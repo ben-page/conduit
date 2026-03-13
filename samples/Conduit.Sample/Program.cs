@@ -9,5 +9,3 @@ var app = builder.Build();
 app.MapConduit();
 app.MapHub<ConduitHub>("/hub");
 app.Run();
-
-public partial class Program;

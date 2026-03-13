@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using Conduit;
 
 namespace Conduit.Tests;
 

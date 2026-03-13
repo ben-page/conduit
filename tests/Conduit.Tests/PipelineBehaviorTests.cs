@@ -16,9 +16,9 @@ public class PipelineBehaviorTests
             Func<Task<string>> next,
             CancellationToken cancellationToken)
         {
-            CallLog.Add("before");
+            this.CallLog.Add("before");
             var result = await next();
-            CallLog.Add("after");
+            this.CallLog.Add("after");
             return result;
         }
     }
@@ -47,7 +47,7 @@ public class PipelineBehaviorTests
             Func<Task> next,
             CancellationToken cancellationToken)
         {
-            WasCalled = true;
+            this.WasCalled = true;
             await next();
         }
     }

@@ -4,14 +4,24 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace Conduit.AspNetCore;
 
+/// <summary>
+/// SignalR hub that accepts dispatch requests from connected clients and routes
+/// them through the <see cref="IWireDispatcher"/>.
+/// </summary>
 public class ConduitHub : Hub
 {
+    /// <summary>
+    /// Dispatches a command or query received from a SignalR client.
+    /// </summary>
+    /// <param name="type">The type name of the request.</param>
+    /// <param name="payload">The JSON payload to deserialize.</param>
+    /// <returns>A <see cref="DispatchResult{T}"/> containing the result or error.</returns>
     public async Task<DispatchResult<object>> Dispatch(
         string type,
         JsonElement payload)
     {
-        var cancellationToken = Context.ConnectionAborted;
-        var dispatcher = Context.GetHttpContext()!.RequestServices.GetRequiredService<IWireDispatcher>();
+        var cancellationToken = this.Context.ConnectionAborted;
+        var dispatcher = this.Context.GetHttpContext()!.RequestServices.GetRequiredService<IWireDispatcher>();
 
         try
         {
@@ -25,7 +35,10 @@ public class ConduitHub : Hub
                 Error = new DispatchError(ex.Code, ex.Message)
             };
         }
+
+#pragma warning disable CA1031 // Intentional catch-all at transport boundary
         catch (Exception)
+#pragma warning restore CA1031
         {
             return new DispatchResult<object>
             {

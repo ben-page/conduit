@@ -5,8 +5,18 @@ using Microsoft.AspNetCore.Routing;
 
 namespace Conduit.AspNetCore;
 
+/// <summary>
+/// Extension methods for mapping Conduit HTTP dispatch endpoints.
+/// </summary>
 public static class ConduitEndpoints
 {
+    /// <summary>
+    /// Maps a POST endpoint that accepts <see cref="DispatchEnvelope"/> payloads
+    /// and routes them through the <see cref="IWireDispatcher"/>.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="path">The URL path for the dispatch endpoint. Defaults to "/api/dispatch".</param>
+    /// <returns>The endpoint route builder for chaining.</returns>
     public static IEndpointRouteBuilder MapConduit(
         this IEndpointRouteBuilder endpoints,
         string path = "/api/dispatch")
@@ -31,7 +41,10 @@ public static class ConduitEndpoints
                     },
                     statusCode: ex.StatusCode);
             }
+
+#pragma warning disable CA1031 // Intentional catch-all at transport boundary
             catch (Exception)
+#pragma warning restore CA1031
             {
                 return Results.Json(
                     new DispatchResult<object>

@@ -10,18 +10,13 @@ namespace Conduit.SourceGen;
 [Generator(LanguageNames.CSharp)]
 public sealed class ConduitGenerator : IIncrementalGenerator
 {
-    private const string CommandHandlerName = "Conduit.ICommandHandler`1";
-    private const string CommandHandlerWithResultName = "Conduit.ICommandHandler`2";
-    private const string QueryHandlerName = "Conduit.IQueryHandler`2";
-    private const string EventListenerName = "Conduit.IEventListener`1";
-
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         // Collect all type declarations
         var typeDeclarations = context.SyntaxProvider
             .CreateSyntaxProvider(
                 predicate: static (node, _) => node is TypeDeclarationSyntax,
-                transform: static (ctx, _) => ctx.SemanticModel.GetDeclaredSymbol(ctx.Node) as INamedTypeSymbol)
+                transform: static (ctx, cancellationToken) => ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, cancellationToken) as INamedTypeSymbol)
             .Where(static symbol => symbol != null)
             .Select(static (symbol, _) => symbol!);
 
@@ -99,11 +94,13 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                 else if (ifaceOriginal == "Conduit.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
                 {
                     var eventFullName = iface.TypeArguments[0].ToDisplayString();
-                    if (!listenerGroups.ContainsKey(eventFullName))
+                    if (!listenerGroups.TryGetValue(eventFullName, out var listeners))
                     {
-                        listenerGroups[eventFullName] = new List<string>();
+                        listeners = new List<string>();
+                        listenerGroups[eventFullName] = listeners;
                     }
-                    listenerGroups[eventFullName].Add(typeSymbol.ToDisplayString());
+
+                    listeners.Add(typeSymbol.ToDisplayString());
                     listenerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
             }
@@ -170,6 +167,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             DispatchableKind.Command => $"ICommandHandler<{type.TypeName}, {type.ResultTypeName}>",
             DispatchableKind.VoidCommand => $"ICommandHandler<{type.TypeName}>",
             DispatchableKind.Query => $"IQueryHandler<{type.TypeName}, {type.ResultTypeName}>",
+            DispatchableKind.Event => $"IEventListener<{type.TypeName}>",
             _ => "IHandler",
         };
     }

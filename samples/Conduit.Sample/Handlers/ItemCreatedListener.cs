@@ -7,7 +7,11 @@ public class ItemCreatedListener(ILogger<ItemCreatedListener> logger) : IEventLi
 {
     public Task HandleAsync(ItemCreatedEvent @event, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Item created: {Id} - {Name}", @event.Id, @event.Name);
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation("Item created: {Id} - {Name}", @event.Id, @event.Name);
+        }
+
         return Task.CompletedTask;
     }
 }
