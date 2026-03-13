@@ -1,3 +1,4 @@
+﻿using Conduit.Messages;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -9,7 +10,7 @@ public abstract class GeneratorTestBase
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
-        var conduitAssemblyPath = typeof(Conduit.ICommand).Assembly.Location;
+        var conduitAssemblyPath = typeof(ICommand).Assembly.Location;
         var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
 
         var references = new List<MetadataReference>

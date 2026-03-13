@@ -1,4 +1,5 @@
-using Conduit.Exceptions;
+﻿using Conduit.Exceptions;
+using Conduit.Handlers;
 
 namespace Conduit.AspNetCore.Tests.TestApp;
 

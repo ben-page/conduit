@@ -1,6 +1,6 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
-namespace Conduit;
+namespace Conduit.Dispatch;
 
 /// <summary>
 /// Dispatches commands and queries received over the wire (HTTP, SignalR, etc.)

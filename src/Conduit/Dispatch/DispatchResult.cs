@@ -1,4 +1,4 @@
-namespace Conduit;
+﻿namespace Conduit.Dispatch;
 
 /// <summary>
 /// The result of a wire dispatch operation, containing either the handler result

@@ -1,4 +1,6 @@
-namespace Conduit;
+﻿using Conduit.Messages;
+
+namespace Conduit.Handlers;
 
 /// <summary>
 /// Handles a query that returns a result.

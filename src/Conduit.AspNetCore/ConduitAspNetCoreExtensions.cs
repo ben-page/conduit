@@ -1,3 +1,4 @@
+using Conduit.Transport;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.AspNetCore;

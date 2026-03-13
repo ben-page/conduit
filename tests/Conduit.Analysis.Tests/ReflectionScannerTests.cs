@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 
 namespace Conduit.Analysis.Tests;
 
@@ -13,7 +13,7 @@ public class ReflectionScannerTests
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestCreateCommand");
         type.Should().NotBeNull();
-        type!.Kind.Should().Be(DispatchableKind.Command);
+        type.Kind.Should().Be(DispatchableKind.Command);
         type.ResultTypeName.Should().Be("Guid");
     }
 
@@ -22,7 +22,7 @@ public class ReflectionScannerTests
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestDeleteCommand");
         type.Should().NotBeNull();
-        type!.Kind.Should().Be(DispatchableKind.VoidCommand);
+        type.Kind.Should().Be(DispatchableKind.VoidCommand);
     }
 
     [TestMethod]
@@ -30,7 +30,7 @@ public class ReflectionScannerTests
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestGetQuery");
         type.Should().NotBeNull();
-        type!.Kind.Should().Be(DispatchableKind.Query);
+        type.Kind.Should().Be(DispatchableKind.Query);
         type.ResultTypeName.Should().Be("String");
     }
 
@@ -39,7 +39,7 @@ public class ReflectionScannerTests
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestItemCreatedEvent");
         type.Should().NotBeNull();
-        type!.Kind.Should().Be(DispatchableKind.Event);
+        type.Kind.Should().Be(DispatchableKind.Event);
     }
 
     [TestMethod]
@@ -68,7 +68,7 @@ public class ReflectionScannerTests
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestValidatedCommand");
         type.Should().NotBeNull();
-        type!.HasValidateOverride.Should().BeTrue();
+        type.HasValidateOverride.Should().BeTrue();
     }
 
     [TestMethod]

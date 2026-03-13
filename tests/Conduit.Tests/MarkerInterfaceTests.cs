@@ -1,4 +1,5 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
+using Conduit.Messages;
 
 namespace Conduit.Tests;
 

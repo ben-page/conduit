@@ -1,4 +1,5 @@
-﻿using Conduit.Sample.Commands;
+﻿using Conduit.Handlers;
+using Conduit.Sample.Commands;
 
 namespace Conduit.Sample.Handlers;
 

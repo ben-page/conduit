@@ -1,4 +1,6 @@
-namespace Conduit;
+﻿using Conduit.Messages;
+
+namespace Conduit.Handlers;
 
 /// <summary>
 /// Handles a published event. Multiple listeners may handle the same event type.

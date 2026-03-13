@@ -61,7 +61,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             {
                 var ifaceOriginal = iface.OriginalDefinition.ToDisplayString();
 
-                if (ifaceOriginal == "Conduit.ICommandHandler<TCommand, TResult>" && iface.TypeArguments.Length == 2)
+                if (ifaceOriginal == "Conduit.Handlers.ICommandHandler<TCommand, TResult>" && iface.TypeArguments.Length == 2)
                 {
                     var commandFullName = iface.TypeArguments[0].ToDisplayString();
                     handlers.Add(new HandlerInfo
@@ -71,7 +71,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     });
                     handlerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
-                else if (ifaceOriginal == "Conduit.ICommandHandler<TCommand>" && iface.TypeArguments.Length == 1)
+                else if (ifaceOriginal == "Conduit.Handlers.ICommandHandler<TCommand>" && iface.TypeArguments.Length == 1)
                 {
                     var commandFullName = iface.TypeArguments[0].ToDisplayString();
                     handlers.Add(new HandlerInfo
@@ -81,7 +81,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     });
                     handlerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
-                else if (ifaceOriginal == "Conduit.IQueryHandler<TQuery, TResult>" && iface.TypeArguments.Length == 2)
+                else if (ifaceOriginal == "Conduit.Handlers.IQueryHandler<TQuery, TResult>" && iface.TypeArguments.Length == 2)
                 {
                     var queryFullName = iface.TypeArguments[0].ToDisplayString();
                     handlers.Add(new HandlerInfo
@@ -91,7 +91,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     });
                     handlerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
-                else if (ifaceOriginal == "Conduit.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
+                else if (ifaceOriginal == "Conduit.Handlers.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
                 {
                     var eventFullName = iface.TypeArguments[0].ToDisplayString();
                     if (!listenerGroups.TryGetValue(eventFullName, out var listeners))

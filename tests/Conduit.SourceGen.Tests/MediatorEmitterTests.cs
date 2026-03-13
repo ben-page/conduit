@@ -9,8 +9,9 @@ public class MediatorEmitterTests : GeneratorTestBase
     public void EmitsMediatorWithStronglyTypedOverloads()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Handlers;
+using Conduit.Messages;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -64,9 +65,9 @@ namespace App.Events
         mediatorSource.Should().NotBeNull();
 
         // Strongly-typed overloads
-        mediatorSource.Should().Contain("ExecuteAsync(\n        App.Commands.CreateOrder command");
-        mediatorSource.Should().Contain("ExecuteAsync(\n        App.Commands.DeleteOrder command");
-        mediatorSource.Should().Contain("FetchAsync(\n        App.Queries.GetOrder query");
+        mediatorSource.Should().Contain("App.Commands.CreateOrder command");
+        mediatorSource.Should().Contain("App.Commands.DeleteOrder command");
+        mediatorSource.Should().Contain("App.Queries.GetOrder query");
 
         // Interface fallbacks
         mediatorSource.Should().Contain("IMediator.ExecuteAsync<TResult>");

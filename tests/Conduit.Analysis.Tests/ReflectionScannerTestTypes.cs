@@ -1,4 +1,5 @@
-using Conduit.Attributes;
+﻿using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace("Conduit.Analysis.Tests.Sample")]
 

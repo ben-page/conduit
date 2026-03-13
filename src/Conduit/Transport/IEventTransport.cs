@@ -1,4 +1,6 @@
-namespace Conduit;
+using Conduit.Messages;
+
+namespace Conduit.Transport;
 
 /// <summary>
 /// Transports published events to external consumers (e.g. SignalR clients).
