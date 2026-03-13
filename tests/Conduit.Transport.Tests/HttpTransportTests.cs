@@ -9,13 +9,13 @@ namespace Conduit.Transport.Tests;
 public class HttpTransportTests
 {
     [TestMethod]
-    public async Task SendMessageAsync_ThrowsNotSupported()
+    public async Task SendEventAsync_ThrowsNotSupported()
     {
         var httpClient = new HttpClient();
         var transport = new HttpTransport(httpClient);
         var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
 
-        var action = () => transport.SendMessageAsync(envelope, CancellationToken.None);
+        var action = () => transport.SendEventAsync(envelope, CancellationToken.None);
 
         await action.Should().ThrowExactlyAsync<NotSupportedException>();
     }

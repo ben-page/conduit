@@ -18,10 +18,22 @@ public sealed class DefaultRouteResolver(ConduitOptions options) : IRouteResolve
         {
             if (messageFullTypeName.StartsWith(route.Pattern, StringComparison.Ordinal))
             {
-                if (options.Endpoints.TryGetValue(route.EndpointName, out var endpoint))
+                if (!options.Endpoints.TryGetValue(route.EndpointName, out var endpoint))
                 {
-                    return endpoint;
+                    throw new InvalidOperationException(
+                        $"Route pattern '{route.Pattern}' matched message '{messageFullTypeName}' " +
+                        $"but endpoint '{route.EndpointName}' is not registered. " +
+                        $"Ensure AddEndpoint(\"{route.EndpointName}\", ...) is called in your Conduit configuration.");
                 }
+
+                if (endpoint.Transport is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Endpoint '{route.EndpointName}' has no transport configured. " +
+                        $"Call UseHttp() or UseSignalR(uri) in the endpoint configuration.");
+                }
+
+                return endpoint;
             }
         }
 

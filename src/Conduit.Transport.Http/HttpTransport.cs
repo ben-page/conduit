@@ -12,7 +12,7 @@ namespace Conduit.Transport.Http;
 public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
 {
     /// <inheritdoc />
-    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
         throw new NotSupportedException(
             "HTTP transport does not support fire-and-forget event delivery. " +
@@ -22,7 +22,9 @@ public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch")
     /// <inheritdoc />
     public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
-        var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        using var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<DispatchResult<JsonElement?>>(cancellationToken);

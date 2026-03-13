@@ -1,4 +1,5 @@
 using Conduit.Dispatch;
+using Conduit.Exceptions;
 using Microsoft.Extensions.Options;
 
 namespace Conduit.Bridge.SignalR;
@@ -20,7 +21,7 @@ public class BridgeTypeFilterInterceptor(IOptions<BridgeOptions> options) : IDis
 
         if (!options.Value.AllowedTypes.Contains(envelope.Type))
         {
-            throw new UnauthorizedAccessException(
+            throw new UnauthorizedException(
                 $"Type '{envelope.Type}' is not available via the bridge.");
         }
 
@@ -33,6 +34,7 @@ public class BridgeTypeFilterInterceptor(IOptions<BridgeOptions> options) : IDis
         Func<Task> next,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(next);
         // Events are server→client, no filtering needed
         return next();

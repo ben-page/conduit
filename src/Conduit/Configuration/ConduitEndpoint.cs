@@ -17,5 +17,5 @@ public sealed class ConduitEndpoint
     /// The transport used to communicate with this endpoint.
     /// Set during endpoint configuration via <see cref="EndpointBuilder"/>.
     /// </summary>
-    public IConduitTransport? Transport { get; internal set; }
+    public IConduitTransport? Transport { get; set; }
 }

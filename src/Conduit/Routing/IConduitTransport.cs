@@ -17,10 +17,10 @@ public interface IConduitTransport
     public Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Delivers a message (typically an event) to external consumers (fire-and-forget).
+    /// Delivers an event to external consumers (fire-and-forget).
     /// </summary>
     /// <param name="envelope">The dispatch envelope containing the type and payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
+    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
 }

@@ -17,7 +17,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddConduitSignalR(this IServiceCollection services)
     {
         services.AddSignalR();
-        services.AddSingleton<IConduitTransport, SignalRTransport>();
+        services.AddSingleton<SignalRTransport>();
+        services.AddSingleton<IConduitTransport>(sp => sp.GetRequiredService<SignalRTransport>());
         return services;
     }
 }

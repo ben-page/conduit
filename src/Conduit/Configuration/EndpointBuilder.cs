@@ -5,7 +5,7 @@ namespace Conduit.Configuration;
 /// <summary>
 /// Configures a <see cref="ConduitEndpoint"/> during DI setup.
 /// Transport-specific extension methods (e.g. UseSignalR, UseHttp) are provided
-/// by transport packages like Conduit.AspNetCore.
+/// by transport packages like Conduit.Transport.Http and Conduit.Transport.SignalR.
 /// </summary>
 public sealed class EndpointBuilder
 {

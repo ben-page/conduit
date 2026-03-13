@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Dispatch;
 using Conduit.Routing;
 
 namespace Conduit.Tests;
@@ -22,7 +23,7 @@ public class DefaultRouteResolverTests
     public void MatchesNamespacePrefix()
     {
         var options = new ConduitOptions();
-        var endpoint = new ConduitEndpoint { Name = "orders-api" };
+        var endpoint = new ConduitEndpoint { Name = "orders-api", Transport = new StubTransport() };
         options.Endpoints["orders-api"] = endpoint;
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "orders-api" });
 
@@ -53,8 +54,8 @@ public class DefaultRouteResolverTests
     public void FirstMatchWins_WhenMultipleRoutesMatch()
     {
         var options = new ConduitOptions();
-        options.Endpoints["specific"] = new ConduitEndpoint { Name = "specific" };
-        options.Endpoints["general"] = new ConduitEndpoint { Name = "general" };
+        options.Endpoints["specific"] = new ConduitEndpoint { Name = "specific", Transport = new StubTransport() };
+        options.Endpoints["general"] = new ConduitEndpoint { Name = "general", Transport = new StubTransport() };
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands.Create", EndpointName = "specific" });
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "general" });
 
@@ -66,17 +67,42 @@ public class DefaultRouteResolverTests
     }
 
     [TestMethod]
-    public void ReturnsNull_WhenEndpointNotRegistered()
+    public void ThrowsWhenEndpointNotRegistered()
     {
         var options = new ConduitOptions();
         options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "missing" });
 
         var resolver = new DefaultRouteResolver(options);
 
-        var result = resolver.Resolve("Orders.Commands.CreateOrder");
+        var action = () => resolver.Resolve("Orders.Commands.CreateOrder");
 
-        result.Should().BeNull();
+        action.Should().ThrowExactly<InvalidOperationException>()
+            .WithMessage("*endpoint 'missing' is not registered*");
     }
+
+    [TestMethod]
+    public void ThrowsWhenEndpointHasNoTransport()
+    {
+        var options = new ConduitOptions();
+        options.Endpoints["orders-api"] = new ConduitEndpoint { Name = "orders-api" };
+        options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "orders-api" });
+
+        var resolver = new DefaultRouteResolver(options);
+
+        var action = () => resolver.Resolve("Orders.Commands.CreateOrder");
+
+        action.Should().ThrowExactly<InvalidOperationException>()
+            .WithMessage("*no transport configured*");
+    }
+}
+
+file class StubTransport : IConduitTransport
+{
+    public Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+        => Task.FromResult<object?>(null);
+
+    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+        => Task.CompletedTask;
 }
 
 [TestClass]

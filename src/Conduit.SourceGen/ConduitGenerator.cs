@@ -66,7 +66,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     var commandFullName = iface.TypeArguments[0].ToDisplayString();
                     handlers.Add(new HandlerInfo
                     {
-                        CommandFullTypeName = commandFullName,
+                        MessageFullTypeName = commandFullName,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
                     });
                     handlerTypeNames.Add(typeSymbol.ToDisplayString());
@@ -76,7 +76,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     var commandFullName = iface.TypeArguments[0].ToDisplayString();
                     handlers.Add(new HandlerInfo
                     {
-                        CommandFullTypeName = commandFullName,
+                        MessageFullTypeName = commandFullName,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
                     });
                     handlerTypeNames.Add(typeSymbol.ToDisplayString());
@@ -86,7 +86,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     var queryFullName = iface.TypeArguments[0].ToDisplayString();
                     handlers.Add(new HandlerInfo
                     {
-                        CommandFullTypeName = queryFullName,
+                        MessageFullTypeName = queryFullName,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
                     });
                     handlerTypeNames.Add(typeSymbol.ToDisplayString());
@@ -140,7 +140,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                 continue;
             }
 
-            var matchingHandlers = handlers.Where(h => h.CommandFullTypeName == type.FullTypeName).ToList();
+            var matchingHandlers = handlers.Where(h => h.MessageFullTypeName == type.FullTypeName).ToList();
 
             if (matchingHandlers.Count == 0)
             {

@@ -80,8 +80,8 @@ namespace App.Events
 
         // Wire dispatch
         mediatorSource.Should().Contain("DispatchRequestAsync(");
-        mediatorSource.Should().Contain("\"CreateOrder\"");
-        mediatorSource.Should().Contain("\"DeleteOrder\"");
+        mediatorSource.Should().Contain("\"App.Commands.CreateOrder\"");
+        mediatorSource.Should().Contain("\"App.Commands.DeleteOrder\"");
 
         // SafeExecute
         mediatorSource.Should().Contain("SafeExecute");
@@ -95,6 +95,6 @@ namespace App.Events
         mediatorSource.Should().Contain("DispatchEventAsync(");
         mediatorSource.Should().Contain("string type,");
         mediatorSource.Should().Contain("JsonElement payload,");
-        mediatorSource.Should().Contain("\"OrderCreated\"");
+        mediatorSource.Should().Contain("\"App.Events.OrderCreated\"");
     }
 }
