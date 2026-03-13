@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "Conduit.Sample/1.0.0": {
+        "runtime": {
+          "Conduit.Sample.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "Conduit.Sample/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
