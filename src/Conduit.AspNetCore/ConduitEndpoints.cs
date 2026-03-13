@@ -56,6 +56,31 @@ public static class ConduitEndpoints
             }
         });
 
+        endpoints.MapPost(path + "/publish", async (
+            DispatchEnvelope envelope,
+            IMessageRouter dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await dispatcher.PublishAsync(
+                    envelope.Type, envelope.Payload, cancellationToken);
+                return Results.Ok();
+            }
+
+#pragma warning disable CA1031 // Intentional catch-all at transport boundary
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                return Results.Json(
+                    new DispatchResult<object>
+                    {
+                        Error = new DispatchError("InternalError", "An unexpected error occurred")
+                    },
+                    statusCode: 500);
+            }
+        });
+
         return endpoints;
     }
 }

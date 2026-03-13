@@ -124,6 +124,9 @@ public static class MediatorEmitter
         // Wire dispatch
         EmitWireDispatch(sb, commands, voidCommands, queries);
 
+        // Wire publish (inbound event publishing from external clients)
+        EmitWirePublish(sb, events);
+
         // CastTask helper
         sb.AppendLine("    private static Task<TTarget> CastTask<TSource, TTarget>(Task<TSource> task)");
         sb.AppendLine("    {");
@@ -272,6 +275,28 @@ public static class MediatorEmitter
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown dispatch type: {type}\")");
         sb.AppendLine("        };");
+        sb.AppendLine();
+    }
+
+    private static void EmitWirePublish(StringBuilder sb, List<DispatchableTypeInfo> events)
+    {
+        sb.AppendLine("    public async Task PublishAsync(");
+        sb.AppendLine("        string type,");
+        sb.AppendLine("        JsonElement payload,");
+        sb.AppendLine("        CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        IEvent @event = type switch");
+        sb.AppendLine("        {");
+
+        foreach (var evt in events)
+        {
+            sb.AppendLine($"            \"{evt.TypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload)!,");
+        }
+
+        sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
+        sb.AppendLine("        };");
+        sb.AppendLine("        await PublishAsync(@event, cancellationToken);");
+        sb.AppendLine("    }");
         sb.AppendLine();
     }
 }

@@ -47,6 +47,32 @@ public class ConduitHub : Hub
             };
         }
     }
+
+    /// <summary>
+    /// Publishes an event received from a SignalR client through the local mediator.
+    /// This enables TypeScript clients to publish events to C# listeners.
+    /// </summary>
+    /// <param name="type">The type name of the event.</param>
+    /// <param name="payload">The JSON payload to deserialize.</param>
+    public async Task Publish(
+        string type,
+        JsonElement payload)
+    {
+        var cancellationToken = this.Context.ConnectionAborted;
+        var router = this.Context.GetHttpContext()!.RequestServices.GetRequiredService<IMessageRouter>();
+
+        try
+        {
+            await router.PublishAsync(type, payload, cancellationToken);
+        }
+
+#pragma warning disable CA1031 // Intentional catch-all at transport boundary
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Events are fire-and-forget; errors are logged by SafeExecute in the mediator
+        }
+    }
 }
 
 // Extension to resolve services - avoids importing the DI namespace in Hub
