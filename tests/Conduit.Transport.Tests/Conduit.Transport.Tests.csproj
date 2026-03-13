@@ -1,4 +1,4 @@
-<Project Sdk="MSTest.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -12,21 +12,19 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="MSTest" />
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
-    
-    
-    
-    
-    
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
-    <ProjectReference Include="..\..\src\Conduit.Transport.AspNetCore\Conduit.Transport.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Transport.Http\Conduit.Transport.Http.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Transport.SignalR\Conduit.Transport.SignalR.csproj" />
-    <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\..\src\Conduit.Analysis\Conduit.Analysis.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

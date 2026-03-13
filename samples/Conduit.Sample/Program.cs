@@ -1,4 +1,6 @@
-﻿using Conduit.Transport.AspNetCore;
+using global::Conduit;
+using Conduit.Bridge.Http;
+using Conduit.Bridge.SignalR;
 using Conduit.Transport.SignalR;
 using Conduit.Generated;
 
@@ -11,10 +13,16 @@ public partial class Program
         var builder = WebApplication.CreateBuilder(args);
         builder.Services.AddConduit();
         builder.Services.AddConduitSignalR();
+        builder.Services.AddConduitBridge(bridge =>
+        {
+            bridge.AllowType("CreateItemCommand");
+            bridge.AllowType("DeleteItemCommand");
+            bridge.AllowType("GetItemQuery");
+        });
         builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
-        app.MapConduit();
+        app.MapConduitBridge();
         app.MapHub<ConduitHub>("/hub");
         app.Run();
     }

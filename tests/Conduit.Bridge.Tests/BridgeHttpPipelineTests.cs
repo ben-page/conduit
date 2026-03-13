@@ -1,19 +1,19 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Transport.AspNetCore.Tests.TestApp;
+using Conduit.Bridge.Http;
+using Conduit.Bridge.Tests.TestApp;
 using Conduit.Transport.SignalR;
 using Conduit.Dispatch;
-using Conduit.Generated;
+using global::Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 
-namespace Conduit.Transport.AspNetCore.Tests;
+namespace Conduit.Bridge.Tests;
 
 [TestClass]
-public class FullPipelineTests
+public class BridgeHttpPipelineTests
 {
     private static (WebApplication App, HttpClient Client) CreateTestHost()
     {
@@ -24,7 +24,7 @@ public class FullPipelineTests
         builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
-        app.MapConduit();
+        app.MapConduitBridge();
         app.MapHub<ConduitHub>("/hub");
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();

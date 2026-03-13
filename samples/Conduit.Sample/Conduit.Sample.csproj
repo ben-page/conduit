@@ -9,7 +9,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
-    <ProjectReference Include="..\..\src\Conduit.Transport.AspNetCore\Conduit.Transport.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Bridge.Http\Conduit.Bridge.Http.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Bridge.SignalR\Conduit.Bridge.SignalR.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Transport.SignalR\Conduit.Transport.SignalR.csproj" />
     <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj"
                       OutputItemType="Analyzer"
