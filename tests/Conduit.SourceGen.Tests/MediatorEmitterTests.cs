@@ -90,5 +90,11 @@ namespace App.Events
         mediatorSource.Should().Contain("IRouteResolver routeResolver");
         mediatorSource.Should().Contain("routeResolver.Resolve(");
         mediatorSource.Should().Contain("endpoint.Transport.SendAsync");
+
+        // Wire publish (inbound event publishing from external clients)
+        mediatorSource.Should().Contain("PublishAsync(");
+        mediatorSource.Should().Contain("string type,");
+        mediatorSource.Should().Contain("JsonElement payload,");
+        mediatorSource.Should().Contain("\"OrderCreated\"");
     }
 }

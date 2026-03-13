@@ -191,18 +191,79 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-### Event Transport
+### Conduit Transport
 
 ```csharp
-public interface IEventTransport
+public interface IConduitTransport
 {
-    Task DeliverAsync(IEvent @event, CancellationToken cancellationToken);
+    public Task DeliverAsync(IEvent @event, CancellationToken cancellationToken);
+    public Task<object?> SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
 }
 ```
 
+Transports are bidirectional pipes between endpoints:
+- `DeliverAsync` — fire-and-forget event delivery (outbound)
+- `SendAsync` — request/response dispatch via envelope (outbound)
+
 When `PublishAsync` is called, the mediator:
 1. Runs all in-process `IEventListener<T>` implementations (continue on failure)
-2. Delivers to all registered `IEventTransport` implementations
+2. Delivers to all registered `IConduitTransport` implementations
+
+### Message Router
+
+```csharp
+public interface IMessageRouter
+{
+    public Task<object?> DispatchAsync(string type, JsonElement payload, CancellationToken cancellationToken);
+    public Task PublishAsync(string type, JsonElement payload, CancellationToken cancellationToken);
+}
+```
+
+Bridges external transports (HTTP, SignalR) with the generated mediator. The generated `ConduitMediator` implements both `IMediator` and `IMessageRouter`. `DispatchAsync` handles inbound commands/queries; `PublishAsync` handles inbound events from external clients (e.g. TypeScript → SignalR → C# listeners).
+
+### Endpoint-Based Routing
+
+Named endpoints with pluggable transports enable cross-service dispatch:
+
+```csharp
+public sealed class ConduitEndpoint
+{
+    public required string Name { get; init; }
+    public IConduitTransport? Transport { get; internal set; }
+}
+
+public sealed class ConduitRoute
+{
+    public required string Pattern { get; init; }   // namespace prefix
+    public required string EndpointName { get; init; }
+}
+
+public sealed class ConduitOptions
+{
+    public Dictionary<string, ConduitEndpoint> Endpoints { get; } = new();
+    public List<ConduitRoute> Routes { get; } = [];
+}
+
+public interface IRouteResolver
+{
+    public ConduitEndpoint? Resolve(string messageFullTypeName);
+}
+```
+
+The generated mediator checks the route table before local dispatch. If a message type matches a route, it serializes the request into a `DispatchEnvelope` and sends it via the endpoint's transport. If no route matches, dispatch is local.
+
+Configuration uses a fluent builder API:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.AddEndpoint("orders-api", endpoint =>
+        endpoint.UseHttp(httpClient));
+
+    conduit.Route<OrderCommands.CreateOrder>().To("orders-api");
+    conduit.Route("Inventory.Commands").To("orders-api");
+});
+```
 
 ### Error Model
 
@@ -339,98 +400,74 @@ public static IServiceCollection AddConduitHandlers(this IServiceCollection serv
 
 ### 4. Mediator Implementation
 
-Generated with strongly-typed overloads to avoid boxing in application code:
+Generated with strongly-typed overloads, route-aware dispatch, and wire publish support:
 
 ```csharp
 internal sealed class ConduitMediator(
     IServiceProvider serviceProvider,
-    IEnumerable<IEventTransport> transports,
-    ILogger<ConduitMediator> logger) : IMediator
+    IEnumerable<IConduitTransport> transports,
+    IRouteResolver routeResolver,
+    ILogger<ConduitMediator> logger) : IMediator, IMessageRouter
 {
     // Strongly-typed overloads — compiler picks these, zero boxing
-    public Task<Guid> ExecuteAsync(
+    // Each checks the route table before local dispatch
+    public async Task<Guid> ExecuteAsync(
         CreateOrderCommand command,
         CancellationToken cancellationToken)
-        => ConduitDispatch.Execute(command, serviceProvider, cancellationToken);
-
-    public Task ExecuteAsync(
-        DeleteOrderCommand command,
-        CancellationToken cancellationToken)
-        => ConduitDispatch.Execute(command, serviceProvider, cancellationToken);
-
-    // Generic interface fallback — only used by dispatch endpoint
-    Task<TResult> IMediator.ExecuteAsync<TResult>(
-        ICommand<TResult> command,
-        CancellationToken cancellationToken)
-        => command switch
+    {
+        var endpoint = routeResolver.Resolve("App.Commands.CreateOrderCommand");
+        if (endpoint?.Transport != null)
         {
-            CreateOrderCommand cmd =>
-                Unsafe.As<Task<TResult>>(ExecuteAsync(cmd, cancellationToken)),
-            _ => throw new InvalidOperationException($"No handler for {command.GetType().Name}")
-        };
+            var payload = JsonSerializer.SerializeToElement(command);
+            var result = await endpoint.Transport.SendAsync(
+                new DispatchEnvelope("CreateOrder", payload), cancellationToken);
+            return (Guid)result!;
+        }
+        return await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);
+    }
 
-    // Void command interface fallback
-    Task IMediator.ExecuteAsync(
-        ICommand command,
-        CancellationToken cancellationToken)
-        => command switch
-        {
-            DeleteOrderCommand cmd => ExecuteAsync(cmd, cancellationToken),
-            _ => throw new InvalidOperationException($"No handler for {command.GetType().Name}")
-        };
+    // Generic interface fallbacks, void command fallbacks... (same pattern)
 
-    // Events — continue on failure
+    // Events — continue on failure, deliver to transports
     public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken)
     {
         switch (@event)
         {
             case OrderCreatedEvent e:
                 await SafeExecute(
-                    () => serviceProvider.GetRequiredService<SendConfirmationListener>()
-                        .HandleAsync(e, cancellationToken));
-                await SafeExecute(
-                    () => serviceProvider.GetRequiredService<UpdateInventoryListener>()
+                    () => serviceProvider.GetRequiredService<OrderCreatedListener>()
                         .HandleAsync(e, cancellationToken));
                 break;
         }
-
         foreach (var transport in transports)
         {
             await SafeExecute(() => transport.DeliverAsync(@event, cancellationToken));
         }
     }
 
-    // Wire dispatch — returns object, boxing is irrelevant (serialization boundary)
-    // Void commands return null; the dispatch endpoint wraps in DispatchResult<object> { Data = null }
-    public static async Task<object?> Dispatch(
-        string type,
-        JsonElement payload,
-        IServiceProvider serviceProvider,
-        CancellationToken cancellationToken)
+    // Wire dispatch — inbound commands/queries from external transports
+    public async Task<object?> DispatchAsync(
+        string type, JsonElement payload, CancellationToken cancellationToken)
         => type switch
         {
             "CreateOrder" => await ConduitDispatch.Execute(
-                JsonSerializer.Deserialize<CreateOrderCommand>(payload)!,
-                serviceProvider,
-                cancellationToken),
-            "DeleteOrder" => await ConduitDispatch.ExecuteVoid(
-                JsonSerializer.Deserialize<DeleteOrderCommand>(payload)!,
-                serviceProvider,
-                cancellationToken),
-            _ => throw new InvalidOperationException($"Unknown command: {type}")
+                JsonSerializer.Deserialize<CreateOrderCommand>(payload)!, serviceProvider, cancellationToken),
+            _ => throw new InvalidOperationException($"Unknown dispatch type: {type}")
         };
 
-    private async Task SafeExecute(Func<Task> action)
+    // Wire publish — inbound events from external clients (e.g. TypeScript → SignalR)
+    public async Task PublishAsync(
+        string type, JsonElement payload, CancellationToken cancellationToken)
     {
-        try
+        IEvent @event = type switch
         {
-            await action();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Event listener or transport failed");
-        }
+            "OrderCreated" => JsonSerializer.Deserialize<OrderCreatedEvent>(payload)!,
+            _ => throw new InvalidOperationException($"Unknown event type: {type}")
+        };
+        await PublishAsync(@event, cancellationToken);
     }
+
+    private async Task SafeExecute(Func<Task> action) { /* try/catch + log */ }
 }
 ```
 
@@ -445,6 +482,10 @@ The generator emits diagnostics for:
 
 ### HTTP Dispatch Endpoint
 
+Maps two POST endpoints via `IMessageRouter`:
+- `POST /api/dispatch` — commands and queries (returns `DispatchResult<object>`)
+- `POST /api/dispatch/publish` — events (fire-and-forget, returns 200 OK)
+
 ```csharp
 public static class ConduitEndpoints
 {
@@ -454,35 +495,23 @@ public static class ConduitEndpoints
     {
         endpoints.MapPost(path, async (
             DispatchEnvelope envelope,
-            IServiceProvider serviceProvider,
+            IMessageRouter dispatcher,
             CancellationToken cancellationToken) =>
         {
-            try
-            {
-                var result = await ConduitMediator.Dispatch(
-                    envelope.Type, envelope.Payload,
-                    serviceProvider, cancellationToken);
-                return Results.Ok(new DispatchResult<object> { Data = result });
-            }
-            catch (ConduitException ex)
-            {
-                return Results.Json(
-                    new DispatchResult<object>
-                    {
-                        Error = new DispatchError(ex.Code, ex.Message)
-                    },
-                    statusCode: ex.StatusCode);
-            }
-            catch (Exception ex)
-            {
-                // Log, OTel
-                return Results.Json(
-                    new DispatchResult<object>
-                    {
-                        Error = new DispatchError("InternalError", "An unexpected error occurred")
-                    },
-                    statusCode: 500);
-            }
+            var result = await dispatcher.DispatchAsync(
+                envelope.Type, envelope.Payload, cancellationToken);
+            return Results.Ok(new DispatchResult<object> { Data = result });
+            // + ConduitException → structured error, catch-all → 500
+        });
+
+        endpoints.MapPost(path + "/publish", async (
+            DispatchEnvelope envelope,
+            IMessageRouter dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            await dispatcher.PublishAsync(
+                envelope.Type, envelope.Payload, cancellationToken);
+            return Results.Ok();
         });
 
         return endpoints;
@@ -492,52 +521,64 @@ public static class ConduitEndpoints
 
 ### SignalR Hub
 
-Dual purpose — handles client-to-server dispatch and server-to-client event delivery on the same connection:
+Dual purpose — handles client-to-server dispatch/publish and server-to-client event delivery:
 
 ```csharp
 public class ConduitHub : Hub
 {
-    public async Task<DispatchResult<object>> Dispatch(
-        string type,
-        JsonElement payload)
+    public async Task<DispatchResult<object>> Dispatch(string type, JsonElement payload)
     {
-        var cancellationToken = Context.ConnectionAborted;
-        try
-        {
-            var result = await ConduitMediator.Dispatch(
-                type, payload,
-                Context.GetHttpContext()!.RequestServices,
-                cancellationToken);
-            return new DispatchResult<object> { Data = result };
-        }
-        catch (ConduitException ex)
-        {
-            return new DispatchResult<object>
-            {
-                Error = new DispatchError(ex.Code, ex.Message)
-            };
-        }
-        catch (Exception ex)
-        {
-            // Log, OTel
-            return new DispatchResult<object>
-            {
-                Error = new DispatchError("InternalError", "An unexpected error occurred")
-            };
-        }
+        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IMessageRouter>();
+        var result = await router.DispatchAsync(type, payload, Context.ConnectionAborted);
+        return new DispatchResult<object> { Data = result };
+        // + ConduitException → structured error, catch-all → 500
+    }
+
+    public async Task Publish(string type, JsonElement payload)
+    {
+        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IMessageRouter>();
+        await router.PublishAsync(type, payload, Context.ConnectionAborted);
+        // Fire-and-forget; errors logged by SafeExecute in mediator
     }
 }
 ```
 
-### SignalR Event Transport
+### SignalR Transport
+
+Bidirectional transport implementing `IConduitTransport`:
 
 ```csharp
-public class SignalREventTransport(IHubContext<ConduitHub> hub) : IEventTransport
+public class SignalRTransport(IHubContext<ConduitHub> hubContext) : IConduitTransport
 {
     public Task DeliverAsync(IEvent @event, CancellationToken cancellationToken)
     {
         var eventName = @event.GetType().Name;
-        return hub.Clients.All.SendAsync(eventName, @event, cancellationToken);
+        return hubContext.Clients.All.SendAsync(eventName, @event, cancellationToken);
+    }
+
+    public Task<object?> SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+        => throw new NotSupportedException("Use HTTP transport for outbound request/response dispatch.");
+}
+```
+
+### HTTP Transport
+
+Sends commands and queries to a remote Conduit endpoint via HTTP POST:
+
+```csharp
+public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
+{
+    public Task DeliverAsync(IEvent @event, CancellationToken cancellationToken)
+        => throw new NotSupportedException("HTTP transport does not support fire-and-forget events.");
+
+    public async Task<object?> SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<DispatchResult<JsonElement?>>(cancellationToken);
+        if (result?.Error is not null)
+            throw new InvalidOperationException($"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
+        return result?.Data;
     }
 }
 ```
@@ -547,19 +588,30 @@ public class SignalREventTransport(IHubContext<ConduitHub> hub) : IEventTranspor
 ```csharp
 public static class ConduitAspNetCoreExtensions
 {
-    public static IServiceCollection AddConduit(this IServiceCollection services)
+    public static IServiceCollection AddConduit(
+        this IServiceCollection services,
+        Action<ConduitBuilder>? configure = null)
     {
         services.AddConduitHandlers();  // generated
-        services.AddSingleton<IMediator, ConduitMediator>();  // generated
         services.AddSignalR();
-        services.AddSingleton<IEventTransport, SignalREventTransport>();
+        services.AddSingleton<IConduitTransport, SignalRTransport>();
+
+        var builder = new ConduitBuilder(services);
+        configure?.Invoke(builder);
+
+        services.AddSingleton(builder.Options);
+        services.AddSingleton<IRouteResolver, DefaultRouteResolver>();
         return services;
     }
 }
 
 // Program.cs
-builder.Services.AddConduit();
-// ...
+builder.Services.AddConduit(conduit =>
+{
+    conduit.AddEndpoint("orders-api", ep => ep.UseHttp(httpClient));
+    conduit.Route("Orders.Commands").To("orders-api");
+});
+
 app.MapConduit();
 app.MapHub<ConduitHub>("/hub");
 ```
@@ -844,14 +896,23 @@ public class CreateOrderHandler(IDbContext db) : ICommandHandler<CreateOrderComm
 
 ## Event Model
 
-Unified pub/sub across transports:
+Unified pub/sub across transports. Events flow in both directions:
 
+**Outbound** (C# → external):
 ```
-Publisher calls mediator.PublishAsync(new OrderCreatedEvent(...))
+mediator.PublishAsync(new OrderCreatedEvent(...))
     │
     ├─ In-process: IEventListener<OrderCreatedEvent> handlers (continue on failure)
-    ├─ SignalR: SignalREventTransport → hub.Clients.All.SendAsync("OrderCreatedEvent", ...)
-    └─ Rebus (future): RebusEventTransport → bus.Publish(...)
+    ├─ SignalR: SignalRTransport → hub.Clients.All.SendAsync("OrderCreated", ...)
+    └─ Rebus (future): RebusTransport → bus.Publish(...)
+```
+
+**Inbound** (external → C#):
+```
+TypeScript client calls hub.invoke("Publish", "OrderCreated", payload)
+    │
+    └─ ConduitHub.Publish → IMessageRouter.PublishAsync(type, payload)
+        └─ Deserialize → mediator.PublishAsync(IEvent) → listeners + transports
 ```
 
 The publisher doesn't know or care who's listening or which transports are configured.
@@ -996,9 +1057,17 @@ public class AuthorizationBehavior<TRequest, TResult>(
 
 Not built now, but the design accommodates it:
 
-- `Conduit.Rebus` package implementing `IEventTransport`
+- `Conduit.Rebus` package implementing `IConduitTransport`
 - Commands can be dispatched to other services via Rebus (outbox pattern)
 - Events published in-process are also published to message broker
 - `IEvent` marker interface is the natural boundary for distributed events
 
-The `IEventTransport` abstraction means adding Rebus is one new class + service registration.
+The `IConduitTransport` abstraction means adding Rebus is one new class + endpoint registration:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.AddEndpoint("message-bus", ep => ep.UseRebus(rebusConfig));
+    conduit.Route("Orders.Events").To("message-bus");
+});
+```
