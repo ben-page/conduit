@@ -85,6 +85,13 @@ public static class MediatorEmitter
         // Wire dispatch
         EmitWireDispatch(sb, commands, voidCommands, queries);
 
+        // CastTask helper
+        sb.AppendLine("    private static Task<TTarget> CastTask<TSource, TTarget>(Task<TSource> task)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        return Unsafe.As<Task<TSource>, Task<TTarget>>(ref task);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
         // SafeExecute helper
         sb.AppendLine("    private async Task SafeExecute(Func<Task> action)");
         sb.AppendLine("    {");
@@ -112,9 +119,7 @@ public static class MediatorEmitter
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"            {cmd.FullTypeName} cmd =>");
-            sb.AppendLine($"                Unsafe.As<Task<{cmd.ResultFullTypeName}>, Task<TResult>>(");
-            sb.AppendLine($"                    ref Unsafe.AsRef(ExecuteAsync(cmd, cancellationToken))),");
+            sb.AppendLine($"            {cmd.FullTypeName} cmd => CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync(cmd, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -150,9 +155,7 @@ public static class MediatorEmitter
 
         foreach (var q in queries)
         {
-            sb.AppendLine($"            {q.FullTypeName} qry =>");
-            sb.AppendLine($"                Unsafe.As<Task<{q.ResultFullTypeName}>, Task<TResult>>(");
-            sb.AppendLine($"                    ref Unsafe.AsRef(FetchAsync(qry, cancellationToken))),");
+            sb.AppendLine($"            {q.FullTypeName} qry => CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync(qry, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {query.GetType().Name}\")");

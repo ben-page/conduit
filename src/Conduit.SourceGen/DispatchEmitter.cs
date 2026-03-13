@@ -65,7 +65,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        command.Validate();");
+        sb.AppendLine($"        ((Conduit.ICommand<{type.ResultFullTypeName}>)command).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -83,7 +83,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        command.Validate();");
+        sb.AppendLine("        ((Conduit.ICommand)command).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: true);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -110,7 +110,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        query.Validate();");
+        sb.AppendLine($"        ((Conduit.IQuery<{type.ResultFullTypeName}>)query).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -128,16 +128,18 @@ public static class DispatchEmitter
             .OrderBy(b => b.Order)
             .ToList() ?? new List<BehaviorInfo>();
 
+        var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
+
         if (applicableBehaviors.Count == 0)
         {
             sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
             if (isVoid)
             {
-                sb.AppendLine($"        await handler.HandleAsync(command, cancellationToken);");
+                sb.AppendLine($"        await handler.HandleAsync({requestParamName}, cancellationToken);");
             }
             else
             {
-                sb.AppendLine($"        return await handler.HandleAsync(command, cancellationToken);");
+                sb.AppendLine($"        return await handler.HandleAsync({requestParamName}, cancellationToken);");
             }
         }
         else
@@ -154,7 +156,6 @@ public static class DispatchEmitter
             sb.AppendLine();
 
             // Build nested call
-            var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
             var innerCall = $"handler.HandleAsync({requestParamName}, cancellationToken)";
 
             for (int i = applicableBehaviors.Count - 1; i >= 0; i--)
