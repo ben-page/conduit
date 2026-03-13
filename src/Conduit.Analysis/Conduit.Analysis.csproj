@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.*" />
+    <PackageReference Include="PolySharp" Version="1.*" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>
