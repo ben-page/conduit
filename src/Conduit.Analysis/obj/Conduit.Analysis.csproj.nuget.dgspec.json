@@ -1,0 +1,75 @@
+{
+  "format": 1,
+  "restore": {
+    "/mnt/c/Solutions/Conduit/src/Conduit.Analysis/Conduit.Analysis.csproj": {}
+  },
+  "projects": {
+    "/mnt/c/Solutions/Conduit/src/Conduit.Analysis/Conduit.Analysis.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/mnt/c/Solutions/Conduit/src/Conduit.Analysis/Conduit.Analysis.csproj",
+        "projectName": "Conduit.Analysis",
+        "projectPath": "/mnt/c/Solutions/Conduit/src/Conduit.Analysis/Conduit.Analysis.csproj",
+        "packagesPath": "/home/bpage/.nuget/packages/",
+        "outputPath": "/mnt/c/Solutions/Conduit/src/Conduit.Analysis/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/home/bpage/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "netstandard2.0"
+        ],
+        "sources": {
+          "/usr/lib/dotnet/library-packs": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "netstandard2.0": {
+            "targetAlias": "netstandard2.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "netstandard2.0": {
+          "targetAlias": "netstandard2.0",
+          "dependencies": {
+            "Microsoft.CodeAnalysis.CSharp": {
+              "target": "Package",
+              "version": "[4.*, )"
+            },
+            "NETStandard.Library": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[2.0.3, )",
+              "autoReferenced": true
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "runtimeIdentifierGraphPath": "/usr/lib/dotnet/sdk/10.0.104/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
