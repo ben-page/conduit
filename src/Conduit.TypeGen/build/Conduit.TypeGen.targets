@@ -1,0 +1,13 @@
+<Project>
+  <UsingTask TaskName="Conduit.TypeGen.TypeGenTask"
+             AssemblyFile="$(MSBuildThisFileDirectory)../lib/net10.0/Conduit.TypeGen.dll" />
+
+  <Target Name="ConduitTypeGen"
+          AfterTargets="Build"
+          Condition="'$(ConduitTypeGenEnabled)' == 'true'"
+          Inputs="$(TargetPath)"
+          Outputs="$(ConduitTypeGenOutput)/conduit.generated.ts">
+    <TypeGenTask AssemblyPath="$(TargetPath)"
+                 OutputDirectory="$(ConduitTypeGenOutput)" />
+  </Target>
+</Project>
