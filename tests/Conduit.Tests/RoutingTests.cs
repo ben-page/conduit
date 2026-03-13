@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.Routing;
 
 namespace Conduit.Tests;
@@ -115,6 +116,6 @@ public class ConduitBuilderTests
         builder.Route<ConduitBuilder>().To("test");
 
         builder.Options.Routes.Should().HaveCount(1);
-        builder.Options.Routes[0].Pattern.Should().Be("Conduit.Routing");
+        builder.Options.Routes[0].Pattern.Should().Be("Conduit.Configuration");
     }
 }

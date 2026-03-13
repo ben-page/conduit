@@ -28,19 +28,20 @@ The library replaces MediatR (now commercial) with a custom implementation that 
 Conduit/
 ├── src/
 │   ├── Conduit/                        # Core interfaces and types
-│   ├── Conduit.Analysis/               # Shared Roslyn analysis for SourceGen and TypeGen
-│   ├── Conduit.SourceGen/              # Roslyn incremental source generator
-│   ├── Conduit.AspNetCore/             # HTTP dispatch endpoint + SignalR hub + event transport
-│   └── Conduit.TypeGen/                # MSBuild task for TypeScript emission
+│   ├── Conduit.Analysis/               # Shared type model (DispatchableTypeInfo, etc.)
+│   ├── Conduit.SourceGen/              # Roslyn source generator + RoslynScanner
+│   ├── Conduit.Transport.AspNetCore/   # HTTP dispatch endpoint + HTTP transport
+│   ├── Conduit.Transport.SignalR/      # SignalR hub + SignalR transport
+│   └── Conduit.TypeGen/                # MSBuild task for TypeScript emission + ReflectionScanner
 ├── tests/
 │   ├── Conduit.Tests/
 │   ├── Conduit.Analysis.Tests/
 │   ├── Conduit.SourceGen.Tests/
-│   ├── Conduit.AspNetCore.Tests/
+│   ├── Conduit.Transport.AspNetCore.Tests/
 │   └── Conduit.TypeGen.Tests/
 ├── samples/
 │   └── Conduit.Sample/
-└── Conduit.sln
+└── Conduit.slnx
 ```
 
 ### Dependency Graph
@@ -48,7 +49,12 @@ Conduit/
 ```
 Conduit.SourceGen ──→ Conduit.Analysis ──→ (Roslyn APIs)
 Conduit.TypeGen   ──→ Conduit.Analysis ──→ (Roslyn APIs)
-Conduit.AspNetCore ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+Conduit.Transport.AspNetCore ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+Conduit.Transport.SignalR    ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+
+Scanners live in their consumers:
+  RoslynScanner      → Conduit.SourceGen (compile-time scanning)
+  ReflectionScanner  → Conduit.TypeGen (post-compilation scanning)
 ```
 
 `Conduit` (core) has no dependency on Analysis, SourceGen, TypeGen, or AspNetCore.
@@ -196,30 +202,30 @@ builder.Services.AddConduit(conduit =>
 ```csharp
 public interface IConduitTransport
 {
-    public Task DeliverAsync(IEvent @event, CancellationToken cancellationToken);
-    public Task<object?> SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
+    public Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
+    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
 }
 ```
 
-Transports are bidirectional pipes between endpoints:
-- `DeliverAsync` — fire-and-forget event delivery (outbound)
-- `SendAsync` — request/response dispatch via envelope (outbound)
+Transports are bidirectional pipes between endpoints. Both methods use `DispatchEnvelope`:
+- `SendRequestAsync` — request/response dispatch (outbound commands/queries)
+- `SendMessageAsync` — fire-and-forget delivery (outbound events)
 
 When `PublishAsync` is called, the mediator:
 1. Runs all in-process `IEventListener<T>` implementations (continue on failure)
 2. Delivers to all registered `IConduitTransport` implementations
 
-### Message Router
+### Dispatch Router
 
 ```csharp
-public interface IMessageRouter
+public interface IDispatchRouter
 {
-    public Task<object?> DispatchAsync(string type, JsonElement payload, CancellationToken cancellationToken);
-    public Task PublishAsync(string type, JsonElement payload, CancellationToken cancellationToken);
+    public Task<object?> DispatchRequestAsync(string type, JsonElement payload, CancellationToken cancellationToken);
+    public Task DispatchEventAsync(string type, JsonElement payload, CancellationToken cancellationToken);
 }
 ```
 
-Bridges external transports (HTTP, SignalR) with the generated mediator. The generated `ConduitMediator` implements both `IMediator` and `IMessageRouter`. `DispatchAsync` handles inbound commands/queries; `PublishAsync` handles inbound events from external clients (e.g. TypeScript → SignalR → C# listeners).
+Bridges external transports (HTTP, SignalR) with the generated mediator. The generated `ConduitMediator` implements both `IMediator` and `IDispatchRouter`. `DispatchRequestAsync` handles inbound commands/queries; `DispatchEventAsync` handles inbound events from external clients (e.g. TypeScript → SignalR → C# listeners).
 
 ### Endpoint-Based Routing
 
@@ -407,7 +413,7 @@ internal sealed class ConduitMediator(
     IServiceProvider serviceProvider,
     IEnumerable<IConduitTransport> transports,
     IRouteResolver routeResolver,
-    ILogger<ConduitMediator> logger) : IMediator, IMessageRouter
+    ILogger<ConduitMediator> logger) : IMediator, IDispatchRouter
 {
     // Strongly-typed overloads — compiler picks these, zero boxing
     // Each checks the route table before local dispatch
@@ -419,7 +425,7 @@ internal sealed class ConduitMediator(
         if (endpoint?.Transport != null)
         {
             var payload = JsonSerializer.SerializeToElement(command);
-            var result = await endpoint.Transport.SendAsync(
+            var result = await endpoint.Transport.SendRequestAsync(
                 new DispatchEnvelope("CreateOrder", payload), cancellationToken);
             return (Guid)result!;
         }
@@ -439,14 +445,17 @@ internal sealed class ConduitMediator(
                         .HandleAsync(e, cancellationToken));
                 break;
         }
+        var eventEnvelope = new DispatchEnvelope(
+            @event.GetType().Name,
+            JsonSerializer.SerializeToElement(@event));
         foreach (var transport in transports)
         {
-            await SafeExecute(() => transport.DeliverAsync(@event, cancellationToken));
+            await SafeExecute(() => transport.SendMessageAsync(eventEnvelope, cancellationToken));
         }
     }
 
     // Wire dispatch — inbound commands/queries from external transports
-    public async Task<object?> DispatchAsync(
+    public async Task<object?> DispatchRequestAsync(
         string type, JsonElement payload, CancellationToken cancellationToken)
         => type switch
         {
@@ -455,8 +464,8 @@ internal sealed class ConduitMediator(
             _ => throw new InvalidOperationException($"Unknown dispatch type: {type}")
         };
 
-    // Wire publish — inbound events from external clients (e.g. TypeScript → SignalR)
-    public async Task PublishAsync(
+    // Wire event dispatch — inbound events from external clients (e.g. TypeScript → SignalR)
+    public async Task DispatchEventAsync(
         string type, JsonElement payload, CancellationToken cancellationToken)
     {
         IEvent @event = type switch
@@ -478,16 +487,16 @@ The generator emits diagnostics for:
 - Multiple handlers for the same command or query
 - `[Dispatchable]` on a type that doesn't implement a marker interface
 
-## ASP.NET Core Integration (`Conduit.AspNetCore`)
+## ASP.NET Core Integration (`Conduit.Transport.AspNetCore`)
 
 ### HTTP Dispatch Endpoint
 
-Maps two POST endpoints via `IMessageRouter`:
+Maps two POST endpoints via `IDispatchRouter`:
 - `POST /api/dispatch` — commands and queries (returns `DispatchResult<object>`)
 - `POST /api/dispatch/publish` — events (fire-and-forget, returns 200 OK)
 
 ```csharp
-public static class ConduitEndpoints
+public static class EndpointRouteBuilderExtensions
 {
     public static IEndpointRouteBuilder MapConduit(
         this IEndpointRouteBuilder endpoints,
@@ -495,10 +504,10 @@ public static class ConduitEndpoints
     {
         endpoints.MapPost(path, async (
             DispatchEnvelope envelope,
-            IMessageRouter dispatcher,
+            IDispatchRouter router,
             CancellationToken cancellationToken) =>
         {
-            var result = await dispatcher.DispatchAsync(
+            var result = await router.DispatchRequestAsync(
                 envelope.Type, envelope.Payload, cancellationToken);
             return Results.Ok(new DispatchResult<object> { Data = result });
             // + ConduitException → structured error, catch-all → 500
@@ -506,10 +515,10 @@ public static class ConduitEndpoints
 
         endpoints.MapPost(path + "/publish", async (
             DispatchEnvelope envelope,
-            IMessageRouter dispatcher,
+            IDispatchRouter router,
             CancellationToken cancellationToken) =>
         {
-            await dispatcher.PublishAsync(
+            await router.DispatchEventAsync(
                 envelope.Type, envelope.Payload, cancellationToken);
             return Results.Ok();
         });
@@ -518,6 +527,8 @@ public static class ConduitEndpoints
     }
 }
 ```
+
+## SignalR Integration (`Conduit.Transport.SignalR`)
 
 ### SignalR Hub
 
@@ -528,16 +539,16 @@ public class ConduitHub : Hub
 {
     public async Task<DispatchResult<object>> Dispatch(string type, JsonElement payload)
     {
-        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IMessageRouter>();
-        var result = await router.DispatchAsync(type, payload, Context.ConnectionAborted);
+        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IDispatchRouter>();
+        var result = await router.DispatchRequestAsync(type, payload, Context.ConnectionAborted);
         return new DispatchResult<object> { Data = result };
         // + ConduitException → structured error, catch-all → 500
     }
 
     public async Task Publish(string type, JsonElement payload)
     {
-        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IMessageRouter>();
-        await router.PublishAsync(type, payload, Context.ConnectionAborted);
+        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IDispatchRouter>();
+        await router.DispatchEventAsync(type, payload, Context.ConnectionAborted);
         // Fire-and-forget; errors logged by SafeExecute in mediator
     }
 }
@@ -550,13 +561,13 @@ Bidirectional transport implementing `IConduitTransport`:
 ```csharp
 public class SignalRTransport(IHubContext<ConduitHub> hubContext) : IConduitTransport
 {
-    public Task DeliverAsync(IEvent @event, CancellationToken cancellationToken)
+    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
-        var eventName = @event.GetType().Name;
-        return hubContext.Clients.All.SendAsync(eventName, @event, cancellationToken);
+        ArgumentNullException.ThrowIfNull(envelope);
+        return hubContext.Clients.All.SendAsync(envelope.Type, envelope.Payload, cancellationToken);
     }
 
-    public Task<object?> SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw new NotSupportedException("Use HTTP transport for outbound request/response dispatch.");
 }
 ```
@@ -568,10 +579,10 @@ Sends commands and queries to a remote Conduit endpoint via HTTP POST:
 ```csharp
 public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
 {
-    public Task DeliverAsync(IEvent @event, CancellationToken cancellationToken)
+    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw new NotSupportedException("HTTP transport does not support fire-and-forget events.");
 
-    public async Task<object?> SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
         var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -586,21 +597,29 @@ public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch")
 ### Registration
 
 ```csharp
-public static class ConduitAspNetCoreExtensions
+// Conduit.Transport.AspNetCore — routing infrastructure
+public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddConduit(
         this IServiceCollection services,
         Action<ConduitBuilder>? configure = null)
     {
-        services.AddConduitHandlers();  // generated
-        services.AddSignalR();
-        services.AddSingleton<IConduitTransport, SignalRTransport>();
-
         var builder = new ConduitBuilder(services);
         configure?.Invoke(builder);
 
         services.AddSingleton(builder.Options);
         services.AddSingleton<IRouteResolver, DefaultRouteResolver>();
+        return services;
+    }
+}
+
+// Conduit.Transport.SignalR — SignalR transport
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddConduitSignalR(this IServiceCollection services)
+    {
+        services.AddSignalR();
+        services.AddSingleton<IConduitTransport, SignalRTransport>();
         return services;
     }
 }
@@ -611,6 +630,8 @@ builder.Services.AddConduit(conduit =>
     conduit.AddEndpoint("orders-api", ep => ep.UseHttp(httpClient));
     conduit.Route("Orders.Commands").To("orders-api");
 });
+builder.Services.AddConduitSignalR();
+builder.Services.AddConduitHandlers(); // generated
 
 app.MapConduit();
 app.MapHub<ConduitHub>("/hub");
@@ -911,7 +932,7 @@ mediator.PublishAsync(new OrderCreatedEvent(...))
 ```
 TypeScript client calls hub.invoke("Publish", "OrderCreated", payload)
     │
-    └─ ConduitHub.Publish → IMessageRouter.PublishAsync(type, payload)
+    └─ ConduitHub.Publish → IDispatchRouter.DispatchEventAsync(type, payload)
         └─ Deserialize → mediator.PublishAsync(IEvent) → listeners + transports
 ```
 
@@ -940,11 +961,11 @@ The publisher doesn't know or care who's listening or which transports are confi
 - Missing handler produces compile-time diagnostic
 - Missing `[Authorize]`/`[AllowAnonymous]` on dispatchable type produces diagnostic
 
-**Conduit.AspNetCore.Tests:**
-- Integration tests with `WebApplicationFactory`
+**Conduit.Transport.AspNetCore.Tests:**
+- Integration tests with full HTTP + SignalR pipeline
 - HTTP POST dispatch returns correct envelope for success, `ConduitException`, unexpected exception
 - SignalR dispatch returns correct envelope
-- `SignalREventTransport` delivers events to connected clients
+- `SignalRTransport` delivers events to connected clients
 
 **Conduit.TypeGen.Tests:**
 - C# type → TypeScript mapping for all supported types
@@ -954,14 +975,12 @@ The publisher doesn't know or care who's listening or which transports are confi
 
 ## Shared Analysis Library (`Conduit.Analysis`)
 
-`Conduit.Analysis` provides a unified API for scanning types, but has two internal paths:
+`Conduit.Analysis` provides a shared type model (`DispatchableTypeInfo`, `DispatchableKind`, `NamespaceGroup`) and resolution logic used by both scanning paths. The scanners themselves live in their consumers:
 
-- **Roslyn symbol API** (`INamedTypeSymbol`) — used by `Conduit.SourceGen` at compile time. Works on source code during compilation.
-- **Reflection metadata** (`System.Reflection`) — used by `Conduit.TypeGen` as an MSBuild task post-compilation. Works on the compiled assembly DLL.
+- **`RoslynScanner`** (in `Conduit.SourceGen`) — uses Roslyn symbol API (`INamedTypeSymbol`) at compile time. Works on source code during compilation.
+- **`ReflectionScanner`** (in `Conduit.TypeGen`) — uses Reflection metadata (`System.Reflection`) as an MSBuild task post-compilation. Works on the compiled assembly DLL.
 
-Both paths use the same resolution logic: find types implementing `ICommand`, `ICommand<T>`, `IQuery<T>`, `IEvent`; apply `[DispatchableNamespace]`/`[Dispatchable]`/`[NotDispatchable]` precedence; group by namespace.
-
-The public API returns a common model (`DispatchableTypeInfo`, `NamespaceGroup`) that both consumers use.
+Both scanners use the same resolution logic from `Conduit.Analysis`: find types implementing `ICommand`, `ICommand<T>`, `IQuery<T>`, `IEvent`; apply `[DispatchableNamespace]`/`[Dispatchable]`/`[NotDispatchable]` precedence; group by namespace.
 
 ## Incremental Build Support
 

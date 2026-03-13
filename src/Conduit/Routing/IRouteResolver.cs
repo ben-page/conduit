@@ -1,3 +1,5 @@
+using Conduit.Configuration;
+
 namespace Conduit.Routing;
 
 /// <summary>

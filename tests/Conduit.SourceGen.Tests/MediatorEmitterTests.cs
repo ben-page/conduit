@@ -79,7 +79,7 @@ namespace App.Events
         mediatorSource.Should().Contain("OrderCreatedListener");
 
         // Wire dispatch
-        mediatorSource.Should().Contain("DispatchAsync(");
+        mediatorSource.Should().Contain("DispatchRequestAsync(");
         mediatorSource.Should().Contain("\"CreateOrder\"");
         mediatorSource.Should().Contain("\"DeleteOrder\"");
 
@@ -89,10 +89,10 @@ namespace App.Events
         // Routing infrastructure
         mediatorSource.Should().Contain("IRouteResolver routeResolver");
         mediatorSource.Should().Contain("routeResolver.Resolve(");
-        mediatorSource.Should().Contain("endpoint.Transport.SendAsync");
+        mediatorSource.Should().Contain("endpoint.Transport.SendRequestAsync");
 
-        // Wire publish (inbound event publishing from external clients)
-        mediatorSource.Should().Contain("PublishAsync(");
+        // Wire event dispatch (inbound event publishing from external clients)
+        mediatorSource.Should().Contain("DispatchEventAsync(");
         mediatorSource.Should().Contain("string type,");
         mediatorSource.Should().Contain("JsonElement payload,");
         mediatorSource.Should().Contain("\"OrderCreated\"");

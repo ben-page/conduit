@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
     <ProjectReference Include="..\..\src\Conduit.TypeGen\Conduit.TypeGen.csproj" />
   </ItemGroup>
 
