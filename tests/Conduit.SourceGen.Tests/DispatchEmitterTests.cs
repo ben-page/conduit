@@ -34,7 +34,7 @@ namespace App.Commands
         dispatchSource.Should().NotBeNull();
         dispatchSource.Should().Contain("Execute(");
         dispatchSource.Should().Contain("App.Commands.CreateOrder command");
-        dispatchSource.Should().Contain("command.Validate()");
+        dispatchSource.Should().Contain("((Conduit.ICommand<System.Guid>)command).Validate()");
         dispatchSource.Should().Contain("CreateOrderHandler");
     }
 
