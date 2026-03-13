@@ -43,7 +43,7 @@ public static class RegistrationEmitter
         }
 
         sb.AppendLine("        services.AddSingleton<Conduit.IMediator, ConduitMediator>();");
-        sb.AppendLine("        services.AddSingleton<Conduit.Routing.IMessageRouter>(sp => (ConduitMediator)sp.GetRequiredService<Conduit.IMediator>());");
+        sb.AppendLine("        services.AddSingleton<Conduit.Dispatch.IDispatchRouter>(sp => (ConduitMediator)sp.GetRequiredService<Conduit.IMediator>());");
         sb.AppendLine("        return services;");
         sb.AppendLine("    }");
         sb.AppendLine("}");

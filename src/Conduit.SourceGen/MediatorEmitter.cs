@@ -35,6 +35,8 @@ public static class MediatorEmitter
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using Conduit;");
+        sb.AppendLine("using Conduit.Configuration;");
+        sb.AppendLine("using Conduit.Dispatch;");
         sb.AppendLine("using Conduit.Messages;");
         sb.AppendLine("using Conduit.Routing;");
         sb.AppendLine("using Conduit.Handlers;");
@@ -46,7 +48,7 @@ public static class MediatorEmitter
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
         sb.AppendLine("    IRouteResolver routeResolver,");
-        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IMessageRouter");
+        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IDispatchRouter");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result
@@ -60,7 +62,7 @@ public static class MediatorEmitter
             sb.AppendLine("        if (endpoint?.Transport != null)");
             sb.AppendLine("        {");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
-            sb.AppendLine($"            var result = await endpoint.Transport.SendAsync(");
+            sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                new DispatchEnvelope(\"{cmd.TypeName}\", payload), cancellationToken);");
             sb.AppendLine($"            return ({cmd.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
@@ -80,7 +82,7 @@ public static class MediatorEmitter
             sb.AppendLine("        if (endpoint?.Transport != null)");
             sb.AppendLine("        {");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
-            sb.AppendLine($"            await endpoint.Transport.SendAsync(");
+            sb.AppendLine($"            await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                new DispatchEnvelope(\"{cmd.TypeName}\", payload), cancellationToken);");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
@@ -100,7 +102,7 @@ public static class MediatorEmitter
             sb.AppendLine("        if (endpoint?.Transport != null)");
             sb.AppendLine("        {");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(query);");
-            sb.AppendLine($"            var result = await endpoint.Transport.SendAsync(");
+            sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                new DispatchEnvelope(\"{query.TypeName}\", payload), cancellationToken);");
             sb.AppendLine($"            return ({query.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
@@ -228,9 +230,12 @@ public static class MediatorEmitter
 
         sb.AppendLine("        }");
         sb.AppendLine();
+        sb.AppendLine("        var eventEnvelope = new DispatchEnvelope(");
+        sb.AppendLine("            @event.GetType().Name,");
+        sb.AppendLine("            JsonSerializer.SerializeToElement(@event));");
         sb.AppendLine("        foreach (var transport in transports)");
         sb.AppendLine("        {");
-        sb.AppendLine("            await SafeExecute(() => transport.DeliverAsync(@event, cancellationToken));");
+        sb.AppendLine("            await SafeExecute(() => transport.SendMessageAsync(eventEnvelope, cancellationToken));");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -242,7 +247,7 @@ public static class MediatorEmitter
         List<DispatchableTypeInfo> voidCommands,
         List<DispatchableTypeInfo> queries)
     {
-        sb.AppendLine("    public async Task<object?> DispatchAsync(");
+        sb.AppendLine("    public async Task<object?> DispatchRequestAsync(");
         sb.AppendLine("        string type,");
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
@@ -280,7 +285,7 @@ public static class MediatorEmitter
 
     private static void EmitWirePublish(StringBuilder sb, List<DispatchableTypeInfo> events)
     {
-        sb.AppendLine("    public async Task PublishAsync(");
+        sb.AppendLine("    public async Task DispatchEventAsync(");
         sb.AppendLine("        string type,");
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
@@ -299,10 +304,4 @@ public static class MediatorEmitter
         sb.AppendLine("    }");
         sb.AppendLine();
     }
-}
-
-public sealed class ListenerGroup
-{
-    public required string EventFullTypeName { get; init; }
-    public required IReadOnlyList<string> ListenerFullTypeNames { get; init; }
 }

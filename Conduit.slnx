@@ -4,14 +4,15 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
-    <Project Path="src/Conduit.AspNetCore/Conduit.AspNetCore.csproj" />
+    <Project Path="src/Conduit.Transport.AspNetCore/Conduit.Transport.AspNetCore.csproj" />
+    <Project Path="src/Conduit.Transport.SignalR/Conduit.Transport.SignalR.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
     <Project Path="src/Conduit.TypeGen/Conduit.TypeGen.csproj" />
     <Project Path="src/Conduit/Conduit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Conduit.Analysis.Tests/Conduit.Analysis.Tests.csproj" />
-    <Project Path="tests/Conduit.AspNetCore.Tests/Conduit.AspNetCore.Tests.csproj" />
+    <Project Path="tests/Conduit.Transport.AspNetCore.Tests/Conduit.Transport.AspNetCore.Tests.csproj" />
     <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.TypeGen.Tests/Conduit.TypeGen.Tests.csproj" />

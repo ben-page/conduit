@@ -1,4 +1,5 @@
-﻿using Conduit.AspNetCore;
+﻿using Conduit.Transport.AspNetCore;
+using Conduit.Transport.SignalR;
 using Conduit.Generated;
 
 namespace Conduit.Sample;
@@ -9,6 +10,7 @@ public partial class Program
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.Services.AddConduit();
+        builder.Services.AddConduitSignalR();
         builder.Services.AddConduitHandlers();
 
         var app = builder.Build();

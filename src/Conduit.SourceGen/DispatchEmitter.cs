@@ -195,16 +195,3 @@ public static class DispatchEmitter
         return $"{behavior.OpenTypeName}<{type.FullTypeName}, {type.ResultFullTypeName}>";
     }
 }
-
-public sealed class HandlerInfo
-{
-    public required string CommandFullTypeName { get; init; }
-    public required string HandlerFullTypeName { get; init; }
-}
-
-public sealed class BehaviorInfo
-{
-    public required string OpenTypeName { get; init; }
-    public required int Order { get; init; }
-    public required bool IsEventBehavior { get; init; }
-}
