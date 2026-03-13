@@ -85,5 +85,10 @@ namespace App.Events
 
         // SafeExecute
         mediatorSource.Should().Contain("SafeExecute");
+
+        // Routing infrastructure
+        mediatorSource.Should().Contain("IRouteResolver routeResolver");
+        mediatorSource.Should().Contain("routeResolver.Resolve(");
+        mediatorSource.Should().Contain("endpoint.Transport.SendAsync");
     }
 }
