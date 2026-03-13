@@ -37,7 +37,7 @@ public static class MediatorEmitter
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IEventTransport> transports,");
-        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator");
+        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IWireDispatcher");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result
@@ -197,10 +197,9 @@ public static class MediatorEmitter
         List<DispatchableTypeInfo> voidCommands,
         List<DispatchableTypeInfo> queries)
     {
-        sb.AppendLine("    public static async Task<object?> Dispatch(");
+        sb.AppendLine("    public async Task<object?> DispatchAsync(");
         sb.AppendLine("        string type,");
         sb.AppendLine("        JsonElement payload,");
-        sb.AppendLine("        IServiceProvider serviceProvider,");
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("        => type switch");
         sb.AppendLine("        {");

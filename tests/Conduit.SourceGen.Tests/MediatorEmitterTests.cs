@@ -78,7 +78,7 @@ namespace App.Events
         mediatorSource.Should().Contain("OrderCreatedListener");
 
         // Wire dispatch
-        mediatorSource.Should().Contain("Dispatch(");
+        mediatorSource.Should().Contain("DispatchAsync(");
         mediatorSource.Should().Contain("\"CreateOrder\"");
         mediatorSource.Should().Contain("\"DeleteOrder\"");
 
