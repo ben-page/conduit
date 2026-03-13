@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="MSTest" Version="4.*" />
-    <PackageReference Include="AwesomeAssertions" Version="*" />
+    <PackageReference Include="AwesomeAssertions" Version="9.4.0" />
   </ItemGroup>
 
   <ItemGroup>
