@@ -60,7 +60,7 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 

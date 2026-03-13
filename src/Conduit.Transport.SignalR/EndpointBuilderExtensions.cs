@@ -9,18 +9,6 @@ namespace Conduit.Transport.SignalR;
 public static class EndpointBuilderExtensions
 {
     /// <summary>
-    /// Configures this endpoint to use SignalR for bidirectional messaging.
-    /// When no URL is provided, this app hosts the hub and clients connect inbound.
-    /// </summary>
-    /// <param name="builder">The endpoint builder.</param>
-    /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseSignalR(this EndpointBuilder builder)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        return builder;
-    }
-
-    /// <summary>
     /// Configures this endpoint to connect to a remote SignalR hub at the given URI.
     /// Creates a <see cref="HubConnection"/> in client mode for outbound C#-to-C# communication.
     /// </summary>

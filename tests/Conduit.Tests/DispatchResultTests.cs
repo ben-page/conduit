@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Dispatch;
 
 namespace Conduit.Tests;
@@ -7,36 +7,30 @@ namespace Conduit.Tests;
 public class DispatchResultTests
 {
     [TestMethod]
-    public void SuccessResult_HasDataAndNoError()
+    public void Ok_HasDataAndNoError()
     {
-        var result = new DispatchResult<string> { Data = "hello" };
+        var result = DispatchResult<string>.Ok("hello");
         result.Data.Should().Be("hello");
         result.Error.Should().BeNull();
     }
 
     [TestMethod]
-    public void ErrorResult_HasErrorAndNoData()
+    public void Fail_HasErrorAndNoData()
     {
-        var result = new DispatchResult<string>
-        {
-            Error = new DispatchError("NotFound", "Item not found")
-        };
+        var result = DispatchResult<string>.Fail("NotFound", "Item not found");
         result.Data.Should().BeNull();
-        result.Error.Code.Should().Be("NotFound");
+        result.Error!.Code.Should().Be("NotFound");
     }
 
     [TestMethod]
-    public void ErrorWithDetails_HasFieldErrors()
+    public void Fail_WithDetails_HasFieldErrors()
     {
-        var result = new DispatchResult<string>
-        {
-            Error = new DispatchError("Validation", "Invalid input",
-            [
-                new DispatchErrorDetail("name", "Required"),
-                new DispatchErrorDetail("email", "Invalid format"),
-            ])
-        };
-        result.Error.Details.Should().HaveCount(2);
-        result.Error.Details[0].Field.Should().Be("name");
+        var result = DispatchResult<string>.Fail("Validation", "Invalid input",
+        [
+            new DispatchErrorDetail("name", "Required"),
+            new DispatchErrorDetail("email", "Invalid format"),
+        ]);
+        result.Error!.Details.Should().HaveCount(2);
+        result.Error.Details![0].Field.Should().Be("name");
     }
 }

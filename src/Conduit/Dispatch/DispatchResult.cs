@@ -1,4 +1,4 @@
-namespace Conduit.Dispatch;
+﻿namespace Conduit.Dispatch;
 
 /// <summary>
 /// The result of a dispatch operation, containing either the handler result
@@ -7,6 +7,8 @@ namespace Conduit.Dispatch;
 /// <typeparam name="T">The type of the successful result.</typeparam>
 public sealed record DispatchResult<T>
 {
+    private DispatchResult() { }
+
     /// <summary>
     /// The handler result when the dispatch succeeds. <see langword="null"/> on failure.
     /// </summary>
@@ -16,6 +18,19 @@ public sealed record DispatchResult<T>
     /// Structured error information when the dispatch fails. <see langword="null"/> on success.
     /// </summary>
     public DispatchError? Error { get; init; }
+
+    /// <summary>
+    /// Creates a successful result with the given data.
+    /// </summary>
+#pragma warning disable CA1000 // Factory methods on generic types are the intended API
+    public static DispatchResult<T> Ok(T? data) => new() { Data = data };
+
+    /// <summary>
+    /// Creates a failed result with the given error.
+    /// </summary>
+    public static DispatchResult<T> Fail(string code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
+        => new() { Error = new DispatchError(code, message, details) };
+#pragma warning restore CA1000
 }
 
 /// <summary>

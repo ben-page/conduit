@@ -63,8 +63,10 @@ public static class MediatorEmitter
             sb.AppendLine("        {");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
             sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
-            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.TypeName}\", payload), cancellationToken);");
-            sb.AppendLine($"            return ({cmd.ResultFullTypeName})result!;");
+            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"            return result is JsonElement je");
+            sb.AppendLine($"                ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je)!");
+            sb.AppendLine($"                : ({cmd.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
             sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
             sb.AppendLine("    }");
@@ -83,7 +85,7 @@ public static class MediatorEmitter
             sb.AppendLine("        {");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
             sb.AppendLine($"            await endpoint.Transport.SendRequestAsync(");
-            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.TypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
             sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
@@ -103,8 +105,10 @@ public static class MediatorEmitter
             sb.AppendLine("        {");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(query);");
             sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
-            sb.AppendLine($"                new DispatchEnvelope(\"{query.TypeName}\", payload), cancellationToken);");
-            sb.AppendLine($"            return ({query.ResultFullTypeName})result!;");
+            sb.AppendLine($"                new DispatchEnvelope(\"{query.FullTypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"            return result is JsonElement je");
+            sb.AppendLine($"                ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je)!");
+            sb.AppendLine($"                : ({query.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
             sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, cancellationToken);");
             sb.AppendLine("    }");
@@ -209,7 +213,25 @@ public static class MediatorEmitter
 
     private static void EmitPublishAsync(StringBuilder sb, IReadOnlyList<ListenerGroup> listenerGroups)
     {
+        // PublishAsync dispatches to local listeners AND broadcasts to transports.
+        // Used for locally-originated events.
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine();
+        sb.AppendLine("        var eventEnvelope = new DispatchEnvelope(");
+        sb.AppendLine("            @event.GetType().FullName!,");
+        sb.AppendLine("            JsonSerializer.SerializeToElement(@event));");
+        sb.AppendLine("        foreach (var transport in transports)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await SafeExecute(() => transport.SendEventAsync(eventEnvelope, cancellationToken));");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        // PublishLocalAsync dispatches only to local listeners (no transport broadcast).
+        // Used by DispatchEventAsync for wire-inbound events to prevent echo loops.
+        sb.AppendLine("    private async Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine("        switch (@event)");
         sb.AppendLine("        {");
@@ -228,14 +250,6 @@ public static class MediatorEmitter
             sb.AppendLine("                break;");
         }
 
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        var eventEnvelope = new DispatchEnvelope(");
-        sb.AppendLine("            @event.GetType().Name,");
-        sb.AppendLine("            JsonSerializer.SerializeToElement(@event));");
-        sb.AppendLine("        foreach (var transport in transports)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            await SafeExecute(() => transport.SendMessageAsync(eventEnvelope, cancellationToken));");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -256,7 +270,7 @@ public static class MediatorEmitter
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"            \"{cmd.TypeName}\" => await ConduitDispatch.Execute(");
+            sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                cancellationToken),");
@@ -264,7 +278,7 @@ public static class MediatorEmitter
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"            \"{cmd.TypeName}\" => await ConduitDispatch.ExecuteVoid(");
+            sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.ExecuteVoid(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                cancellationToken),");
@@ -272,7 +286,7 @@ public static class MediatorEmitter
 
         foreach (var query in queries)
         {
-            sb.AppendLine($"            \"{query.TypeName}\" => await ConduitDispatch.Fetch(");
+            sb.AppendLine($"            \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{query.FullTypeName}>(payload)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                cancellationToken),");
@@ -295,12 +309,12 @@ public static class MediatorEmitter
 
         foreach (var evt in events)
         {
-            sb.AppendLine($"            \"{evt.TypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload)!,");
+            sb.AppendLine($"            \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload)!,");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
         sb.AppendLine("        };");
-        sb.AppendLine("        await PublishAsync(@event, cancellationToken);");
+        sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
         sb.AppendLine("    }");
         sb.AppendLine();
     }

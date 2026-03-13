@@ -57,9 +57,19 @@ public static class TypeScriptEmitter
 
     private static Type? FindType(string fullTypeName)
     {
+        // Use Type.GetType which searches the calling assembly and mscorlib/System first,
+        // then falls back to all loaded assemblies. This works correctly in the MSBuild
+        // task context where the target assembly is loaded via MetadataLoadContext or
+        // Assembly.LoadFrom.
+        var type = Type.GetType(fullTypeName);
+        if (type != null)
+        {
+            return type;
+        }
+
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
-            var type = assembly.GetType(fullTypeName);
+            type = assembly.GetType(fullTypeName);
             if (type != null)
             {
                 return type;

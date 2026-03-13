@@ -35,7 +35,7 @@ public static class DispatchEmitter
 
         foreach (var type in types)
         {
-            var handler = handlers.FirstOrDefault(h => h.CommandFullTypeName == type.FullTypeName);
+            var handler = handlers.FirstOrDefault(h => h.MessageFullTypeName == type.FullTypeName);
             if (handler == null)
             {
                 continue;
@@ -58,6 +58,12 @@ public static class DispatchEmitter
             }
         }
 
+        sb.AppendLine("    private static async Task<object> VoidToObject(Func<Task> action)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        await action();");
+        sb.AppendLine("        return null!;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
         sb.AppendLine("}");
         return sb.ToString();
     }
@@ -163,8 +169,17 @@ public static class DispatchEmitter
             sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
             sb.AppendLine();
 
-            // Build nested call
-            var innerCall = $"handler.HandleAsync({requestParamName}, cancellationToken)";
+            // Build nested call — for void commands, wrap handler.HandleAsync (returns Task)
+            // to return Task<object> so it matches the IPipelineBehavior<T, object> delegate shape
+            string innerCall;
+            if (isVoid)
+            {
+                innerCall = $"VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken))";
+            }
+            else
+            {
+                innerCall = $"handler.HandleAsync({requestParamName}, cancellationToken)";
+            }
 
             for (var i = applicableBehaviors.Count - 1; i >= 0; i--)
             {
@@ -185,13 +200,7 @@ public static class DispatchEmitter
 
     private static string MakeBehaviorTypeName(BehaviorInfo behavior, DispatchableTypeInfo type, bool isVoid)
     {
-        if (isVoid)
-        {
-            // Void commands use behaviors differently - they'd need a different shape
-            // For now, use the open generic with the command type and a dummy result
-            return $"{behavior.OpenTypeName}<{type.FullTypeName}, object>";
-        }
-
-        return $"{behavior.OpenTypeName}<{type.FullTypeName}, {type.ResultFullTypeName}>";
+        var resultType = isVoid ? "object" : type.ResultFullTypeName;
+        return $"{behavior.OpenTypeName}<{type.FullTypeName}, {resultType}>";
     }
 }

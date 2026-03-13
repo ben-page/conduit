@@ -2,6 +2,7 @@ using System.Text.Json;
 using Conduit.Dispatch;
 using Conduit.Exceptions;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.SignalR;
 
@@ -10,8 +11,14 @@ namespace Conduit.Transport.SignalR;
 /// and browser clients) and routes them through the <see cref="IDispatchRouter"/>.
 /// Registered <see cref="IDispatchInterceptor"/> instances are chained before the router.
 /// </summary>
-public class ConduitHub : Hub
+public partial class ConduitHub : Hub
 {
+    [LoggerMessage(Level = LogLevel.Error, Message = "Unhandled exception dispatching '{Type}'")]
+    private static partial void LogDispatchError(ILogger logger, Exception ex, string type);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Unhandled exception publishing event '{Type}'")]
+    private static partial void LogPublishError(ILogger logger, Exception ex, string type);
+
     /// <summary>
     /// Dispatches a command or query received from a SignalR client.
     /// </summary>
@@ -40,24 +47,20 @@ public class ConduitHub : Hub
         try
         {
             var result = await chain();
-            return new DispatchResult<object> { Data = result };
+            return DispatchResult<object>.Ok(result);
         }
         catch (ConduitException ex)
         {
-            return new DispatchResult<object>
-            {
-                Error = new DispatchError(ex.Code, ex.Message)
-            };
+            return DispatchResult<object>.Fail(ex.Code, ex.Message);
         }
 
 #pragma warning disable CA1031 // Intentional catch-all at transport boundary
-        catch (Exception)
+        catch (Exception ex)
 #pragma warning restore CA1031
         {
-            return new DispatchResult<object>
-            {
-                Error = new DispatchError("InternalError", "An unexpected error occurred")
-            };
+            var logger = services.GetRequiredService<ILogger<ConduitHub>>();
+            LogDispatchError(logger, ex, type);
+            return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
         }
     }
 
@@ -92,10 +95,11 @@ public class ConduitHub : Hub
         }
 
 #pragma warning disable CA1031 // Intentional catch-all at transport boundary
-        catch (Exception)
+        catch (Exception ex)
 #pragma warning restore CA1031
         {
-            // Events are fire-and-forget; errors are logged by SafeExecute in the mediator
+            var logger = services.GetRequiredService<ILogger<ConduitHub>>();
+            LogPublishError(logger, ex, type);
         }
     }
 }

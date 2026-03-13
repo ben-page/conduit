@@ -207,11 +207,26 @@ public static class ReflectionScanner
         {
             if (iface.IsGenericType && iface.GetGenericTypeDefinition().FullName == targetGenericName)
             {
-                return iface.GetGenericArguments()[0].FullName;
+                return FormatFullTypeName(iface.GetGenericArguments()[0]);
             }
         }
 
         return null;
+    }
+
+    private static string FormatFullTypeName(Type type)
+    {
+        if (!type.IsGenericType)
+        {
+            return type.FullName ?? type.Name;
+        }
+
+        // For generic types like List<string>, FullName returns CLR format with backticks
+        // and assembly-qualified args. Build the C#-style name instead.
+        var genericDef = type.GetGenericTypeDefinition();
+        var baseName = (genericDef.FullName ?? genericDef.Name).Split('`')[0];
+        var args = string.Join(", ", type.GetGenericArguments().Select(FormatFullTypeName));
+        return $"{baseName}<{args}>";
     }
 
     private static bool HasValidateOverride(Type type)

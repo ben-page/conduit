@@ -3,6 +3,7 @@ using Conduit.Exceptions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 namespace Conduit.Bridge.Http;
 
 /// <summary>
@@ -26,6 +27,7 @@ public static class EndpointRouteBuilderExtensions
             DispatchEnvelope envelope,
             IEnumerable<IDispatchInterceptor> interceptors,
             IDispatchRouter router,
+            ILogger<IDispatchRouter> logger,
             CancellationToken cancellationToken) =>
         {
             Func<Task<object?>> chain = () =>
@@ -40,27 +42,24 @@ public static class EndpointRouteBuilderExtensions
             try
             {
                 var result = await chain();
-                return Results.Ok(new DispatchResult<object> { Data = result });
+                return Results.Ok(DispatchResult<object>.Ok(result));
             }
             catch (ConduitException ex)
             {
                 return Results.Json(
-                    new DispatchResult<object>
-                    {
-                        Error = new DispatchError(ex.Code, ex.Message)
-                    },
-                    statusCode: ex.StatusCode);
+                    DispatchResult<object>.Fail(ex.Code, ex.Message),
+                    statusCode: MapStatusCode(ex.Code));
             }
 
 #pragma warning disable CA1031 // Intentional catch-all at transport boundary
-            catch (Exception)
+            catch (Exception ex)
 #pragma warning restore CA1031
             {
+#pragma warning disable CA1848 // Error-path only — LoggerMessage not practical in lambda
+                logger.LogError(ex, "Unhandled exception dispatching '{Type}'", envelope.Type);
+#pragma warning restore CA1848
                 return Results.Json(
-                    new DispatchResult<object>
-                    {
-                        Error = new DispatchError("InternalError", "An unexpected error occurred")
-                    },
+                    DispatchResult<object>.Fail("InternalError", "An unexpected error occurred"),
                     statusCode: 500);
             }
         });
@@ -69,6 +68,7 @@ public static class EndpointRouteBuilderExtensions
             DispatchEnvelope envelope,
             IEnumerable<IDispatchInterceptor> interceptors,
             IDispatchRouter router,
+            ILogger<IDispatchRouter> logger,
             CancellationToken cancellationToken) =>
         {
             Func<Task> chain = () =>
@@ -85,20 +85,34 @@ public static class EndpointRouteBuilderExtensions
                 await chain();
                 return Results.Ok();
             }
-
-#pragma warning disable CA1031 // Intentional catch-all at transport boundary
-            catch (Exception)
-#pragma warning restore CA1031
+            catch (ConduitException ex)
             {
                 return Results.Json(
-                    new DispatchResult<object>
-                    {
-                        Error = new DispatchError("InternalError", "An unexpected error occurred")
-                    },
+                    DispatchResult<object>.Fail(ex.Code, ex.Message),
+                    statusCode: MapStatusCode(ex.Code));
+            }
+
+#pragma warning disable CA1031 // Intentional catch-all at transport boundary
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+#pragma warning disable CA1848 // Error-path only — LoggerMessage not practical in lambda
+                logger.LogError(ex, "Unhandled exception publishing event '{Type}'", envelope.Type);
+#pragma warning restore CA1848
+                return Results.Json(
+                    DispatchResult<object>.Fail("InternalError", "An unexpected error occurred"),
                     statusCode: 500);
             }
         });
 
         return endpoints;
     }
+
+    private static int MapStatusCode(string code) => code switch
+    {
+        "NotFound" => 404,
+        "Unauthorized" => 401,
+        "Conflict" => 409,
+        _ => 400,
+    };
 }
