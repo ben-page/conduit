@@ -1,9 +1,9 @@
 using Conduit.Configuration;
 
-namespace Conduit.Transport.AspNetCore;
+namespace Conduit.Transport.Http;
 
 /// <summary>
-/// Extension methods for configuring ASP.NET Core transports on endpoints.
+/// Extension methods for configuring HTTP transport on endpoints.
 /// </summary>
 public static class EndpointBuilderExtensions
 {

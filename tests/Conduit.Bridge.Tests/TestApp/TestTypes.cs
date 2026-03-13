@@ -1,7 +1,7 @@
-﻿using Conduit.Attributes;
+using Conduit.Attributes;
 using Conduit.Messages;
 
-namespace Conduit.Transport.AspNetCore.Tests.TestApp;
+namespace Conduit.Bridge.Tests.TestApp;
 
 public class ItemStore
 {

@@ -1,7 +1,7 @@
-﻿using Conduit.Exceptions;
+using Conduit.Exceptions;
 using Conduit.Handlers;
 
-namespace Conduit.Transport.AspNetCore.Tests.TestApp;
+namespace Conduit.Bridge.Tests.TestApp;
 
 public class CreateItemHandler(IMediator mediator, ItemStore store) : ICommandHandler<CreateItemCommand, Guid>
 {

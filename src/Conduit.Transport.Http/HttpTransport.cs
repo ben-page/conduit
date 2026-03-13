@@ -3,12 +3,11 @@ using System.Text.Json;
 using Conduit.Dispatch;
 using Conduit.Routing;
 
-namespace Conduit.Transport.AspNetCore;
+namespace Conduit.Transport.Http;
 
 /// <summary>
 /// Sends commands and queries to a remote Conduit endpoint via HTTP POST.
-/// The remote endpoint is expected to expose a <c>/api/dispatch</c> route
-/// mapped by <see cref="EndpointRouteBuilderExtensions.MapConduit"/>.
+/// Used for C#-to-C# service communication.
 /// </summary>
 public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
 {

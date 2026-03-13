@@ -4,39 +4,59 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR dispatch, TypeSc
 
 ## Architecture
 
-Six source projects, five test projects, one sample app:
+Eight source projects, six test projects, one sample app:
 
 ```
-src/Conduit/                        Core interfaces + routing infrastructure — net10.0
+src/Conduit/                        Core interfaces, routing, dispatch, configuration — net10.0
 src/Conduit.Analysis/               Shared type model (DispatchableTypeInfo, etc.) — netstandard2.0 (PolySharp)
 src/Conduit.SourceGen/              Roslyn incremental source generator + RoslynScanner — netstandard2.0 (PolySharp)
-src/Conduit.Transport.AspNetCore/   HTTP dispatch endpoint + HTTP transport — net10.0
-src/Conduit.Transport.SignalR/      SignalR hub + SignalR transport — net10.0
 src/Conduit.TypeGen/                MSBuild task for TypeScript emission + ReflectionScanner — net10.0
+
+src/Conduit.Transport.Http/         C#→C# outbound HTTP transport — net10.0
+src/Conduit.Transport.SignalR/      C#→C# SignalR (ConduitHub + dual-mode SignalRTransport) — net10.0
+
+src/Conduit.Bridge.Http/            Browser→Server HTTP dispatch endpoint — net10.0
+src/Conduit.Bridge.SignalR/         Browser→Server SignalR bridge (interceptors + config) — net10.0
 ```
 
-**Dependency graph:** SourceGen → Analysis → Roslyn APIs; TypeGen → Analysis; Transport.AspNetCore → Conduit; Transport.SignalR → Conduit. Core has no dependency on the other five projects.
+**Dependency graph:**
+- `Transport.Http` → `Conduit` (core)
+- `Transport.SignalR` → `Conduit` (core) + `Microsoft.AspNetCore.SignalR` + `Microsoft.AspNetCore.SignalR.Client`
+- `Bridge.Http` → `Conduit` (core) + ASP.NET Core
+- `Bridge.SignalR` → `Conduit` (core) + `Microsoft.Extensions.Options` (does NOT reference Transport.SignalR)
+- `SourceGen` → `Analysis` → Roslyn APIs
+- `TypeGen` → `Analysis`
+- Core has no dependency on the other seven projects.
+
+**Transport vs Bridge distinction:**
+- **Transports** = C#-to-C# inter-service communication (outbound HTTP client, SignalR hub connections)
+- **Bridges** = Browser/TypeScript client communication with the C# backend (inbound endpoints + interceptors)
 
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes (`src/Conduit/Configuration/`)
-- `Conduit.Dispatch` — wire-format types: `DispatchEnvelope`, `DispatchResult`, `IDispatchRouter` (`src/Conduit/Dispatch/`)
+- `Conduit.Dispatch` — wire-format types: `DispatchEnvelope`, `DispatchResult`, `IDispatchRouter`, `IDispatchInterceptor` (`src/Conduit/Dispatch/`)
 - `Conduit.Routing` — transport + resolution: `IConduitTransport`, `IRouteResolver`, `DefaultRouteResolver` (`src/Conduit/Routing/`)
 - `Conduit.Messages`, `Conduit.Handlers`, `Conduit.Pipelines`, `Conduit.Attributes`, `Conduit.Exceptions` — core contracts
 
 **Key design decisions:**
 - **Endpoint-based routing**: Messages route to named endpoints via `ConduitBuilder.AddEndpoint()` and `Route<T>().To()`. Unrouted messages dispatch locally (default).
 - `IDispatchRouter` interface (in `Conduit.Dispatch`) bridges generated code with transport layer via DI. Methods: `DispatchRequestAsync` (commands/queries) and `DispatchEventAsync` (events).
+- `IDispatchInterceptor` interface (in `Conduit.Dispatch`) wraps dispatch calls with a middleware pipeline. Used by Bridge packages to add type filtering, auth, etc. without subclassing the hub.
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendMessageAsync` (fire-and-forget), both envelope-based
 - `IRouteResolver` resolves message type → endpoint at runtime; `DefaultRouteResolver` uses namespace prefix matching
 - Generated `ConduitMediator` implements `IMediator` + `IDispatchRouter`, checks route table before local dispatch
+- **Single hub with interceptor pipeline**: One `ConduitHub` serves both C# and browser clients. `IDispatchInterceptor` allows Bridge packages to extend hub behavior without subclassing.
+- **Dual-mode SignalRTransport**: Server mode (IHubContext, pushes events) and client mode (HubConnection, sends commands + receives events) selected by constructor.
+- **Authentication is a transport concern**: Connection-level auth (`RequireAuthorization()` on `MapHub`) applies to all clients. Per-command authorization runs in the dispatch pipeline.
 - `Validate()` is a default interface method — generated code must cast to the interface to call it (e.g., `((ICommand)command).Validate()`)
 - `Unsafe.As` used for generic task casting in mediator fallback methods — wrapped in `CastTask<TSource, TTarget>` helper to avoid `ref readonly` warnings
+- `ServiceCollectionExtensions.AddConduit()` lives in core `Conduit` namespace (not in a transport package)
 
 ## Build & Test
 
 ```bash
 dotnet build          # builds everything including sample app
-dotnet test           # runs all 69 tests across 5 test projects
+dotnet test           # runs all tests across 6 test projects
 ```
 
 Solution file is `Conduit.slnx` (.NET 10 format).
@@ -47,6 +67,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Line breaks for control flow — don't put if-condition and body on the same line
 - MSTest v4 + AwesomeAssertions (FluentAssertions fork) for tests
 - No NSubstitute currently — tests use real types or in-memory state
+- Test project SDK: use `Microsoft.NET.Sdk` (not `MSTest.Sdk`) with `<PackageReference Include="MSTest" />`
 
 ## Project-Specific Notes
 
@@ -64,17 +85,27 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Roslyn `OriginalDefinition.ToDisplayString()` returns `"Conduit.Messages.ICommand<TResult>"` format (NOT backtick format like `ICommand\`1`)
 - Helper classes (`HandlerInfo`, `BehaviorInfo`, `ListenerGroup`) each in their own file
 
-### Conduit.Transport.AspNetCore
-- `EndpointRouteBuilderExtensions.MapConduit()` maps POST `/api/dispatch` using `IDispatchRouter`
-- `HttpTransport` implements `IConduitTransport` for request/response via HTTP POST
+### Conduit.Transport.Http
+- `HttpTransport` implements `IConduitTransport` for outbound C#→C# request/response via HTTP POST
 - `EndpointBuilderExtensions` provides `UseHttp()` on `EndpointBuilder`
-- `ServiceCollectionExtensions.AddConduit()` registers `ConduitOptions` and `IRouteResolver`
+- Does not support fire-and-forget events (throws `NotSupportedException`)
 
 ### Conduit.Transport.SignalR
-- `ConduitHub` resolves `IDispatchRouter` from `Context.GetHttpContext()!.RequestServices`
-- `SignalRTransport` implements `IConduitTransport`, delivers events via `IHubContext<ConduitHub>`
-- `EndpointBuilderExtensions` provides `UseSignalR()` on `EndpointBuilder`
-- `ServiceCollectionExtensions.AddConduitSignalR()` registers SignalR services and `SignalRTransport`
+- `ConduitHub` resolves `IDispatchRouter` and `IDispatchInterceptor` instances from `Context.GetHttpContext()!.RequestServices`, chains interceptors before the router
+- `SignalRTransport` implements `IConduitTransport` with dual-mode: server mode (IHubContext, pushes events) and client mode (HubConnection, outbound requests)
+- `EndpointBuilderExtensions` provides `UseSignalR()` (no-op for hosted hub) and `UseSignalR(Uri)` (creates client-mode HubConnection)
+- `ServiceCollectionExtensions.AddConduitSignalR()` registers SignalR services and server-mode `SignalRTransport`
+
+### Conduit.Bridge.Http
+- `EndpointRouteBuilderExtensions.MapConduitBridge()` maps POST `/api/dispatch` and `/api/dispatch/publish` with interceptor pipeline
+- Replaces the old `MapConduit()` from the removed `Conduit.Transport.AspNetCore` project
+
+### Conduit.Bridge.SignalR
+- `BridgeTypeFilterInterceptor` implements `IDispatchInterceptor` to reject dispatch requests for types not in the allowed set
+- `BridgeOptions` holds the `AllowedTypes` HashSet
+- `BridgeBuilder` provides `AllowType()` fluent API
+- `ServiceCollectionExtensions.AddConduitBridge()` registers interceptors and options
+- Does NOT reference `Transport.SignalR` — both reference core Conduit for `IDispatchInterceptor`
 
 ### Conduit.TypeGen
 - MSBuild task using `Microsoft.Build.Utilities.Task` (fully qualified to avoid ambiguity with `System.Threading.Tasks.Task`)
@@ -83,6 +114,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 ### Sample App
 - `public partial class Program;` at end of Program.cs enables `WebApplicationFactory<Program>` in integration tests
 - Uses static `Dictionary<Guid, string>` for in-memory storage (not thread-safe, fine for demo)
+- References: `Conduit`, `Bridge.Http`, `Bridge.SignalR`, `Transport.SignalR`, `SourceGen`, `Analysis`
 
 ## Design Spec
 
