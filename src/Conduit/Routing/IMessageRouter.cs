@@ -1,13 +1,13 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 
-namespace Conduit.Dispatch;
+namespace Conduit.Routing;
 
 /// <summary>
-/// Dispatches commands and queries received over the wire (HTTP, SignalR, etc.)
-/// by deserializing a JSON payload into the appropriate request type and routing
+/// Routes commands and queries received over the wire (HTTP, SignalR, etc.)
+/// by deserializing a JSON payload into the appropriate request type and dispatching
 /// it through the mediator. Implemented by the source generator.
 /// </summary>
-public interface IWireDispatcher
+public interface IMessageRouter
 {
     /// <summary>
     /// Deserializes <paramref name="payload"/> into the request type identified

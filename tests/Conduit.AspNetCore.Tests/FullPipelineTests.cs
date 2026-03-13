@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.AspNetCore.Tests.TestApp;
-using Conduit.Dispatch;
+using Conduit.Routing;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;

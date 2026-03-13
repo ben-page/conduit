@@ -1,5 +1,5 @@
 ﻿using AwesomeAssertions;
-using Conduit.Dispatch;
+using Conduit.Routing;
 
 namespace Conduit.Tests;
 

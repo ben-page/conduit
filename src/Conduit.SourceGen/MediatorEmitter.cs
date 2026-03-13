@@ -35,9 +35,8 @@ public static class MediatorEmitter
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using Conduit;");
-        sb.AppendLine("using Conduit.Dispatch;");
         sb.AppendLine("using Conduit.Messages;");
-        sb.AppendLine("using Conduit.Transport;");
+        sb.AppendLine("using Conduit.Routing;");
         sb.AppendLine("using Conduit.Handlers;");
         sb.AppendLine();
         sb.AppendLine("namespace Conduit.Generated;");
@@ -45,8 +44,8 @@ public static class MediatorEmitter
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
-        sb.AppendLine("    IEnumerable<IEventTransport> transports,");
-        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IWireDispatcher");
+        sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
+        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IMessageRouter");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result

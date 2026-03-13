@@ -1,7 +1,7 @@
-﻿namespace Conduit.Dispatch;
+namespace Conduit.Routing;
 
 /// <summary>
-/// The result of a wire dispatch operation, containing either the handler result
+/// The result of a dispatch operation, containing either the handler result
 /// or structured error information.
 /// </summary>
 /// <typeparam name="T">The type of the successful result.</typeparam>
