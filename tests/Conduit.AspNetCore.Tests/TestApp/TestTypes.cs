@@ -1,4 +1,5 @@
-using Conduit.Attributes;
+﻿using Conduit.Attributes;
+using Conduit.Messages;
 
 namespace Conduit.AspNetCore.Tests.TestApp;
 

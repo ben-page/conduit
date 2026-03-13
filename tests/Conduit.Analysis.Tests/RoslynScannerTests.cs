@@ -1,4 +1,5 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
+using Conduit.Messages;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -12,7 +13,7 @@ public class RoslynScannerTests
         var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
         // Reference the Conduit assembly
-        var conduitAssemblyPath = typeof(Conduit.ICommand).Assembly.Location;
+        var conduitAssemblyPath = typeof(ICommand).Assembly.Location;
         var references = new List<MetadataReference>
         {
             MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
@@ -35,8 +36,8 @@ public class RoslynScannerTests
     public void FindsCommandWithResult()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 
@@ -56,8 +57,8 @@ public record CreateOrder(string CustomerId) : ICommand<System.Guid>;
     public void FindsVoidCommand()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 
@@ -75,8 +76,8 @@ public record DeleteOrder(System.Guid Id) : ICommand;
     public void FindsQuery()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 
@@ -95,8 +96,8 @@ public record GetOrder(System.Guid Id) : IQuery<string>;
     public void FindsEvent()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 
@@ -114,8 +115,8 @@ public record OrderCreated(System.Guid Id) : IEvent;
     public void NotDispatchable_ExcludesType()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 
@@ -134,8 +135,8 @@ public record InternalCommand(string Data) : ICommand;
     public void Dispatchable_IncludesTypeOutsideNamespace()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 namespace Other;
 
@@ -153,8 +154,8 @@ public record SpecialCommand(string Data) : ICommand;
     public void DetectsValidateOverride()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 
@@ -179,7 +180,7 @@ public record ValidatedCommand(string Name) : ICommand
     public void TypeOutsideNamespace_WithoutDispatchable_IsExcluded()
     {
         var source = @"
-using Conduit;
+using Conduit.Messages;
 
 namespace Other;
 public record OrphanCommand() : ICommand;
@@ -194,8 +195,8 @@ public record OrphanCommand() : ICommand;
     public void ExtractsResultFullTypeName()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 [assembly: DispatchableNamespace(""App"")]
 

@@ -1,4 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
+using Conduit.Dispatch;
 using Conduit.Exceptions;
 using Microsoft.AspNetCore.SignalR;
 

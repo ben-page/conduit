@@ -73,7 +73,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        ((Conduit.ICommand<{type.ResultFullTypeName}>)command).Validate();");
+        sb.AppendLine($"        ((Conduit.Messages.ICommand<{type.ResultFullTypeName}>)command).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -91,7 +91,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        ((Conduit.ICommand)command).Validate();");
+        sb.AppendLine("        ((Conduit.Messages.ICommand)command).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: true);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -118,7 +118,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        ((Conduit.IQuery<{type.ResultFullTypeName}>)query).Validate();");
+        sb.AppendLine($"        ((Conduit.Messages.IQuery<{type.ResultFullTypeName}>)query).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();

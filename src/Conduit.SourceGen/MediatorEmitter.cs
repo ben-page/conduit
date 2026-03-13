@@ -35,6 +35,10 @@ public static class MediatorEmitter
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using Conduit;");
+        sb.AppendLine("using Conduit.Dispatch;");
+        sb.AppendLine("using Conduit.Messages;");
+        sb.AppendLine("using Conduit.Transport;");
+        sb.AppendLine("using Conduit.Handlers;");
         sb.AppendLine();
         sb.AppendLine("namespace Conduit.Generated;");
         sb.AppendLine();

@@ -10,10 +10,10 @@ namespace Conduit.Analysis;
 /// </summary>
 public static class RoslynScanner
 {
-    private const string CommandInterfaceName = "Conduit.ICommand";
-    private const string CommandWithResultInterfaceName = "Conduit.ICommand<TResult>";
-    private const string QueryInterfaceName = "Conduit.IQuery<TResult>";
-    private const string EventInterfaceName = "Conduit.IEvent";
+    private const string CommandInterfaceName = "Conduit.Messages.ICommand";
+    private const string CommandWithResultInterfaceName = "Conduit.Messages.ICommand<TResult>";
+    private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
+    private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string DispatchableAttributeName = "Conduit.Attributes.DispatchableAttribute";
     private const string NotDispatchableAttributeName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeName = "Conduit.Attributes.DispatchableNamespaceAttribute";

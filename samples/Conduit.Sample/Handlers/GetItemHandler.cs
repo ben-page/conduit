@@ -1,4 +1,5 @@
 ﻿using Conduit.Exceptions;
+using Conduit.Handlers;
 using Conduit.Sample.Queries;
 
 namespace Conduit.Sample.Handlers;

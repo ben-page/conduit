@@ -1,4 +1,4 @@
-namespace Conduit;
+﻿namespace Conduit.Pipelines;
 
 /// <summary>
 /// Wraps the handler pipeline for commands and queries, enabling cross-cutting

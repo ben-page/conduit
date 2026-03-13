@@ -10,10 +10,10 @@ namespace Conduit.Analysis;
 /// </summary>
 public static class ReflectionScanner
 {
-    private const string CommandInterfaceName = "Conduit.ICommand";
-    private const string CommandWithResultInterfaceName = "Conduit.ICommand`1";
-    private const string QueryInterfaceName = "Conduit.IQuery`1";
-    private const string EventInterfaceName = "Conduit.IEvent";
+    private const string CommandInterfaceName = "Conduit.Messages.ICommand";
+    private const string CommandWithResultInterfaceName = "Conduit.Messages.ICommand`1";
+    private const string QueryInterfaceName = "Conduit.Messages.IQuery`1";
+    private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string DispatchableAttributeFullName = "Conduit.Attributes.DispatchableAttribute";
     private const string NotDispatchableAttributeFullName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeFullName = "Conduit.Attributes.DispatchableNamespaceAttribute";

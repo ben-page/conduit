@@ -1,4 +1,4 @@
-namespace Conduit;
+﻿namespace Conduit.Messages;
 
 /// <summary>
 /// Marker interface for events published via <see cref="IMediator.PublishAsync"/>.

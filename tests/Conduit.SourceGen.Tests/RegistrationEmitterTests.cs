@@ -9,8 +9,9 @@ public class RegistrationEmitterTests : GeneratorTestBase
     public void EmitsHandlerRegistration()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Handlers;
+using Conduit.Messages;
 using System;
 using System.Threading;
 using System.Threading.Tasks;

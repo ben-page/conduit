@@ -1,4 +1,5 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
+using Conduit.Dispatch;
 
 namespace Conduit.Tests;
 
@@ -21,7 +22,7 @@ public class DispatchResultTests
             Error = new DispatchError("NotFound", "Item not found")
         };
         result.Data.Should().BeNull();
-        result.Error!.Code.Should().Be("NotFound");
+        result.Error.Code.Should().Be("NotFound");
     }
 
     [TestMethod]
@@ -35,7 +36,7 @@ public class DispatchResultTests
                 new DispatchErrorDetail("email", "Invalid format"),
             ])
         };
-        result.Error!.Details.Should().HaveCount(2);
-        result.Error.Details![0].Field.Should().Be("name");
+        result.Error.Details.Should().HaveCount(2);
+        result.Error.Details[0].Field.Should().Be("name");
     }
 }

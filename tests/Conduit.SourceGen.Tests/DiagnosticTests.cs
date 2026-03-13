@@ -9,8 +9,8 @@ public class DiagnosticTests : GeneratorTestBase
     public void EmitsErrorForCommandWithNoHandler()
     {
         var source = @"
-using Conduit;
 using Conduit.Attributes;
+using Conduit.Messages;
 using System;
 
 [assembly: DispatchableNamespace(""App"")]
