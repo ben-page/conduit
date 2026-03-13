@@ -1,9 +1,8 @@
-using Conduit;
-using Conduit.Sample.Commands;
+﻿using Conduit.Sample.Commands;
 
 namespace Conduit.Sample.Handlers;
 
-public class DeleteItemHandler : ICommandHandler<DeleteItemCommand>
+internal sealed class DeleteItemHandler : ICommandHandler<DeleteItemCommand>
 {
     public Task HandleAsync(DeleteItemCommand command, CancellationToken cancellationToken)
     {
