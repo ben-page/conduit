@@ -4,12 +4,26 @@ using System.Linq;
 
 namespace Conduit.Analysis;
 
+/// <summary>
+/// Groups dispatchable types by their matching declared namespace for output file organization.
+/// </summary>
 public static class NamespaceGrouper
 {
+    /// <summary>
+    /// Groups the given types by their best-matching declared namespace.
+    /// </summary>
+    /// <param name="types">The dispatchable types to group.</param>
+    /// <param name="declaredNamespaces">The declared namespaces to match against.</param>
+    /// <returns>The grouped types, one group per namespace.</returns>
     public static IReadOnlyList<NamespaceGroup> Group(
         IReadOnlyList<DispatchableTypeInfo> types,
         IReadOnlyList<string> declaredNamespaces)
     {
+        if (types is null)
+        {
+            throw new ArgumentNullException(nameof(types));
+        }
+
         var groups = new Dictionary<string, List<DispatchableTypeInfo>>();
 
         foreach (var type in types)
@@ -21,12 +35,13 @@ public static class NamespaceGrouper
 
             var groupKey = matchedNamespace ?? "default";
 
-            if (!groups.ContainsKey(groupKey))
+            if (!groups.TryGetValue(groupKey, out var group))
             {
-                groups[groupKey] = new List<DispatchableTypeInfo>();
+                group = new List<DispatchableTypeInfo>();
+                groups[groupKey] = group;
             }
 
-            groups[groupKey].Add(type);
+            group.Add(type);
         }
 
         return groups

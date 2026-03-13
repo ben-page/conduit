@@ -28,7 +28,7 @@ namespace App.Commands
     }
 }
 ";
-        var (trees, diagnostics) = RunGenerator(source);
+        var (trees, _) = RunGenerator(source);
 
         var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch");
         dispatchSource.Should().NotBeNull();

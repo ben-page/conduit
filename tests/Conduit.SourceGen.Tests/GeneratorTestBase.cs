@@ -29,7 +29,7 @@ public abstract class GeneratorTestBase
         var generator = new ConduitGenerator();
         var driver = CSharpGeneratorDriver
             .Create(generator)
-            .RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var diagnostics);
+            .RunGeneratorsAndUpdateCompilation(compilation, out _, out var diagnostics);
 
         var runResult = driver.GetRunResult();
 
@@ -43,7 +43,7 @@ public abstract class GeneratorTestBase
     {
         foreach (var tree in trees)
         {
-            if (tree.FilePath.Contains(hintNameContains))
+            if (tree.FilePath.Contains(hintNameContains, StringComparison.Ordinal))
             {
                 return tree.GetText().ToString();
             }

@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using Conduit.Analysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -8,7 +7,7 @@ namespace Conduit.Analysis.Tests;
 [TestClass]
 public class RoslynScannerTests
 {
-    private static Compilation CreateCompilation(string source)
+    private static CSharpCompilation CreateCompilation(string source)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(source);
 

@@ -4,31 +4,42 @@ using Microsoft.Build.Framework;
 
 namespace Conduit.TypeGen;
 
+/// <summary>
+/// MSBuild task that scans a compiled assembly for dispatchable types and emits
+/// TypeScript definitions, type maps, and a typed mediator client.
+/// </summary>
 public class TypeGenTask : Microsoft.Build.Utilities.Task
 {
+    /// <summary>
+    /// The path to the compiled assembly to scan.
+    /// </summary>
     [Required]
     public string AssemblyPath { get; set; } = "";
 
+    /// <summary>
+    /// The directory where generated TypeScript files will be written.
+    /// </summary>
     [Required]
     public string OutputDirectory { get; set; } = "";
 
+    /// <inheritdoc />
     public override bool Execute()
     {
-        Log.LogMessage(MessageImportance.Normal,
-            $"Conduit TypeGen: scanning {AssemblyPath}, output to {OutputDirectory}");
+        this.Log.LogMessage(MessageImportance.Normal,
+            $"Conduit TypeGen: scanning {this.AssemblyPath}, output to {this.OutputDirectory}");
 
         try
         {
-            var assembly = Assembly.LoadFrom(AssemblyPath);
+            var assembly = Assembly.LoadFrom(this.AssemblyPath);
             var types = ReflectionScanner.Scan(assembly);
             var declaredNamespaces = ReflectionScanner.GetDeclaredNamespaces(assembly);
             var groups = NamespaceGrouper.Group(types, declaredNamespaces);
 
-            Directory.CreateDirectory(OutputDirectory);
+            Directory.CreateDirectory(this.OutputDirectory);
 
             // Emit base file
             File.WriteAllText(
-                Path.Combine(OutputDirectory, "conduit.ts"),
+                Path.Combine(this.OutputDirectory, "conduit.ts"),
                 BaseFileEmitter.Emit());
 
             // Emit per-namespace files
@@ -36,23 +47,25 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
             {
                 var content = TypeScriptEmitter.EmitNamespaceFile(group);
                 File.WriteAllText(
-                    Path.Combine(OutputDirectory, group.FileName),
+                    Path.Combine(this.OutputDirectory, group.FileName),
                     content);
             }
 
             // Emit merge file
             File.WriteAllText(
-                Path.Combine(OutputDirectory, "conduit.generated.ts"),
+                Path.Combine(this.OutputDirectory, "conduit.generated.ts"),
                 MergeFileEmitter.Emit(groups));
 
-            Log.LogMessage(MessageImportance.Normal,
+            this.Log.LogMessage(MessageImportance.Normal,
                 $"Conduit TypeGen: generated {groups.Count + 2} files");
 
             return true;
         }
+#pragma warning disable CA1031
         catch (Exception ex)
+#pragma warning restore CA1031
         {
-            Log.LogError($"Conduit TypeGen failed: {ex.Message}");
+            this.Log.LogError($"Conduit TypeGen failed: {ex.Message}");
             return false;
         }
     }

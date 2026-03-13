@@ -9,9 +9,14 @@ public static class MediatorEmitter
 {
     public static string Emit(
         IReadOnlyList<DispatchableTypeInfo> types,
-        IReadOnlyList<HandlerInfo> handlers,
+        IReadOnlyList<HandlerInfo> _,
         IReadOnlyList<ListenerGroup> listenerGroups)
     {
+        if (listenerGroups is null)
+        {
+            throw new System.ArgumentNullException(nameof(listenerGroups));
+        }
+
         var commands = types.Where(t => t.Kind == DispatchableKind.Command).ToList();
         var voidCommands = types.Where(t => t.Kind == DispatchableKind.VoidCommand).ToList();
         var queries = types.Where(t => t.Kind == DispatchableKind.Query).ToList();

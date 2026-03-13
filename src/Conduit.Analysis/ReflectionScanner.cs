@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 
 namespace Conduit.Analysis;
 
+/// <summary>
+/// Scans a loaded <see cref="Assembly"/> for dispatchable types using reflection.
+/// Used at runtime and by the TypeGen MSBuild task.
+/// </summary>
 public static class ReflectionScanner
 {
     private const string CommandInterfaceName = "Conduit.ICommand";
@@ -17,8 +20,18 @@ public static class ReflectionScanner
     private const string AuthorizeAttributeFullName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
     private const string AllowAnonymousAttributeFullName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
 
+    /// <summary>
+    /// Extracts namespaces declared via <c>[DispatchableNamespace]</c> on the assembly.
+    /// </summary>
+    /// <param name="assembly">The assembly to inspect.</param>
+    /// <returns>The list of declared dispatchable namespaces.</returns>
     public static IReadOnlyList<string> GetDeclaredNamespaces(Assembly assembly)
     {
+        if (assembly is null)
+        {
+            throw new ArgumentNullException(nameof(assembly));
+        }
+
         var namespaces = new List<string>();
 
         foreach (var attribute in assembly.GetCustomAttributes())
@@ -37,16 +50,38 @@ public static class ReflectionScanner
         return namespaces.AsReadOnly();
     }
 
+    /// <summary>
+    /// Scans the assembly for dispatchable types using automatically discovered namespaces.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan.</param>
+    /// <returns>The discovered dispatchable types.</returns>
     public static IReadOnlyList<DispatchableTypeInfo> Scan(Assembly assembly)
     {
         var declaredNamespaces = GetDeclaredNamespaces(assembly);
         return Scan(assembly, declaredNamespaces);
     }
 
+    /// <summary>
+    /// Scans the assembly for dispatchable types matching the specified namespaces
+    /// or annotated with <c>[Dispatchable]</c>.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan.</param>
+    /// <param name="declaredNamespaces">The namespaces to include.</param>
+    /// <returns>The discovered dispatchable types.</returns>
     public static IReadOnlyList<DispatchableTypeInfo> Scan(
         Assembly assembly,
         IReadOnlyList<string> declaredNamespaces)
     {
+        if (assembly is null)
+        {
+            throw new ArgumentNullException(nameof(assembly));
+        }
+
+        if (declaredNamespaces is null)
+        {
+            throw new ArgumentNullException(nameof(declaredNamespaces));
+        }
+
         var results = new List<DispatchableTypeInfo>();
 
         foreach (var type in assembly.GetExportedTypes())
@@ -148,7 +183,7 @@ public static class ReflectionScanner
 
     private static string? GetResultTypeName(Type type, DispatchableKind kind)
     {
-        if (kind == DispatchableKind.VoidCommand || kind == DispatchableKind.Event)
+        if (kind is DispatchableKind.VoidCommand or DispatchableKind.Event)
         {
             return null;
         }
@@ -170,7 +205,7 @@ public static class ReflectionScanner
 
     private static string? GetResultFullTypeName(Type type, DispatchableKind kind)
     {
-        if (kind == DispatchableKind.VoidCommand || kind == DispatchableKind.Event)
+        if (kind is DispatchableKind.VoidCommand or DispatchableKind.Event)
         {
             return null;
         }

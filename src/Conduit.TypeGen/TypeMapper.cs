@@ -1,7 +1,8 @@
-using System.Reflection;
-
 namespace Conduit.TypeGen;
 
+/// <summary>
+/// Maps .NET types to their TypeScript equivalents for code generation.
+/// </summary>
 public static class TypeMapper
 {
     private static readonly Dictionary<string, string> SimpleTypeMappings = new()
@@ -23,8 +24,15 @@ public static class TypeMapper
         ["TimeSpan"] = "string",
     };
 
+    /// <summary>
+    /// Maps a .NET <see cref="Type"/> to a TypeScript type string.
+    /// </summary>
+    /// <param name="type">The .NET type to map.</param>
+    /// <returns>The corresponding TypeScript type expression.</returns>
     public static string MapType(Type type)
     {
+        ArgumentNullException.ThrowIfNull(type);
+
         // Handle nullable value types
         var underlyingNullable = Nullable.GetUnderlyingType(type);
         if (underlyingNullable != null)
@@ -85,6 +93,11 @@ public static class TypeMapper
         return type.Name;
     }
 
+    /// <summary>
+    /// Maps a .NET type name (short name) to a TypeScript type string.
+    /// </summary>
+    /// <param name="csharpTypeName">The short .NET type name.</param>
+    /// <returns>The corresponding TypeScript type, or the original name if no mapping exists.</returns>
     public static string MapTypeName(string csharpTypeName)
     {
         if (SimpleTypeMappings.TryGetValue(csharpTypeName, out var tsType))

@@ -1,4 +1,3 @@
-using Conduit;
 using Conduit.Attributes;
 
 [assembly: DispatchableNamespace("Conduit.Analysis.Tests.Sample")]

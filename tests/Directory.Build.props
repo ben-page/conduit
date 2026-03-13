@@ -1,0 +1,12 @@
+<Project>
+
+  <Import Project="../src/Directory.Build.props" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);CS1591;CA1707;CA2234;CA2000</NoWarn>
+  </PropertyGroup>
+
+</Project>

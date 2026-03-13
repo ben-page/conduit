@@ -1,17 +1,12 @@
 using AwesomeAssertions;
-using Conduit.Analysis;
 
 namespace Conduit.Analysis.Tests;
 
 [TestClass]
 public class ReflectionScannerTests
 {
-    private static readonly IReadOnlyList<DispatchableTypeInfo> ScannedTypes;
-
-    static ReflectionScannerTests()
-    {
-        ScannedTypes = ReflectionScanner.Scan(typeof(ReflectionScannerTests).Assembly);
-    }
+    private static readonly IReadOnlyList<DispatchableTypeInfo> ScannedTypes =
+        ReflectionScanner.Scan(typeof(ReflectionScannerTests).Assembly);
 
     [TestMethod]
     public void FindsCommandWithResult()
