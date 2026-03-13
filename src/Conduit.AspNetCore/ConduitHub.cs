@@ -1,5 +1,5 @@
 ﻿using System.Text.Json;
-using Conduit.Dispatch;
+using Conduit.Routing;
 using Conduit.Exceptions;
 using Microsoft.AspNetCore.SignalR;
 
@@ -7,7 +7,7 @@ namespace Conduit.AspNetCore;
 
 /// <summary>
 /// SignalR hub that accepts dispatch requests from connected clients and routes
-/// them through the <see cref="IWireDispatcher"/>.
+/// them through the <see cref="IMessageRouter"/>.
 /// </summary>
 public class ConduitHub : Hub
 {
@@ -22,7 +22,7 @@ public class ConduitHub : Hub
         JsonElement payload)
     {
         var cancellationToken = this.Context.ConnectionAborted;
-        var dispatcher = this.Context.GetHttpContext()!.RequestServices.GetRequiredService<IWireDispatcher>();
+        var dispatcher = this.Context.GetHttpContext()!.RequestServices.GetRequiredService<IMessageRouter>();
 
         try
         {

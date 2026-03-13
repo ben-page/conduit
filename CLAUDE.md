@@ -17,8 +17,9 @@ src/Conduit.TypeGen/       MSBuild task for TypeScript emission — net10.0
 **Dependency graph:** SourceGen → Analysis → Roslyn APIs; TypeGen → Analysis; AspNetCore → Conduit → DI abstractions. Core has no dependency on the other four projects.
 
 **Key design decisions:**
-- `IWireDispatcher` interface bridges generated code (in consumer assembly) with transport layer (in library assembly) via DI
-- Generated `ConduitMediator` implements both `IMediator` and `IWireDispatcher`
+- `IMessageRouter` interface (in `Conduit.Routing`) bridges generated code (in consumer assembly) with transport layer (in library assembly) via DI
+- `IConduitTransport` interface (in `Conduit.Routing`) is a bidirectional transport with `DeliverAsync` (events) and `SendAsync` (request/response)
+- Generated `ConduitMediator` implements both `IMediator` and `IMessageRouter`
 - `Validate()` is a default interface method — generated code must cast to the interface to call it (e.g., `((ICommand)command).Validate()`)
 - `Unsafe.As` used for generic task casting in mediator fallback methods — wrapped in `CastTask<TSource, TTarget>` helper to avoid `ref readonly` warnings
 
@@ -51,9 +52,9 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - When emitting handler calls for queries, parameter name must be `query` (not `command`)
 
 ### Conduit.AspNetCore
-- `ConduitEndpoints.MapConduit()` maps POST `/api/dispatch` using `IWireDispatcher`
-- `ConduitHub` resolves `IWireDispatcher` from `Context.GetHttpContext()!.RequestServices`
-- `SignalREventTransport` delivers events via `IHubContext<ConduitHub>`
+- `ConduitEndpoints.MapConduit()` maps POST `/api/dispatch` using `IMessageRouter`
+- `ConduitHub` resolves `IMessageRouter` from `Context.GetHttpContext()!.RequestServices`
+- `SignalRTransport` implements `IConduitTransport`, delivers events via `IHubContext<ConduitHub>`
 
 ### Conduit.TypeGen
 - MSBuild task using `Microsoft.Build.Utilities.Task` (fully qualified to avoid ambiguity with `System.Threading.Tasks.Task`)

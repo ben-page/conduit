@@ -1,4 +1,4 @@
-using Conduit.Transport;
+using Conduit.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.AspNetCore;
@@ -22,7 +22,7 @@ public static class ConduitAspNetCoreExtensions
         configure?.Invoke(builder);
 
         services.AddSignalR();
-        services.AddSingleton<IEventTransport, SignalREventTransport>();
+        services.AddSingleton<IConduitTransport, SignalRTransport>();
 
         return services;
     }

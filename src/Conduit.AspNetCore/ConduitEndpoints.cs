@@ -1,4 +1,4 @@
-﻿using Conduit.Dispatch;
+﻿using Conduit.Routing;
 using Conduit.Exceptions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -13,7 +13,7 @@ public static class ConduitEndpoints
 {
     /// <summary>
     /// Maps a POST endpoint that accepts <see cref="DispatchEnvelope"/> payloads
-    /// and routes them through the <see cref="IWireDispatcher"/>.
+    /// and routes them through the <see cref="IMessageRouter"/>.
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="path">The URL path for the dispatch endpoint. Defaults to "/api/dispatch".</param>
@@ -24,7 +24,7 @@ public static class ConduitEndpoints
     {
         endpoints.MapPost(path, async (
             DispatchEnvelope envelope,
-            IWireDispatcher dispatcher,
+            IMessageRouter dispatcher,
             CancellationToken cancellationToken) =>
         {
             try
