@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 
 namespace Conduit.SourceGen.Tests;
 
