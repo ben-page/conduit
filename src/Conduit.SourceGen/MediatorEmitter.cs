@@ -45,36 +45,67 @@ public static class MediatorEmitter
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
+        sb.AppendLine("    IRouteResolver routeResolver,");
         sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IMessageRouter");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"    public Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
+            sb.AppendLine($"    public async Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
-            sb.AppendLine($"        => ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
+            sb.AppendLine("    {");
+            sb.AppendLine($"        var endpoint = routeResolver.Resolve(\"{cmd.FullTypeName}\");");
+            sb.AppendLine("        if (endpoint?.Transport != null)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
+            sb.AppendLine($"            var result = await endpoint.Transport.SendAsync(");
+            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.TypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"            return ({cmd.ResultFullTypeName})result!;");
+            sb.AppendLine("        }");
+            sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
+            sb.AppendLine("    }");
             sb.AppendLine();
         }
 
         // Strongly-typed overloads for void commands
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"    public Task ExecuteAsync(");
+            sb.AppendLine($"    public async Task ExecuteAsync(");
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
-            sb.AppendLine($"        => ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
+            sb.AppendLine("    {");
+            sb.AppendLine($"        var endpoint = routeResolver.Resolve(\"{cmd.FullTypeName}\");");
+            sb.AppendLine("        if (endpoint?.Transport != null)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
+            sb.AppendLine($"            await endpoint.Transport.SendAsync(");
+            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.TypeName}\", payload), cancellationToken);");
+            sb.AppendLine("            return;");
+            sb.AppendLine("        }");
+            sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
+            sb.AppendLine("    }");
             sb.AppendLine();
         }
 
         // Strongly-typed overloads for queries
         foreach (var query in queries)
         {
-            sb.AppendLine($"    public Task<{query.ResultFullTypeName}> FetchAsync(");
+            sb.AppendLine($"    public async Task<{query.ResultFullTypeName}> FetchAsync(");
             sb.AppendLine($"        {query.FullTypeName} query,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
-            sb.AppendLine($"        => ConduitDispatch.Fetch(query, serviceProvider, cancellationToken);");
+            sb.AppendLine("    {");
+            sb.AppendLine($"        var endpoint = routeResolver.Resolve(\"{query.FullTypeName}\");");
+            sb.AppendLine("        if (endpoint?.Transport != null)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(query);");
+            sb.AppendLine($"            var result = await endpoint.Transport.SendAsync(");
+            sb.AppendLine($"                new DispatchEnvelope(\"{query.TypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"            return ({query.ResultFullTypeName})result!;");
+            sb.AppendLine("        }");
+            sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, cancellationToken);");
+            sb.AppendLine("    }");
             sb.AppendLine();
         }
 
