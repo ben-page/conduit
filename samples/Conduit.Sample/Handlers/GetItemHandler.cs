@@ -1,10 +1,9 @@
-using Conduit;
-using Conduit.Exceptions;
+﻿using Conduit.Exceptions;
 using Conduit.Sample.Queries;
 
 namespace Conduit.Sample.Handlers;
 
-public class GetItemHandler : IQueryHandler<GetItemQuery, ItemDto>
+internal sealed class GetItemHandler : IQueryHandler<GetItemQuery, ItemDto>
 {
     public Task<ItemDto> HandleAsync(GetItemQuery query, CancellationToken cancellationToken)
     {

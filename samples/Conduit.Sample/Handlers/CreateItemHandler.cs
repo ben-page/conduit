@@ -1,10 +1,9 @@
-using Conduit;
-using Conduit.Sample.Commands;
+﻿using Conduit.Sample.Commands;
 using Conduit.Sample.Events;
 
 namespace Conduit.Sample.Handlers;
 
-public class CreateItemHandler(IMediator mediator) : ICommandHandler<CreateItemCommand, Guid>
+internal sealed class CreateItemHandler(IMediator mediator) : ICommandHandler<CreateItemCommand, Guid>
 {
     private static readonly Dictionary<Guid, string> Items = new();
 

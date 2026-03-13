@@ -1,5 +1,4 @@
-using Conduit;
-using Conduit.Attributes;
+﻿using Conduit.Attributes;
 
 namespace Conduit.Sample.Queries;
 
