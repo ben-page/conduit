@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Conduit.Configuration;
 using Conduit.Exceptions;
+using Conduit.Messages;
 using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

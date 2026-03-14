@@ -1,4 +1,4 @@
-namespace Conduit;
+namespace Conduit.Messages;
 
 /// <summary>
 /// Represents the absence of a return value. Used as <c>TResult</c> for void
