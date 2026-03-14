@@ -5,17 +5,67 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Conduit Sample</title>
     <style>
-        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
-        input, button { padding: 8px 12px; margin: 4px 0; }
-        #result { margin-top: 20px; padding: 12px; background: #f5f5f5; white-space: pre-wrap; }
+        body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }
+        h2 { margin-top: 32px; border-top: 1px solid #ddd; padding-top: 16px; }
+        h2:first-of-type { border-top: none; }
+        input, button { padding: 8px 12px; margin: 4px 4px 4px 0; }
+        button { cursor: pointer; }
+        .result { margin-top: 8px; padding: 12px; background: #f5f5f5; white-space: pre-wrap; min-height: 20px; }
+        .section { margin-bottom: 24px; }
+        .label { font-weight: bold; font-size: 0.85em; color: #666; margin-bottom: 4px; }
+        .error { color: #c00; }
+        .success { color: #080; }
     </style>
 </head>
 <body>
     <h1>Conduit Sample</h1>
-    <h2>Create Item (via SignalR)</h2>
-    <input id="itemName" placeholder="Item name" />
-    <button id="createBtn">Create</button>
-    <div id="result"></div>
+    <p id="status">Connecting...</p>
+
+    <h2>Local Commands & Queries (OrderService)</h2>
+
+    <div class="section">
+        <div class="label">Create Item</div>
+        <input id="itemName" placeholder="Item name" />
+        <button onclick="createItem()">Create</button>
+        <div id="createResult" class="result"></div>
+    </div>
+
+    <div class="section">
+        <div class="label">Get Item</div>
+        <input id="getItemId" placeholder="Item ID (GUID)" />
+        <button onclick="getItem()">Get</button>
+        <div id="getResult" class="result"></div>
+    </div>
+
+    <div class="section">
+        <div class="label">Delete Item</div>
+        <input id="deleteItemId" placeholder="Item ID (GUID)" />
+        <button onclick="deleteItem()">Delete</button>
+        <div id="deleteResult" class="result"></div>
+    </div>
+
+    <h2>Remote Commands & Queries (routed to InventoryService)</h2>
+
+    <div class="section">
+        <div class="label">Check Stock</div>
+        <input id="stockProductId" placeholder="Product ID (e.g. WIDGET-001)" value="WIDGET-001" />
+        <button onclick="checkStock()">Check</button>
+        <div id="stockResult" class="result"></div>
+    </div>
+
+    <div class="section">
+        <div class="label">Reserve Inventory</div>
+        <input id="reserveProductId" placeholder="Product ID" value="WIDGET-001" />
+        <input id="reserveQty" placeholder="Quantity" type="number" value="5" style="width:80px" />
+        <button onclick="reserveInventory()">Reserve</button>
+        <div id="reserveResult" class="result"></div>
+    </div>
+
+    <h2>Events</h2>
+    <div class="section">
+        <div class="label">Server events will appear here as they arrive:</div>
+        <div id="eventLog" class="result"></div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
     <script>
@@ -23,30 +73,91 @@
             .withUrl("/hub")
             .build();
 
-        var resultDiv = document.getElementById("result");
-
         connection.start().then(function () {
-            resultDiv.textContent = "Connected to hub.";
+            document.getElementById("status").textContent = "Connected to hub.";
+            document.getElementById("status").className = "success";
         }).catch(function (err) {
-            resultDiv.textContent = "Connection failed: " + err;
+            document.getElementById("status").textContent = "Connection failed: " + err;
+            document.getElementById("status").className = "error";
         });
 
-        document.getElementById("createBtn").addEventListener("click", function () {
-            var name = document.getElementById("itemName").value;
-            if (!name) return;
+        // Listen for any event pushed from the server
+        connection.on("Conduit.Sample.OrderService.Events.ItemCreatedEvent", function (payload) {
+            var log = document.getElementById("eventLog");
+            log.textContent += "ItemCreated: " + JSON.stringify(payload) + "\n";
+        });
 
-            connection.invoke("Dispatch", "Conduit.Sample.OrderService.Commands.CreateItemCommand", { Name: name })
+        function dispatch(type, payload, resultDivId) {
+            var div = document.getElementById(resultDivId);
+            div.textContent = "Dispatching...";
+            div.className = "result";
+
+            connection.invoke("Dispatch", type, payload)
                 .then(function (result) {
                     if (result.error) {
-                        resultDiv.textContent = "Error: [" + result.error.code + "] " + result.error.message;
+                        div.textContent = "[" + result.error.code + "] " + result.error.message;
+                        div.className = "result error";
                     } else {
-                        resultDiv.textContent = "Created item: " + result.data;
+                        div.textContent = JSON.stringify(result.data, null, 2);
+                        div.className = "result success";
                     }
                 })
                 .catch(function (err) {
-                    resultDiv.textContent = "Error: " + err;
+                    div.textContent = err.toString();
+                    div.className = "result error";
                 });
-        });
+        }
+
+        function createItem() {
+            var name = document.getElementById("itemName").value;
+            if (!name) return;
+            dispatch(
+                "Conduit.Sample.OrderService.Commands.CreateItemCommand",
+                { Name: name },
+                "createResult"
+            );
+        }
+
+        function getItem() {
+            var id = document.getElementById("getItemId").value;
+            if (!id) return;
+            dispatch(
+                "Conduit.Sample.OrderService.Queries.GetItemQuery",
+                { Id: id },
+                "getResult"
+            );
+        }
+
+        function deleteItem() {
+            var id = document.getElementById("deleteItemId").value;
+            if (!id) return;
+            dispatch(
+                "Conduit.Sample.OrderService.Commands.DeleteItemCommand",
+                { Id: id },
+                "deleteResult"
+            );
+        }
+
+        function checkStock() {
+            var productId = document.getElementById("stockProductId").value;
+            if (!productId) return;
+            dispatch(
+                "Conduit.Sample.InventoryService.Queries.CheckStockQuery",
+                { ProductId: productId },
+                "stockResult"
+            );
+        }
+
+        function reserveInventory() {
+            var productId = document.getElementById("reserveProductId").value;
+            var qty = parseInt(document.getElementById("reserveQty").value);
+            if (!productId || isNaN(qty)) return;
+            dispatch(
+                "Conduit.Sample.InventoryService.Commands.ReserveInventoryCommand",
+                { ProductId: productId, Quantity: qty },
+                "reserveResult"
+            );
+        }
     </script>
 </body>
 </html>
