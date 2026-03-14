@@ -49,7 +49,7 @@ public static class MediatorEmitter
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
         sb.AppendLine("    IRouteResolver routeResolver,");
-        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IDispatchRouter");
+        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IWireDispatcher");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result

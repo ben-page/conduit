@@ -65,13 +65,13 @@ public class EventBroadcastShould
                 });
                 builder.Services.AddConduitHandlers();
             });
-        var router = host.GetRequiredService<IDispatchRouter>();
+        var wireDispatcher = host.GetRequiredService<IWireDispatcher>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
         var payload = System.Text.Json.JsonSerializer.SerializeToElement(
             new { Id = Guid.NewGuid(), Name = "Wire Event" });
 
         // Act
-        await router.DispatchEventAsync(
+        await wireDispatcher.DispatchEventAsync(
             "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload, CancellationToken.None);
 
         // Assert

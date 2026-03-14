@@ -12,7 +12,7 @@ public static class EndpointRouteBuilderExtensions
 {
     /// <summary>
     /// Maps a POST endpoint that accepts <see cref="DispatchEnvelope"/> payloads
-    /// from browser clients and routes them through the <see cref="IDispatchRouter"/>,
+    /// and dispatches them through the <see cref="IWireDispatcher"/>,
     /// applying any registered <see cref="IDispatchInterceptor"/> instances.
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
@@ -25,12 +25,12 @@ public static class EndpointRouteBuilderExtensions
         endpoints.MapPost(path, async (
             DispatchEnvelope envelope,
             IEnumerable<IDispatchInterceptor> interceptors,
-            IDispatchRouter router,
-            ILogger<IDispatchRouter> logger,
+            IWireDispatcher wireDispatcher,
+            ILogger<IWireDispatcher> logger,
             CancellationToken cancellationToken) =>
         {
             var result = await DispatchPipeline.ExecuteRequestAsync(
-                envelope, interceptors, router, logger, cancellationToken);
+                envelope, interceptors, wireDispatcher, logger, cancellationToken);
 
             if (result.Error is not null)
             {
@@ -43,12 +43,12 @@ public static class EndpointRouteBuilderExtensions
         endpoints.MapPost(path + "/publish", async (
             DispatchEnvelope envelope,
             IEnumerable<IDispatchInterceptor> interceptors,
-            IDispatchRouter router,
-            ILogger<IDispatchRouter> logger,
+            IWireDispatcher wireDispatcher,
+            ILogger<IWireDispatcher> logger,
             CancellationToken cancellationToken) =>
         {
             await DispatchPipeline.ExecuteEventAsync(
-                envelope, interceptors, router, logger, cancellationToken);
+                envelope, interceptors, wireDispatcher, logger, cancellationToken);
 
             return Results.Ok();
         });

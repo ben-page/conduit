@@ -1,9 +1,11 @@
 namespace Conduit.Dispatch;
 
 /// <summary>
-/// Intercepts dispatch calls before they reach the <see cref="IDispatchRouter"/>.
-/// Registered via DI and chained in order — each interceptor calls <c>next</c>
-/// to continue the pipeline or short-circuits by returning/throwing.
+/// Intercepts inbound wire dispatch calls before they reach the <see cref="IWireDispatcher"/>.
+/// Registered via DI and chained by <see cref="DispatchPipeline"/> in reverse registration
+/// order — each interceptor calls <c>next</c> to continue the pipeline or short-circuits
+/// by returning/throwing. Used for access control, logging, or other cross-cutting concerns
+/// on messages arriving from transports (HTTP, SignalR).
 /// </summary>
 public interface IDispatchInterceptor
 {
@@ -11,7 +13,7 @@ public interface IDispatchInterceptor
     /// Intercepts a command or query dispatch.
     /// </summary>
     /// <param name="envelope">The dispatch envelope containing type and payload.</param>
-    /// <param name="next">Delegate to invoke the next interceptor or the router.</param>
+    /// <param name="next">Delegate to invoke the next interceptor or the wire dispatcher.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The handler result, or <see langword="null"/> for void commands.</returns>
     public Task<object?> InterceptRequestAsync(
@@ -23,7 +25,7 @@ public interface IDispatchInterceptor
     /// Intercepts an event dispatch.
     /// </summary>
     /// <param name="envelope">The dispatch envelope containing type and payload.</param>
-    /// <param name="next">Delegate to invoke the next interceptor or the router.</param>
+    /// <param name="next">Delegate to invoke the next interceptor or the wire dispatcher.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public Task InterceptEventAsync(
         DispatchEnvelope envelope,

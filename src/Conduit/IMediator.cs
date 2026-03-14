@@ -4,7 +4,10 @@ namespace Conduit;
 
 /// <summary>
 /// Central entry point for dispatching commands, queries, and events
-/// through the Conduit pipeline.
+/// through the Conduit pipeline. Implemented by the source-generated
+/// <c>ConduitMediator</c> class, which checks route configuration before
+/// dispatching locally or forwarding to a remote endpoint via transport.
+/// Registered as scoped in DI so handlers can access scoped services.
 /// </summary>
 public interface IMediator
 {
