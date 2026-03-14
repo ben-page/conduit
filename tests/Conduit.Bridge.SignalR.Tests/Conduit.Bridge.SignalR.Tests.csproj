@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS9057</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Bridge.SignalR\Conduit.Bridge.SignalR.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Bridge.Http\Conduit.Bridge.Http.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Transport.SignalR\Conduit.Transport.SignalR.csproj" />
+    <ProjectReference Include="..\Conduit.TestUtils\Conduit.TestUtils.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Conduit.Analysis\Conduit.Analysis.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

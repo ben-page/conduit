@@ -2,7 +2,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
 
-namespace Conduit.Transport.Tests;
+namespace Conduit.Transport.SignalR.Tests.Unit;
 
 [TestClass]
 public class SignalRTransportTests
