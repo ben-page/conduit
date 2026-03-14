@@ -47,7 +47,7 @@ public class BridgeTypeFilterInterceptorTests
             () => Task.FromResult<object?>("ok"),
             CancellationToken.None);
 
-        await action.Should().ThrowExactlyAsync<UnauthorizedAccessException>()
+        await action.Should().ThrowExactlyAsync<Conduit.Exceptions.UnauthorizedException>()
             .WithMessage("*DeleteDatabase*");
     }
 
