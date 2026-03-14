@@ -1,4 +1,4 @@
-using Conduit.Exceptions;
+﻿using Conduit.Exceptions;
 using Conduit.Handlers;
 
 namespace Conduit.Bridge.Http.Tests.TestApp;
@@ -45,13 +45,13 @@ public class ItemCreatedListener : IEventListener<ItemCreatedEvent>
 public class ThrowConflictHandler : ICommandHandler<ThrowConflictCommand>
 {
     public Task HandleAsync(ThrowConflictCommand command, CancellationToken cancellationToken)
-        => throw new Conduit.Exceptions.ConflictException("Already exists");
+        => throw new ConflictException("Already exists");
 }
 
 public class ThrowUnauthorizedHandler : ICommandHandler<ThrowUnauthorizedCommand>
 {
     public Task HandleAsync(ThrowUnauthorizedCommand command, CancellationToken cancellationToken)
-        => throw new Conduit.Exceptions.UnauthorizedException("Access denied");
+        => throw new UnauthorizedException("Access denied");
 }
 
 public class ThrowGenericHandler : ICommandHandler<ThrowGenericCommand>

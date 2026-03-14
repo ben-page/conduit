@@ -1,3 +1,4 @@
+﻿using Conduit.Exceptions;
 using Conduit.Handlers;
 
 namespace Conduit.Transport.Http.Tests.TestApp;
@@ -34,7 +35,7 @@ public class GetItemHandler(ItemStore store) : IQueryHandler<GetItemQuery, strin
 {
     public Task<string> HandleAsync(GetItemQuery query, CancellationToken cancellationToken)
     {
-        var name = store.Get(query.Id) ?? throw new Conduit.Exceptions.NotFoundException($"Item {query.Id} not found");
+        var name = store.Get(query.Id) ?? throw new NotFoundException($"Item {query.Id} not found");
         return Task.FromResult(name);
     }
 }
