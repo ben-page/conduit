@@ -3,9 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.Http;
-using Conduit.Bridge.SignalR;
 using Conduit.Bridge.SignalR.Tests.TestApp;
 using Conduit.Transport.SignalR;
+using Microsoft.Extensions.Hosting;
 using Conduit.Dispatch;
 using global::Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
@@ -24,8 +24,8 @@ public class InterceptorPipelineTests
         builder.Services.AddConduitSignalR();
         builder.Services.AddConduitBridge(bridge =>
         {
-            bridge.AllowType("CreateItemCommand");
-            bridge.AllowType("GetItemQuery");
+            bridge.AllowType("Conduit.Bridge.SignalR.Tests.TestApp.CreateItemCommand");
+            bridge.AllowType("Conduit.Bridge.SignalR.Tests.TestApp.GetItemQuery");
         });
         builder.Services.AddConduitHandlers();
 
@@ -48,7 +48,7 @@ public class InterceptorPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Name = "Test" });
-            var envelope = new DispatchEnvelope("CreateItemCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.SignalR.Tests.TestApp.CreateItemCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
@@ -64,7 +64,7 @@ public class InterceptorPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
-            var envelope = new DispatchEnvelope("DeleteItemCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.SignalR.Tests.TestApp.DeleteItemCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Bridge.SignalR;
 using Conduit.Dispatch;
 using Microsoft.Extensions.Options;
 
@@ -29,7 +28,11 @@ public class BridgeTypeFilterInterceptorTests
 
         var result = await interceptor.InterceptRequestAsync(
             envelope,
-            () => { nextCalled = true; return Task.FromResult<object?>("ok"); },
+            () =>
+            {
+                nextCalled = true;
+                return Task.FromResult<object?>("ok");
+            },
             CancellationToken.None);
 
         nextCalled.Should().BeTrue();
@@ -60,7 +63,11 @@ public class BridgeTypeFilterInterceptorTests
 
         await interceptor.InterceptEventAsync(
             envelope,
-            () => { nextCalled = true; return Task.CompletedTask; },
+            () =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
             CancellationToken.None);
 
         nextCalled.Should().BeTrue();

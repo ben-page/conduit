@@ -5,6 +5,7 @@ using AwesomeAssertions;
 using Conduit.Bridge.Http;
 using Conduit.Bridge.Http.Tests.TestApp;
 using Conduit.Transport.SignalR;
+using Microsoft.Extensions.Hosting;
 using Conduit.Dispatch;
 using global::Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
@@ -37,7 +38,7 @@ public class BridgeHttpPipelineTests
     private static async Task<string> CreateItem(HttpClient client, string name)
     {
         var payload = JsonSerializer.SerializeToElement(new { Name = name });
-        var envelope = new DispatchEnvelope("CreateItemCommand", payload);
+        var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.CreateItemCommand", payload);
         var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -52,7 +53,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Name = "Test Item" });
-            var envelope = new DispatchEnvelope("CreateItemCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.CreateItemCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
@@ -75,7 +76,7 @@ public class BridgeHttpPipelineTests
             var id = await CreateItem(client, "To Delete");
 
             var deletePayload = JsonSerializer.SerializeToElement(new { Id = id });
-            var deleteEnvelope = new DispatchEnvelope("DeleteItemCommand", deletePayload);
+            var deleteEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.DeleteItemCommand", deletePayload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", deleteEnvelope);
 
@@ -95,7 +96,7 @@ public class BridgeHttpPipelineTests
             var id = await CreateItem(client, "Query Test");
 
             var queryPayload = JsonSerializer.SerializeToElement(new { Id = id });
-            var queryEnvelope = new DispatchEnvelope("GetItemQuery", queryPayload);
+            var queryEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.GetItemQuery", queryPayload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", queryEnvelope);
 
@@ -115,7 +116,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var queryPayload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
-            var queryEnvelope = new DispatchEnvelope("GetItemQuery", queryPayload);
+            var queryEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.GetItemQuery", queryPayload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", queryEnvelope);
 
@@ -135,7 +136,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("NonExistentCommand", payload);
+            var envelope = new DispatchEnvelope("NonExistent.NonExistentCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
