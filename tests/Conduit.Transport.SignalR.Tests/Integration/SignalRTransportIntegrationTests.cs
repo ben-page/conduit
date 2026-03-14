@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
+using Conduit.Transport.SignalR.Tests.Support;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -19,7 +19,6 @@ public class SignalRTransportShould
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
                 builder.Services.AddConduitSignalR();
-                builder.Services.AddConduitHandlers();
             },
             app => app.MapHub<ConduitHub>("/hub"));
     }
@@ -38,7 +37,6 @@ public class SignalRTransportShould
                     conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("remote");
                 });
                 builder.Services.AddConduitSignalR();
-                builder.Services.AddConduitHandlers();
             },
             app => app.MapHub<ConduitHub>("/hub"));
     }

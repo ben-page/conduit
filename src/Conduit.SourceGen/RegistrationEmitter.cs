@@ -42,8 +42,13 @@ public static class RegistrationEmitter
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
         sb.AppendLine("internal static class ConduitRegistration");
         sb.AppendLine("{");
-        sb.AppendLine("    public static IServiceCollection AddConduitHandlers(this IServiceCollection services)");
+        sb.AppendLine($"    public static IServiceCollection AddConduit(");
+        sb.AppendLine($"        this IServiceCollection services,");
+        sb.AppendLine($"        System.Action<{EmitConstants.ConduitBuilder}>? configure = null)");
         sb.AppendLine("    {");
+        sb.AppendLine("        // Register core infrastructure (options, routing)");
+        sb.AppendLine($"        Conduit.ServiceCollectionExtensions.AddConduitCore(services, configure);");
+        sb.AppendLine();
 
         foreach (var handler in handlerTypeNames)
         {
@@ -55,6 +60,7 @@ public static class RegistrationEmitter
             sb.AppendLine($"        services.AddTransient<{listener}>();");
         }
 
+        sb.AppendLine();
         sb.AppendLine("        services.AddScoped<ConduitMediator>();");
         sb.AppendLine($"        services.AddScoped<{EmitConstants.IMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
         sb.AppendLine($"        services.AddScoped<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
@@ -78,6 +84,7 @@ public static class RegistrationEmitter
             sb.AppendLine("        }");
         }
 
+        sb.AppendLine();
         sb.AppendLine("        return services;");
         sb.AppendLine("    }");
         sb.AppendLine("}");

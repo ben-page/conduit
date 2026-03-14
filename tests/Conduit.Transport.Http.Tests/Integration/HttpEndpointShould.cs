@@ -22,7 +22,6 @@ public class HttpEndpointShould
         builder.Services.AddSingleton<ItemStore>();
         builder.Services.AddConduit();
         builder.Services.AddConduitSignalR();
-        builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
         app.MapConduitEndpoint();

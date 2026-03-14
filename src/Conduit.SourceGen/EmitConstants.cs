@@ -24,6 +24,7 @@ internal static class EmitConstants
     internal const string DispatchEnvelope = "Conduit.Dispatch.DispatchEnvelope";
 
     // Configuration types
+    internal const string ConduitBuilder = "Conduit.Configuration.ConduitBuilder";
     internal const string ConduitOptions = "Conduit.Configuration.ConduitOptions";
     internal const string ConduitRoute = "Conduit.Configuration.ConduitRoute";
 

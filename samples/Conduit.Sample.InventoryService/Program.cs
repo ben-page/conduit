@@ -1,5 +1,5 @@
-﻿using Conduit.Transport.SignalR;
-using Conduit.Generated;
+﻿using Conduit.Generated;
+using Conduit.Transport.SignalR;
 
 namespace Conduit.Sample.InventoryService;
 
@@ -11,7 +11,6 @@ public partial class Program
         builder.Services.AddSingleton<InventoryStore>();
         builder.Services.AddConduit();
         builder.Services.AddConduitSignalR();
-        builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
         app.MapHub<ConduitHub>("/hub");

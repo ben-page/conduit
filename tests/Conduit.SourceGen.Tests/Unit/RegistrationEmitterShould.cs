@@ -42,7 +42,8 @@ namespace App.Events
 
         var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
         registrationSource.Should().NotBeNull();
-        registrationSource.Should().Contain("AddConduitHandlers");
+        registrationSource.Should().Contain("AddConduit(");
+        registrationSource.Should().Contain("AddConduitCore");
         registrationSource.Should().Contain("AddTransient<App.Commands.CreateOrderHandler>()");
         registrationSource.Should().Contain("AddTransient<App.Events.OrderCreatedListener>()");
     }
