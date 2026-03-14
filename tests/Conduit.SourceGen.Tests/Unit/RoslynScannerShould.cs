@@ -4,10 +4,10 @@ using Conduit.Messages;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace Conduit.SourceGen.Tests;
+namespace Conduit.SourceGen.Tests.Unit;
 
 [TestClass]
-public class RoslynScannerTests
+public class RoslynScannerShould
 {
     private static CSharpCompilation CreateCompilation(string source)
     {
@@ -34,7 +34,7 @@ public class RoslynScannerTests
     }
 
     [TestMethod]
-    public void FindsCommandWithResult()
+    public void FindCommandWithResult()
     {
         var source = @"
 using Conduit.Attributes;
@@ -55,7 +55,7 @@ public record CreateOrder(string CustomerId) : ICommand<System.Guid>;
     }
 
     [TestMethod]
-    public void FindsVoidCommand()
+    public void FindVoidCommand()
     {
         var source = @"
 using Conduit.Attributes;
@@ -74,7 +74,7 @@ public record DeleteOrder(System.Guid Id) : ICommand;
     }
 
     [TestMethod]
-    public void FindsQuery()
+    public void FindQuery()
     {
         var source = @"
 using Conduit.Attributes;
@@ -94,7 +94,7 @@ public record GetOrder(System.Guid Id) : IQuery<string>;
     }
 
     [TestMethod]
-    public void FindsEvent()
+    public void FindEvent()
     {
         var source = @"
 using Conduit.Attributes;
@@ -113,7 +113,7 @@ public record OrderCreated(System.Guid Id) : IEvent;
     }
 
     [TestMethod]
-    public void NotDispatchable_ExcludesType()
+    public void ExcludeNotDispatchableType()
     {
         var source = @"
 using Conduit.Attributes;
@@ -133,7 +133,7 @@ public record InternalCommand(string Data) : ICommand;
     }
 
     [TestMethod]
-    public void Dispatchable_IncludesTypeOutsideNamespace()
+    public void IncludeDispatchableTypeOutsideNamespace()
     {
         var source = @"
 using Conduit.Attributes;
@@ -152,7 +152,7 @@ public record SpecialCommand(string Data) : ICommand;
     }
 
     [TestMethod]
-    public void DetectsValidateOverride()
+    public void DetectValidateOverride()
     {
         var source = @"
 using Conduit.Attributes;
@@ -178,7 +178,7 @@ public record ValidatedCommand(string Name) : ICommand
     }
 
     [TestMethod]
-    public void TypeOutsideNamespace_WithoutDispatchable_IsExcluded()
+    public void ExcludeTypeOutsideNamespaceWithoutAttribute()
     {
         var source = @"
 using Conduit.Messages;
@@ -193,7 +193,7 @@ public record OrphanCommand() : ICommand;
     }
 
     [TestMethod]
-    public void ExtractsResultFullTypeName()
+    public void ExtractResultFullTypeName()
     {
         var source = @"
 using Conduit.Attributes;

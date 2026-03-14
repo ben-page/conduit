@@ -1,12 +1,13 @@
 using AwesomeAssertions;
+using Conduit.SourceGen.Tests.Support;
 
-namespace Conduit.SourceGen.Tests;
+namespace Conduit.SourceGen.Tests.Unit;
 
 [TestClass]
-public class DiagnosticTests : GeneratorTestBase
+public class DiagnosticShould : GeneratorTestBase
 {
     [TestMethod]
-    public void EmitsErrorForCommandWithNoHandler()
+    public void EmitErrorForCommandWithNoHandler()
     {
         var source = @"
 using Conduit.Attributes;

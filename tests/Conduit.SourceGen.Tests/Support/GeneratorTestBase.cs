@@ -1,8 +1,8 @@
-﻿using Conduit.Messages;
+using Conduit.Messages;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace Conduit.SourceGen.Tests;
+namespace Conduit.SourceGen.Tests.Support;
 
 public abstract class GeneratorTestBase
 {
