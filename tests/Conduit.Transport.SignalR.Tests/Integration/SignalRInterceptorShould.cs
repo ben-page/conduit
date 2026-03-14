@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
@@ -74,6 +74,6 @@ public class SignalRInterceptorShould
         // Assert
         result.Should().NotBeNull();
         result.Error.Should().NotBeNull();
-        result.Error!.Code.Should().Be("Unauthorized");
+        result.Error.Code.Should().Be("Unauthorized");
     }
 }

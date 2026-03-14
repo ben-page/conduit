@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Dispatch;
 
@@ -28,7 +28,7 @@ public class ConduitRuntimeShould
         var result = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
         result.Should().NotBeNull();
-        result!.Name.Should().Be("orders-api");
+        result.Name.Should().Be("orders-api");
     }
 
     [TestMethod]
