@@ -8,7 +8,7 @@ namespace Conduit.Transport.SignalR;
 
 /// <summary>
 /// SignalR hub that accepts dispatch requests from connected clients (both C# services
-/// and browser clients) and routes them through the <see cref="IDispatchRouter"/>.
+/// and browser clients) and routes them through the <see cref="IWireDispatcher"/>.
 /// Registered <see cref="IDispatchInterceptor"/> instances are chained before the router.
 /// </summary>
 public class ConduitHub : Hub
@@ -27,11 +27,11 @@ public class ConduitHub : Hub
         var services = this.Context.GetHttpContext()!.RequestServices;
         var envelope = new DispatchEnvelope(type, payload);
         var interceptors = services.GetServices<IDispatchInterceptor>();
-        var router = services.GetRequiredService<IDispatchRouter>();
+        var wireDispatcher = services.GetRequiredService<IWireDispatcher>();
         var logger = services.GetRequiredService<ILogger<ConduitHub>>();
 
         return await DispatchPipeline.ExecuteRequestAsync(
-            envelope, interceptors, router, logger, cancellationToken);
+            envelope, interceptors, wireDispatcher, logger, cancellationToken);
     }
 
     /// <summary>
@@ -48,10 +48,10 @@ public class ConduitHub : Hub
         var services = this.Context.GetHttpContext()!.RequestServices;
         var envelope = new DispatchEnvelope(type, payload);
         var interceptors = services.GetServices<IDispatchInterceptor>();
-        var router = services.GetRequiredService<IDispatchRouter>();
+        var wireDispatcher = services.GetRequiredService<IWireDispatcher>();
         var logger = services.GetRequiredService<ILogger<ConduitHub>>();
 
         await DispatchPipeline.ExecuteEventAsync(
-            envelope, interceptors, router, logger, cancellationToken);
+            envelope, interceptors, wireDispatcher, logger, cancellationToken);
     }
 }

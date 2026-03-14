@@ -3,7 +3,7 @@ using Conduit.Dispatch;
 
 namespace Conduit.Tests.Support;
 
-public class StubRouter : IDispatchRouter
+public class StubRouter : IWireDispatcher
 {
     public object? RequestResult { get; set; }
     public Exception? RequestException { get; set; }

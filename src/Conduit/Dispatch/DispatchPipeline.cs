@@ -25,17 +25,17 @@ public static partial class DispatchPipeline
     public static async Task<DispatchResult<object>> ExecuteRequestAsync(
         DispatchEnvelope envelope,
         IEnumerable<IDispatchInterceptor> interceptors,
-        IDispatchRouter router,
+        IWireDispatcher wireDispatcher,
         ILogger logger,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(interceptors);
-        ArgumentNullException.ThrowIfNull(router);
+        ArgumentNullException.ThrowIfNull(wireDispatcher);
         ArgumentNullException.ThrowIfNull(logger);
 
         Func<Task<object?>> chain = () =>
-            router.DispatchRequestAsync(envelope.Type, envelope.Payload, cancellationToken);
+            wireDispatcher.DispatchRequestAsync(envelope.Type, envelope.Payload, cancellationToken);
 
         foreach (var interceptor in interceptors.Reverse())
         {
@@ -69,17 +69,17 @@ public static partial class DispatchPipeline
     public static async Task ExecuteEventAsync(
         DispatchEnvelope envelope,
         IEnumerable<IDispatchInterceptor> interceptors,
-        IDispatchRouter router,
+        IWireDispatcher wireDispatcher,
         ILogger logger,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(interceptors);
-        ArgumentNullException.ThrowIfNull(router);
+        ArgumentNullException.ThrowIfNull(wireDispatcher);
         ArgumentNullException.ThrowIfNull(logger);
 
         Func<Task> chain = () =>
-            router.DispatchEventAsync(envelope.Type, envelope.Payload, cancellationToken);
+            wireDispatcher.DispatchEventAsync(envelope.Type, envelope.Payload, cancellationToken);
 
         foreach (var interceptor in interceptors.Reverse())
         {

@@ -28,7 +28,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes, `TypeFilterBuilder` (`src/Conduit/Configuration/`)
-- `Conduit.Dispatch` — pipeline + wire types: `DispatchPipeline`, `DispatchEnvelope`, `DispatchResult`, `IDispatchRouter`, `IDispatchInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions` (`src/Conduit/Dispatch/`)
+- `Conduit.Dispatch` — pipeline + wire types: `DispatchPipeline`, `DispatchEnvelope`, `DispatchResult`, `IWireDispatcher`, `IDispatchInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions` (`src/Conduit/Dispatch/`)
 - `Conduit.Routing` — transport + resolution: `IConduitTransport`, `IRouteResolver`, `DefaultRouteResolver` (`src/Conduit/Routing/`)
 - `Conduit.Messages`, `Conduit.Handlers`, `Conduit.Pipelines`, `Conduit.Attributes`, `Conduit.Exceptions` — core contracts
 
@@ -38,10 +38,10 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 - **Endpoint-based routing**: Messages route to named endpoints via `ConduitBuilder.AddEndpoint()`. Unrouted messages dispatch locally (default). Endpoints define HOW to reach a destination (transport + URI). Routes (attributes or builder) define WHERE types go.
 - **DispatchPipeline**: Centralized interceptor chaining + error handling in `Conduit.Dispatch.DispatchPipeline`. Transport packages call `ExecuteRequestAsync` / `ExecuteEventAsync` instead of duplicating pipeline logic.
 - **TypeFilterInterceptor**: Access control interceptor in core that rejects dispatch requests for types not in the allowed set. Configured via `AddConduitTypeFilter(filter => filter.AllowType(...))`. Transport-agnostic — works with any inbound path.
-- `IDispatchRouter` interface (in `Conduit.Dispatch`) — generated mediator implements this. Methods: `DispatchRequestAsync` (commands/queries) and `DispatchEventAsync` (events). Deserializes wire payloads and calls local handlers.
+- `IWireDispatcher` interface (in `Conduit.Dispatch`) — generated mediator implements this. Methods: `DispatchRequestAsync` (commands/queries) and `DispatchEventAsync` (events). Deserializes wire payloads and calls local handlers.
 - `IDispatchInterceptor` interface (in `Conduit.Dispatch`) wraps dispatch calls with a middleware pipeline. Chained by `DispatchPipeline` in reverse registration order.
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendEventAsync` (fire-and-forget events), both envelope-based.
-- Generated `ConduitMediator` implements `IMediator` + `IDispatchRouter`, checks route table before local dispatch.
+- Generated `ConduitMediator` implements `IMediator` + `IWireDispatcher`, checks route table before local dispatch.
 - **Pipeline behaviors from DI**: `IPipelineBehavior<T,R>` and `IEventPipelineBehavior<T>` are resolved from DI at runtime and chained around handlers/listeners. Register via `services.AddSingleton<IPipelineBehavior<TCommand, TResult>>(...)`.
 - **Event echo prevention**: `PublishAsync` dispatches to local listeners AND broadcasts to transports. `PublishLocalAsync` (private) dispatches only to local listeners. Wire-inbound events use `PublishLocalAsync` to prevent re-broadcast loops.
 - **Wire discriminator**: `FullTypeName` (e.g. `"Orders.Commands.CreateOrder"`) is used as the type discriminator in `DispatchEnvelope` on the wire.
