@@ -37,7 +37,11 @@
 
             connection.invoke("Dispatch", "Conduit.Sample.OrderService.Commands.CreateItemCommand", { Name: name })
                 .then(function (result) {
-                    resultDiv.textContent = JSON.stringify(result, null, 2);
+                    if (result.error) {
+                        resultDiv.textContent = "Error: [" + result.error.code + "] " + result.error.message;
+                    } else {
+                        resultDiv.textContent = "Created item: " + result.data;
+                    }
                 })
                 .catch(function (err) {
                     resultDiv.textContent = "Error: " + err;
