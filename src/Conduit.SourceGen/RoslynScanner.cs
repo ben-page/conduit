@@ -15,7 +15,6 @@ public static class RoslynScanner
     private const string CommandWithResultInterfaceName = "Conduit.Messages.ICommand<TResult>";
     private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
-    private const string NotDispatchableAttributeName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeName = "Conduit.Attributes.DispatchableNamespaceAttribute";
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
     private const string AuthorizeAttributeName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
@@ -140,11 +139,6 @@ public static class RoslynScanner
 
     private static bool ShouldInclude(INamedTypeSymbol typeSymbol)
     {
-        if (HasAttribute(typeSymbol, NotDispatchableAttributeName))
-        {
-            return false;
-        }
-
         // Skip types that aren't accessible to generated code (private nested types, etc.)
         if (typeSymbol.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected)
         {
