@@ -7,7 +7,7 @@ public static class DiagnosticDescriptors
     public static readonly DiagnosticDescriptor NoHandler = new(
         "CONDUIT001", "No handler found",
         "No handler found for {0}, create a class implementing {1}",
-        "Conduit", DiagnosticSeverity.Error, true);
+        "Conduit", DiagnosticSeverity.Warning, true);
 
     public static readonly DiagnosticDescriptor MultipleHandlers = new(
         "CONDUIT002", "Multiple handlers found",
