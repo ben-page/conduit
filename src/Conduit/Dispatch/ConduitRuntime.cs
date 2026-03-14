@@ -15,6 +15,17 @@ namespace Conduit.Dispatch;
 /// </summary>
 public static class ConduitRuntime
 {
+    private static readonly Action<ILogger, string, Exception?> LogDispatchError =
+        LoggerMessage.Define<string>(LogLevel.Error, new EventId(1, "DispatchError"),
+            "Unhandled exception dispatching '{Type}'");
+
+    private static readonly Action<ILogger, string, Exception?> LogPublishError =
+        LoggerMessage.Define<string>(LogLevel.Error, new EventId(2, "PublishError"),
+            "Unhandled exception publishing event '{Type}'");
+
+    private static readonly Action<ILogger, Exception?> LogListenerError =
+        LoggerMessage.Define(LogLevel.Error, new EventId(3, "ListenerError"),
+            "Event listener or transport failed");
     /// <summary>
     /// Resolves a route for the given message type. Returns the matched endpoint,
     /// or null for local dispatch. Throws if the matched endpoint is missing or
@@ -134,9 +145,7 @@ public static class ConduitRuntime
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-#pragma warning disable CA1848
-            logger.LogError(ex, "Unhandled exception dispatching '{Type}'", envelope.Type);
-#pragma warning restore CA1848
+            LogDispatchError(logger, envelope.Type, ex);
             return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
         }
     }
@@ -171,9 +180,7 @@ public static class ConduitRuntime
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-#pragma warning disable CA1848
-            logger.LogError(ex, "Unhandled exception publishing event '{Type}'", envelope.Type);
-#pragma warning restore CA1848
+            LogPublishError(logger, envelope.Type, ex);
         }
     }
 
@@ -213,9 +220,7 @@ public static class ConduitRuntime
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-#pragma warning disable CA1848
-            logger.LogError(ex, "Event listener or transport failed");
-#pragma warning restore CA1848
+            LogListenerError(logger, ex);
         }
     }
 }
