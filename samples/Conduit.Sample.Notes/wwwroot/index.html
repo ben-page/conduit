@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conduit Notes Sample</title>
+    <style>
+        body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 0 20px; }
+        input { padding: 8px; width: 300px; }
+        button { padding: 8px 16px; cursor: pointer; }
+        ul { list-style: none; padding: 0; }
+        li { padding: 8px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+        li button { padding: 2px 8px; font-size: 0.85em; }
+        #status { font-size: 0.85em; color: #666; }
+        #events { margin-top: 24px; font-size: 0.85em; color: #888; max-height: 150px; overflow-y: auto; }
+        .error { color: #c00; }
+    </style>
+</head>
+<body>
+    <h1>Notes</h1>
+    <p id="status">Connecting...</p>
+
+    <div>
+        <input id="noteText" placeholder="Write a note..." />
+        <button onclick="createNote()">Add</button>
+    </div>
+
+    <ul id="noteList"></ul>
+
+    <div id="events">
+        <strong>Events:</strong>
+        <div id="eventLog"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+    <script>
+        var connection = new signalR.HubConnectionBuilder()
+            .withUrl("/hub")
+            .build();
+
+        connection.start().then(function () {
+            document.getElementById("status").textContent = "Connected";
+            loadNotes();
+        }).catch(function (err) {
+            document.getElementById("status").textContent = "Connection failed: " + err;
+            document.getElementById("status").className = "error";
+        });
+
+        // Listen for server-pushed events
+        connection.on("Conduit.Sample.Notes.Events.NoteCreatedEvent", function (payload) {
+            logEvent("NoteCreated: " + payload.text);
+            loadNotes();
+        });
+
+        connection.on("Conduit.Sample.Notes.Events.NoteDeletedEvent", function (payload) {
+            logEvent("NoteDeleted: " + payload.id);
+            loadNotes();
+        });
+
+        function dispatch(type, payload) {
+            return connection.invoke("Dispatch", type, payload)
+                .then(function (result) {
+                    if (result.error) {
+                        alert("[" + result.error.code + "] " + result.error.message);
+                        return null;
+                    }
+                    return result.data;
+                });
+        }
+
+        function createNote() {
+            var input = document.getElementById("noteText");
+            var text = input.value.trim();
+            if (!text) return;
+            input.value = "";
+            dispatch("Conduit.Sample.Notes.Commands.CreateNoteCommand", { Text: text });
+        }
+
+        function deleteNote(id) {
+            dispatch("Conduit.Sample.Notes.Commands.DeleteNoteCommand", { Id: id });
+        }
+
+        function loadNotes() {
+            dispatch("Conduit.Sample.Notes.Queries.GetNotesQuery", {})
+                .then(function (notes) {
+                    if (!notes) return;
+                    var list = document.getElementById("noteList");
+                    list.textContent = "";
+                    notes.forEach(function (note) {
+                        var li = document.createElement("li");
+                        var span = document.createElement("span");
+                        span.textContent = note.text;
+                        var btn = document.createElement("button");
+                        btn.textContent = "delete";
+                        btn.addEventListener("click", function () { deleteNote(note.id); });
+                        li.appendChild(span);
+                        li.appendChild(btn);
+                        list.appendChild(li);
+                    });
+                });
+        }
+
+        function logEvent(message) {
+            var log = document.getElementById("eventLog");
+            var div = document.createElement("div");
+            div.textContent = new Date().toLocaleTimeString() + " " + message;
+            log.prepend(div);
+        }
+
+        document.getElementById("noteText").addEventListener("keydown", function (e) {
+            if (e.key === "Enter") createNote();
+        });
+    </script>
+</body>
+</html>

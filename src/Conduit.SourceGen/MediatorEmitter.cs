@@ -9,7 +9,7 @@ public static class MediatorEmitter
 {
     public static string Emit(
         IReadOnlyList<DispatchableTypeInfo> types,
-        IReadOnlyList<HandlerInfo> _,
+        IReadOnlyList<HandlerInfo> handlers,
         IReadOnlyList<ListenerGroup> listenerGroups)
     {
         if (listenerGroups is null)
@@ -17,6 +17,7 @@ public static class MediatorEmitter
             throw new System.ArgumentNullException(nameof(listenerGroups));
         }
 
+        var handledTypes = new HashSet<string>(handlers.Select(h => h.MessageFullTypeName));
         var commands = types.Where(t => t.Kind == DispatchableKind.Command).ToList();
         var voidCommands = types.Where(t => t.Kind == DispatchableKind.VoidCommand).ToList();
         var queries = types.Where(t => t.Kind == DispatchableKind.Query).ToList();
@@ -56,6 +57,7 @@ public static class MediatorEmitter
         // Strongly-typed overloads for commands with result
         foreach (var cmd in commands)
         {
+            var hasHandler = handledTypes.Contains(cmd.FullTypeName);
             sb.AppendLine($"    public async Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
@@ -70,7 +72,16 @@ public static class MediatorEmitter
             sb.AppendLine($"                ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je)!");
             sb.AppendLine($"                : ({cmd.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
-            sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+
+            if (hasHandler)
+            {
+                sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+            }
+            else
+            {
+                sb.AppendLine($"        throw new InvalidOperationException(\"No local handler for {cmd.FullTypeName} and no route matched.\");");
+            }
+
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -78,6 +89,7 @@ public static class MediatorEmitter
         // Strongly-typed overloads for void commands
         foreach (var cmd in voidCommands)
         {
+            var hasHandler = handledTypes.Contains(cmd.FullTypeName);
             sb.AppendLine($"    public async Task ExecuteAsync(");
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
@@ -90,7 +102,16 @@ public static class MediatorEmitter
             sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+
+            if (hasHandler)
+            {
+                sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+            }
+            else
+            {
+                sb.AppendLine($"        throw new InvalidOperationException(\"No local handler for {cmd.FullTypeName} and no route matched.\");");
+            }
+
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -98,6 +119,7 @@ public static class MediatorEmitter
         // Strongly-typed overloads for queries
         foreach (var query in queries)
         {
+            var hasHandler = handledTypes.Contains(query.FullTypeName);
             sb.AppendLine($"    public async Task<{query.ResultFullTypeName}> FetchAsync(");
             sb.AppendLine($"        {query.FullTypeName} query,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
@@ -112,7 +134,16 @@ public static class MediatorEmitter
             sb.AppendLine($"                ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je)!");
             sb.AppendLine($"                : ({query.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
-            sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
+
+            if (hasHandler)
+            {
+                sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
+            }
+            else
+            {
+                sb.AppendLine($"        throw new InvalidOperationException(\"No local handler for {query.FullTypeName} and no route matched.\");");
+            }
+
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -255,6 +286,16 @@ public static class MediatorEmitter
         // PublishLocalAsync dispatches only to local listeners (no transport broadcast).
         // Used by DispatchEventAsync for wire-inbound events to prevent echo loops.
         // Uses the unified IPipelineBehavior<TEvent, object> pipeline (same as commands/queries).
+        if (listenerGroups.Count == 0)
+        {
+            sb.AppendLine("    private Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
+            sb.AppendLine("    {");
+            sb.AppendLine("        return Task.CompletedTask;");
+            sb.AppendLine("    }");
+            sb.AppendLine();
+            return;
+        }
+
         sb.AppendLine("    private async Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine("        switch (@event)");

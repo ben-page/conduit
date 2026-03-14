@@ -21,7 +21,7 @@
     <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
-    <NoWarn>$(NoWarn);IDE0005</NoWarn>
+    <NoWarn>$(NoWarn);IDE0005;IDE0130</NoWarn>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
