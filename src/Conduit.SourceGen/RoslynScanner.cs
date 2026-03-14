@@ -15,7 +15,6 @@ public static class RoslynScanner
     private const string CommandWithResultInterfaceName = "Conduit.Messages.ICommand<TResult>";
     private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
-    private const string DispatchableAttributeName = "Conduit.Attributes.DispatchableAttribute";
     private const string NotDispatchableAttributeName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeName = "Conduit.Attributes.DispatchableNamespaceAttribute";
     private const string AuthorizeAttributeName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
@@ -50,22 +49,19 @@ public static class RoslynScanner
     }
 
     /// <summary>
-    /// Scans the compilation for all dispatchable types matching the declared namespaces
-    /// or annotated with <c>[Dispatchable]</c>.
+    /// Scans the compilation for all dispatchable types implementing
+    /// <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c>.
+    /// Types marked with <c>[NotDispatchable]</c> are excluded.
     /// </summary>
     /// <param name="compilation">The Roslyn compilation to scan.</param>
-    /// <param name="declaredNamespaces">Optional pre-computed namespaces; retrieved automatically if <see langword="null"/>.</param>
     /// <returns>The discovered dispatchable types.</returns>
-    public static IReadOnlyList<DispatchableTypeInfo> Scan(
-        Compilation compilation,
-        IReadOnlyList<string>? declaredNamespaces = null)
+    public static IReadOnlyList<DispatchableTypeInfo> Scan(Compilation compilation)
     {
         if (compilation is null)
         {
             throw new ArgumentNullException(nameof(compilation));
         }
 
-        declaredNamespaces ??= GetDeclaredNamespaces(compilation);
         var results = new List<DispatchableTypeInfo>();
 
         foreach (var typeSymbol in GetAllNamedTypes(compilation))
@@ -81,7 +77,7 @@ public static class RoslynScanner
                 continue;
             }
 
-            if (!ShouldInclude(typeSymbol, declaredNamespaces))
+            if (!ShouldInclude(typeSymbol))
             {
                 continue;
             }
@@ -140,31 +136,14 @@ public static class RoslynScanner
         return null;
     }
 
-    private static bool ShouldInclude(INamedTypeSymbol typeSymbol, IReadOnlyList<string> declaredNamespaces)
+    private static bool ShouldInclude(INamedTypeSymbol typeSymbol)
     {
-        // [NotDispatchable] always wins
         if (HasAttribute(typeSymbol, NotDispatchableAttributeName))
         {
             return false;
         }
 
-        // [Dispatchable] always includes
-        if (HasAttribute(typeSymbol, DispatchableAttributeName))
-        {
-            return true;
-        }
-
-        // Check if type is in a declared namespace
-        var typeNamespace = typeSymbol.ContainingNamespace.ToDisplayString();
-        foreach (var ns in declaredNamespaces)
-        {
-            if (typeNamespace.StartsWith(ns, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return true;
     }
 
     private static string? GetResultTypeName(INamedTypeSymbol typeSymbol, DispatchableKind kind)

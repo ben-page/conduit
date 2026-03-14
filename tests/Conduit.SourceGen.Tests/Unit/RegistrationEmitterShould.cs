@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.SourceGen.Tests.Support;
 
 namespace Conduit.SourceGen.Tests.Unit;
@@ -10,14 +10,11 @@ public class RegistrationEmitterShould : GeneratorTestBase
     public void EmitHandlerRegistration()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Handlers;
 using Conduit.Messages;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands
 {

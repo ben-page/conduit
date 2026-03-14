@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.SourceGen.Tests.Support;
 
 namespace Conduit.SourceGen.Tests.Unit;
@@ -10,11 +10,8 @@ public class DiagnosticShould : GeneratorTestBase
     public void EmitErrorForCommandWithNoHandler()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
 using System;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands
 {

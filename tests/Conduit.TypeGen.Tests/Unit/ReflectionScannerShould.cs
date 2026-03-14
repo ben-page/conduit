@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Analysis;
 
 namespace Conduit.TypeGen.Tests.Unit;
@@ -51,17 +51,17 @@ public class ReflectionScannerShould
     }
 
     [TestMethod]
-    public void IncludeDispatchableTypeOutsideNamespace()
+    public void FindTypeInAnyNamespace()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestExplicitCommand");
         type.Should().NotBeNull();
     }
 
     [TestMethod]
-    public void ExcludeOrphanTypeWithoutDispatchable()
+    public void FindTypeWithoutExplicitAttribute()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestOrphanCommand");
-        type.Should().BeNull();
+        type.Should().NotBeNull();
     }
 
     [TestMethod]
@@ -76,6 +76,6 @@ public class ReflectionScannerShould
     public void GetDeclaredNamespacesFromAssemblyAttribute()
     {
         var namespaces = ReflectionScanner.GetDeclaredNamespaces(typeof(ReflectionScannerShould).Assembly);
-        namespaces.Should().Contain("Conduit.TypeGen.Tests.Sample");
+        namespaces.Should().HaveCount(0);
     }
 }

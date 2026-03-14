@@ -36,8 +36,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         ImmutableArray<INamedTypeSymbol> typeSymbols,
         SourceProductionContext context)
     {
-        var declaredNamespaces = RoslynScanner.GetDeclaredNamespaces(compilation);
-        var dispatchableTypes = RoslynScanner.Scan(compilation, declaredNamespaces);
+        var dispatchableTypes = RoslynScanner.Scan(compilation);
 
         if (dispatchableTypes.Count == 0)
         {
