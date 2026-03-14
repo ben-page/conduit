@@ -225,4 +225,20 @@ public static class ConduitRuntime
             LogListenerError(logger, ex);
         }
     }
+
+    /// <summary>
+    /// Registers core Conduit infrastructure (options). Called by generated code.
+    /// </summary>
+    public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddConduitCore(
+        Microsoft.Extensions.DependencyInjection.IServiceCollection services,
+        Action<ConduitBuilder>? configure = null)
+    {
+        var builder = new ConduitBuilder(services);
+        configure?.Invoke(builder);
+
+        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions
+            .AddSingleton(services, builder.Options);
+
+        return services;
+    }
 }

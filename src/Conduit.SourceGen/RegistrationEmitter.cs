@@ -47,7 +47,7 @@ public static class RegistrationEmitter
         sb.AppendLine($"        System.Action<{EmitConstants.ConduitBuilder}>? configure = null)");
         sb.AppendLine("    {");
         sb.AppendLine("        // Register core infrastructure (options, routing)");
-        sb.AppendLine($"        Conduit.ServiceCollectionExtensions.AddConduitCore(services, configure);");
+        sb.AppendLine($"        {EmitConstants.ConduitRuntime}.AddConduitCore(services, configure);");
         sb.AppendLine();
 
         foreach (var handler in handlerTypeNames)

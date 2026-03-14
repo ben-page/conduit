@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Dispatch;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Tests.Unit;
@@ -12,7 +13,7 @@ public class ServiceRegistrationShould
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddConduitCore();
+        ConduitRuntime.AddConduitCore(services);
         var serviceProvider = services.BuildServiceProvider();
 
         // Act

@@ -10,23 +10,6 @@ namespace Conduit;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers core Conduit infrastructure (options, routing). Called by the
-    /// source-generated <c>AddConduit</c> extension method — not intended for direct use.
-    /// </summary>
-    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    public static IServiceCollection AddConduitCore(
-        this IServiceCollection services,
-        Action<ConduitBuilder>? configure = null)
-    {
-        var builder = new ConduitBuilder(services);
-        configure?.Invoke(builder);
-
-        services.AddSingleton(builder.Options);
-
-        return services;
-    }
-
-    /// <summary>
     /// Adds a type filter interceptor that restricts which message types
     /// external clients are permitted to dispatch.
     /// </summary>
