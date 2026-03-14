@@ -1,0 +1,221 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using Conduit.Configuration;
+using Conduit.Exceptions;
+using Conduit.Messages;
+using Conduit.Pipelines;
+using Microsoft.Extensions.Logging;
+
+namespace Conduit.Dispatch;
+
+/// <summary>
+/// Runtime helpers used by the source-generated mediator. Contains reusable
+/// logic for route resolution, pipeline behavior chaining, interceptor chaining,
+/// and error handling so the generated code stays thin.
+/// </summary>
+public static class ConduitRuntime
+{
+    /// <summary>
+    /// Resolves a route for the given message type. Returns the matched endpoint,
+    /// or null for local dispatch. Throws if the matched endpoint is missing or
+    /// has no transport configured.
+    /// </summary>
+    public static ConduitEndpoint? ResolveRoute(ConduitOptions options, string messageFullTypeName)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(messageFullTypeName);
+
+        foreach (var route in options.Routes)
+        {
+            if (messageFullTypeName.StartsWith(route.Pattern, StringComparison.Ordinal))
+            {
+                if (!options.Endpoints.TryGetValue(route.EndpointName, out var endpoint))
+                {
+                    throw new InvalidOperationException(
+                        $"Route pattern '{route.Pattern}' matched message '{messageFullTypeName}' " +
+                        $"but endpoint '{route.EndpointName}' is not registered. " +
+                        $"Ensure AddEndpoint(\"{route.EndpointName}\", ...) is called in your Conduit configuration.");
+                }
+
+                if (endpoint.Transport is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Endpoint '{route.EndpointName}' has no transport configured. " +
+                        $"Call UseHttp() or UseSignalR(uri) in the endpoint configuration.");
+                }
+
+                return endpoint;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Chains pipeline behaviors around a handler call. Behaviors execute in
+    /// registration order (first registered = outermost wrapper).
+    /// </summary>
+    public static async Task<TResult> ExecuteWithBehaviors<TRequest, TResult>(
+        TRequest request,
+        IPipelineBehavior<TRequest, TResult>[] behaviors,
+        Func<Task<TResult>> handler,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(behaviors);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var next = handler;
+        for (var i = behaviors.Length - 1; i >= 0; i--)
+        {
+            var behavior = behaviors[i];
+            var currentNext = next;
+            next = () => behavior.HandleAsync(request, currentNext, cancellationToken);
+        }
+
+        return await next();
+    }
+
+    /// <summary>
+    /// Chains event pipeline behaviors around a listener call.
+    /// </summary>
+    public static async Task ExecuteWithEventBehaviors<TEvent>(
+        TEvent @event,
+        IEventPipelineBehavior<TEvent>[] behaviors,
+        Func<Task> listener,
+        CancellationToken cancellationToken) where TEvent : IEvent
+    {
+        ArgumentNullException.ThrowIfNull(behaviors);
+        ArgumentNullException.ThrowIfNull(listener);
+
+        var next = listener;
+        for (var i = behaviors.Length - 1; i >= 0; i--)
+        {
+            var behavior = behaviors[i];
+            var currentNext = next;
+            next = () => behavior.HandleAsync(@event, currentNext, cancellationToken);
+        }
+
+        await next();
+    }
+
+    /// <summary>
+    /// Chains interceptors and executes a wire request dispatch.
+    /// Returns DispatchResult with Ok/Fail wrapping.
+    /// </summary>
+    public static async Task<DispatchResult<object>> HandleWireRequest(
+        DispatchEnvelope envelope,
+        IEnumerable<IDispatchInterceptor> interceptors,
+        Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(dispatch);
+
+        Func<Task<object?>> chain = () =>
+            dispatch(envelope.Type, envelope.Payload, cancellationToken);
+
+        foreach (var interceptor in interceptors.Reverse())
+        {
+            var next = chain;
+            chain = () => interceptor.InterceptRequestAsync(envelope, next, cancellationToken);
+        }
+
+        try
+        {
+            var result = await chain();
+            return DispatchResult<object>.Ok(result);
+        }
+        catch (ConduitException ex)
+        {
+            return DispatchResult<object>.Fail(ex.Code, ex.Message);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+#pragma warning disable CA1848
+            logger.LogError(ex, "Unhandled exception dispatching '{Type}'", envelope.Type);
+#pragma warning restore CA1848
+            return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
+        }
+    }
+
+    /// <summary>
+    /// Chains interceptors and executes a wire event dispatch.
+    /// Swallows all exceptions (fire-and-forget).
+    /// </summary>
+    public static async Task HandleWireEvent(
+        DispatchEnvelope envelope,
+        IEnumerable<IDispatchInterceptor> interceptors,
+        Func<string, JsonElement, CancellationToken, Task> dispatch,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        Func<Task> chain = () =>
+            dispatch(envelope.Type, envelope.Payload, cancellationToken);
+
+        foreach (var interceptor in interceptors.Reverse())
+        {
+            var next = chain;
+            chain = () => interceptor.InterceptEventAsync(envelope, next, cancellationToken);
+        }
+
+        try
+        {
+            await chain();
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+#pragma warning disable CA1848
+            logger.LogError(ex, "Unhandled exception publishing event '{Type}'", envelope.Type);
+#pragma warning restore CA1848
+        }
+    }
+
+    /// <summary>
+    /// Wraps a void Task as Task&lt;object&gt; for pipeline behavior compatibility.
+    /// </summary>
+    public static async Task<object> VoidToObject(Func<Task> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        await action();
+        return null!;
+    }
+
+    /// <summary>
+    /// Casts Task&lt;TSource&gt; to Task&lt;TTarget&gt; without allocating.
+    /// Used by generic interface fallback methods.
+    /// </summary>
+    public static Task<TTarget> CastTask<TSource, TTarget>(Task<TSource> task)
+    {
+        return Unsafe.As<Task<TSource>, Task<TTarget>>(ref task);
+    }
+
+    /// <summary>
+    /// Executes an action with error swallowing. Used for listener/transport calls
+    /// where individual failures should not prevent other listeners from executing.
+    /// </summary>
+    public static async Task SafeExecute(Func<Task> action, ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        try
+        {
+            await action();
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+#pragma warning disable CA1848
+            logger.LogError(ex, "Event listener or transport failed");
+#pragma warning restore CA1848
+        }
+    }
+}

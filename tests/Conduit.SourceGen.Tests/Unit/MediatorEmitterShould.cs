@@ -81,12 +81,12 @@ namespace App.Events
         mediatorSource.Should().Contain("\"App.Commands.CreateOrder\"");
         mediatorSource.Should().Contain("\"App.Commands.DeleteOrder\"");
 
-        // SafeExecute
-        mediatorSource.Should().Contain("SafeExecute");
+        // SafeExecute via ConduitRuntime
+        mediatorSource.Should().Contain("ConduitRuntime.SafeExecute");
 
-        // Routing infrastructure
-        mediatorSource.Should().Contain("IRouteResolver routeResolver");
-        mediatorSource.Should().Contain("routeResolver.Resolve(");
+        // Routing infrastructure via ConduitRuntime
+        mediatorSource.Should().Contain("ConduitOptions conduitOptions");
+        mediatorSource.Should().Contain("ConduitRuntime.ResolveRoute(conduitOptions,");
         mediatorSource.Should().Contain("endpoint.Transport.SendRequestAsync");
 
         // Wire event dispatch (private, called by HandleWireEventAsync)

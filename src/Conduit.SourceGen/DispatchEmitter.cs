@@ -27,6 +27,7 @@ public static class DispatchEmitter
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+        sb.AppendLine("using Conduit.Dispatch;");
         sb.AppendLine();
         sb.AppendLine("namespace Conduit.Generated;");
         sb.AppendLine();
@@ -59,12 +60,6 @@ public static class DispatchEmitter
             }
         }
 
-        sb.AppendLine("    private static async Task<object> VoidToObject(Func<Task> action)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        await action();");
-        sb.AppendLine("        return null!;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
         sb.AppendLine("}");
         return sb.ToString();
     }
@@ -152,30 +147,22 @@ public static class DispatchEmitter
         // Build the innermost delegate (the handler call)
         if (isVoid)
         {
-            sb.AppendLine($"        Func<Task<object>> next = () => VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
+            sb.AppendLine($"        Func<Task<object>> handlerCall = () => ConduitRuntime.VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
         }
         else
         {
-            sb.AppendLine($"        Func<Task<{resultType}>> next = () => handler.HandleAsync({requestParamName}, cancellationToken);");
+            sb.AppendLine($"        Func<Task<{resultType}>> handlerCall = () => handler.HandleAsync({requestParamName}, cancellationToken);");
         }
 
-        sb.AppendLine();
-        sb.AppendLine("        // Chain behaviors in reverse order (last registered wraps outermost)");
-        sb.AppendLine("        for (var i = behaviors.Length - 1; i >= 0; i--)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            var behavior = behaviors[i];");
-        sb.AppendLine("            var currentNext = next;");
-        sb.AppendLine($"            next = () => behavior.HandleAsync({requestParamName}, currentNext, cancellationToken);");
-        sb.AppendLine("        }");
         sb.AppendLine();
 
         if (isVoid)
         {
-            sb.AppendLine("        await next();");
+            sb.AppendLine($"        await ConduitRuntime.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
         }
         else
         {
-            sb.AppendLine("        return await next();");
+            sb.AppendLine($"        return await ConduitRuntime.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
         }
     }
 }
