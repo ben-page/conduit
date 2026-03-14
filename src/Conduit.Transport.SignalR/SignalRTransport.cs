@@ -16,6 +16,8 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
 {
     private readonly IHubContext<ConduitHub>? hubContext;
     private readonly HubConnection? hubConnection;
+    private readonly SemaphoreSlim connectLock = new(1, 1);
+    private bool connected;
 
     /// <summary>
     /// Creates a server-mode transport that pushes events to connected SignalR clients.
@@ -47,6 +49,8 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
                 "Use client-mode transport with a HubConnection for request/response.");
         }
 
+        await this.EnsureConnectedAsync(cancellationToken);
+
         var result = await this.hubConnection.InvokeAsync<DispatchResult<JsonElement?>>(
             "Dispatch", envelope.Type, envelope.Payload, cancellationToken);
 
@@ -60,21 +64,48 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public async Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
         if (this.hubContext is not null)
         {
-            return this.hubContext.Clients.All.SendAsync(envelope.Type, envelope.Payload, cancellationToken);
+            await this.hubContext.Clients.All.SendAsync(envelope.Type, envelope.Payload, cancellationToken);
+            return;
         }
 
         if (this.hubConnection is not null)
         {
-            return this.hubConnection.InvokeAsync("Publish", envelope.Type, envelope.Payload, cancellationToken);
+            await this.EnsureConnectedAsync(cancellationToken);
+            await this.hubConnection.InvokeAsync("Publish", envelope.Type, envelope.Payload, cancellationToken);
+            return;
         }
 
         throw new InvalidOperationException("Transport not configured.");
+    }
+
+    private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
+    {
+        if (this.connected)
+        {
+            return;
+        }
+
+        await this.connectLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (this.connected)
+            {
+                return;
+            }
+
+            await this.hubConnection!.StartAsync(cancellationToken);
+            this.connected = true;
+        }
+        finally
+        {
+            this.connectLock.Release();
+        }
     }
 
     /// <inheritdoc />
@@ -84,6 +115,8 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         {
             await this.hubConnection.DisposeAsync();
         }
+
+        this.connectLock.Dispose();
 
         GC.SuppressFinalize(this);
     }
