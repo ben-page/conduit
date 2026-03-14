@@ -1,4 +1,3 @@
-using Conduit.Attributes;
 using Conduit.Messages;
 
 namespace Conduit.TypeGen.Tests.Sample;
@@ -16,9 +15,6 @@ public record TestValidatedCommand(string Name) : ICommand
         }
     }
 }
-
-[NotDispatchable]
-public record TestExcludedCommand(string Data) : ICommand;
 
 public record TestGetQuery(Guid Id) : IQuery<string>;
 

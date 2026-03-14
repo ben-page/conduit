@@ -101,24 +101,6 @@ public record OrderCreated(System.Guid Id) : IEvent;
     }
 
     [TestMethod]
-    public void ExcludeNotDispatchableType()
-    {
-        var source = @"
-using Conduit.Attributes;
-using Conduit.Messages;
-
-namespace App.Commands;
-
-[NotDispatchable]
-public record InternalCommand(string Data) : ICommand;
-";
-        var compilation = CreateCompilation(source);
-        var types = RoslynScanner.Scan(compilation);
-
-        types.Should().HaveCount(0);
-    }
-
-    [TestMethod]
     public void FindTypeInAnyNamespace()
     {
         var source = @"

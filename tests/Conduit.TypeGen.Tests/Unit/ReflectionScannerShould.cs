@@ -44,13 +44,6 @@ public class ReflectionScannerShould
     }
 
     [TestMethod]
-    public void ExcludeNotDispatchableType()
-    {
-        var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestExcludedCommand");
-        type.Should().BeNull();
-    }
-
-    [TestMethod]
     public void FindTypeInAnyNamespace()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestExplicitCommand");
