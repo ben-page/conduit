@@ -6,4 +6,5 @@ public sealed class ListenerGroup
 {
     public required string EventFullTypeName { get; init; }
     public required IReadOnlyList<string> ListenerFullTypeNames { get; init; }
+    public bool IsLocalOnly { get; init; }
 }

@@ -17,6 +17,7 @@ public static class RoslynScanner
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string NotDispatchableAttributeName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeName = "Conduit.Attributes.DispatchableNamespaceAttribute";
+    private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
     private const string AuthorizeAttributeName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
     private const string AllowAnonymousAttributeName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
 
@@ -96,6 +97,7 @@ public static class RoslynScanner
                 HasValidateOverride = HasValidateOverride(typeSymbol),
                 HasAuthorizeAttribute = HasAttribute(typeSymbol, AuthorizeAttributeName),
                 HasAllowAnonymousAttribute = HasAttribute(typeSymbol, AllowAnonymousAttributeName),
+                IsLocalOnly = HasAttribute(typeSymbol, LocalOnlyAttributeName),
             });
         }
 

@@ -32,4 +32,7 @@ public sealed class DispatchableTypeInfo
 
     /// <summary>Whether the type has an <c>[AllowAnonymous]</c> attribute.</summary>
     public required bool HasAllowAnonymousAttribute { get; init; }
+
+    /// <summary>Whether the type has a <c>[LocalOnly]</c> attribute (events only).</summary>
+    public bool IsLocalOnly { get; init; }
 }
