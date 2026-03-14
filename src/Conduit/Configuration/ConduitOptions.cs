@@ -17,4 +17,12 @@ public sealed class ConduitOptions
     /// Evaluated in order; first match wins.
     /// </summary>
     public List<ConduitRoute> Routes { get; } = [];
+
+    /// <summary>
+    /// Open generic pipeline behavior types in registration order
+    /// (first = outermost). Each type must implement
+    /// <c>IPipelineBehavior&lt;,&gt;</c>. Applied to commands, queries,
+    /// and events uniformly.
+    /// </summary>
+    public List<Type> PipelineTypes { get; } = [];
 }

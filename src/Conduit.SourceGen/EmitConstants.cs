@@ -28,9 +28,8 @@ internal static class EmitConstants
     internal const string ConduitOptions = "Conduit.Configuration.ConduitOptions";
     internal const string ConduitRoute = "Conduit.Configuration.ConduitRoute";
 
-    // Middleware types (used in GetServices<T> calls)
+    // Middleware types
     internal const string IPipelineBehavior = "Conduit.Middleware.IPipelineBehavior";
-    internal const string IEventPipelineBehavior = "Conduit.Middleware.IEventPipelineBehavior";
     internal const string IWireInterceptor = "Conduit.Middleware.IWireInterceptor";
 
     // Message interface casts (for Validate() calls)

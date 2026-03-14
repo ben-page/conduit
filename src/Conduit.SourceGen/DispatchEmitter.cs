@@ -23,10 +23,10 @@ public static class DispatchEmitter
         sb.AppendLine("#nullable enable");
         sb.AppendLine();
         sb.AppendLine("using System;");
-        sb.AppendLine("using System.Linq;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+        sb.AppendLine($"using {EmitConstants.NamespaceConfiguration};");
         sb.AppendLine($"using {EmitConstants.NamespaceDispatch};");
         sb.AppendLine();
         sb.AppendLine($"namespace {EmitConstants.NamespaceGenerated};");
@@ -73,6 +73,7 @@ public static class DispatchEmitter
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Execute(");
         sb.AppendLine($"        {type.FullTypeName} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand}<{type.ResultFullTypeName}>)command).Validate();");
@@ -90,6 +91,7 @@ public static class DispatchEmitter
         sb.AppendLine($"    public static async Task Execute(");
         sb.AppendLine($"        {type.FullTypeName} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
@@ -100,9 +102,10 @@ public static class DispatchEmitter
         sb.AppendLine($"    public static async Task<object?> ExecuteVoid(");
         sb.AppendLine($"        {type.FullTypeName} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        await Execute(command, serviceProvider, cancellationToken);");
+        sb.AppendLine($"        await Execute(command, serviceProvider, conduitOptions, cancellationToken);");
         sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -117,6 +120,7 @@ public static class DispatchEmitter
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Fetch(");
         sb.AppendLine($"        {type.FullTypeName} query,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.IQuery}<{type.ResultFullTypeName}>)query).Validate();");
@@ -136,9 +140,7 @@ public static class DispatchEmitter
         var resultType = isVoid ? "object" : type.ResultFullTypeName;
 
         sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
-        sb.AppendLine($"        var behaviors = serviceProvider");
-        sb.AppendLine($"            .GetServices<{EmitConstants.IPipelineBehavior}<{type.FullTypeName}, {resultType}>>()");
-        sb.AppendLine($"            .ToArray();");
+        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, {resultType}>(conduitOptions, serviceProvider);");
         sb.AppendLine();
 
         if (isVoid)

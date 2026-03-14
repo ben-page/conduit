@@ -3,8 +3,8 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Conduit.Configuration;
 using Conduit.Exceptions;
-using Conduit.Messages;
 using Conduit.Middleware;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Conduit.Dispatch;
@@ -93,6 +93,35 @@ public static class ConduitRuntime
     }
 
     /// <summary>
+    /// Resolves pipeline behaviors in the order declared via
+    /// <see cref="ConduitBuilder.AddPipeline"/>. Constructs closed generics
+    /// from the ordered type list and resolves each from DI.
+    /// Used for commands, queries, and events uniformly.
+    /// </summary>
+    public static IPipelineBehavior<TRequest, TResult>[] ResolvePipelines<TRequest, TResult>(
+        ConduitOptions options,
+        IServiceProvider serviceProvider)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(serviceProvider);
+
+        if (options.PipelineTypes.Count == 0)
+        {
+            return [];
+        }
+
+        var behaviors = new IPipelineBehavior<TRequest, TResult>[options.PipelineTypes.Count];
+        for (var i = 0; i < options.PipelineTypes.Count; i++)
+        {
+            var closedType = options.PipelineTypes[i]
+                .MakeGenericType(typeof(TRequest), typeof(TResult));
+            behaviors[i] = (IPipelineBehavior<TRequest, TResult>)serviceProvider.GetRequiredService(closedType);
+        }
+
+        return behaviors;
+    }
+
+    /// <summary>
     /// Chains pipeline behaviors around a handler call. Behaviors execute in
     /// registration order (first registered = outermost wrapper).
     /// </summary>
@@ -114,29 +143,6 @@ public static class ConduitRuntime
         }
 
         return await next();
-    }
-
-    /// <summary>
-    /// Chains event pipeline behaviors around a listener call.
-    /// </summary>
-    public static async Task ExecuteWithEventBehaviors<TEvent>(
-        TEvent @event,
-        IEventPipelineBehavior<TEvent>[] behaviors,
-        Func<Task> listener,
-        CancellationToken cancellationToken) where TEvent : IEvent
-    {
-        ArgumentNullException.ThrowIfNull(behaviors);
-        ArgumentNullException.ThrowIfNull(listener);
-
-        var next = listener;
-        for (var i = behaviors.Length - 1; i >= 0; i--)
-        {
-            var behavior = behaviors[i];
-            var currentNext = next;
-            next = () => behavior.HandleAsync(@event, currentNext, cancellationToken);
-        }
-
-        await next();
     }
 
     /// <summary>

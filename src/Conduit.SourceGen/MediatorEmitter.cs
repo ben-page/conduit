@@ -68,7 +68,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je)!");
             sb.AppendLine($"                : ({cmd.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
-            sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
+            sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -88,7 +88,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);");
+            sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -110,7 +110,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je)!");
             sb.AppendLine($"                : ({query.ResultFullTypeName})result!;");
             sb.AppendLine("        }");
-            sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, cancellationToken);");
+            sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -227,7 +227,7 @@ public static class MediatorEmitter
 
         // PublishLocalAsync dispatches only to local listeners (no transport broadcast).
         // Used by DispatchEventAsync for wire-inbound events to prevent echo loops.
-        // Resolves IEventPipelineBehavior<TEvent> from DI and chains them before listeners.
+        // Uses the unified IPipelineBehavior<TEvent, object> pipeline (same as commands/queries).
         sb.AppendLine("    private async Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine("        switch (@event)");
@@ -238,8 +238,8 @@ public static class MediatorEmitter
             sb.AppendLine($"            case {group.EventFullTypeName} e:");
             sb.AppendLine($"            {{");
 
-            // Build the innermost delegate: all listeners called in sequence
-            sb.AppendLine($"                Func<Task> listenerChain = async () =>");
+            // Build the innermost delegate: all listeners called in sequence, wrapped as Func<Task<object>>
+            sb.AppendLine($"                Func<Task<object>> listenerChain = async () =>");
             sb.AppendLine($"                {{");
             foreach (var listener in group.ListenerFullTypeNames)
             {
@@ -248,14 +248,13 @@ public static class MediatorEmitter
                 sb.AppendLine($"                            .HandleAsync(e, cancellationToken), logger);");
             }
 
+            sb.AppendLine($"                    return {EmitConstants.Unit}.Value;");
             sb.AppendLine($"                }};");
             sb.AppendLine();
 
-            // Wrap with event pipeline behaviors from DI via ConduitRuntime
-            sb.AppendLine($"                var eventBehaviors = serviceProvider");
-            sb.AppendLine($"                    .GetServices<{EmitConstants.IEventPipelineBehavior}<{group.EventFullTypeName}>>()");
-            sb.AppendLine($"                    .ToArray();");
-            sb.AppendLine($"                await ConduitRuntime.ExecuteWithEventBehaviors(e, eventBehaviors, listenerChain, cancellationToken);");
+            // Wrap with unified pipeline behaviors via ConduitRuntime
+            sb.AppendLine($"                var behaviors = ConduitRuntime.ResolvePipelines<{group.EventFullTypeName}, object>(conduitOptions, serviceProvider);");
+            sb.AppendLine($"                await ConduitRuntime.ExecuteWithBehaviors(e, behaviors, listenerChain, cancellationToken);");
 
             sb.AppendLine("                break;");
             sb.AppendLine($"            }}");
@@ -284,6 +283,7 @@ public static class MediatorEmitter
             sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
             sb.AppendLine($"                serviceProvider,");
+            sb.AppendLine($"                conduitOptions,");
             sb.AppendLine($"                cancellationToken),");
         }
 
@@ -292,6 +292,7 @@ public static class MediatorEmitter
             sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.ExecuteVoid(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
             sb.AppendLine($"                serviceProvider,");
+            sb.AppendLine($"                conduitOptions,");
             sb.AppendLine($"                cancellationToken),");
         }
 
@@ -300,6 +301,7 @@ public static class MediatorEmitter
             sb.AppendLine($"            \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{query.FullTypeName}>(payload)!,");
             sb.AppendLine($"                serviceProvider,");
+            sb.AppendLine($"                conduitOptions,");
             sb.AppendLine($"                cancellationToken),");
         }
 
