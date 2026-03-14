@@ -18,4 +18,18 @@ public class HttpTransportTests
 
         await action.Should().ThrowExactlyAsync<NotSupportedException>();
     }
+
+    [TestMethod]
+    public async Task SendRequestAsync_NullEnvelope_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var httpClient = new HttpClient();
+        var transport = new HttpTransport(httpClient);
+
+        // Act
+        var action = () => transport.SendRequestAsync(null!, CancellationToken.None);
+
+        // Assert
+        await action.Should().ThrowExactlyAsync<ArgumentNullException>();
+    }
 }

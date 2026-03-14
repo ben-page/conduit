@@ -1,4 +1,6 @@
-﻿namespace Conduit.Dispatch;
+﻿using System.Text.Json.Serialization;
+
+namespace Conduit.Dispatch;
 
 /// <summary>
 /// The result of a dispatch operation, containing either the handler result
@@ -7,6 +9,7 @@
 /// <typeparam name="T">The type of the successful result.</typeparam>
 public sealed record DispatchResult<T>
 {
+    [JsonConstructor]
     private DispatchResult() { }
 
     /// <summary>
