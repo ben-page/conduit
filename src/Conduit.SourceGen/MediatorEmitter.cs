@@ -313,7 +313,17 @@ public static class MediatorEmitter
         sb.AppendLine("        string type,");
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
-        sb.AppendLine("        => type switch");
+        sb.AppendLine("    {");
+        sb.AppendLine("        // Forward to transport if the type matches a route (handles types not known locally)");
+        sb.AppendLine("        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
+        sb.AppendLine("        if (endpoint?.Transport != null)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var result = await endpoint.Transport.SendRequestAsync(");
+        sb.AppendLine("                new DispatchEnvelope(type, payload), cancellationToken);");
+        sb.AppendLine("            return result;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        return type switch");
         sb.AppendLine("        {");
 
         foreach (var cmd in commands)
@@ -345,6 +355,7 @@ public static class MediatorEmitter
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown dispatch type: {type}\")");
         sb.AppendLine("        };");
+        sb.AppendLine("    }");
         sb.AppendLine();
     }
 

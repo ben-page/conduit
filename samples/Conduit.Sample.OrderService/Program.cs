@@ -21,6 +21,8 @@ public partial class Program
                 filter.AllowType("Conduit.Sample.OrderService.Commands.CreateItemCommand");
                 filter.AllowType("Conduit.Sample.OrderService.Commands.DeleteItemCommand");
                 filter.AllowType("Conduit.Sample.OrderService.Queries.GetItemQuery");
+                filter.AllowType("Conduit.Sample.InventoryService.Commands.ReserveInventoryCommand");
+                filter.AllowType("Conduit.Sample.InventoryService.Queries.CheckStockQuery");
             });
         });
         builder.Services.AddConduitSignalR();
