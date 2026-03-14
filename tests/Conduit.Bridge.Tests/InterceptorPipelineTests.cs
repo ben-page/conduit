@@ -68,7 +68,7 @@ public class InterceptorPipelineTests
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
-            ((int)response.StatusCode).Should().Be(500);
+            ((int)response.StatusCode).Should().Be(401);
         }
     }
 }
