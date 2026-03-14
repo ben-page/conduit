@@ -1,5 +1,5 @@
 using Conduit.Configuration;
-using Conduit.Dispatch;
+using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit;
@@ -53,7 +53,7 @@ public static class ServiceCollectionExtensions
             }
         });
 
-        services.AddSingleton<IDispatchInterceptor, TypeFilterInterceptor>();
+        services.AddSingleton<IWireInterceptor, TypeFilterInterceptor>();
 
         return services;
     }

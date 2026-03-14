@@ -1,5 +1,3 @@
-using Conduit.Dispatch;
-
 namespace Conduit.Configuration;
 
 /// <summary>

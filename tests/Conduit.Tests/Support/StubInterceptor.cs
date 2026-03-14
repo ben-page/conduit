@@ -1,8 +1,9 @@
 using Conduit.Dispatch;
+using Conduit.Middleware;
 
 namespace Conduit.Tests.Support;
 
-public class StubInterceptor : IDispatchInterceptor
+public class StubInterceptor : IWireInterceptor
 {
     public List<string> RequestLog { get; } = [];
     public List<string> EventLog { get; } = [];

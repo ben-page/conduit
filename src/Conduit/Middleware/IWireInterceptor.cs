@@ -1,13 +1,15 @@
-namespace Conduit.Dispatch;
+using Conduit.Dispatch;
+
+namespace Conduit.Middleware;
 
 /// <summary>
-/// Intercepts inbound wire dispatch calls. Registered via DI and chained
+/// Intercepts inbound wire calls. Registered via DI and chained
 /// in reverse registration order by the generated mediator — each interceptor
 /// calls <c>next</c> to continue the pipeline or short-circuits by returning/throwing.
 /// Used for access control, logging, or other cross-cutting concerns
 /// on messages arriving from transports (HTTP, SignalR).
 /// </summary>
-public interface IDispatchInterceptor
+public interface IWireInterceptor
 {
     /// <summary>
     /// Intercepts a command or query dispatch.

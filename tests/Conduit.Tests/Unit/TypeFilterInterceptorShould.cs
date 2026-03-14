@@ -1,6 +1,8 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.Dispatch;
+using Conduit.Middleware;
 using Microsoft.Extensions.Options;
 
 namespace Conduit.Tests.Unit;
