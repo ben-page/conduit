@@ -7,30 +7,30 @@ namespace Conduit.Tests;
 [TestClass]
 public class HandlerInterfaceTests
 {
-    private record CreateItemCommand(string Name) : ICommand<Guid>;
-    private record DeleteItemCommand(Guid Id) : ICommand;
-    private record GetItemQuery(Guid Id) : IQuery<string>;
-    private record ItemCreatedEvent(Guid Id) : IEvent;
+    internal record CreateItemCommand(string Name) : ICommand<Guid>;
+    internal record DeleteItemCommand(Guid Id) : ICommand;
+    internal record GetItemQuery(Guid Id) : IQuery<string>;
+    internal record ItemCreatedEvent(Guid Id) : IEvent;
 
-    private class CreateItemHandler : ICommandHandler<CreateItemCommand, Guid>
+    internal class CreateItemHandler : ICommandHandler<CreateItemCommand, Guid>
     {
         public Task<Guid> HandleAsync(CreateItemCommand command, CancellationToken cancellationToken)
             => Task.FromResult(Guid.NewGuid());
     }
 
-    private class DeleteItemHandler : ICommandHandler<DeleteItemCommand>
+    internal class DeleteItemHandler : ICommandHandler<DeleteItemCommand>
     {
         public Task HandleAsync(DeleteItemCommand command, CancellationToken cancellationToken)
             => Task.CompletedTask;
     }
 
-    private class GetItemHandler : IQueryHandler<GetItemQuery, string>
+    internal class GetItemHandler : IQueryHandler<GetItemQuery, string>
     {
         public Task<string> HandleAsync(GetItemQuery query, CancellationToken cancellationToken)
             => Task.FromResult("item");
     }
 
-    private class ItemCreatedListener : IEventListener<ItemCreatedEvent>
+    internal class ItemCreatedListener : IEventListener<ItemCreatedEvent>
     {
         public Task HandleAsync(ItemCreatedEvent @event, CancellationToken cancellationToken)
             => Task.CompletedTask;
