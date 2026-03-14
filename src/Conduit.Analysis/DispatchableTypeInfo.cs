@@ -32,10 +32,4 @@ public sealed class DispatchableTypeInfo
 
     /// <summary>Whether the type has an <c>[AllowAnonymous]</c> attribute.</summary>
     public required bool HasAllowAnonymousAttribute { get; init; }
-
-    /// <summary>
-    /// The endpoint name this type is routed to via <c>[Route]</c> or <c>[RouteNamespace]</c>,
-    /// or <see langword="null"/> if no attribute-based route is declared.
-    /// </summary>
-    public string? RouteEndpointName { get; init; }
 }
