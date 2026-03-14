@@ -64,4 +64,30 @@ public class ConduitBuilder
     {
         return new RouteBuilder(this.Options, pattern);
     }
+
+    /// <summary>
+    /// Registers an open generic pipeline behavior. The type must implement
+    /// <c>IPipelineBehavior&lt;TRequest, TResult&gt;</c>.
+    /// Pipelines execute in registration order (first registered = outermost).
+    /// The same pipeline wraps commands, queries, and events uniformly.
+    /// </summary>
+    /// <param name="behaviorType">An open generic type implementing IPipelineBehavior&lt;,&gt;.</param>
+    /// <returns>This builder for chaining.</returns>
+    public ConduitBuilder AddPipeline(Type behaviorType)
+    {
+        ArgumentNullException.ThrowIfNull(behaviorType);
+
+        if (!behaviorType.GetInterfaces().Any(i =>
+                i.IsGenericType &&
+                i.GetGenericTypeDefinition() == typeof(Middleware.IPipelineBehavior<,>)))
+        {
+            throw new ArgumentException(
+                $"Type '{behaviorType.Name}' does not implement IPipelineBehavior<,>.",
+                nameof(behaviorType));
+        }
+
+        this.Options.PipelineTypes.Add(behaviorType);
+        this.Services.AddTransient(behaviorType);
+        return this;
+    }
 }
