@@ -81,6 +81,27 @@ public class EventBroadcastShould
     }
 
     [TestMethod]
+    public async Task NotSendCommandsToBroadcastTransports()
+    {
+        // Arrange — DI transport should only receive events, not commands
+        var broadcastTransport = new SpyTransport();
+        await using var host = TestHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddSingleton<IConduitTransport>(broadcastTransport);
+            builder.Services.AddConduit();
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act — dispatch a command (no route configured, so handled locally)
+        await mediator.ExecuteAsync(new EchoCommand("Test"));
+
+        // Assert — broadcast transport did NOT receive the command
+        broadcastTransport.SentRequests.Should().BeEmpty();
+    }
+
+    [TestMethod]
     public async Task NotBroadcastLocalOnlyEvent()
     {
         // Arrange
