@@ -79,4 +79,25 @@ public class EventBroadcastShould
         // Assert — local listeners fire, no errors
         await spy.WaitForCountAsync(1);
     }
+
+    [TestMethod]
+    public async Task NotBroadcastLocalOnlyEvent()
+    {
+        // Arrange
+        var spyTransport = new SpyTransport();
+        await using var host = TestHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddSingleton<IConduitTransport>(spyTransport);
+            builder.Services.AddConduit();
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.PublishAsync(new LocalOnlyEvent("Secret"));
+
+        // Assert — NOT broadcast to transport
+        spyTransport.SentEvents.Should().BeEmpty();
+    }
 }

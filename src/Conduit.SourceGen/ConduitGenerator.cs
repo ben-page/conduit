@@ -121,6 +121,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         {
             EventFullTypeName = kvp.Key,
             ListenerFullTypeNames = kvp.Value.AsReadOnly(),
+            IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
         }).ToList();
 
         var mediatorSource = MediatorEmitter.Emit(dispatchableTypes, handlers, groups);

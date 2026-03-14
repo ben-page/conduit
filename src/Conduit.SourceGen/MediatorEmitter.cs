@@ -126,7 +126,7 @@ public static class MediatorEmitter
         EmitQueryFallback(sb, queries);
 
         // PublishAsync
-        EmitPublishAsync(sb, listenerGroups);
+        EmitPublishAsync(sb, listenerGroups, events);
 
         // Wire dispatch (private, called by HandleWireRequestAsync)
         EmitWireDispatch(sb, commands, voidCommands, queries);
@@ -205,21 +205,49 @@ public static class MediatorEmitter
         sb.AppendLine();
     }
 
-    private static void EmitPublishAsync(StringBuilder sb, IReadOnlyList<ListenerGroup> listenerGroups)
+    private static void EmitPublishAsync(
+        StringBuilder sb,
+        IReadOnlyList<ListenerGroup> listenerGroups,
+        List<DispatchableTypeInfo> events)
     {
+        var localOnlyTypes = new HashSet<string>(
+            events.Where(e => e.IsLocalOnly).Select(e => e.FullTypeName));
+
         // PublishAsync dispatches to local listeners AND broadcasts to all registered transports.
-        // Events don't use the route table — they broadcast to whoever is connected.
+        // Events marked [LocalOnly] skip the broadcast step entirely.
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
         sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
         sb.AppendLine();
-        sb.AppendLine("        var eventEnvelope = new DispatchEnvelope(");
-        sb.AppendLine("            @event.GetType().FullName!,");
-        sb.AppendLine("            JsonSerializer.SerializeToElement(@event));");
-        sb.AppendLine("        foreach (var transport in transports)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            await ConduitRuntime.SafeExecute(() => transport.SendEventAsync(eventEnvelope, cancellationToken), logger);");
-        sb.AppendLine("        }");
+
+        if (localOnlyTypes.Count == events.Count)
+        {
+            // All events are local-only — no broadcast needed
+        }
+        else if (localOnlyTypes.Count == 0)
+        {
+            // No local-only events — always broadcast
+            EmitBroadcastBlock(sb);
+        }
+        else
+        {
+            // Mix of local-only and broadcastable — check type at runtime
+            sb.AppendLine("        var shouldBroadcast = @event switch");
+            sb.AppendLine("        {");
+            foreach (var localOnly in localOnlyTypes)
+            {
+                sb.AppendLine($"            {localOnly} => false,");
+            }
+
+            sb.AppendLine("            _ => true,");
+            sb.AppendLine("        };");
+            sb.AppendLine();
+            sb.AppendLine("        if (shouldBroadcast)");
+            sb.AppendLine("        {");
+            EmitBroadcastBlock(sb, indent: "    ");
+            sb.AppendLine("        }");
+        }
+
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -261,6 +289,17 @@ public static class MediatorEmitter
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
+    }
+
+    private static void EmitBroadcastBlock(StringBuilder sb, string indent = "")
+    {
+        sb.AppendLine($"        {indent}var eventEnvelope = new DispatchEnvelope(");
+        sb.AppendLine($"        {indent}    @event.GetType().FullName!,");
+        sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event));");
+        sb.AppendLine($"        {indent}foreach (var transport in transports)");
+        sb.AppendLine($"        {indent}{{");
+        sb.AppendLine($"        {indent}    await ConduitRuntime.SafeExecute(() => transport.SendEventAsync(eventEnvelope, cancellationToken), logger);");
+        sb.AppendLine($"        {indent}}}");
     }
 
     private static void EmitWireDispatch(
