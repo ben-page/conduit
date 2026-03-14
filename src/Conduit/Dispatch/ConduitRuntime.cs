@@ -186,13 +186,14 @@ public static class ConduitRuntime
 
     /// <summary>
     /// Wraps a void Task as Task&lt;object&gt; for pipeline behavior compatibility.
+    /// Returns <see cref="Unit.Value"/> so the result is never null and never boxes.
     /// </summary>
     public static async Task<object> VoidToObject(Func<Task> action)
     {
         ArgumentNullException.ThrowIfNull(action);
 
         await action();
-        return null!;
+        return Unit.Value;
     }
 
     /// <summary>
