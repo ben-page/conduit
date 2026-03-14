@@ -41,3 +41,21 @@ public class ItemCreatedListener : IEventListener<ItemCreatedEvent>
         return Task.CompletedTask;
     }
 }
+
+public class ThrowConflictHandler : ICommandHandler<ThrowConflictCommand>
+{
+    public Task HandleAsync(ThrowConflictCommand command, CancellationToken cancellationToken)
+        => throw new Conduit.Exceptions.ConflictException("Already exists");
+}
+
+public class ThrowUnauthorizedHandler : ICommandHandler<ThrowUnauthorizedCommand>
+{
+    public Task HandleAsync(ThrowUnauthorizedCommand command, CancellationToken cancellationToken)
+        => throw new Conduit.Exceptions.UnauthorizedException("Access denied");
+}
+
+public class ThrowGenericHandler : ICommandHandler<ThrowGenericCommand>
+{
+    public Task HandleAsync(ThrowGenericCommand command, CancellationToken cancellationToken)
+        => throw new InvalidOperationException("Something went wrong");
+}

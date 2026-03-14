@@ -27,3 +27,12 @@ public record GetItemQuery(Guid Id) : IQuery<ItemDto>;
 
 [Dispatchable]
 public record ItemCreatedEvent(Guid Id, string Name) : IEvent;
+
+[Dispatchable]
+public record ThrowConflictCommand() : ICommand;
+
+[Dispatchable]
+public record ThrowUnauthorizedCommand() : ICommand;
+
+[Dispatchable]
+public record ThrowGenericCommand() : ICommand;

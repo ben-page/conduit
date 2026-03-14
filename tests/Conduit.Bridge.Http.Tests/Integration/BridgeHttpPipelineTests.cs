@@ -143,4 +143,86 @@ public class BridgeHttpPipelineTests
             ((int)response.StatusCode).Should().BeGreaterThanOrEqualTo(400);
         }
     }
+
+    [TestMethod]
+    public async Task HttpDispatch_PublishEndpoint_Returns200()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid(), Name = "Event" });
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ItemCreatedEvent", payload);
+
+            // Act
+            var response = await client.PostAsJsonAsync("/api/dispatch/publish", envelope);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+    }
+
+    [TestMethod]
+    public async Task HttpDispatch_ConflictException_Returns409()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var payload = JsonSerializer.SerializeToElement(new { });
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ThrowConflictCommand", payload);
+
+            // Act
+            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            json.GetProperty("error").GetProperty("code").GetString().Should().Be("Conflict");
+        }
+    }
+
+    [TestMethod]
+    public async Task HttpDispatch_UnauthorizedException_Returns401()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var payload = JsonSerializer.SerializeToElement(new { });
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ThrowUnauthorizedCommand", payload);
+
+            // Act
+            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            json.GetProperty("error").GetProperty("code").GetString().Should().Be("Unauthorized");
+        }
+    }
+
+    [TestMethod]
+    public async Task HttpDispatch_UnhandledException_Returns500WithInternalError()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var payload = JsonSerializer.SerializeToElement(new { });
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ThrowGenericCommand", payload);
+
+            // Act
+            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+
+            // Assert
+            ((int)response.StatusCode).Should().Be(500);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            json.GetProperty("error").GetProperty("code").GetString().Should().Be("InternalError");
+        }
+    }
 }
