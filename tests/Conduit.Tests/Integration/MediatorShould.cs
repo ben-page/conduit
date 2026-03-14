@@ -117,7 +117,7 @@ public class MediatorShould
     }
 }
 
-file class StubTransport : Routing.IConduitTransport
+file class StubTransport : Dispatch.IConduitTransport
 {
     public Task<object?> SendRequestAsync(Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
         => Task.FromResult<object?>(null);

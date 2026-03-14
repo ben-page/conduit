@@ -38,7 +38,6 @@ public static class MediatorEmitter
         sb.AppendLine("using Conduit.Configuration;");
         sb.AppendLine("using Conduit.Dispatch;");
         sb.AppendLine("using Conduit.Messages;");
-        sb.AppendLine("using Conduit.Routing;");
         sb.AppendLine("using Conduit.Handlers;");
         sb.AppendLine();
         sb.AppendLine("namespace Conduit.Generated;");

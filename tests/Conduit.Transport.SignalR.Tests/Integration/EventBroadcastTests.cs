@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using Conduit.Dispatch;
-using Conduit.Routing;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
