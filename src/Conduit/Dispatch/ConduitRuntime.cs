@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Conduit.Configuration;
@@ -9,10 +10,9 @@ using Microsoft.Extensions.Logging;
 namespace Conduit.Dispatch;
 
 /// <summary>
-/// Runtime helpers used by the source-generated mediator. Contains reusable
-/// logic for route resolution, pipeline behavior chaining, interceptor chaining,
-/// and error handling so the generated code stays thin.
+/// Runtime helpers used by the source-generated mediator. Not intended for direct use.
 /// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public static class ConduitRuntime
 {
     private static readonly Action<ILogger, string, Exception?> LogDispatchError =

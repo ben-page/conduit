@@ -27,9 +27,9 @@ public static class DispatchEmitter
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
-        sb.AppendLine("using Conduit.Dispatch;");
+        sb.AppendLine($"using {EmitConstants.NamespaceDispatch};");
         sb.AppendLine();
-        sb.AppendLine("namespace Conduit.Generated;");
+        sb.AppendLine($"namespace {EmitConstants.NamespaceGenerated};");
         sb.AppendLine();
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
         sb.AppendLine("internal static class ConduitDispatch");
@@ -75,7 +75,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        ((Conduit.Messages.ICommand<{type.ResultFullTypeName}>)command).Validate();");
+        sb.AppendLine($"        (({EmitConstants.ICommand}<{type.ResultFullTypeName}>)command).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -87,13 +87,12 @@ public static class DispatchEmitter
         HandlerInfo handler,
         IReadOnlyList<BehaviorInfo>? behaviors)
     {
-        // Void commands need both Execute (returns Task) and ExecuteVoid (for wire dispatch returning Task<object?>)
         sb.AppendLine($"    public static async Task Execute(");
         sb.AppendLine($"        {type.FullTypeName} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        ((Conduit.Messages.ICommand)command).Validate();");
+        sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: true);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -104,7 +103,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        await Execute(command, serviceProvider, cancellationToken);");
-        sb.AppendLine("        return Conduit.Unit.Value;");
+        sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -120,7 +119,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        ((Conduit.Messages.IQuery<{type.ResultFullTypeName}>)query).Validate();");
+        sb.AppendLine($"        (({EmitConstants.IQuery}<{type.ResultFullTypeName}>)query).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -136,18 +135,15 @@ public static class DispatchEmitter
         var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
         var resultType = isVoid ? "object" : type.ResultFullTypeName;
 
-        // Resolve pipeline behaviors from DI at runtime (like MediatR).
-        // For void commands, use IPipelineBehavior<T, object> with a VoidToObject wrapper.
         sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
         sb.AppendLine($"        var behaviors = serviceProvider");
-        sb.AppendLine($"            .GetServices<Conduit.Middleware.IPipelineBehavior<{type.FullTypeName}, {resultType}>>()");
+        sb.AppendLine($"            .GetServices<{EmitConstants.IPipelineBehavior}<{type.FullTypeName}, {resultType}>>()");
         sb.AppendLine($"            .ToArray();");
         sb.AppendLine();
 
-        // Build the innermost delegate (the handler call)
         if (isVoid)
         {
-            sb.AppendLine($"        Func<Task<object>> handlerCall = () => ConduitRuntime.VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
+            sb.AppendLine($"        Func<Task<object>> handlerCall = () => {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
         }
         else
         {
@@ -158,11 +154,11 @@ public static class DispatchEmitter
 
         if (isVoid)
         {
-            sb.AppendLine($"        await ConduitRuntime.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
+            sb.AppendLine($"        await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
         }
         else
         {
-            sb.AppendLine($"        return await ConduitRuntime.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
+            sb.AppendLine($"        return await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
         }
     }
 }
