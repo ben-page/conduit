@@ -20,13 +20,15 @@ public class SignalRInterceptorShould
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
-                builder.Services.AddConduit();
-                builder.Services.AddConduitSignalR();
-                builder.Services.AddConduitTypeFilter(filter =>
+                builder.Services.AddConduit(conduit =>
                 {
-                    filter.AllowType("Conduit.Transport.SignalR.Tests.Support.CreateItemCommand");
-                    filter.AllowType("Conduit.Transport.SignalR.Tests.Support.GetItemQuery");
+                    conduit.AddTypeFilter(filter =>
+                    {
+                        filter.AllowType("Conduit.Transport.SignalR.Tests.Support.CreateItemCommand");
+                        filter.AllowType("Conduit.Transport.SignalR.Tests.Support.GetItemQuery");
+                    });
                 });
+                builder.Services.AddConduitSignalR();
             },
             app => app.MapHub<ConduitHub>("/hub"));
     }
