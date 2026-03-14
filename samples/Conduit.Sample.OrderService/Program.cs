@@ -27,6 +27,7 @@ public partial class Program
 
         var app = builder.Build();
 
+        app.UseDefaultFiles();
         app.UseStaticFiles();
         app.MapConduitEndpoint();
         app.MapHub<ConduitHub>("/hub");
