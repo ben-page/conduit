@@ -1,16 +1,16 @@
 using AwesomeAssertions;
 using Conduit.Analysis;
 
-namespace Conduit.TypeGen.Tests;
+namespace Conduit.TypeGen.Tests.Unit;
 
 [TestClass]
-public class ReflectionScannerTests
+public class ReflectionScannerShould
 {
     private static readonly IReadOnlyList<DispatchableTypeInfo> ScannedTypes =
-        ReflectionScanner.Scan(typeof(ReflectionScannerTests).Assembly);
+        ReflectionScanner.Scan(typeof(ReflectionScannerShould).Assembly);
 
     [TestMethod]
-    public void FindsCommandWithResult()
+    public void FindCommandWithResult()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestCreateCommand");
         type.Should().NotBeNull();
@@ -19,7 +19,7 @@ public class ReflectionScannerTests
     }
 
     [TestMethod]
-    public void FindsVoidCommand()
+    public void FindVoidCommand()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestDeleteCommand");
         type.Should().NotBeNull();
@@ -27,7 +27,7 @@ public class ReflectionScannerTests
     }
 
     [TestMethod]
-    public void FindsQuery()
+    public void FindQuery()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestGetQuery");
         type.Should().NotBeNull();
@@ -36,7 +36,7 @@ public class ReflectionScannerTests
     }
 
     [TestMethod]
-    public void FindsEvent()
+    public void FindEvent()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestItemCreatedEvent");
         type.Should().NotBeNull();
@@ -44,28 +44,28 @@ public class ReflectionScannerTests
     }
 
     [TestMethod]
-    public void NotDispatchable_ExcludesType()
+    public void ExcludeNotDispatchableType()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestExcludedCommand");
         type.Should().BeNull();
     }
 
     [TestMethod]
-    public void Dispatchable_IncludesTypeOutsideNamespace()
+    public void IncludeDispatchableTypeOutsideNamespace()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestExplicitCommand");
         type.Should().NotBeNull();
     }
 
     [TestMethod]
-    public void OrphanType_WithoutDispatchable_IsExcluded()
+    public void ExcludeOrphanTypeWithoutDispatchable()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestOrphanCommand");
         type.Should().BeNull();
     }
 
     [TestMethod]
-    public void DetectsValidateOverride()
+    public void DetectValidateOverride()
     {
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestValidatedCommand");
         type.Should().NotBeNull();
@@ -73,9 +73,9 @@ public class ReflectionScannerTests
     }
 
     [TestMethod]
-    public void GetDeclaredNamespaces_ReadsAssemblyAttribute()
+    public void GetDeclaredNamespacesFromAssemblyAttribute()
     {
-        var namespaces = ReflectionScanner.GetDeclaredNamespaces(typeof(ReflectionScannerTests).Assembly);
+        var namespaces = ReflectionScanner.GetDeclaredNamespaces(typeof(ReflectionScannerShould).Assembly);
         namespaces.Should().Contain("Conduit.TypeGen.Tests.Sample");
     }
 }

@@ -1,68 +1,68 @@
 using AwesomeAssertions;
 
-namespace Conduit.TypeGen.Tests;
+namespace Conduit.TypeGen.Tests.Unit;
 
 [TestClass]
-public class TypeMapperTests
+public class TypeMapperShould
 {
     [TestMethod]
-    public void MapsStringToString() =>
+    public void MapStringToString() =>
         TypeMapper.MapType(typeof(string)).Should().Be("string");
 
     [TestMethod]
-    public void MapsGuidToString() =>
+    public void MapGuidToString() =>
         TypeMapper.MapType(typeof(Guid)).Should().Be("string");
 
     [TestMethod]
-    public void MapsIntToNumber() =>
+    public void MapIntToNumber() =>
         TypeMapper.MapType(typeof(int)).Should().Be("number");
 
     [TestMethod]
-    public void MapsLongToNumber() =>
+    public void MapLongToNumber() =>
         TypeMapper.MapType(typeof(long)).Should().Be("number");
 
     [TestMethod]
-    public void MapsDecimalToNumber() =>
+    public void MapDecimalToNumber() =>
         TypeMapper.MapType(typeof(decimal)).Should().Be("number");
 
     [TestMethod]
-    public void MapsDoubleToNumber() =>
+    public void MapDoubleToNumber() =>
         TypeMapper.MapType(typeof(double)).Should().Be("number");
 
     [TestMethod]
-    public void MapsBoolToBoolean() =>
+    public void MapBoolToBoolean() =>
         TypeMapper.MapType(typeof(bool)).Should().Be("boolean");
 
     [TestMethod]
-    public void MapsDateTimeToString() =>
+    public void MapDateTimeToString() =>
         TypeMapper.MapType(typeof(DateTime)).Should().Be("string");
 
     [TestMethod]
-    public void MapsDateTimeOffsetToString() =>
+    public void MapDateTimeOffsetToString() =>
         TypeMapper.MapType(typeof(DateTimeOffset)).Should().Be("string");
 
     [TestMethod]
-    public void MapsArrayToTsArray() =>
+    public void MapArrayToTsArray() =>
         TypeMapper.MapType(typeof(string[])).Should().Be("string[]");
 
     [TestMethod]
-    public void MapsListToTsArray() =>
+    public void MapListToTsArray() =>
         TypeMapper.MapType(typeof(List<int>)).Should().Be("number[]");
 
     [TestMethod]
-    public void MapsIEnumerableToTsArray() =>
+    public void MapIEnumerableToTsArray() =>
         TypeMapper.MapType(typeof(IEnumerable<string>)).Should().Be("string[]");
 
     [TestMethod]
-    public void MapsDictionaryToRecord() =>
+    public void MapDictionaryToRecord() =>
         TypeMapper.MapType(typeof(Dictionary<string, int>)).Should().Be("Record<string, number>");
 
     [TestMethod]
-    public void MapsNullableToUnion() =>
+    public void MapNullableToUnion() =>
         TypeMapper.MapType(typeof(int?)).Should().Be("number | null");
 
     [TestMethod]
-    public void MapsEnumToStringLiteralUnion()
+    public void MapEnumToStringLiteralUnion()
     {
         var result = TypeMapper.MapType(typeof(TestEnum));
         result.Should().Contain("'A'");

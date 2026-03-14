@@ -1,12 +1,13 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
+using Conduit.SourceGen.Tests.Support;
 
-namespace Conduit.SourceGen.Tests;
+namespace Conduit.SourceGen.Tests.Unit;
 
 [TestClass]
-public class MediatorEmitterTests : GeneratorTestBase
+public class MediatorEmitterShould : GeneratorTestBase
 {
     [TestMethod]
-    public void EmitsMediatorWithStronglyTypedOverloads()
+    public void EmitMediatorWithStronglyTypedOverloads()
     {
         var source = @"
 using Conduit.Attributes;

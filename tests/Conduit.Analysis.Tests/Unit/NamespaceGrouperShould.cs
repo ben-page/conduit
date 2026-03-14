@@ -1,9 +1,9 @@
 using AwesomeAssertions;
 
-namespace Conduit.Analysis.Tests;
+namespace Conduit.Analysis.Tests.Unit;
 
 [TestClass]
-public class NamespaceGrouperTests
+public class NamespaceGrouperShould
 {
     private static DispatchableTypeInfo MakeType(string ns, string name, DispatchableKind kind = DispatchableKind.Command)
         => new()
@@ -18,7 +18,7 @@ public class NamespaceGrouperTests
         };
 
     [TestMethod]
-    public void GroupsByDeclaredNamespace()
+    public void GroupByDeclaredNamespace()
     {
         var declaredNamespaces = new[] { "App.Orders", "App.Inventory" };
         var types = new[]
@@ -36,7 +36,7 @@ public class NamespaceGrouperTests
     }
 
     [TestMethod]
-    public void GeneratesKebabCaseFileName()
+    public void GenerateKebabCaseFileName()
     {
         var declaredNamespaces = new[] { "App.Orders" };
         var types = new[] { MakeType("App.Orders.Commands", "CreateOrder") };
@@ -47,7 +47,7 @@ public class NamespaceGrouperTests
     }
 
     [TestMethod]
-    public void TypesOutsideDeclaredNamespaces_GoToDefaultFile()
+    public void PutUnmatchedTypesInDefaultFile()
     {
         var declaredNamespaces = new[] { "App.Orders" };
         var types = new[]
@@ -63,7 +63,7 @@ public class NamespaceGrouperTests
     }
 
     [TestMethod]
-    public void NoDeclaredNamespaces_AllGoToDefault()
+    public void PutAllTypesInDefaultWhenNoDeclaredNamespaces()
     {
         var types = new[]
         {

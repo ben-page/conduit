@@ -1,12 +1,13 @@
 using AwesomeAssertions;
+using Conduit.SourceGen.Tests.Support;
 
-namespace Conduit.SourceGen.Tests;
+namespace Conduit.SourceGen.Tests.Unit;
 
 [TestClass]
-public class RegistrationEmitterTests : GeneratorTestBase
+public class RegistrationEmitterShould : GeneratorTestBase
 {
     [TestMethod]
-    public void EmitsHandlerRegistration()
+    public void EmitHandlerRegistration()
     {
         var source = @"
 using Conduit.Attributes;

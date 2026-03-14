@@ -1,12 +1,13 @@
 using AwesomeAssertions;
+using Conduit.SourceGen.Tests.Support;
 
-namespace Conduit.SourceGen.Tests;
+namespace Conduit.SourceGen.Tests.Unit;
 
 [TestClass]
-public class DispatchEmitterTests : GeneratorTestBase
+public class DispatchEmitterShould : GeneratorTestBase
 {
     [TestMethod]
-    public void EmitsExecuteForCommandWithResult()
+    public void EmitExecuteForCommandWithResult()
     {
         var source = @"
 using Conduit.Attributes;
@@ -40,7 +41,7 @@ namespace App.Commands
     }
 
     [TestMethod]
-    public void EmitsExecuteForVoidCommand()
+    public void EmitExecuteForVoidCommand()
     {
         var source = @"
 using Conduit.Attributes;
@@ -72,7 +73,7 @@ namespace App.Commands
     }
 
     [TestMethod]
-    public void EmitsFetchForQuery()
+    public void EmitFetchForQuery()
     {
         var source = @"
 using Conduit.Attributes;
