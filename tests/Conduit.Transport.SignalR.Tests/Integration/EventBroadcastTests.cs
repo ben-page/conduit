@@ -1,8 +1,8 @@
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
+using Conduit.Transport.SignalR.Tests.Support;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -29,7 +29,6 @@ public class EventBroadcastShould
                         endpoint.UseTransport(recordingTransport));
                     conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("recorder");
                 });
-                builder.Services.AddConduitHandlers();
             });
 
         var mediator = host.GetRequiredService<IMediator>();
@@ -62,7 +61,6 @@ public class EventBroadcastShould
                         endpoint.UseTransport(recordingTransport));
                     conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("recorder");
                 });
-                builder.Services.AddConduitHandlers();
             });
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();

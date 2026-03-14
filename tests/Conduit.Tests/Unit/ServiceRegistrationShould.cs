@@ -12,7 +12,7 @@ public class ServiceRegistrationShould
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddConduit();
+        services.AddConduitCore();
         var serviceProvider = services.BuildServiceProvider();
 
         // Act

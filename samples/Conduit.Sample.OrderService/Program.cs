@@ -1,6 +1,6 @@
+using Conduit.Generated;
 using Conduit.Transport.Http;
 using Conduit.Transport.SignalR;
-using Conduit.Generated;
 
 namespace Conduit.Sample.OrderService;
 
@@ -24,7 +24,6 @@ public partial class Program
             filter.AllowType("Conduit.Sample.OrderService.Commands.DeleteItemCommand");
             filter.AllowType("Conduit.Sample.OrderService.Queries.GetItemQuery");
         });
-        builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
 

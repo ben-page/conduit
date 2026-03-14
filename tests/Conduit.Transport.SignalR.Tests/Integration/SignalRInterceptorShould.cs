@@ -3,8 +3,8 @@ using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
-using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
+using Conduit.Transport.SignalR.Tests.Support;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,7 +27,6 @@ public class SignalRInterceptorShould
                     filter.AllowType("Conduit.Transport.SignalR.Tests.Support.CreateItemCommand");
                     filter.AllowType("Conduit.Transport.SignalR.Tests.Support.GetItemQuery");
                 });
-                builder.Services.AddConduitHandlers();
             },
             app => app.MapHub<ConduitHub>("/hub"));
     }

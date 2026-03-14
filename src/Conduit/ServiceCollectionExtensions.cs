@@ -10,20 +10,17 @@ namespace Conduit;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Adds Conduit mediator infrastructure with endpoint routing.
-    /// Call transport-specific methods (e.g. <c>AddConduitSignalR()</c>) to add transports.
+    /// Registers core Conduit infrastructure (options, routing). Called by the
+    /// source-generated <c>AddConduit</c> extension method — not intended for direct use.
     /// </summary>
-    /// <param name="services">The service collection.</param>
-    /// <param name="configure">Optional builder callback for endpoint and route configuration.</param>
-    /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddConduit(
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public static IServiceCollection AddConduitCore(
         this IServiceCollection services,
         Action<ConduitBuilder>? configure = null)
     {
         var builder = new ConduitBuilder(services);
         configure?.Invoke(builder);
 
-        // Register routing infrastructure
         services.AddSingleton(builder.Options);
 
         return services;

@@ -99,7 +99,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` (no attributes needed)
 - Reads `[Route]` and `[RouteNamespace]` attributes for compile-time route registration
 - Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`
-- Generated `AddConduitHandlers()` also registers attribute-declared routes into `ConduitOptions`
+- Generated `AddConduit()` calls `AddConduitCore()` and also registers handlers and attribute-declared routes into `ConduitOptions`
 - Pipeline behaviors resolved from DI at runtime in generated dispatch code
 - Microsoft.CodeAnalysis.CSharp version must be ≤ the SDK's Roslyn version (currently 4.12.0 for .NET 10 SDK)
 

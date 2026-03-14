@@ -1,6 +1,6 @@
 using AwesomeAssertions;
-using Conduit.TestUtils;
 using Conduit.Generated;
+using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Conduit.Tests.Support;
 
@@ -17,7 +17,6 @@ public class MediatorShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitHandlers();
                 configure?.Invoke(builder.Services);
             });
     }
@@ -103,7 +102,6 @@ public class MediatorShould
                         endpoint.UseTransport(new StubTransport()));
                     conduit.Route("Remote.Commands").To("remote");
                 });
-                builder.Services.AddConduitHandlers();
             });
         var mediator = host.GetRequiredService<IMediator>();
         var store = host.GetRequiredService<ItemStore>();

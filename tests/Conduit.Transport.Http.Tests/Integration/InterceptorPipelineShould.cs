@@ -27,7 +27,6 @@ public class InterceptorPipelineShould
             filter.AllowType("Conduit.Transport.Http.Tests.Support.CreateItemCommand");
             filter.AllowType("Conduit.Transport.Http.Tests.Support.GetItemQuery");
         });
-        builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
         app.MapConduitEndpoint();

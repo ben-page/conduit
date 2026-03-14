@@ -1,7 +1,7 @@
 using AwesomeAssertions;
+using Conduit.Generated;
 using Conduit.Middleware;
 using Conduit.TestUtils;
-using Conduit.Generated;
 using Microsoft.Extensions.DependencyInjection;
 using Conduit.Tests.Support;
 
@@ -22,7 +22,6 @@ public class PipelineBehaviorIntegrationShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitHandlers();
                 builder.Services.AddSingleton<IPipelineBehavior<CreateItemCommand, Guid>>(trackingBehavior);
             });
 
@@ -48,7 +47,6 @@ public class PipelineBehaviorIntegrationShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitHandlers();
                 builder.Services.AddSingleton<IEventPipelineBehavior<ItemCreatedEvent>>(trackingBehavior);
             });
 

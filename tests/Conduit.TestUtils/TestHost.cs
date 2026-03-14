@@ -36,7 +36,7 @@ public sealed class TestHost : IAsyncDisposable
     /// </summary>
     /// <param name="configureBuilder">
     /// Callback to register services. This is where tests call AddConduit(),
-    /// AddConduitSignalR(), AddConduitHandlers(), and register their own types.
+    /// AddConduitSignalR(), and register their own types.
     /// </param>
     /// <param name="configureApp">
     /// Callback to configure middleware and endpoints (e.g. MapHub, MapConduitEndpoint).
