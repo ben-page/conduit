@@ -1,11 +1,11 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Pipelines;
-using Conduit.Tests.TestApp;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
-using global::Conduit.Generated;
+using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Conduit.Tests.Support;
 
 namespace Conduit.Tests.Integration;
 

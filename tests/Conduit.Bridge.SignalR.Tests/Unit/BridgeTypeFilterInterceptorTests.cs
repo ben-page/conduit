@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Microsoft.Extensions.Options;
@@ -50,7 +50,7 @@ public class BridgeTypeFilterInterceptorTests
             () => Task.FromResult<object?>("ok"),
             CancellationToken.None);
 
-        await action.Should().ThrowExactlyAsync<Conduit.Exceptions.UnauthorizedException>()
+        await action.Should().ThrowExactlyAsync<Exceptions.UnauthorizedException>()
             .WithMessage("*DeleteDatabase*");
     }
 

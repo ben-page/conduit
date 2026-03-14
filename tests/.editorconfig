@@ -3,12 +3,6 @@
 dotnet_diagnostic.CA1707.severity = none
 # CA1852: Type can be sealed (test classes are not sealed by convention)
 dotnet_diagnostic.CA1852.severity = none
-# IDE0130: Namespace does not match folder structure (test helpers use nested namespaces)
-dotnet_diagnostic.IDE0130.severity = none
 # CA1062: Validate arguments of public methods (test methods don't need null guards)
 dotnet_diagnostic.CA1062.severity = none
-# IDE0009: this. qualification not needed in tests
-dotnet_style_qualification_for_field = false
-dotnet_style_qualification_for_property = false
-dotnet_style_qualification_for_method = false
-dotnet_style_qualification_for_event = false
+

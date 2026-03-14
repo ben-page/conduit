@@ -1,10 +1,10 @@
-using AwesomeAssertions;
-using Conduit.Tests.TestApp;
+﻿using AwesomeAssertions;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
-using global::Conduit.Generated;
+using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Conduit.Tests.Support;
 
 namespace Conduit.Tests.Integration;
 
@@ -123,11 +123,11 @@ public class MediatorDispatchTests
     }
 }
 
-file class StubTransport : Conduit.Routing.IConduitTransport
+file class StubTransport : Routing.IConduitTransport
 {
-    public Task<object?> SendRequestAsync(Conduit.Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task<object?> SendRequestAsync(Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
         => Task.FromResult<object?>(null);
 
-    public Task SendEventAsync(Conduit.Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task SendEventAsync(Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
         => Task.CompletedTask;
 }

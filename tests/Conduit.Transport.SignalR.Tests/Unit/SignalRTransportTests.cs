@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Transport.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -11,7 +11,7 @@ public class SignalRTransportTests
     public async Task SendRequestAsync_NullEnvelope_ThrowsArgumentNullException()
     {
         // Arrange
-        var hubConnection = new Microsoft.AspNetCore.SignalR.Client.HubConnectionBuilder()
+        var hubConnection = new HubConnectionBuilder()
             .WithUrl("http://localhost:1")
             .Build();
         var transport = new SignalRTransport(hubConnection);
@@ -28,7 +28,7 @@ public class SignalRTransportTests
     public async Task SendEventAsync_NullEnvelope_ThrowsArgumentNullException()
     {
         // Arrange
-        var hubConnection = new Microsoft.AspNetCore.SignalR.Client.HubConnectionBuilder()
+        var hubConnection = new HubConnectionBuilder()
             .WithUrl("http://localhost:1")
             .Build();
         var transport = new SignalRTransport(hubConnection);

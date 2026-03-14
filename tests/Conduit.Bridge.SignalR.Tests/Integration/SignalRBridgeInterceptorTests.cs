@@ -1,11 +1,11 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.SignalR;
 using Conduit.Bridge.SignalR.Tests.TestApp;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
-using global::Conduit.Generated;
+using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;

@@ -1,9 +1,9 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.Routing;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR.Tests.TestApp;
-using global::Conduit.Generated;
+using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 

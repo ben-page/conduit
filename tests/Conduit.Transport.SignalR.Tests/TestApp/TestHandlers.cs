@@ -1,4 +1,4 @@
-using Conduit.Handlers;
+﻿using Conduit.Handlers;
 using Conduit.TestUtils;
 
 namespace Conduit.Transport.SignalR.Tests.TestApp;
@@ -35,7 +35,7 @@ public class GetItemHandler(ItemStore store) : IQueryHandler<GetItemQuery, strin
 {
     public Task<string> HandleAsync(GetItemQuery query, CancellationToken cancellationToken)
     {
-        var name = store.Get(query.Id) ?? throw new Conduit.Exceptions.NotFoundException($"Item {query.Id} not found");
+        var name = store.Get(query.Id) ?? throw new Exceptions.NotFoundException($"Item {query.Id} not found");
         return Task.FromResult(name);
     }
 }

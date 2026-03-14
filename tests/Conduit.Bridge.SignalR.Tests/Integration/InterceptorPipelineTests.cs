@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
@@ -7,7 +7,7 @@ using Conduit.Bridge.SignalR.Tests.TestApp;
 using Conduit.Transport.SignalR;
 using Microsoft.Extensions.Hosting;
 using Conduit.Dispatch;
-using global::Conduit.Generated;
+using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
