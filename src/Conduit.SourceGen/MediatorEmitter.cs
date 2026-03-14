@@ -35,13 +35,13 @@ public static class MediatorEmitter
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using Conduit;");
-        sb.AppendLine("using Conduit.Configuration;");
-        sb.AppendLine("using Conduit.Dispatch;");
-        sb.AppendLine("using Conduit.Middleware;");
-        sb.AppendLine("using Conduit.Messages;");
-        sb.AppendLine("using Conduit.Handlers;");
+        sb.AppendLine($"using {EmitConstants.NamespaceConfiguration};");
+        sb.AppendLine($"using {EmitConstants.NamespaceDispatch};");
+        sb.AppendLine($"using {EmitConstants.NamespaceMiddleware};");
+        sb.AppendLine($"using {EmitConstants.NamespaceMessages};");
+        sb.AppendLine($"using {EmitConstants.NamespaceHandlers};");
         sb.AppendLine();
-        sb.AppendLine("namespace Conduit.Generated;");
+        sb.AppendLine($"namespace {EmitConstants.NamespaceGenerated};");
         sb.AppendLine();
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
         sb.AppendLine("internal sealed class ConduitMediator(");
@@ -251,7 +251,7 @@ public static class MediatorEmitter
 
             // Wrap with event pipeline behaviors from DI via ConduitRuntime
             sb.AppendLine($"                var eventBehaviors = serviceProvider");
-            sb.AppendLine($"                    .GetServices<Conduit.Middleware.IEventPipelineBehavior<{group.EventFullTypeName}>>()");
+            sb.AppendLine($"                    .GetServices<{EmitConstants.IEventPipelineBehavior}<{group.EventFullTypeName}>>()");
             sb.AppendLine($"                    .ToArray();");
             sb.AppendLine($"                await ConduitRuntime.ExecuteWithEventBehaviors(e, eventBehaviors, listenerChain, cancellationToken);");
 

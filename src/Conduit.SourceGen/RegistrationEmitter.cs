@@ -37,7 +37,7 @@ public static class RegistrationEmitter
         sb.AppendLine("using System.Linq;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine();
-        sb.AppendLine("namespace Conduit.Generated;");
+        sb.AppendLine($"namespace {EmitConstants.NamespaceGenerated};");
         sb.AppendLine();
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
         sb.AppendLine("internal static class ConduitRegistration");
@@ -56,22 +56,22 @@ public static class RegistrationEmitter
         }
 
         sb.AppendLine("        services.AddScoped<ConduitMediator>();");
-        sb.AppendLine("        services.AddScoped<Conduit.IMediator>(sp => sp.GetRequiredService<ConduitMediator>());");
-        sb.AppendLine("        services.AddScoped<Conduit.IWireMediator>(sp => sp.GetRequiredService<ConduitMediator>());");
+        sb.AppendLine($"        services.AddScoped<{EmitConstants.IMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
+        sb.AppendLine($"        services.AddScoped<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
 
         if (routedTypes.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("        // Register attribute-declared routes into ConduitOptions");
-            sb.AppendLine("        var optionsDescriptor = services.FirstOrDefault(s => s.ServiceType == typeof(Conduit.Configuration.ConduitOptions));");
-            sb.AppendLine("        if (optionsDescriptor?.ImplementationInstance is Conduit.Configuration.ConduitOptions conduitOptions)");
+            sb.AppendLine($"        var optionsDescriptor = services.FirstOrDefault(s => s.ServiceType == typeof({EmitConstants.ConduitOptions}));");
+            sb.AppendLine($"        if (optionsDescriptor?.ImplementationInstance is {EmitConstants.ConduitOptions} conduitOptions)");
             sb.AppendLine("        {");
 
             foreach (var type in routedTypes)
             {
                 sb.AppendLine($"            if (!conduitOptions.Routes.Any(r => r.Pattern == \"{type.FullTypeName}\" && r.EndpointName == \"{type.RouteEndpointName}\"))");
                 sb.AppendLine("            {");
-                sb.AppendLine($"                conduitOptions.Routes.Add(new Conduit.Configuration.ConduitRoute {{ Pattern = \"{type.FullTypeName}\", EndpointName = \"{type.RouteEndpointName}\" }});");
+                sb.AppendLine($"                conduitOptions.Routes.Add(new {EmitConstants.ConduitRoute} {{ Pattern = \"{type.FullTypeName}\", EndpointName = \"{type.RouteEndpointName}\" }});");
                 sb.AppendLine("            }");
             }
 
