@@ -113,7 +113,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         context.AddSource("ConduitDispatch.g.cs", dispatchSource);
 
         // Generate DI registration
-        var registrationSource = RegistrationEmitter.Emit(handlerTypeNames, listenerTypeNames);
+        var registrationSource = RegistrationEmitter.Emit(handlerTypeNames, listenerTypeNames, dispatchableTypes);
         context.AddSource("ConduitRegistration.g.cs", registrationSource);
 
         // Generate mediator

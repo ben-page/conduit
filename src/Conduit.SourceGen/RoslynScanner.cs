@@ -17,6 +17,8 @@ public static class RoslynScanner
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string NotDispatchableAttributeName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeName = "Conduit.Attributes.DispatchableNamespaceAttribute";
+    private const string RouteAttributeName = "Conduit.Attributes.RouteAttribute";
+    private const string RouteNamespaceAttributeName = "Conduit.Attributes.RouteNamespaceAttribute";
     private const string AuthorizeAttributeName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
     private const string AllowAnonymousAttributeName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
 
@@ -49,6 +51,35 @@ public static class RoslynScanner
     }
 
     /// <summary>
+    /// Extracts namespace-to-endpoint mappings declared via <c>[RouteNamespace]</c>
+    /// on the assembly.
+    /// </summary>
+    /// <param name="compilation">The Roslyn compilation to inspect.</param>
+    /// <returns>The list of namespace→endpoint pairs.</returns>
+    public static IReadOnlyList<(string Namespace, string EndpointName)> GetRouteNamespaces(Compilation compilation)
+    {
+        if (compilation is null)
+        {
+            throw new ArgumentNullException(nameof(compilation));
+        }
+
+        var routeNamespaces = new List<(string Namespace, string EndpointName)>();
+
+        foreach (var attribute in compilation.Assembly.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() == RouteNamespaceAttributeName
+                && attribute.ConstructorArguments.Length == 2
+                && attribute.ConstructorArguments[0].Value is string ns
+                && attribute.ConstructorArguments[1].Value is string endpointName)
+            {
+                routeNamespaces.Add((ns, endpointName));
+            }
+        }
+
+        return routeNamespaces.AsReadOnly();
+    }
+
+    /// <summary>
     /// Scans the compilation for all dispatchable types implementing
     /// <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c>.
     /// Types marked with <c>[NotDispatchable]</c> are excluded.
@@ -63,6 +94,7 @@ public static class RoslynScanner
         }
 
         var results = new List<DispatchableTypeInfo>();
+        var routeNamespaces = GetRouteNamespaces(compilation);
 
         foreach (var typeSymbol in GetAllNamedTypes(compilation))
         {
@@ -84,6 +116,7 @@ public static class RoslynScanner
 
             var resultTypeName = GetResultTypeName(typeSymbol, kind.Value);
             var resultFullTypeName = GetResultFullTypeName(typeSymbol, kind.Value);
+            var routeEndpointName = GetRouteEndpointName(typeSymbol, routeNamespaces);
 
             results.Add(new DispatchableTypeInfo
             {
@@ -96,6 +129,7 @@ public static class RoslynScanner
                 HasValidateOverride = HasValidateOverride(typeSymbol),
                 HasAuthorizeAttribute = HasAttribute(typeSymbol, AuthorizeAttributeName),
                 HasAllowAnonymousAttribute = HasAttribute(typeSymbol, AllowAnonymousAttributeName),
+                RouteEndpointName = routeEndpointName,
             });
         }
 
@@ -216,6 +250,34 @@ public static class RoslynScanner
         }
 
         return false;
+    }
+
+    private static string? GetRouteEndpointName(
+        INamedTypeSymbol typeSymbol,
+        IReadOnlyList<(string Namespace, string EndpointName)> routeNamespaces)
+    {
+        // Type-level [Route] takes precedence over namespace-level [RouteNamespace]
+        foreach (var attribute in typeSymbol.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() == RouteAttributeName
+                && attribute.ConstructorArguments.Length == 1
+                && attribute.ConstructorArguments[0].Value is string endpointName)
+            {
+                return endpointName;
+            }
+        }
+
+        // Fall back to namespace-level [RouteNamespace]
+        var typeNamespace = typeSymbol.ContainingNamespace.ToDisplayString();
+        foreach (var (ns, endpointName) in routeNamespaces)
+        {
+            if (typeNamespace.StartsWith(ns, StringComparison.Ordinal))
+            {
+                return endpointName;
+            }
+        }
+
+        return null;
     }
 
     private static IEnumerable<INamedTypeSymbol> GetAllNamedTypes(Compilation compilation)
