@@ -6,15 +6,14 @@ using Conduit.Routing;
 namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class RouteResolverShould
+public class ConduitRuntimeShould
 {
     [TestMethod]
     public void ReturnNullWhenNoRoutesConfigured()
     {
         var options = new ConduitOptions();
-        var resolver = new DefaultRouteResolver(options);
 
-        var result = resolver.Resolve("Orders.Commands.CreateOrder");
+        var result = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
         result.Should().BeNull();
     }
@@ -27,9 +26,7 @@ public class RouteResolverShould
         options.Endpoints["orders-api"] = endpoint;
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "orders-api" });
 
-        var resolver = new DefaultRouteResolver(options);
-
-        var result = resolver.Resolve("Orders.Commands.CreateOrder");
+        var result = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
         result.Should().NotBeNull();
         result!.Name.Should().Be("orders-api");
@@ -43,9 +40,7 @@ public class RouteResolverShould
         options.Endpoints["orders-api"] = endpoint;
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "orders-api" });
 
-        var resolver = new DefaultRouteResolver(options);
-
-        var result = resolver.Resolve("Billing.Commands.ChargeCard");
+        var result = ConduitRuntime.ResolveRoute(options, "Billing.Commands.ChargeCard");
 
         result.Should().BeNull();
     }
@@ -59,9 +54,7 @@ public class RouteResolverShould
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands.Create", EndpointName = "specific" });
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "general" });
 
-        var resolver = new DefaultRouteResolver(options);
-
-        var result = resolver.Resolve("Orders.Commands.CreateOrder");
+        var result = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
         result!.Name.Should().Be("specific");
     }
@@ -72,9 +65,7 @@ public class RouteResolverShould
         var options = new ConduitOptions();
         options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "missing" });
 
-        var resolver = new DefaultRouteResolver(options);
-
-        var action = () => resolver.Resolve("Orders.Commands.CreateOrder");
+        var action = () => ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
         action.Should().ThrowExactly<InvalidOperationException>()
             .WithMessage("*endpoint 'missing' is not registered*");
@@ -87,9 +78,7 @@ public class RouteResolverShould
         options.Endpoints["orders-api"] = new ConduitEndpoint { Name = "orders-api" };
         options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "orders-api" });
 
-        var resolver = new DefaultRouteResolver(options);
-
-        var action = () => resolver.Resolve("Orders.Commands.CreateOrder");
+        var action = () => ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
         action.Should().ThrowExactly<InvalidOperationException>()
             .WithMessage("*no transport configured*");

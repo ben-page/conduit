@@ -1,6 +1,5 @@
 using Conduit.Configuration;
 using Conduit.Dispatch;
-using Conduit.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit;
@@ -26,7 +25,6 @@ public static class ServiceCollectionExtensions
 
         // Register routing infrastructure
         services.AddSingleton(builder.Options);
-        services.AddSingleton<IRouteResolver, DefaultRouteResolver>();
 
         return services;
     }

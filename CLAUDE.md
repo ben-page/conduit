@@ -28,8 +28,8 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes, `TypeFilterBuilder` (`src/Conduit/Configuration/`)
-- `Conduit.Dispatch` — pipeline + wire types: `DispatchPipeline`, `DispatchEnvelope`, `DispatchResult`, `IWireDispatcher`, `IDispatchInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions` (`src/Conduit/Dispatch/`)
-- `Conduit.Routing` — transport + resolution: `IConduitTransport`, `IRouteResolver`, `DefaultRouteResolver` (`src/Conduit/Routing/`)
+- `Conduit.Dispatch` — pipeline + wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IDispatchInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions` (`src/Conduit/Dispatch/`)
+- `Conduit.Routing` — transport: `IConduitTransport` (`src/Conduit/Routing/`)
 - `Conduit.Messages`, `Conduit.Handlers`, `Conduit.Pipelines`, `Conduit.Attributes`, `Conduit.Exceptions` — core contracts
 
 **Key design decisions:**
@@ -86,7 +86,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - No ASP.NET dependency — only DI abstractions, Logging abstractions, Options
 - `DispatchPipeline` — static class centralizing interceptor chaining + error handling
 - `TypeFilterInterceptor` — access control interceptor, rejects types not in `TypeFilterOptions.AllowedTypes`
-- `AddConduit()` registers `ConduitOptions`, `IRouteResolver`. `AddConduitTypeFilter()` registers the interceptor.
+- `AddConduit()` registers `ConduitOptions`. `AddConduitTypeFilter()` registers the interceptor.
 
 ### Conduit.Analysis (netstandard2.0)
 - Target netstandard2.0 for Roslyn analyzer compatibility
