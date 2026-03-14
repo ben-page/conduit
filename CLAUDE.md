@@ -29,22 +29,22 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes (`src/Conduit/Configuration/`)
 - `Conduit.Dispatch` — wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult` (`src/Conduit/Dispatch/`)
-- `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IEventPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions`, `TypeFilterBuilder` (`src/Conduit/Middleware/`)
+- `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions`, `TypeFilterBuilder` (`src/Conduit/Middleware/`)
 - `Conduit.Routing` — transport: `IConduitTransport` (`src/Conduit/Routing/`)
 - `Conduit.Messages`, `Conduit.Handlers`, `Conduit.Attributes`, `Conduit.Exceptions` — core contracts
 
 **Key design decisions:**
 - **Auto-discovery**: The source generator automatically discovers ALL types implementing `ICommand`, `IQuery`, or `IEvent`. No opt-in attributes needed. Use `[NotDispatchable]` to exclude a type.
-- **Attribute-based routing**: `[Route("endpointName")]` on a type or `[RouteNamespace("ns", "endpointName")]` on assembly declares compile-time routes. Runtime routes via `conduit.Route("...").To("...")` still work as overrides.
-- **Endpoint-based routing**: Messages route to named endpoints via `ConduitBuilder.AddEndpoint()`. Unrouted messages dispatch locally (default). Endpoints define HOW to reach a destination (transport + URI). Routes (attributes or builder) define WHERE types go.
-- **DispatchPipeline**: Centralized interceptor chaining + error handling in `Conduit.Dispatch.DispatchPipeline`. Transport packages call `ExecuteRequestAsync` / `ExecuteEventAsync` instead of duplicating pipeline logic.
+- **Runtime routing (commands/queries only)**: `conduit.Route("namespace").To("endpoint")` assigns command/query types to named endpoints. Events don't route — they broadcast to all connected transports. Unrouted messages dispatch locally.
+- **Endpoint-based routing**: Messages route to named endpoints via `ConduitBuilder.AddEndpoint()`. Endpoints define HOW to reach a destination (transport + URI). Routes define WHERE command/query types go.
 - **TypeFilterInterceptor**: Access control interceptor in core that rejects dispatch requests for types not in the allowed set. Configured via `AddConduitTypeFilter(filter => filter.AllowType(...))`. Transport-agnostic — works with any inbound path.
 - `IWireDispatcher` interface (in `Conduit.Dispatch`) — generated mediator implements this. Methods: `DispatchRequestAsync` (commands/queries) and `DispatchEventAsync` (events). Deserializes wire payloads and calls local handlers.
 - `IWireInterceptor` interface (in `Conduit.Middleware`) wraps dispatch calls with a middleware pipeline. Chained by `ConduitRuntime` in reverse registration order.
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendEventAsync` (fire-and-forget events), both envelope-based.
-- Generated `ConduitMediator` implements `IMediator` + `IWireDispatcher`, checks route table before local dispatch.
-- **Pipeline behaviors from DI**: `IPipelineBehavior<T,R>` and `IEventPipelineBehavior<T>` are resolved from DI at runtime and chained around handlers/listeners. Register via `services.AddSingleton<IPipelineBehavior<TCommand, TResult>>(...)`.
-- **Event echo prevention**: `PublishAsync` dispatches to local listeners AND broadcasts to transports. `PublishLocalAsync` (private) dispatches only to local listeners. Wire-inbound events use `PublishLocalAsync` to prevent re-broadcast loops.
+- Generated `ConduitMediator` implements `IMediator` + `IWireMediator`, checks route table for commands/queries before local dispatch.
+- **Unified pipeline behaviors**: `IPipelineBehavior<TRequest, TResult>` wraps commands, queries, and events uniformly. Register open generics via `conduit.AddPipeline(typeof(MyPipeline<,>))`. Order is explicit (first registered = outermost).
+- **Event broadcast model**: `PublishAsync` dispatches to local listeners AND broadcasts to all DI-registered `IConduitTransport` instances (server-mode transports). Events marked `[LocalOnly]` skip transport broadcast. Wire-inbound events use `PublishLocalAsync` (private) to prevent re-broadcast loops.
+- **Transport limitations**: HTTP has no server→client push — events only flow client→server over HTTP. SignalR supports bidirectional event flow. Cross-pod unsolicited events require a SignalR backplane.
 - **Wire discriminator**: `FullTypeName` (e.g. `"Orders.Commands.CreateOrder"`) is used as the type discriminator in `DispatchEnvelope` on the wire.
 - **Dual-mode SignalRTransport**: Server mode (IHubContext, pushes events) and client mode (HubConnection, sends commands + receives events). Client mode uses lazy connect (auto-starts on first use via `EnsureConnectedAsync`).
 - **ConduitException is transport-agnostic**: Carries a machine-readable `Code` string but no HTTP status code. HTTP status mapping lives in `Transport.Http/EndpointRouteBuilderExtensions.MapStatusCode()`.
@@ -56,8 +56,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 | Attribute | Scope | Purpose |
 |---|---|---|
 | `[NotDispatchable]` | Type | Opt-out from source gen |
-| `[Route("endpoint")]` | Type | Route to named endpoint |
-| `[RouteNamespace("ns", "endpoint")]` | Assembly | Route namespace to endpoint |
+| `[LocalOnly]` | Type | Prevent event from being broadcast to transports |
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
 
 ## Build & Test
@@ -97,9 +96,9 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 ### Conduit.SourceGen (netstandard2.0)
 - `EnforceExtendedAnalyzerRules=true`, `IsRoslynComponent=true`, `NoWarn=RS2008`
 - Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` (no attributes needed)
-- Reads `[Route]` and `[RouteNamespace]` attributes for compile-time route registration
+- Reads `[LocalOnly]` attribute to suppress event broadcast in generated code
 - Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`
-- Generated `AddConduit()` calls `AddConduitCore()` and also registers handlers and attribute-declared routes into `ConduitOptions`
+- Generated `AddConduit()` calls `AddConduitCore()` and registers handlers
 - Pipeline behaviors resolved from DI at runtime in generated dispatch code
 - Microsoft.CodeAnalysis.CSharp version must be ≤ the SDK's Roslyn version (currently 4.12.0 for .NET 10 SDK)
 
