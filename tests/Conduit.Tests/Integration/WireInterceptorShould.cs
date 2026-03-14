@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.Generated;
@@ -115,7 +115,7 @@ public class WireInterceptorShould
 
         // Assert — type filter rejects the unauthorized type
         result.Error.Should().NotBeNull();
-        result.Error!.Code.Should().Be("Unauthorized");
+        result.Error.Code.Should().Be("Unauthorized");
     }
 
     [TestMethod]
