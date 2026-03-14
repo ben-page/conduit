@@ -1,6 +1,6 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR.Tests.TestApp;
+using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Transport.SignalR.Tests.Integration;
 
 [TestClass]
-public class SignalRTransportIntegrationTests
+public class SignalRTransportShould
 {
     private static TestHost CreateHandlerHost()
     {
@@ -35,7 +35,7 @@ public class SignalRTransportIntegrationTests
                 {
                     conduit.AddEndpoint("remote", endpoint =>
                         endpoint.UseSignalR(new Uri($"{remoteAddress}/hub")));
-                    conduit.Route("Conduit.Transport.SignalR.Tests.TestApp").To("remote");
+                    conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("remote");
                 });
                 builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitHandlers();
@@ -44,7 +44,7 @@ public class SignalRTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task CommandWithResult_RoundTrips_ThroughSignalR()
+    public async Task RoundTripCommandWithResult()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -60,7 +60,7 @@ public class SignalRTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task VoidCommand_RoundTrips_ThroughSignalR()
+    public async Task RoundTripVoidCommand()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -78,7 +78,7 @@ public class SignalRTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task Query_RoundTrips_ThroughSignalR()
+    public async Task RoundTripQuery()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -95,7 +95,7 @@ public class SignalRTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task NotFoundException_Propagates_ThroughSignalR()
+    public async Task PropagateNotFoundException()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -111,7 +111,7 @@ public class SignalRTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task GenericException_Propagates_AsInternalError()
+    public async Task PropagateGenericExceptionAsInternalError()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();

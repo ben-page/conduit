@@ -1,8 +1,8 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR.Tests.TestApp;
+using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -11,7 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Transport.SignalR.Tests.Integration;
 
 [TestClass]
-public class ConduitHubTests
+public class ConduitHubShould
 {
     private static TestHost CreateHost()
     {
@@ -37,7 +37,7 @@ public class ConduitHubTests
     }
 
     [TestMethod]
-    public async Task Dispatch_Command_ReturnsOkResult()
+    public async Task ReturnOkResultForCommand()
     {
         // Arrange
         await using var host = CreateHost();
@@ -46,7 +46,7 @@ public class ConduitHubTests
 
         // Act
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.TestApp.CreateItemCommand", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload);
 
         // Assert
         result.Should().NotBeNull();
@@ -55,7 +55,7 @@ public class ConduitHubTests
     }
 
     [TestMethod]
-    public async Task Dispatch_ConduitException_ReturnsFail()
+    public async Task ReturnFailForConduitException()
     {
         // Arrange
         await using var host = CreateHost();
@@ -64,7 +64,7 @@ public class ConduitHubTests
 
         // Act
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.TestApp.GetItemQuery", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.GetItemQuery", payload);
 
         // Assert
         result.Should().NotBeNull();
@@ -73,7 +73,7 @@ public class ConduitHubTests
     }
 
     [TestMethod]
-    public async Task Publish_Event_CompletesWithoutError()
+    public async Task DeliverPublishedEventToListener()
     {
         // Arrange
         await using var host = CreateHost();
@@ -84,14 +84,14 @@ public class ConduitHubTests
 
         // Act
         await connection.InvokeAsync(
-            "Publish", "Conduit.Transport.SignalR.Tests.TestApp.ItemCreatedEvent", payload);
+            "Publish", "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload);
 
         // Assert
         await spy.WaitForCountAsync(1);
     }
 
     [TestMethod]
-    public async Task Publish_ExceptionInHandler_SwallowedNoErrorToClient()
+    public async Task SwallowListenerException()
     {
         // Arrange — ExplodingEventListener throws InvalidOperationException.
         // The hub's Publish method should catch it and not propagate to the client.
@@ -102,7 +102,7 @@ public class ConduitHubTests
         // Act — publish an event whose listener throws
         var act = () => connection.InvokeAsync(
             "Publish",
-            "Conduit.Transport.SignalR.Tests.TestApp.ExplodingEvent",
+            "Conduit.Transport.SignalR.Tests.Support.ExplodingEvent",
             payload);
 
         // Assert — no exception propagated to the caller

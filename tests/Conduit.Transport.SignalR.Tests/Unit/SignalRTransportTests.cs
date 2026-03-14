@@ -1,14 +1,14 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Transport.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace Conduit.Transport.SignalR.Tests.Unit;
 
 [TestClass]
-public class SignalRTransportTests
+public class SignalRTransportShould
 {
     [TestMethod]
-    public async Task SendRequestAsync_NullEnvelope_ThrowsArgumentNullException()
+    public async Task RejectNullEnvelopeOnSendRequest()
     {
         // Arrange
         var hubConnection = new HubConnectionBuilder()
@@ -25,7 +25,7 @@ public class SignalRTransportTests
     }
 
     [TestMethod]
-    public async Task SendEventAsync_NullEnvelope_ThrowsArgumentNullException()
+    public async Task RejectNullEnvelopeOnSendEvent()
     {
         // Arrange
         var hubConnection = new HubConnectionBuilder()

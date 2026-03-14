@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Microsoft.Extensions.Options;
@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 namespace Conduit.Bridge.SignalR.Tests.Unit;
 
 [TestClass]
-public class BridgeTypeFilterInterceptorTests
+public class TypeFilterInterceptorShould
 {
     private static BridgeTypeFilterInterceptor CreateInterceptor(params string[] allowedTypes)
     {
@@ -20,7 +20,7 @@ public class BridgeTypeFilterInterceptorTests
     }
 
     [TestMethod]
-    public async Task InterceptRequestAsync_AllowedType_CallsNext()
+    public async Task AllowPermittedType()
     {
         var interceptor = CreateInterceptor("CreateOrder");
         var envelope = new DispatchEnvelope("CreateOrder", JsonSerializer.SerializeToElement(new { }));
@@ -40,7 +40,7 @@ public class BridgeTypeFilterInterceptorTests
     }
 
     [TestMethod]
-    public async Task InterceptRequestAsync_DisallowedType_ThrowsUnauthorized()
+    public async Task RejectForbiddenType()
     {
         var interceptor = CreateInterceptor("CreateOrder");
         var envelope = new DispatchEnvelope("DeleteDatabase", JsonSerializer.SerializeToElement(new { }));
@@ -55,7 +55,7 @@ public class BridgeTypeFilterInterceptorTests
     }
 
     [TestMethod]
-    public async Task InterceptEventAsync_AlwaysCallsNext()
+    public async Task AlwaysPassEvents()
     {
         var interceptor = CreateInterceptor(); // no types allowed
         var envelope = new DispatchEnvelope("SomeEvent", JsonSerializer.SerializeToElement(new { }));

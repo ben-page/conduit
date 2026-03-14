@@ -5,10 +5,10 @@ using Conduit.Dispatch;
 namespace Conduit.Transport.Http.Tests.Unit;
 
 [TestClass]
-public class HttpTransportTests
+public class HttpTransportShould
 {
     [TestMethod]
-    public async Task SendEventAsync_ThrowsNotSupported()
+    public async Task ThrowOnSendEvent()
     {
         var httpClient = new HttpClient();
         var transport = new HttpTransport(httpClient);
@@ -20,7 +20,7 @@ public class HttpTransportTests
     }
 
     [TestMethod]
-    public async Task SendRequestAsync_NullEnvelope_ThrowsArgumentNullException()
+    public async Task RejectNullEnvelope()
     {
         // Arrange
         var httpClient = new HttpClient();

@@ -1,7 +1,7 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.SignalR;
-using Conduit.Bridge.SignalR.Tests.TestApp;
+using Conduit.Bridge.SignalR.Tests.Support;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
@@ -13,7 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Bridge.SignalR.Tests.Integration;
 
 [TestClass]
-public class SignalRBridgeInterceptorTests
+public class SignalRInterceptorShould
 {
     private static TestHost CreateHostWithBridge()
     {
@@ -25,8 +25,8 @@ public class SignalRBridgeInterceptorTests
                 builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitBridge(bridge =>
                 {
-                    bridge.AllowType("Conduit.Bridge.SignalR.Tests.TestApp.CreateItemCommand");
-                    bridge.AllowType("Conduit.Bridge.SignalR.Tests.TestApp.GetItemQuery");
+                    bridge.AllowType("Conduit.Bridge.SignalR.Tests.Support.CreateItemCommand");
+                    bridge.AllowType("Conduit.Bridge.SignalR.Tests.Support.GetItemQuery");
                 });
                 builder.Services.AddConduitHandlers();
             },
@@ -43,7 +43,7 @@ public class SignalRBridgeInterceptorTests
     }
 
     [TestMethod]
-    public async Task AllowedType_Dispatches_ReturnsOk()
+    public async Task DispatchAllowedType()
     {
         // Arrange
         await using var host = CreateHostWithBridge();
@@ -52,7 +52,7 @@ public class SignalRBridgeInterceptorTests
 
         // Act
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Bridge.SignalR.Tests.TestApp.CreateItemCommand", payload);
+            "Dispatch", "Conduit.Bridge.SignalR.Tests.Support.CreateItemCommand", payload);
 
         // Assert
         result.Should().NotBeNull();
@@ -60,7 +60,7 @@ public class SignalRBridgeInterceptorTests
     }
 
     [TestMethod]
-    public async Task DisallowedType_Returns_UnauthorizedError()
+    public async Task RejectDisallowedType()
     {
         // Arrange
         await using var host = CreateHostWithBridge();
@@ -69,7 +69,7 @@ public class SignalRBridgeInterceptorTests
 
         // Act
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Bridge.SignalR.Tests.TestApp.DeleteItemCommand", payload);
+            "Dispatch", "Conduit.Bridge.SignalR.Tests.Support.DeleteItemCommand", payload);
 
         // Assert
         result.Should().NotBeNull();

@@ -1,9 +1,9 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.Http;
-using Conduit.Bridge.SignalR.Tests.TestApp;
+using Conduit.Bridge.SignalR.Tests.Support;
 using Conduit.Transport.SignalR;
 using Microsoft.Extensions.Hosting;
 using Conduit.Dispatch;
@@ -14,7 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Bridge.SignalR.Tests.Integration;
 
 [TestClass]
-public class InterceptorPipelineTests
+public class InterceptorPipelineShould
 {
     private static (WebApplication App, HttpClient Client) CreateTestHostWithBridge()
     {
@@ -24,8 +24,8 @@ public class InterceptorPipelineTests
         builder.Services.AddConduitSignalR();
         builder.Services.AddConduitBridge(bridge =>
         {
-            bridge.AllowType("Conduit.Bridge.SignalR.Tests.TestApp.CreateItemCommand");
-            bridge.AllowType("Conduit.Bridge.SignalR.Tests.TestApp.GetItemQuery");
+            bridge.AllowType("Conduit.Bridge.SignalR.Tests.Support.CreateItemCommand");
+            bridge.AllowType("Conduit.Bridge.SignalR.Tests.Support.GetItemQuery");
         });
         builder.Services.AddConduitHandlers();
 
@@ -41,14 +41,14 @@ public class InterceptorPipelineTests
     }
 
     [TestMethod]
-    public async Task BridgeInterceptor_AllowedType_Succeeds()
+    public async Task DispatchAllowedType()
     {
         var (app, client) = CreateTestHostWithBridge();
         await using (app)
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Name = "Test" });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.SignalR.Tests.TestApp.CreateItemCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.SignalR.Tests.Support.CreateItemCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
@@ -57,14 +57,14 @@ public class InterceptorPipelineTests
     }
 
     [TestMethod]
-    public async Task BridgeInterceptor_DisallowedType_ReturnsError()
+    public async Task RejectDisallowedTypeWith401()
     {
         var (app, client) = CreateTestHostWithBridge();
         await using (app)
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.SignalR.Tests.TestApp.DeleteItemCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.SignalR.Tests.Support.DeleteItemCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
