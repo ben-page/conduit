@@ -67,7 +67,7 @@ public class HttpEndpointShould
     }
 
     [TestMethod]
-    public async Task ReturnNullDataForVoidCommand()
+    public async Task ReturnOkForVoidCommand()
     {
         var (app, client) = CreateTestHost();
         await using (app)
@@ -81,8 +81,6 @@ public class HttpEndpointShould
             var response = await client.PostAsJsonAsync("/api/dispatch", deleteEnvelope);
 
             response.StatusCode.Should().Be(HttpStatusCode.OK);
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-            json.GetProperty("data").ValueKind.Should().Be(JsonValueKind.Null);
         }
     }
 

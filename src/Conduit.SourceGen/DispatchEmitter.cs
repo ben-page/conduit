@@ -104,7 +104,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        await Execute(command, serviceProvider, cancellationToken);");
-        sb.AppendLine("        return null;");
+        sb.AppendLine("        return Conduit.Unit.Value;");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
