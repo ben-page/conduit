@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/samples/">
-    <Project Path="samples/Conduit.Sample/Conduit.Sample.csproj" />
+    <Project Path="samples/Conduit.Sample.InventoryService/Conduit.Sample.InventoryService.csproj" />
+    <Project Path="samples/Conduit.Sample.OrderService/Conduit.Sample.OrderService.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />

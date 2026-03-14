@@ -1,7 +1,7 @@
 ﻿using Conduit.Handlers;
-using Conduit.Sample.Events;
+using Conduit.Sample.OrderService.Events;
 
-namespace Conduit.Sample.Handlers;
+namespace Conduit.Sample.OrderService.Handlers;
 
 internal sealed partial class ItemCreatedListener(ILogger<ItemCreatedListener> logger) : IEventListener<ItemCreatedEvent>
 {

@@ -1,7 +1,7 @@
 ﻿using Conduit.Attributes;
 using Conduit.Messages;
 
-namespace Conduit.Sample.Queries;
+namespace Conduit.Sample.OrderService.Queries;
 
 [Dispatchable]
 public record GetItemQuery(Guid Id) : IQuery<ItemDto>;
