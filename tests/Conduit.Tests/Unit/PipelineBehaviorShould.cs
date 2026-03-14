@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Attributes;
 using Conduit.Messages;
 using Conduit.Pipelines;
 
@@ -7,6 +8,7 @@ namespace Conduit.Tests.Unit;
 [TestClass]
 public class PipelineBehaviorShould
 {
+    [NotDispatchable]
     private record TestCommand(string Value) : ICommand<string>;
 
     private class TrackingBehavior : IPipelineBehavior<TestCommand, string>
@@ -38,6 +40,7 @@ public class PipelineBehaviorShould
         behavior.CallLog.Should().BeEquivalentTo(["before", "after"]);
     }
 
+    [NotDispatchable]
     private record TestEvent(string Data) : IEvent;
 
     private class TrackingEventBehavior : IEventPipelineBehavior<TestEvent>

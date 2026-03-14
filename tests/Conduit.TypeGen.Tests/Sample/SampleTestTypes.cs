@@ -1,8 +1,6 @@
 using Conduit.Attributes;
 using Conduit.Messages;
 
-[assembly: DispatchableNamespace("Conduit.TypeGen.Tests.Sample")]
-
 namespace Conduit.TypeGen.Tests.Sample;
 
 public record TestCreateCommand(string Name) : ICommand<Guid>;

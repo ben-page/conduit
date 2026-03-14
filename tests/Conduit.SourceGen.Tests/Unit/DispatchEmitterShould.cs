@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.SourceGen.Tests.Support;
 
 namespace Conduit.SourceGen.Tests.Unit;
@@ -10,14 +10,11 @@ public class DispatchEmitterShould : GeneratorTestBase
     public void EmitExecuteForCommandWithResult()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Handlers;
 using Conduit.Messages;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands
 {
@@ -44,14 +41,11 @@ namespace App.Commands
     public void EmitExecuteForVoidCommand()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Handlers;
 using Conduit.Messages;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands
 {
@@ -76,14 +70,11 @@ namespace App.Commands
     public void EmitFetchForQuery()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Handlers;
 using Conduit.Messages;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Queries
 {

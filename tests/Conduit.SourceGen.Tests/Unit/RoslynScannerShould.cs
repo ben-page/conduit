@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Analysis;
 using Conduit.Messages;
 using Microsoft.CodeAnalysis;
@@ -37,10 +37,7 @@ public class RoslynScannerShould
     public void FindCommandWithResult()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands;
 public record CreateOrder(string CustomerId) : ICommand<System.Guid>;
@@ -58,10 +55,7 @@ public record CreateOrder(string CustomerId) : ICommand<System.Guid>;
     public void FindVoidCommand()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands;
 public record DeleteOrder(System.Guid Id) : ICommand;
@@ -77,10 +71,7 @@ public record DeleteOrder(System.Guid Id) : ICommand;
     public void FindQuery()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Queries;
 public record GetOrder(System.Guid Id) : IQuery<string>;
@@ -97,10 +88,7 @@ public record GetOrder(System.Guid Id) : IQuery<string>;
     public void FindEvent()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Events;
 public record OrderCreated(System.Guid Id) : IEvent;
@@ -119,8 +107,6 @@ public record OrderCreated(System.Guid Id) : IEvent;
 using Conduit.Attributes;
 using Conduit.Messages;
 
-[assembly: DispatchableNamespace(""App"")]
-
 namespace App.Commands;
 
 [NotDispatchable]
@@ -133,15 +119,12 @@ public record InternalCommand(string Data) : ICommand;
     }
 
     [TestMethod]
-    public void IncludeDispatchableTypeOutsideNamespace()
+    public void FindTypeInAnyNamespace()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
 
 namespace Other;
-
-[Dispatchable]
 public record SpecialCommand(string Data) : ICommand;
 ";
         var compilation = CreateCompilation(source);
@@ -155,10 +138,7 @@ public record SpecialCommand(string Data) : ICommand;
     public void DetectValidateOverride()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands;
 public record ValidatedCommand(string Name) : ICommand
@@ -178,28 +158,10 @@ public record ValidatedCommand(string Name) : ICommand
     }
 
     [TestMethod]
-    public void ExcludeTypeOutsideNamespaceWithoutAttribute()
-    {
-        var source = @"
-using Conduit.Messages;
-
-namespace Other;
-public record OrphanCommand() : ICommand;
-";
-        var compilation = CreateCompilation(source);
-        var types = RoslynScanner.Scan(compilation);
-
-        types.Should().HaveCount(0);
-    }
-
-    [TestMethod]
     public void ExtractResultFullTypeName()
     {
         var source = @"
-using Conduit.Attributes;
 using Conduit.Messages;
-
-[assembly: DispatchableNamespace(""App"")]
 
 namespace App.Commands;
 public record CreateOrder(string CustomerId) : ICommand<System.Guid>;

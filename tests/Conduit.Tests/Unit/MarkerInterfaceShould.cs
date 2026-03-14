@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Attributes;
 using Conduit.Messages;
 
 namespace Conduit.Tests.Unit;
@@ -6,9 +7,16 @@ namespace Conduit.Tests.Unit;
 [TestClass]
 public class MarkerInterfaceShould
 {
+    [NotDispatchable]
     private record TestVoidCommand : ICommand;
+
+    [NotDispatchable]
     private record TestResultCommand(string Value) : ICommand<string>;
+
+    [NotDispatchable]
     private record TestQuery(int Id) : IQuery<string>;
+
+    [NotDispatchable]
     private record TestEvent(string Data) : IEvent;
 
     [TestMethod]

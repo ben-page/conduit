@@ -13,7 +13,6 @@ public static class ReflectionScanner
     private const string CommandWithResultInterfaceName = "Conduit.Messages.ICommand`1";
     private const string QueryInterfaceName = "Conduit.Messages.IQuery`1";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
-    private const string DispatchableAttributeFullName = "Conduit.Attributes.DispatchableAttribute";
     private const string NotDispatchableAttributeFullName = "Conduit.Attributes.NotDispatchableAttribute";
     private const string DispatchableNamespaceAttributeFullName = "Conduit.Attributes.DispatchableNamespaceAttribute";
     private const string AuthorizeAttributeFullName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
@@ -58,8 +57,9 @@ public static class ReflectionScanner
     }
 
     /// <summary>
-    /// Scans the assembly for dispatchable types matching the specified namespaces
-    /// or annotated with <c>[Dispatchable]</c>.
+    /// Scans the assembly for all dispatchable types implementing
+    /// <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c>.
+    /// Types marked with <c>[NotDispatchable]</c> are excluded.
     /// </summary>
     /// <param name="assembly">The assembly to scan.</param>
     /// <param name="declaredNamespaces">The namespaces to include.</param>
@@ -86,7 +86,7 @@ public static class ReflectionScanner
                 continue;
             }
 
-            if (!ShouldInclude(type, declaredNamespaces))
+            if (!ShouldInclude(type))
             {
                 continue;
             }
@@ -146,28 +146,14 @@ public static class ReflectionScanner
         return null;
     }
 
-    private static bool ShouldInclude(Type type, IReadOnlyList<string> declaredNamespaces)
+    private static bool ShouldInclude(Type type)
     {
         if (HasAttributeByName(type, NotDispatchableAttributeFullName))
         {
             return false;
         }
 
-        if (HasAttributeByName(type, DispatchableAttributeFullName))
-        {
-            return true;
-        }
-
-        var typeNamespace = type.Namespace ?? "";
-        foreach (var ns in declaredNamespaces)
-        {
-            if (typeNamespace.StartsWith(ns, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return true;
     }
 
     private static string? GetResultTypeName(Type type, DispatchableKind kind)
