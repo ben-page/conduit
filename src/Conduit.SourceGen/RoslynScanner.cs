@@ -177,6 +177,24 @@ public static class RoslynScanner
             return false;
         }
 
+        // Skip types that aren't accessible to generated code (private nested types, etc.)
+        if (typeSymbol.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected)
+        {
+            return false;
+        }
+
+        // Skip nested types in inaccessible containers
+        var container = typeSymbol.ContainingType;
+        while (container is not null)
+        {
+            if (container.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected)
+            {
+                return false;
+            }
+
+            container = container.ContainingType;
+        }
+
         return true;
     }
 
