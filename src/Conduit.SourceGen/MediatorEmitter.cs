@@ -37,6 +37,7 @@ public static class MediatorEmitter
         sb.AppendLine("using Conduit;");
         sb.AppendLine("using Conduit.Configuration;");
         sb.AppendLine("using Conduit.Dispatch;");
+        sb.AppendLine("using Conduit.Middleware;");
         sb.AppendLine("using Conduit.Messages;");
         sb.AppendLine("using Conduit.Handlers;");
         sb.AppendLine();
@@ -46,7 +47,7 @@ public static class MediatorEmitter
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
-        sb.AppendLine("    IEnumerable<IDispatchInterceptor> interceptors,");
+        sb.AppendLine("    IEnumerable<IWireInterceptor> interceptors,");
         sb.AppendLine("    ConduitOptions conduitOptions,");
         sb.AppendLine("    ILogger<ConduitMediator> logger) : IWireMediator");
         sb.AppendLine("{");
@@ -250,7 +251,7 @@ public static class MediatorEmitter
 
             // Wrap with event pipeline behaviors from DI via ConduitRuntime
             sb.AppendLine($"                var eventBehaviors = serviceProvider");
-            sb.AppendLine($"                    .GetServices<Conduit.Pipelines.IEventPipelineBehavior<{group.EventFullTypeName}>>()");
+            sb.AppendLine($"                    .GetServices<Conduit.Middleware.IEventPipelineBehavior<{group.EventFullTypeName}>>()");
             sb.AppendLine($"                    .ToArray();");
             sb.AppendLine($"                await ConduitRuntime.ExecuteWithEventBehaviors(e, eventBehaviors, listenerChain, cancellationToken);");
 

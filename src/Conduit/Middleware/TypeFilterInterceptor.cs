@@ -1,13 +1,15 @@
+using Conduit.Configuration;
+using Conduit.Dispatch;
 using Conduit.Exceptions;
 using Microsoft.Extensions.Options;
 
-namespace Conduit.Dispatch;
+namespace Conduit.Middleware;
 
 /// <summary>
 /// Rejects dispatch requests for message types not in the configured allowed set.
 /// This prevents browser clients from dispatching internal-only commands.
 /// </summary>
-public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IDispatchInterceptor
+public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IWireInterceptor
 {
     /// <inheritdoc />
     public Task<object?> InterceptRequestAsync(

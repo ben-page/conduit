@@ -1,6 +1,6 @@
-﻿using Conduit.Messages;
+using Conduit.Messages;
 
-namespace Conduit.Pipelines;
+namespace Conduit.Middleware;
 
 /// <summary>
 /// Wraps the event-listener pipeline, enabling cross-cutting concerns

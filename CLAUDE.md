@@ -27,10 +27,11 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 - Each transport package has an **outbound** client (`HttpTransport`, `SignalRTransport`) and an **inbound** endpoint (`MapConduitEndpoint()`, `ConduitHub`). There is no separate "bridge" concept — browser clients and C# clients use the same transport infrastructure.
 
 **Namespace layout** (within `src/Conduit/`):
-- `Conduit.Configuration` — builder, options, endpoints, routes, `TypeFilterBuilder` (`src/Conduit/Configuration/`)
-- `Conduit.Dispatch` — pipeline + wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IDispatchInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions` (`src/Conduit/Dispatch/`)
+- `Conduit.Configuration` — builder, options, endpoints, routes (`src/Conduit/Configuration/`)
+- `Conduit.Dispatch` — wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult` (`src/Conduit/Dispatch/`)
+- `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IEventPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor`, `TypeFilterOptions`, `TypeFilterBuilder` (`src/Conduit/Middleware/`)
 - `Conduit.Routing` — transport: `IConduitTransport` (`src/Conduit/Routing/`)
-- `Conduit.Messages`, `Conduit.Handlers`, `Conduit.Pipelines`, `Conduit.Attributes`, `Conduit.Exceptions` — core contracts
+- `Conduit.Messages`, `Conduit.Handlers`, `Conduit.Attributes`, `Conduit.Exceptions` — core contracts
 
 **Key design decisions:**
 - **Auto-discovery**: The source generator automatically discovers ALL types implementing `ICommand`, `IQuery`, or `IEvent`. No opt-in attributes needed. Use `[NotDispatchable]` to exclude a type.
@@ -39,7 +40,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 - **DispatchPipeline**: Centralized interceptor chaining + error handling in `Conduit.Dispatch.DispatchPipeline`. Transport packages call `ExecuteRequestAsync` / `ExecuteEventAsync` instead of duplicating pipeline logic.
 - **TypeFilterInterceptor**: Access control interceptor in core that rejects dispatch requests for types not in the allowed set. Configured via `AddConduitTypeFilter(filter => filter.AllowType(...))`. Transport-agnostic — works with any inbound path.
 - `IWireDispatcher` interface (in `Conduit.Dispatch`) — generated mediator implements this. Methods: `DispatchRequestAsync` (commands/queries) and `DispatchEventAsync` (events). Deserializes wire payloads and calls local handlers.
-- `IDispatchInterceptor` interface (in `Conduit.Dispatch`) wraps dispatch calls with a middleware pipeline. Chained by `DispatchPipeline` in reverse registration order.
+- `IWireInterceptor` interface (in `Conduit.Middleware`) wraps dispatch calls with a middleware pipeline. Chained by `ConduitRuntime` in reverse registration order.
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendEventAsync` (fire-and-forget events), both envelope-based.
 - Generated `ConduitMediator` implements `IMediator` + `IWireDispatcher`, checks route table before local dispatch.
 - **Pipeline behaviors from DI**: `IPipelineBehavior<T,R>` and `IEventPipelineBehavior<T>` are resolved from DI at runtime and chained around handlers/listeners. Register via `services.AddSingleton<IPipelineBehavior<TCommand, TResult>>(...)`.
@@ -85,7 +86,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 ### Conduit (core)
 - No ASP.NET dependency — only DI abstractions, Logging abstractions, Options
 - `DispatchPipeline` — static class centralizing interceptor chaining + error handling
-- `TypeFilterInterceptor` — access control interceptor, rejects types not in `TypeFilterOptions.AllowedTypes`
+- `TypeFilterInterceptor` (in `Conduit.Middleware`) — access control interceptor, rejects types not in `TypeFilterOptions.AllowedTypes`
 - `AddConduit()` registers `ConduitOptions`. `AddConduitTypeFilter()` registers the interceptor.
 
 ### Conduit.Analysis (netstandard2.0)

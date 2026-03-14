@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using Conduit.Pipelines;
+using Conduit.Middleware;
 using Conduit.TestUtils;
 using Conduit.Generated;
 using Microsoft.Extensions.DependencyInjection;

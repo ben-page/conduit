@@ -3,7 +3,7 @@ using System.Text.Json;
 using Conduit.Configuration;
 using Conduit.Exceptions;
 using Conduit.Messages;
-using Conduit.Pipelines;
+using Conduit.Middleware;
 using Microsoft.Extensions.Logging;
 
 namespace Conduit.Dispatch;
@@ -115,7 +115,7 @@ public static class ConduitRuntime
     /// </summary>
     public static async Task<DispatchResult<object>> HandleWireRequest(
         DispatchEnvelope envelope,
-        IEnumerable<IDispatchInterceptor> interceptors,
+        IEnumerable<IWireInterceptor> interceptors,
         Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
@@ -156,12 +156,13 @@ public static class ConduitRuntime
     /// </summary>
     public static async Task HandleWireEvent(
         DispatchEnvelope envelope,
-        IEnumerable<IDispatchInterceptor> interceptors,
+        IEnumerable<IWireInterceptor> interceptors,
         Func<string, JsonElement, CancellationToken, Task> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(dispatch);
 
         Func<Task> chain = () =>
             dispatch(envelope.Type, envelope.Payload, cancellationToken);

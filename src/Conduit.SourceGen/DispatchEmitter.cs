@@ -140,7 +140,7 @@ public static class DispatchEmitter
         // For void commands, use IPipelineBehavior<T, object> with a VoidToObject wrapper.
         sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
         sb.AppendLine($"        var behaviors = serviceProvider");
-        sb.AppendLine($"            .GetServices<Conduit.Pipelines.IPipelineBehavior<{type.FullTypeName}, {resultType}>>()");
+        sb.AppendLine($"            .GetServices<Conduit.Middleware.IPipelineBehavior<{type.FullTypeName}, {resultType}>>()");
         sb.AppendLine($"            .ToArray();");
         sb.AppendLine();
 
