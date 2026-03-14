@@ -1,3 +1,4 @@
+using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Configuration;
@@ -79,7 +80,7 @@ public class ConduitBuilder
 
         if (!behaviorType.GetInterfaces().Any(i =>
                 i.IsGenericType &&
-                i.GetGenericTypeDefinition() == typeof(Middleware.IPipelineBehavior<,>)))
+                i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>)))
         {
             throw new ArgumentException(
                 $"Type '{behaviorType.Name}' does not implement IPipelineBehavior<,>.",
@@ -88,6 +89,31 @@ public class ConduitBuilder
 
         this.Options.PipelineTypes.Add(behaviorType);
         this.Services.AddTransient(behaviorType);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a type filter interceptor that restricts which message types
+    /// external clients are permitted to dispatch via transports.
+    /// </summary>
+    /// <param name="configure">Callback to configure allowed types.</param>
+    /// <returns>This builder for chaining.</returns>
+    public ConduitBuilder AddTypeFilter(Action<TypeFilterBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var filterBuilder = new TypeFilterBuilder();
+        configure(filterBuilder);
+
+        this.Services.Configure<TypeFilterOptions>(options =>
+        {
+            foreach (var type in filterBuilder.Options.AllowedTypes)
+            {
+                options.AllowedTypes.Add(type);
+            }
+        });
+
+        this.Services.AddSingleton<IWireInterceptor, TypeFilterInterceptor>();
         return this;
     }
 }

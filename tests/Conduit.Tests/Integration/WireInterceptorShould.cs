@@ -101,9 +101,9 @@ public class WireInterceptorShould
             {
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-                builder.Services.AddConduit();
-                builder.Services.AddConduitTypeFilter(filter =>
-                    filter.AllowType("Conduit.Tests.Support.GetItemQuery"));
+                builder.Services.AddConduit(conduit =>
+                    conduit.AddTypeFilter(filter =>
+                        filter.AllowType("Conduit.Tests.Support.GetItemQuery")));
             });
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var envelope = new DispatchEnvelope(
@@ -127,9 +127,9 @@ public class WireInterceptorShould
             {
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-                builder.Services.AddConduit();
-                builder.Services.AddConduitTypeFilter(filter =>
-                    filter.AllowType("Conduit.Tests.Support.CreateItemCommand"));
+                builder.Services.AddConduit(conduit =>
+                    conduit.AddTypeFilter(filter =>
+                        filter.AllowType("Conduit.Tests.Support.CreateItemCommand")));
             });
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var envelope = new DispatchEnvelope(

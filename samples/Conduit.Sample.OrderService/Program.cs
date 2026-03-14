@@ -16,14 +16,14 @@ public partial class Program
             conduit.AddEndpoint("inventory", endpoint =>
                 endpoint.UseSignalR(new Uri("http://localhost:5101/hub")));
             conduit.Route("Conduit.Sample.InventoryService").To("inventory");
+            conduit.AddTypeFilter(filter =>
+            {
+                filter.AllowType("Conduit.Sample.OrderService.Commands.CreateItemCommand");
+                filter.AllowType("Conduit.Sample.OrderService.Commands.DeleteItemCommand");
+                filter.AllowType("Conduit.Sample.OrderService.Queries.GetItemQuery");
+            });
         });
         builder.Services.AddConduitSignalR();
-        builder.Services.AddConduitTypeFilter(filter =>
-        {
-            filter.AllowType("Conduit.Sample.OrderService.Commands.CreateItemCommand");
-            filter.AllowType("Conduit.Sample.OrderService.Commands.DeleteItemCommand");
-            filter.AllowType("Conduit.Sample.OrderService.Queries.GetItemQuery");
-        });
 
         var app = builder.Build();
 

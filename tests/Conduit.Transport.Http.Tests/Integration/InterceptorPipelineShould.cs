@@ -20,13 +20,15 @@ public class InterceptorPipelineShould
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton<ItemStore>();
-        builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
-        builder.Services.AddConduitTypeFilter(filter =>
+        builder.Services.AddConduit(conduit =>
         {
-            filter.AllowType("Conduit.Transport.Http.Tests.Support.CreateItemCommand");
-            filter.AllowType("Conduit.Transport.Http.Tests.Support.GetItemQuery");
+            conduit.AddTypeFilter(filter =>
+            {
+                filter.AllowType("Conduit.Transport.Http.Tests.Support.CreateItemCommand");
+                filter.AllowType("Conduit.Transport.Http.Tests.Support.GetItemQuery");
+            });
         });
+        builder.Services.AddConduitSignalR();
 
         var app = builder.Build();
         app.MapConduitEndpoint();
