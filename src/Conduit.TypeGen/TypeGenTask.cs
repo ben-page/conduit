@@ -31,7 +31,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
         try
         {
             var assembly = Assembly.LoadFrom(this.AssemblyPath);
-            var types = ReflectionScanner.Scan(assembly);
+            var types = ReflectionScanner.ScanClientVisible(assembly);
             var declaredNamespaces = ReflectionScanner.GetDeclaredNamespaces(assembly);
             var groups = NamespaceGrouper.Group(types, declaredNamespaces);
 
