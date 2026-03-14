@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
 using Conduit.Generated;
@@ -9,7 +9,7 @@ using Conduit.Tests.Support;
 namespace Conduit.Tests.Integration;
 
 [TestClass]
-public class MediatorDispatchTests
+public class MediatorShould
 {
     private static TestHost CreateTestHost(Action<IServiceCollection>? configure = null)
     {
@@ -27,7 +27,7 @@ public class MediatorDispatchTests
     }
 
     [TestMethod]
-    public async Task CommandWithResult_DispatchesToHandler_ReturnsResult()
+    public async Task ExecuteCommandWithResult()
     {
         // Arrange
         await using var host = CreateTestHost();
@@ -43,7 +43,7 @@ public class MediatorDispatchTests
     }
 
     [TestMethod]
-    public async Task VoidCommand_DispatchesToHandler()
+    public async Task ExecuteVoidCommand()
     {
         // Arrange
         await using var host = CreateTestHost();
@@ -60,7 +60,7 @@ public class MediatorDispatchTests
     }
 
     [TestMethod]
-    public async Task Query_DispatchesToHandler_ReturnsResult()
+    public async Task ExecuteQuery()
     {
         // Arrange
         await using var host = CreateTestHost();
@@ -77,7 +77,7 @@ public class MediatorDispatchTests
     }
 
     [TestMethod]
-    public async Task PublishAsync_DeliversToListener()
+    public async Task DeliverEventToListener()
     {
         // Arrange
         await using var host = CreateTestHost();
@@ -92,7 +92,7 @@ public class MediatorDispatchTests
     }
 
     [TestMethod]
-    public async Task UnroutedMessage_DispatchesLocally_WhenRoutesExistForOtherNamespaces()
+    public async Task DispatchUnroutedMessageLocally()
     {
         // Arrange — configure a route for "Remote.Commands" namespace,
         // but our test types are in "Conduit.Tests.TestApp" so they won't match

@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Pipelines;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
@@ -10,10 +10,10 @@ using Conduit.Tests.Support;
 namespace Conduit.Tests.Integration;
 
 [TestClass]
-public class MediatorPipelineTests
+public class PipelineBehaviorIntegrationShould
 {
     [TestMethod]
-    public async Task PipelineBehavior_WrapsCommandExecution()
+    public async Task InvokePipelineBehaviorAroundCommand()
     {
         // Arrange
         var trackingBehavior = new TrackingBehavior();
@@ -41,7 +41,7 @@ public class MediatorPipelineTests
     }
 
     [TestMethod]
-    public async Task EventPipelineBehavior_WrapsEventPublish()
+    public async Task InvokeEventPipelineBehaviorAroundPublish()
     {
         // Arrange
         var trackingBehavior = new TrackingEventBehavior();

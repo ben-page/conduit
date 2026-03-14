@@ -5,10 +5,10 @@ using Conduit.Dispatch;
 namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class DispatchEnvelopeTests
+public class DispatchEnvelopeShould
 {
     [TestMethod]
-    public void Constructor_NullType_ThrowsArgumentNullException()
+    public void RejectNullType()
     {
         // Arrange
         var payload = JsonSerializer.SerializeToElement(new { });
@@ -21,7 +21,7 @@ public class DispatchEnvelopeTests
     }
 
     [TestMethod]
-    public void Constructor_WhitespaceType_ThrowsArgumentException()
+    public void RejectWhitespaceType()
     {
         // Arrange
         var payload = JsonSerializer.SerializeToElement(new { });

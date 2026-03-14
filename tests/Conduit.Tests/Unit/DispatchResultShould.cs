@@ -1,13 +1,13 @@
 using AwesomeAssertions;
 using Conduit.Dispatch;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class DispatchResultTests
+public class DispatchResultShould
 {
     [TestMethod]
-    public void Ok_HasDataAndNoError()
+    public void HaveDataAndNoErrorWhenOk()
     {
         var result = DispatchResult<string>.Ok("hello");
         result.Data.Should().Be("hello");
@@ -15,7 +15,7 @@ public class DispatchResultTests
     }
 
     [TestMethod]
-    public void Fail_HasErrorAndNoData()
+    public void HaveErrorAndNoDataWhenFailed()
     {
         var result = DispatchResult<string>.Fail("NotFound", "Item not found");
         result.Data.Should().BeNull();
@@ -23,7 +23,7 @@ public class DispatchResultTests
     }
 
     [TestMethod]
-    public void Fail_WithDetails_HasFieldErrors()
+    public void HaveFieldErrorsWhenFailedWithDetails()
     {
         var result = DispatchResult<string>.Fail("Validation", "Invalid input",
         [

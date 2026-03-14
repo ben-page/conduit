@@ -3,13 +3,13 @@ using Conduit.Configuration;
 using Conduit.Dispatch;
 using Conduit.Routing;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class DefaultRouteResolverTests
+public class RouteResolverShould
 {
     [TestMethod]
-    public void ReturnsNull_WhenNoRoutesConfigured()
+    public void ReturnNullWhenNoRoutesConfigured()
     {
         var options = new ConduitOptions();
         var resolver = new DefaultRouteResolver(options);
@@ -20,7 +20,7 @@ public class DefaultRouteResolverTests
     }
 
     [TestMethod]
-    public void MatchesNamespacePrefix()
+    public void MatchNamespacePrefix()
     {
         var options = new ConduitOptions();
         var endpoint = new ConduitEndpoint { Name = "orders-api", Transport = new StubTransport() };
@@ -36,7 +36,7 @@ public class DefaultRouteResolverTests
     }
 
     [TestMethod]
-    public void ReturnsNull_WhenNoPatternMatches()
+    public void ReturnNullWhenNoPatternMatches()
     {
         var options = new ConduitOptions();
         var endpoint = new ConduitEndpoint { Name = "orders-api" };
@@ -51,7 +51,7 @@ public class DefaultRouteResolverTests
     }
 
     [TestMethod]
-    public void FirstMatchWins_WhenMultipleRoutesMatch()
+    public void PickFirstMatchWhenMultipleRoutesMatch()
     {
         var options = new ConduitOptions();
         options.Endpoints["specific"] = new ConduitEndpoint { Name = "specific", Transport = new StubTransport() };
@@ -67,7 +67,7 @@ public class DefaultRouteResolverTests
     }
 
     [TestMethod]
-    public void ThrowsWhenEndpointNotRegistered()
+    public void ThrowWhenEndpointNotRegistered()
     {
         var options = new ConduitOptions();
         options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "missing" });
@@ -81,7 +81,7 @@ public class DefaultRouteResolverTests
     }
 
     [TestMethod]
-    public void ThrowsWhenEndpointHasNoTransport()
+    public void ThrowWhenEndpointHasNoTransport()
     {
         var options = new ConduitOptions();
         options.Endpoints["orders-api"] = new ConduitEndpoint { Name = "orders-api" };
@@ -103,45 +103,4 @@ file class StubTransport : IConduitTransport
 
     public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => Task.CompletedTask;
-}
-
-[TestClass]
-public class ConduitBuilderTests
-{
-    [TestMethod]
-    public void AddEndpoint_RegistersEndpointInOptions()
-    {
-        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-        var builder = new ConduitBuilder(services);
-
-        builder.AddEndpoint("test", endpoint => { });
-
-        builder.Options.Endpoints.Should().ContainKey("test");
-        builder.Options.Endpoints["test"].Name.Should().Be("test");
-    }
-
-    [TestMethod]
-    public void Route_String_AddsRouteToOptions()
-    {
-        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-        var builder = new ConduitBuilder(services);
-
-        builder.Route("Orders.Commands").To("orders-api");
-
-        builder.Options.Routes.Should().HaveCount(1);
-        builder.Options.Routes[0].Pattern.Should().Be("Orders.Commands");
-        builder.Options.Routes[0].EndpointName.Should().Be("orders-api");
-    }
-
-    [TestMethod]
-    public void Route_Generic_UsesTypeNamespace()
-    {
-        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-        var builder = new ConduitBuilder(services);
-
-        builder.Route<ConduitBuilder>().To("test");
-
-        builder.Options.Routes.Should().HaveCount(1);
-        builder.Options.Routes[0].Pattern.Should().Be("Conduit.Configuration");
-    }
 }

@@ -1,11 +1,11 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Handlers;
 using Conduit.Messages;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class HandlerInterfaceTests
+public class HandlerShould
 {
     internal record CreateItemCommand(string Name) : ICommand<Guid>;
     internal record DeleteItemCommand(Guid Id) : ICommand;
@@ -37,7 +37,7 @@ public class HandlerInterfaceTests
     }
 
     [TestMethod]
-    public async Task CommandHandler_WithResult_ReturnsValue()
+    public async Task ReturnValueFromCommandWithResult()
     {
         var handler = new CreateItemHandler();
         var result = await handler.HandleAsync(new CreateItemCommand("test"), CancellationToken.None);
@@ -45,14 +45,14 @@ public class HandlerInterfaceTests
     }
 
     [TestMethod]
-    public async Task CommandHandler_Void_Completes()
+    public async Task CompleteVoidCommand()
     {
         var handler = new DeleteItemHandler();
         await handler.HandleAsync(new DeleteItemCommand(Guid.NewGuid()), CancellationToken.None);
     }
 
     [TestMethod]
-    public async Task QueryHandler_ReturnsValue()
+    public async Task ReturnValueFromQuery()
     {
         var handler = new GetItemHandler();
         var result = await handler.HandleAsync(new GetItemQuery(Guid.NewGuid()), CancellationToken.None);
@@ -60,7 +60,7 @@ public class HandlerInterfaceTests
     }
 
     [TestMethod]
-    public async Task EventListener_Completes()
+    public async Task CompleteEventListener()
     {
         var listener = new ItemCreatedListener();
         await listener.HandleAsync(new ItemCreatedEvent(Guid.NewGuid()), CancellationToken.None);
