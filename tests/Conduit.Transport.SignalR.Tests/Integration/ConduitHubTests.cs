@@ -93,16 +93,19 @@ public class ConduitHubTests
     [TestMethod]
     public async Task Publish_ExceptionInHandler_SwallowedNoErrorToClient()
     {
-        // Arrange -- the hub's Publish method catches all exceptions and logs them.
-        // Publishing an unknown event type will cause the router to throw internally.
+        // Arrange — ExplodingEventListener throws InvalidOperationException.
+        // The hub's Publish method should catch it and not propagate to the client.
         await using var host = CreateHost();
         await using var connection = await ConnectToHub(host.Address);
-        var payload = JsonSerializer.SerializeToElement(new { });
+        var payload = JsonSerializer.SerializeToElement(new { Data = "boom" });
 
-        // Act -- should complete without throwing HubException to the client
-        var act = () => connection.InvokeAsync("Publish", "NonExistentEvent", payload);
+        // Act — publish an event whose listener throws
+        var act = () => connection.InvokeAsync(
+            "Publish",
+            "Conduit.Transport.SignalR.Tests.TestApp.ExplodingEvent",
+            payload);
 
-        // Assert -- no exception propagated to the caller
+        // Assert — no exception propagated to the caller
         await act.Should().NotThrowAsync();
     }
 }

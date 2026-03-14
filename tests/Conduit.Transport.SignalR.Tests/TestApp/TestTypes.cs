@@ -19,3 +19,6 @@ public record ItemCreatedEvent(Guid Id, string Name) : IEvent;
 
 [Dispatchable]
 public record ExplodingCommand() : ICommand;
+
+[Dispatchable]
+public record ExplodingEvent(string Data) : IEvent;
