@@ -1,7 +1,7 @@
 ﻿using Conduit.Handlers;
-using Conduit.Sample.Commands;
+using Conduit.Sample.OrderService.Commands;
 
-namespace Conduit.Sample.Handlers;
+namespace Conduit.Sample.OrderService.Handlers;
 
 internal sealed class DeleteItemHandler : ICommandHandler<DeleteItemCommand>
 {

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conduit Sample</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+        input, button { padding: 8px 12px; margin: 4px 0; }
+        #result { margin-top: 20px; padding: 12px; background: #f5f5f5; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Conduit Sample</h1>
+    <h2>Create Item (via SignalR)</h2>
+    <input id="itemName" placeholder="Item name" />
+    <button id="createBtn">Create</button>
+    <div id="result"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+    <script>
+        var connection = new signalR.HubConnectionBuilder()
+            .withUrl("/hub")
+            .build();
+
+        var resultDiv = document.getElementById("result");
+
+        connection.start().then(function () {
+            resultDiv.textContent = "Connected to hub.";
+        }).catch(function (err) {
+            resultDiv.textContent = "Connection failed: " + err;
+        });
+
+        document.getElementById("createBtn").addEventListener("click", function () {
+            var name = document.getElementById("itemName").value;
+            if (!name) return;
+
+            connection.invoke("Dispatch", "Conduit.Sample.OrderService.Commands.CreateItemCommand", { Name: name })
+                .then(function (result) {
+                    resultDiv.textContent = JSON.stringify(result, null, 2);
+                })
+                .catch(function (err) {
+                    resultDiv.textContent = "Error: " + err;
+                });
+        });
+    </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 ﻿using Conduit.Attributes;
 using Conduit.Messages;
 
-namespace Conduit.Sample.Events;
+namespace Conduit.Sample.OrderService.Events;
 
 [Dispatchable]
 public record ItemCreatedEvent(Guid Id, string Name) : IEvent;

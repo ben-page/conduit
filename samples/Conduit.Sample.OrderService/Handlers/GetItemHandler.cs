@@ -1,8 +1,8 @@
 ﻿using Conduit.Exceptions;
 using Conduit.Handlers;
-using Conduit.Sample.Queries;
+using Conduit.Sample.OrderService.Queries;
 
-namespace Conduit.Sample.Handlers;
+namespace Conduit.Sample.OrderService.Handlers;
 
 internal sealed class GetItemHandler : IQueryHandler<GetItemQuery, ItemDto>
 {

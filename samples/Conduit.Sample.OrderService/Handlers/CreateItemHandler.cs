@@ -1,8 +1,8 @@
 ﻿using Conduit.Handlers;
-using Conduit.Sample.Commands;
-using Conduit.Sample.Events;
+using Conduit.Sample.OrderService.Commands;
+using Conduit.Sample.OrderService.Events;
 
-namespace Conduit.Sample.Handlers;
+namespace Conduit.Sample.OrderService.Handlers;
 
 internal sealed class CreateItemHandler(IMediator mediator) : ICommandHandler<CreateItemCommand, Guid>
 {
