@@ -46,7 +46,6 @@ public static class MediatorEmitter
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
-        sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
         sb.AppendLine("    IEnumerable<IWireInterceptor> interceptors,");
         sb.AppendLine("    ConduitOptions conduitOptions,");
         sb.AppendLine("    ILogger<ConduitMediator> logger) : IWireMediator");
@@ -207,18 +206,21 @@ public static class MediatorEmitter
 
     private static void EmitPublishAsync(StringBuilder sb, IReadOnlyList<ListenerGroup> listenerGroups)
     {
-        // PublishAsync dispatches to local listeners AND broadcasts to transports.
-        // Used for locally-originated events.
+        // PublishAsync dispatches to local listeners AND broadcasts to matching transports.
+        // Events fan out to ALL transports whose routes match the event type.
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
         sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
         sb.AppendLine();
-        sb.AppendLine("        var eventEnvelope = new DispatchEnvelope(");
-        sb.AppendLine("            @event.GetType().FullName!,");
-        sb.AppendLine("            JsonSerializer.SerializeToElement(@event));");
-        sb.AppendLine("        foreach (var transport in transports)");
+        sb.AppendLine("        var typeName = @event.GetType().FullName!;");
+        sb.AppendLine("        var matchedEndpoints = ConduitRuntime.ResolveAllRoutes(conduitOptions, typeName);");
+        sb.AppendLine("        if (matchedEndpoints.Count > 0)");
         sb.AppendLine("        {");
-        sb.AppendLine("            await ConduitRuntime.SafeExecute(() => transport.SendEventAsync(eventEnvelope, cancellationToken), logger);");
+        sb.AppendLine("            var eventEnvelope = new DispatchEnvelope(typeName, JsonSerializer.SerializeToElement(@event));");
+        sb.AppendLine("            foreach (var endpoint in matchedEndpoints)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                await ConduitRuntime.SafeExecute(() => endpoint.Transport!.SendEventAsync(eventEnvelope, cancellationToken), logger);");
+        sb.AppendLine("            }");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();

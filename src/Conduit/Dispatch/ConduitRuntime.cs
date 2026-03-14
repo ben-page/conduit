@@ -27,9 +27,9 @@ public static class ConduitRuntime
         LoggerMessage.Define(LogLevel.Error, new EventId(3, "ListenerError"),
             "Event listener or transport failed");
     /// <summary>
-    /// Resolves a route for the given message type. Returns the matched endpoint,
-    /// or null for local dispatch. Throws if the matched endpoint is missing or
-    /// has no transport configured.
+    /// Resolves the first route for the given message type. Returns the matched endpoint,
+    /// or null for local dispatch. Used for commands and queries.
+    /// Throws if the matched endpoint is missing or has no transport configured.
     /// </summary>
     public static ConduitEndpoint? ResolveRoute(ConduitOptions options, string messageFullTypeName)
     {
@@ -40,26 +40,56 @@ public static class ConduitRuntime
         {
             if (messageFullTypeName.StartsWith(route.Pattern, StringComparison.Ordinal))
             {
-                if (!options.Endpoints.TryGetValue(route.EndpointName, out var endpoint))
-                {
-                    throw new InvalidOperationException(
-                        $"Route pattern '{route.Pattern}' matched message '{messageFullTypeName}' " +
-                        $"but endpoint '{route.EndpointName}' is not registered. " +
-                        $"Ensure AddEndpoint(\"{route.EndpointName}\", ...) is called in your Conduit configuration.");
-                }
-
-                if (endpoint.Transport is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Endpoint '{route.EndpointName}' has no transport configured. " +
-                        $"Call UseHttp() or UseSignalR(uri) in the endpoint configuration.");
-                }
-
-                return endpoint;
+                return ResolveEndpoint(options, route, messageFullTypeName);
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves all routes for the given message type. Returns all matched endpoints.
+    /// Used for events which fan out to all matching transports.
+    /// Throws if any matched endpoint is missing or has no transport configured.
+    /// </summary>
+    public static List<ConduitEndpoint> ResolveAllRoutes(ConduitOptions options, string messageFullTypeName)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(messageFullTypeName);
+
+        var endpoints = new List<ConduitEndpoint>();
+        foreach (var route in options.Routes)
+        {
+            if (messageFullTypeName.StartsWith(route.Pattern, StringComparison.Ordinal))
+            {
+                endpoints.Add(ResolveEndpoint(options, route, messageFullTypeName));
+            }
+        }
+
+        return endpoints;
+    }
+
+    private static ConduitEndpoint ResolveEndpoint(
+        ConduitOptions options,
+        ConduitRoute route,
+        string messageFullTypeName)
+    {
+        if (!options.Endpoints.TryGetValue(route.EndpointName, out var endpoint))
+        {
+            throw new InvalidOperationException(
+                $"Route pattern '{route.Pattern}' matched message '{messageFullTypeName}' " +
+                $"but endpoint '{route.EndpointName}' is not registered. " +
+                $"Ensure AddEndpoint(\"{route.EndpointName}\", ...) is called in your Conduit configuration.");
+        }
+
+        if (endpoint.Transport is null)
+        {
+            throw new InvalidOperationException(
+                $"Endpoint '{route.EndpointName}' has no transport configured. " +
+                $"Call UseHttp() or UseSignalR(uri) in the endpoint configuration.");
+        }
+
+        return endpoint;
     }
 
     /// <summary>

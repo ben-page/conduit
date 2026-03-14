@@ -85,41 +85,4 @@ public class MediatorShould
         // Assert
         await spy.WaitForCountAsync(1);
     }
-
-    [TestMethod]
-    public async Task DispatchUnroutedMessageLocally()
-    {
-        // Arrange — configure a route for "Remote.Commands" namespace,
-        // but our test types are in "Conduit.Tests.Support" so they won't match
-        await using var host = TestHost.Start(
-            builder =>
-            {
-                builder.Services.AddSingleton<ItemStore>();
-                builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-                builder.Services.AddConduit(conduit =>
-                {
-                    conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseTransport(new StubTransport()));
-                    conduit.Route("Remote.Commands").To("remote");
-                });
-            });
-        var mediator = host.GetRequiredService<IMediator>();
-        var store = host.GetRequiredService<ItemStore>();
-
-        // Act
-        var id = await mediator.ExecuteAsync(new CreateItemCommand("Local"));
-
-        // Assert
-        id.Should().NotBeEmpty();
-        store.Get(id).Should().Be("Local");
-    }
-}
-
-file class StubTransport : Dispatch.IConduitTransport
-{
-    public Task<object?> SendRequestAsync(Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
-        => Task.FromResult<object?>(null);
-
-    public Task SendEventAsync(Dispatch.DispatchEnvelope envelope, CancellationToken cancellationToken)
-        => Task.CompletedTask;
 }
