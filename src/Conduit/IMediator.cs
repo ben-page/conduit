@@ -1,4 +1,4 @@
-﻿using Conduit.Dispatch;
+using Conduit.Dispatch;
 using Conduit.Messages;
 
 namespace Conduit;
@@ -13,21 +13,35 @@ public interface IMediator
     /// <summary>
     /// Dispatches a void command through the pipeline to its handler.
     /// </summary>
+    /// <param name="command">The command to execute.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public Task ExecuteAsync(ICommand command, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Dispatches a command that returns a result through the pipeline to its handler.
     /// </summary>
+    /// <typeparam name="TResult">The type returned by the command handler.</typeparam>
+    /// <param name="command">The command to execute.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The result produced by the command handler.</returns>
     public Task<TResult> ExecuteAsync<TResult>(ICommand<TResult> command, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Dispatches a query through the pipeline to its handler.
     /// </summary>
+    /// <typeparam name="TResult">The type returned by the query handler.</typeparam>
+    /// <param name="query">The query to execute.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The result produced by the query handler.</returns>
     public Task<TResult> FetchAsync<TResult>(IQuery<TResult> query, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Publishes an event to all registered listeners with continue-on-failure semantics.
     /// </summary>
+    /// <param name="event">The event to publish.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default);
 }
 
@@ -43,6 +57,9 @@ public interface IWireMediator : IMediator
     /// <see cref="IDispatchInterceptor"/> instances, deserializes the payload,
     /// dispatches to the handler, and wraps the result in <see cref="DispatchResult{T}"/>.
     /// </summary>
+    /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A dispatch result containing the handler output or error information.</returns>
     public Task<DispatchResult<object>> HandleWireRequestAsync(
         DispatchEnvelope envelope,
         CancellationToken cancellationToken);
@@ -52,6 +69,9 @@ public interface IWireMediator : IMediator
     /// <see cref="IDispatchInterceptor"/> instances, deserializes the payload,
     /// and publishes to local listeners. Swallows exceptions (fire-and-forget).
     /// </summary>
+    /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public Task HandleWireEventAsync(
         DispatchEnvelope envelope,
         CancellationToken cancellationToken);
