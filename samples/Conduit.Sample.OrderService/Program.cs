@@ -14,7 +14,7 @@ public partial class Program
         {
             // Route InventoryService commands to the remote service
             conduit.AddEndpoint("inventory", endpoint =>
-                endpoint.UseSignalR(new Uri("http://localhost:5101/hub")));
+                endpoint.UseSignalR(new Uri("https://localhost:5101/hub")));
             conduit.Route("Conduit.Sample.InventoryService").To("inventory");
             conduit.AddTypeFilter(filter =>
             {
