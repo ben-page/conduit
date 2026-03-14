@@ -48,6 +48,14 @@ public class ExplodingHandler : ICommandHandler<ExplodingCommand>
     }
 }
 
+public class ExplodingEventListener : IEventListener<ExplodingEvent>
+{
+    public Task HandleAsync(ExplodingEvent @event, CancellationToken cancellationToken)
+    {
+        throw new InvalidOperationException("Event handler exploded!");
+    }
+}
+
 public class ItemCreatedListener(EventSpy<ItemCreatedEvent> spy) : IEventListener<ItemCreatedEvent>
 {
     public Task HandleAsync(ItemCreatedEvent @event, CancellationToken cancellationToken)

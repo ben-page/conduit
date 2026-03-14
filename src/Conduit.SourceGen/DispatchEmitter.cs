@@ -23,6 +23,7 @@ public static class DispatchEmitter
         sb.AppendLine("#nullable enable");
         sb.AppendLine();
         sb.AppendLine("using System;");
+        sb.AppendLine("using System.Linq;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
@@ -134,73 +135,47 @@ public static class DispatchEmitter
         StringBuilder sb,
         DispatchableTypeInfo type,
         HandlerInfo handler,
-        IReadOnlyList<BehaviorInfo>? behaviors,
+        IReadOnlyList<BehaviorInfo>? _,
         bool isVoid)
     {
-        var applicableBehaviors = behaviors?
-            .Where(b => !b.IsEventBehavior)
-            .OrderBy(b => b.Order)
-            .ToList() ?? new List<BehaviorInfo>();
-
         var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
+        var resultType = isVoid ? "object" : type.ResultFullTypeName;
 
-        if (applicableBehaviors.Count == 0)
+        // Resolve pipeline behaviors from DI at runtime (like MediatR).
+        // For void commands, use IPipelineBehavior<T, object> with a VoidToObject wrapper.
+        sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
+        sb.AppendLine($"        var behaviors = serviceProvider");
+        sb.AppendLine($"            .GetServices<Conduit.Pipelines.IPipelineBehavior<{type.FullTypeName}, {resultType}>>()");
+        sb.AppendLine($"            .ToArray();");
+        sb.AppendLine();
+
+        // Build the innermost delegate (the handler call)
+        if (isVoid)
         {
-            sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
-            if (isVoid)
-            {
-                sb.AppendLine($"        await handler.HandleAsync({requestParamName}, cancellationToken);");
-            }
-            else
-            {
-                sb.AppendLine($"        return await handler.HandleAsync({requestParamName}, cancellationToken);");
-            }
+            sb.AppendLine($"        Func<Task<object>> next = () => VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
         }
         else
         {
-            // Emit behavior and handler resolution
-            for (var i = 0; i < applicableBehaviors.Count; i++)
-            {
-                var behavior = applicableBehaviors[i];
-                var behaviorTypeName = MakeBehaviorTypeName(behavior, type, isVoid);
-                sb.AppendLine($"        var behavior{i + 1} = serviceProvider.GetRequiredService<{behaviorTypeName}>();");
-            }
-
-            sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
-            sb.AppendLine();
-
-            // Build nested call — for void commands, wrap handler.HandleAsync (returns Task)
-            // to return Task<object> so it matches the IPipelineBehavior<T, object> delegate shape
-            string innerCall;
-            if (isVoid)
-            {
-                innerCall = $"VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken))";
-            }
-            else
-            {
-                innerCall = $"handler.HandleAsync({requestParamName}, cancellationToken)";
-            }
-
-            for (var i = applicableBehaviors.Count - 1; i >= 0; i--)
-            {
-                var capturedInner = innerCall;
-                innerCall = $"behavior{i + 1}.HandleAsync({requestParamName},\n            () => {capturedInner},\n            cancellationToken)";
-            }
-
-            if (isVoid)
-            {
-                sb.AppendLine($"        await {innerCall};");
-            }
-            else
-            {
-                sb.AppendLine($"        return await {innerCall};");
-            }
+            sb.AppendLine($"        Func<Task<{resultType}>> next = () => handler.HandleAsync({requestParamName}, cancellationToken);");
         }
-    }
 
-    private static string MakeBehaviorTypeName(BehaviorInfo behavior, DispatchableTypeInfo type, bool isVoid)
-    {
-        var resultType = isVoid ? "object" : type.ResultFullTypeName;
-        return $"{behavior.OpenTypeName}<{type.FullTypeName}, {resultType}>";
+        sb.AppendLine();
+        sb.AppendLine("        // Chain behaviors in reverse order (last registered wraps outermost)");
+        sb.AppendLine("        for (var i = behaviors.Length - 1; i >= 0; i--)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var behavior = behaviors[i];");
+        sb.AppendLine("            var currentNext = next;");
+        sb.AppendLine($"            next = () => behavior.HandleAsync({requestParamName}, currentNext, cancellationToken);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+
+        if (isVoid)
+        {
+            sb.AppendLine("        await next();");
+        }
+        else
+        {
+            sb.AppendLine("        return await next();");
+        }
     }
 }

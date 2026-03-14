@@ -28,6 +28,7 @@ public static class MediatorEmitter
         sb.AppendLine();
         sb.AppendLine("using System;");
         sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using System.Linq;");
         sb.AppendLine("using System.Runtime.CompilerServices;");
         sb.AppendLine("using System.Text.Json;");
         sb.AppendLine("using System.Threading;");
@@ -231,6 +232,7 @@ public static class MediatorEmitter
 
         // PublishLocalAsync dispatches only to local listeners (no transport broadcast).
         // Used by DispatchEventAsync for wire-inbound events to prevent echo loops.
+        // Resolves IEventPipelineBehavior<TEvent> from DI and chains them before listeners.
         sb.AppendLine("    private async Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine("        switch (@event)");
@@ -239,15 +241,36 @@ public static class MediatorEmitter
         foreach (var group in listenerGroups)
         {
             sb.AppendLine($"            case {group.EventFullTypeName} e:");
+            sb.AppendLine($"            {{");
 
+            // Build the innermost delegate: all listeners called in sequence
+            sb.AppendLine($"                Func<Task> listenerChain = async () =>");
+            sb.AppendLine($"                {{");
             foreach (var listener in group.ListenerFullTypeNames)
             {
-                sb.AppendLine($"                await SafeExecute(");
-                sb.AppendLine($"                    () => serviceProvider.GetRequiredService<{listener}>()");
-                sb.AppendLine($"                        .HandleAsync(e, cancellationToken));");
+                sb.AppendLine($"                    await SafeExecute(");
+                sb.AppendLine($"                        () => serviceProvider.GetRequiredService<{listener}>()");
+                sb.AppendLine($"                            .HandleAsync(e, cancellationToken));");
             }
 
+            sb.AppendLine($"                }};");
+            sb.AppendLine();
+
+            // Wrap with event pipeline behaviors from DI
+            sb.AppendLine($"                var eventBehaviors = serviceProvider");
+            sb.AppendLine($"                    .GetServices<Conduit.Pipelines.IEventPipelineBehavior<{group.EventFullTypeName}>>()");
+            sb.AppendLine($"                    .ToArray();");
+            sb.AppendLine($"                var next = listenerChain;");
+            sb.AppendLine($"                for (var i = eventBehaviors.Length - 1; i >= 0; i--)");
+            sb.AppendLine($"                {{");
+            sb.AppendLine($"                    var behavior = eventBehaviors[i];");
+            sb.AppendLine($"                    var currentNext = next;");
+            sb.AppendLine($"                    next = () => behavior.HandleAsync(e, currentNext, cancellationToken);");
+            sb.AppendLine($"                }}");
+            sb.AppendLine($"                await next();");
+
             sb.AppendLine("                break;");
+            sb.AppendLine($"            }}");
         }
 
         sb.AppendLine("        }");

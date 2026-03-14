@@ -32,16 +32,11 @@ public class MediatorPipelineTests
 
         var mediator = host.GetRequiredService<IMediator>();
 
-        // Act — verify command dispatches correctly with a behavior registered
+        // Act — dispatch through mediator, behavior should wrap the handler
         var id = await mediator.ExecuteAsync(new CreateItemCommand("Pipeline Test"));
 
-        // Assert — command should succeed; manually verify behavior interface works
+        // Assert — verify the behavior was actually called by the mediator
         id.Should().NotBeEmpty();
-        var result = await trackingBehavior.HandleAsync(
-            new CreateItemCommand("Manual"),
-            () => Task.FromResult(Guid.NewGuid()),
-            CancellationToken.None);
-        result.Should().NotBeEmpty();
         trackingBehavior.CallLog.Should().BeEquivalentTo(["before", "after"]);
     }
 
@@ -64,19 +59,13 @@ public class MediatorPipelineTests
             app => app.MapHub<ConduitHub>("/hub"));
 
         var mediator = host.GetRequiredService<IMediator>();
+        var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
 
-        // Act — verify event publishes correctly with a behavior registered
+        // Act — dispatch event through mediator, behavior should wrap the listener
         await mediator.PublishAsync(new ItemCreatedEvent(Guid.NewGuid(), "Event Test"));
 
-        // Assert — event should still be delivered to listener
-        var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
+        // Assert — verify both the behavior and the listener were called
         await spy.WaitForCountAsync(1);
-
-        // Verify behavior interface works correctly
-        await trackingBehavior.HandleAsync(
-            new ItemCreatedEvent(Guid.NewGuid(), "Manual"),
-            () => Task.CompletedTask,
-            CancellationToken.None);
         trackingBehavior.WasCalled.Should().BeTrue();
     }
 }

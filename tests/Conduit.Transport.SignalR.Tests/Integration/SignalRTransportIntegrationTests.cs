@@ -54,8 +54,9 @@ public class SignalRTransportIntegrationTests
         // Act
         var id = await mediator.ExecuteAsync(new CreateItemCommand("SignalR Test"));
 
-        // Assert
+        // Assert — verify the item was created on the HANDLER host, not the caller
         id.Should().NotBeEmpty();
+        handlerHost.GetRequiredService<ItemStore>().Get(id).Should().Be("SignalR Test");
     }
 
     [TestMethod]
