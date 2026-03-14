@@ -65,14 +65,14 @@ public class EventBroadcastShould
                 });
                 builder.Services.AddConduitHandlers();
             });
-        var wireDispatcher = host.GetRequiredService<IWireDispatcher>();
+        var wireMediator = host.GetRequiredService<IWireMediator>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
-        var payload = System.Text.Json.JsonSerializer.SerializeToElement(
-            new { Id = Guid.NewGuid(), Name = "Wire Event" });
+        var envelope = new DispatchEnvelope(
+            "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent",
+            System.Text.Json.JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid(), Name = "Wire Event" }));
 
         // Act
-        await wireDispatcher.DispatchEventAsync(
-            "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload, CancellationToken.None);
+        await wireMediator.HandleWireEventAsync(envelope, CancellationToken.None);
 
         // Assert
         await spy.WaitForCountAsync(1);

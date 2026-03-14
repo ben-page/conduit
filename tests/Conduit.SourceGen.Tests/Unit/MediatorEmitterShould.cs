@@ -76,8 +76,8 @@ namespace App.Events
         mediatorSource.Should().Contain("PublishAsync");
         mediatorSource.Should().Contain("OrderCreatedListener");
 
-        // Wire dispatch
-        mediatorSource.Should().Contain("DispatchRequestAsync(");
+        // Wire dispatch (private methods called by HandleWire*)
+        mediatorSource.Should().Contain("private async Task<object?> DispatchRequestAsync(");
         mediatorSource.Should().Contain("\"App.Commands.CreateOrder\"");
         mediatorSource.Should().Contain("\"App.Commands.DeleteOrder\"");
 
@@ -89,10 +89,13 @@ namespace App.Events
         mediatorSource.Should().Contain("routeResolver.Resolve(");
         mediatorSource.Should().Contain("endpoint.Transport.SendRequestAsync");
 
-        // Wire event dispatch (inbound event publishing from external clients)
-        mediatorSource.Should().Contain("DispatchEventAsync(");
-        mediatorSource.Should().Contain("string type,");
-        mediatorSource.Should().Contain("JsonElement payload,");
+        // Wire event dispatch (private, called by HandleWireEventAsync)
+        mediatorSource.Should().Contain("private async Task DispatchEventAsync(");
         mediatorSource.Should().Contain("\"App.Events.OrderCreated\"");
+
+        // Public wire handler methods (IWireMediator)
+        mediatorSource.Should().Contain("HandleWireRequestAsync(");
+        mediatorSource.Should().Contain("HandleWireEventAsync(");
+        mediatorSource.Should().Contain("IWireMediator");
     }
 }

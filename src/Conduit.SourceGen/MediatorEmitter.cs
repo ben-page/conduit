@@ -40,6 +40,7 @@ public static class MediatorEmitter
         sb.AppendLine("using Conduit.Dispatch;");
         sb.AppendLine("using Conduit.Messages;");
         sb.AppendLine("using Conduit.Routing;");
+        sb.AppendLine("using Conduit.Exceptions;");
         sb.AppendLine("using Conduit.Handlers;");
         sb.AppendLine();
         sb.AppendLine("namespace Conduit.Generated;");
@@ -48,8 +49,9 @@ public static class MediatorEmitter
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
+        sb.AppendLine("    IEnumerable<IDispatchInterceptor> interceptors,");
         sb.AppendLine("    IRouteResolver routeResolver,");
-        sb.AppendLine("    ILogger<ConduitMediator> logger) : IMediator, IWireDispatcher");
+        sb.AppendLine("    ILogger<ConduitMediator> logger) : IWireMediator");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result
@@ -128,11 +130,17 @@ public static class MediatorEmitter
         // PublishAsync
         EmitPublishAsync(sb, listenerGroups);
 
-        // Wire dispatch
+        // Wire dispatch (private, called by HandleWireRequestAsync)
         EmitWireDispatch(sb, commands, voidCommands, queries);
 
-        // Wire publish (inbound event publishing from external clients)
+        // Wire publish (private, called by HandleWireEventAsync)
         EmitWirePublish(sb, events);
+
+        // HandleWireRequestAsync — chains interceptors, dispatches, wraps result
+        EmitHandleWireRequest(sb);
+
+        // HandleWireEventAsync — chains interceptors, dispatches, swallows exceptions
+        EmitHandleWireEvent(sb);
 
         // CastTask helper
         sb.AppendLine("    private static Task<TTarget> CastTask<TSource, TTarget>(Task<TSource> task)");
@@ -284,7 +292,7 @@ public static class MediatorEmitter
         List<DispatchableTypeInfo> voidCommands,
         List<DispatchableTypeInfo> queries)
     {
-        sb.AppendLine("    public async Task<object?> DispatchRequestAsync(");
+        sb.AppendLine("    private async Task<object?> DispatchRequestAsync(");
         sb.AppendLine("        string type,");
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
@@ -322,7 +330,7 @@ public static class MediatorEmitter
 
     private static void EmitWirePublish(StringBuilder sb, List<DispatchableTypeInfo> events)
     {
-        sb.AppendLine("    public async Task DispatchEventAsync(");
+        sb.AppendLine("    private async Task DispatchEventAsync(");
         sb.AppendLine("        string type,");
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
@@ -338,6 +346,70 @@ public static class MediatorEmitter
         sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
         sb.AppendLine("        };");
         sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    private static void EmitHandleWireRequest(StringBuilder sb)
+    {
+        sb.AppendLine("    public async Task<DispatchResult<object>> HandleWireRequestAsync(");
+        sb.AppendLine("        DispatchEnvelope envelope,");
+        sb.AppendLine("        CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Func<Task<object?>> chain = () =>");
+        sb.AppendLine("            DispatchRequestAsync(envelope.Type, envelope.Payload, cancellationToken);");
+        sb.AppendLine();
+        sb.AppendLine("        foreach (var interceptor in interceptors.Reverse())");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var next = chain;");
+        sb.AppendLine("            chain = () => interceptor.InterceptRequestAsync(envelope, next, cancellationToken);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var result = await chain();");
+        sb.AppendLine("            return DispatchResult<object>.Ok(result);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch (ConduitException ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            return DispatchResult<object>.Fail(ex.Code, ex.Message);");
+        sb.AppendLine("        }");
+        sb.AppendLine("#pragma warning disable CA1031");
+        sb.AppendLine("        catch (Exception ex)");
+        sb.AppendLine("#pragma warning restore CA1031");
+        sb.AppendLine("        {");
+        sb.AppendLine("            logger.LogError(ex, \"Unhandled exception dispatching '{Type}'\", envelope.Type);");
+        sb.AppendLine("            return DispatchResult<object>.Fail(\"InternalError\", \"An unexpected error occurred\");");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    private static void EmitHandleWireEvent(StringBuilder sb)
+    {
+        sb.AppendLine("    public async Task HandleWireEventAsync(");
+        sb.AppendLine("        DispatchEnvelope envelope,");
+        sb.AppendLine("        CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Func<Task> chain = () =>");
+        sb.AppendLine("            DispatchEventAsync(envelope.Type, envelope.Payload, cancellationToken);");
+        sb.AppendLine();
+        sb.AppendLine("        foreach (var interceptor in interceptors.Reverse())");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var next = chain;");
+        sb.AppendLine("            chain = () => interceptor.InterceptEventAsync(envelope, next, cancellationToken);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await chain();");
+        sb.AppendLine("        }");
+        sb.AppendLine("#pragma warning disable CA1031");
+        sb.AppendLine("        catch (Exception ex)");
+        sb.AppendLine("#pragma warning restore CA1031");
+        sb.AppendLine("        {");
+        sb.AppendLine("            logger.LogError(ex, \"Unhandled exception publishing event '{Type}'\", envelope.Type);");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
