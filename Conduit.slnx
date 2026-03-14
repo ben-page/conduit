@@ -18,6 +18,7 @@
     <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.Tests/Conduit.Transport.Tests.csproj" />
+    <Project Path="tests/Conduit.TestUtils/Conduit.TestUtils.csproj" />
     <Project Path="tests/Conduit.TypeGen.Tests/Conduit.TypeGen.Tests.csproj" />
   </Folder>
 </Solution>
