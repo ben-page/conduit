@@ -1,9 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Pipelines;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR;
 using Conduit.Generated;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Conduit.Tests.Support;
 
@@ -24,18 +22,16 @@ public class PipelineBehaviorIntegrationShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitHandlers();
                 builder.Services.AddSingleton<IPipelineBehavior<CreateItemCommand, Guid>>(trackingBehavior);
-            },
-            app => app.MapHub<ConduitHub>("/hub"));
+            });
 
         var mediator = host.GetRequiredService<IMediator>();
 
-        // Act — dispatch through mediator, behavior should wrap the handler
+        // Act
         var id = await mediator.ExecuteAsync(new CreateItemCommand("Pipeline Test"));
 
-        // Assert — verify the behavior was actually called by the mediator
+        // Assert
         id.Should().NotBeEmpty();
         trackingBehavior.CallLog.Should().BeEquivalentTo(["before", "after"]);
     }
@@ -52,19 +48,17 @@ public class PipelineBehaviorIntegrationShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitHandlers();
                 builder.Services.AddSingleton<IEventPipelineBehavior<ItemCreatedEvent>>(trackingBehavior);
-            },
-            app => app.MapHub<ConduitHub>("/hub"));
+            });
 
         var mediator = host.GetRequiredService<IMediator>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
 
-        // Act — dispatch event through mediator, behavior should wrap the listener
+        // Act
         await mediator.PublishAsync(new ItemCreatedEvent(Guid.NewGuid(), "Event Test"));
 
-        // Assert — verify both the behavior and the listener were called
+        // Assert
         await spy.WaitForCountAsync(1);
         trackingBehavior.WasCalled.Should().BeTrue();
     }

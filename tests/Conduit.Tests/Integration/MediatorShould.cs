@@ -1,8 +1,6 @@
 using AwesomeAssertions;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR;
 using Conduit.Generated;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Conduit.Tests.Support;
 
@@ -19,11 +17,9 @@ public class MediatorShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitHandlers();
                 configure?.Invoke(builder.Services);
-            },
-            app => app.MapHub<ConduitHub>("/hub"));
+            });
     }
 
     [TestMethod]
@@ -77,7 +73,7 @@ public class MediatorShould
     }
 
     [TestMethod]
-    public async Task DeliverEventToListener()
+    public async Task PublishEvent()
     {
         // Arrange
         await using var host = CreateTestHost();
@@ -95,7 +91,7 @@ public class MediatorShould
     public async Task DispatchUnroutedMessageLocally()
     {
         // Arrange — configure a route for "Remote.Commands" namespace,
-        // but our test types are in "Conduit.Tests.TestApp" so they won't match
+        // but our test types are in "Conduit.Tests.Support" so they won't match
         await using var host = TestHost.Start(
             builder =>
             {
@@ -107,10 +103,8 @@ public class MediatorShould
                         endpoint.UseTransport(new StubTransport()));
                     conduit.Route("Remote.Commands").To("remote");
                 });
-                builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitHandlers();
-            },
-            app => app.MapHub<ConduitHub>("/hub"));
+            });
         var mediator = host.GetRequiredService<IMediator>();
         var store = host.GetRequiredService<ItemStore>();
 
