@@ -14,6 +14,7 @@ public static class ReflectionScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery`1";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string NotDispatchableAttributeFullName = "Conduit.Attributes.NotDispatchableAttribute";
+    private const string ClientVisibleAttributeFullName = "Conduit.Attributes.ClientVisibleAttribute";
     private const string DispatchableNamespaceAttributeFullName = "Conduit.Attributes.DispatchableNamespaceAttribute";
     private const string AuthorizeAttributeFullName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
     private const string AllowAnonymousAttributeFullName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
@@ -103,6 +104,44 @@ public static class ReflectionScanner
                 HasAuthorizeAttribute = HasAttributeByName(type, AuthorizeAttributeFullName),
                 HasAllowAnonymousAttribute = HasAttributeByName(type, AllowAnonymousAttributeFullName),
             });
+        }
+
+        return results.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Scans the assembly for dispatchable types that are marked with <c>[ClientVisible]</c>.
+    /// Only types implementing <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c> that also
+    /// have the <c>[ClientVisible]</c> attribute are included. Used by TypeGen to emit
+    /// TypeScript only for types explicitly opted-in to client visibility.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan.</param>
+    /// <returns>The discovered client-visible dispatchable types.</returns>
+    public static IReadOnlyList<DispatchableTypeInfo> ScanClientVisible(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+
+        var allTypes = Scan(assembly);
+        var assemblyTypes = assembly.GetExportedTypes();
+        var clientVisibleFullNames = new HashSet<string>();
+
+        foreach (var type in assemblyTypes)
+        {
+            if (HasAttributeByName(type, ClientVisibleAttributeFullName))
+            {
+                var fullName = type.FullName ?? type.Name;
+                clientVisibleFullNames.Add(fullName);
+            }
+        }
+
+        var results = new List<DispatchableTypeInfo>();
+
+        foreach (var typeInfo in allTypes)
+        {
+            if (clientVisibleFullNames.Contains(typeInfo.FullTypeName))
+            {
+                results.Add(typeInfo);
+            }
         }
 
         return results.AsReadOnly();
