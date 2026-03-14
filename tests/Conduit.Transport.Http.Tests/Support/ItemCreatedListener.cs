@@ -1,6 +1,6 @@
 using Conduit.Handlers;
 
-namespace Conduit.Bridge.SignalR.Tests.Support;
+namespace Conduit.Transport.Http.Tests.Support;
 
 public class ItemCreatedListener : IEventListener<ItemCreatedEvent>
 {

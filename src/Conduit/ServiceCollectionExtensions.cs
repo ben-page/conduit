@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Conduit.Dispatch;
 using Conduit.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -26,6 +27,35 @@ public static class ServiceCollectionExtensions
         // Register routing infrastructure
         services.AddSingleton(builder.Options);
         services.AddSingleton<IRouteResolver, DefaultRouteResolver>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds a type filter interceptor that restricts which message types
+    /// external clients are permitted to dispatch.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">Callback to configure allowed types.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddConduitTypeFilter(
+        this IServiceCollection services,
+        Action<TypeFilterBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new TypeFilterBuilder();
+        configure(builder);
+
+        services.Configure<TypeFilterOptions>(options =>
+        {
+            foreach (var type in builder.Options.AllowedTypes)
+            {
+                options.AllowedTypes.Add(type);
+            }
+        });
+
+        services.AddSingleton<IDispatchInterceptor, TypeFilterInterceptor>();
 
         return services;
     }

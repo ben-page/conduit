@@ -5,8 +5,6 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
-    <Project Path="src/Conduit.Bridge.Http/Conduit.Bridge.Http.csproj" />
-    <Project Path="src/Conduit.Bridge.SignalR/Conduit.Bridge.SignalR.csproj" />
     <Project Path="src/Conduit.Transport.Http/Conduit.Transport.Http.csproj" />
     <Project Path="src/Conduit.Transport.SignalR/Conduit.Transport.SignalR.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
@@ -15,8 +13,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Conduit.Analysis.Tests/Conduit.Analysis.Tests.csproj" />
-    <Project Path="tests/Conduit.Bridge.Http.Tests/Conduit.Bridge.Http.Tests.csproj" />
-    <Project Path="tests/Conduit.Bridge.SignalR.Tests/Conduit.Bridge.SignalR.Tests.csproj" />
     <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.TestUtils/Conduit.TestUtils.csproj" />

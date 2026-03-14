@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using Conduit.Bridge.Http;
+using Conduit.Transport.Http;
 using Conduit.TestUtils;
 using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
@@ -24,7 +24,7 @@ public class HttpTransportShould
             },
             app =>
             {
-                app.MapConduitBridge();
+                app.MapConduitEndpoint();
                 app.MapHub<ConduitHub>("/hub");
             });
     }

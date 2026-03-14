@@ -1,5 +1,4 @@
-﻿using Conduit.Bridge.Http;
-using Conduit.Bridge.SignalR;
+using Conduit.Transport.Http;
 using Conduit.Transport.SignalR;
 using Conduit.Generated;
 
@@ -19,18 +18,18 @@ public partial class Program
             conduit.Route("Conduit.Sample.InventoryService").To("inventory");
         });
         builder.Services.AddConduitSignalR();
-        builder.Services.AddConduitBridge(bridge =>
+        builder.Services.AddConduitTypeFilter(filter =>
         {
-            bridge.AllowType("Conduit.Sample.OrderService.Commands.CreateItemCommand");
-            bridge.AllowType("Conduit.Sample.OrderService.Commands.DeleteItemCommand");
-            bridge.AllowType("Conduit.Sample.OrderService.Queries.GetItemQuery");
+            filter.AllowType("Conduit.Sample.OrderService.Commands.CreateItemCommand");
+            filter.AllowType("Conduit.Sample.OrderService.Commands.DeleteItemCommand");
+            filter.AllowType("Conduit.Sample.OrderService.Queries.GetItemQuery");
         });
         builder.Services.AddConduitHandlers();
 
         var app = builder.Build();
 
         app.UseStaticFiles();
-        app.MapConduitBridge();
+        app.MapConduitEndpoint();
         app.MapHub<ConduitHub>("/hub");
         app.Run();
     }

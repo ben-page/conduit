@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
-namespace Conduit.Bridge.Http;
+namespace Conduit.Transport.Http;
 
 /// <summary>
 /// Extension methods for mapping browser-facing HTTP dispatch endpoints.
@@ -18,7 +18,7 @@ public static class EndpointRouteBuilderExtensions
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="path">The URL path for the dispatch endpoint. Defaults to "/api/dispatch".</param>
     /// <returns>The endpoint route builder for chaining.</returns>
-    public static IEndpointRouteBuilder MapConduitBridge(
+    public static IEndpointRouteBuilder MapConduitEndpoint(
         this IEndpointRouteBuilder endpoints,
         string path = "/api/dispatch")
     {

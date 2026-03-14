@@ -39,7 +39,7 @@ public sealed class TestHost : IAsyncDisposable
     /// AddConduitSignalR(), AddConduitHandlers(), and register their own types.
     /// </param>
     /// <param name="configureApp">
-    /// Callback to configure middleware and endpoints (e.g. MapHub, MapConduitBridge).
+    /// Callback to configure middleware and endpoints (e.g. MapHub, MapConduitEndpoint).
     /// </param>
     public static TestHost Start(
         Action<WebApplicationBuilder> configureBuilder,

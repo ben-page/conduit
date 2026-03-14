@@ -1,21 +1,20 @@
 using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Bridge.SignalR;
-using Conduit.Bridge.SignalR.Tests.Support;
 using Conduit.Dispatch;
 using Conduit.TestUtils;
 using Conduit.Transport.SignalR;
+using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Bridge.SignalR.Tests.Integration;
+namespace Conduit.Transport.SignalR.Tests.Integration;
 
 [TestClass]
 public class SignalRInterceptorShould
 {
-    private static TestHost CreateHostWithBridge()
+    private static TestHost CreateHostWithTypeFilter()
     {
         return TestHost.Start(
             builder =>
@@ -23,10 +22,10 @@ public class SignalRInterceptorShould
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddConduit();
                 builder.Services.AddConduitSignalR();
-                builder.Services.AddConduitBridge(bridge =>
+                builder.Services.AddConduitTypeFilter(filter =>
                 {
-                    bridge.AllowType("Conduit.Bridge.SignalR.Tests.Support.CreateItemCommand");
-                    bridge.AllowType("Conduit.Bridge.SignalR.Tests.Support.GetItemQuery");
+                    filter.AllowType("Conduit.Transport.SignalR.Tests.Support.CreateItemCommand");
+                    filter.AllowType("Conduit.Transport.SignalR.Tests.Support.GetItemQuery");
                 });
                 builder.Services.AddConduitHandlers();
             },
@@ -46,13 +45,13 @@ public class SignalRInterceptorShould
     public async Task DispatchAllowedType()
     {
         // Arrange
-        await using var host = CreateHostWithBridge();
+        await using var host = CreateHostWithTypeFilter();
         await using var connection = await ConnectToHub(host.Address);
         var payload = JsonSerializer.SerializeToElement(new { Name = "Allowed" });
 
         // Act
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Bridge.SignalR.Tests.Support.CreateItemCommand", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload);
 
         // Assert
         result.Should().NotBeNull();
@@ -63,13 +62,13 @@ public class SignalRInterceptorShould
     public async Task RejectDisallowedType()
     {
         // Arrange
-        await using var host = CreateHostWithBridge();
+        await using var host = CreateHostWithTypeFilter();
         await using var connection = await ConnectToHub(host.Address);
         var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
 
         // Act
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Bridge.SignalR.Tests.Support.DeleteItemCommand", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.DeleteItemCommand", payload);
 
         // Assert
         result.Should().NotBeNull();
