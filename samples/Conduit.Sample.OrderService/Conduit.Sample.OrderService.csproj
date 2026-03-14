@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -9,8 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
-    <ProjectReference Include="..\..\src\Conduit.Bridge.Http\Conduit.Bridge.Http.csproj" />
-    <ProjectReference Include="..\..\src\Conduit.Bridge.SignalR\Conduit.Bridge.SignalR.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Transport.Http\Conduit.Transport.Http.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Transport.SignalR\Conduit.Transport.SignalR.csproj" />
     <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj"
                       OutputItemType="Analyzer"

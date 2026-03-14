@@ -1,14 +1,13 @@
-using Conduit.Dispatch;
 using Conduit.Exceptions;
 using Microsoft.Extensions.Options;
 
-namespace Conduit.Bridge.SignalR;
+namespace Conduit.Dispatch;
 
 /// <summary>
 /// Rejects dispatch requests for message types not in the configured allowed set.
 /// This prevents browser clients from dispatching internal-only commands.
 /// </summary>
-public class BridgeTypeFilterInterceptor(IOptions<BridgeOptions> options) : IDispatchInterceptor
+public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IDispatchInterceptor
 {
     /// <inheritdoc />
     public Task<object?> InterceptRequestAsync(
@@ -22,7 +21,7 @@ public class BridgeTypeFilterInterceptor(IOptions<BridgeOptions> options) : IDis
         if (!options.Value.AllowedTypes.Contains(envelope.Type))
         {
             throw new UnauthorizedException(
-                $"Type '{envelope.Type}' is not available via the bridge.");
+                $"Type '{envelope.Type}' is not allowed by the type filter.");
         }
 
         return next();
@@ -36,7 +35,7 @@ public class BridgeTypeFilterInterceptor(IOptions<BridgeOptions> options) : IDis
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(next);
-        // Events are server→client, no filtering needed
+        // Events are server->client, no filtering needed
         return next();
     }
 }

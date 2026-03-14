@@ -3,20 +3,20 @@ using AwesomeAssertions;
 using Conduit.Dispatch;
 using Microsoft.Extensions.Options;
 
-namespace Conduit.Bridge.SignalR.Tests.Unit;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
 public class TypeFilterInterceptorShould
 {
-    private static BridgeTypeFilterInterceptor CreateInterceptor(params string[] allowedTypes)
+    private static TypeFilterInterceptor CreateInterceptor(params string[] allowedTypes)
     {
-        var options = new BridgeOptions();
+        var options = new TypeFilterOptions();
         foreach (var type in allowedTypes)
         {
             options.AllowedTypes.Add(type);
         }
 
-        return new BridgeTypeFilterInterceptor(Options.Create(options));
+        return new TypeFilterInterceptor(Options.Create(options));
     }
 
     [TestMethod]

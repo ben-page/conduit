@@ -1,7 +1,7 @@
 using Conduit.Attributes;
 using Conduit.Messages;
 
-namespace Conduit.Bridge.Http.Tests.Support;
+namespace Conduit.Transport.Http.Tests.Support;
 
 [Dispatchable]
 public record ThrowConflictCommand() : ICommand;
