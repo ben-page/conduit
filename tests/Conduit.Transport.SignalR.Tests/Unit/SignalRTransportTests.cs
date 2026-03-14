@@ -1,6 +1,6 @@
-using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Dispatch;
+using Conduit.Transport.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
 
 namespace Conduit.Transport.SignalR.Tests.Unit;
 
@@ -8,10 +8,36 @@ namespace Conduit.Transport.SignalR.Tests.Unit;
 public class SignalRTransportTests
 {
     [TestMethod]
-    public void DispatchEnvelope_RoundTrips()
+    public async Task SendRequestAsync_NullEnvelope_ThrowsArgumentNullException()
     {
-        var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
+        // Arrange
+        var hubConnection = new Microsoft.AspNetCore.SignalR.Client.HubConnectionBuilder()
+            .WithUrl("http://localhost:1")
+            .Build();
+        var transport = new SignalRTransport(hubConnection);
 
-        envelope.Type.Should().Be("Test");
+        // Act
+        var action = () => transport.SendRequestAsync(null!, CancellationToken.None);
+
+        // Assert
+        await action.Should().ThrowExactlyAsync<ArgumentNullException>();
+        await transport.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task SendEventAsync_NullEnvelope_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var hubConnection = new Microsoft.AspNetCore.SignalR.Client.HubConnectionBuilder()
+            .WithUrl("http://localhost:1")
+            .Build();
+        var transport = new SignalRTransport(hubConnection);
+
+        // Act
+        var action = () => transport.SendEventAsync(null!, CancellationToken.None);
+
+        // Assert
+        await action.Should().ThrowExactlyAsync<ArgumentNullException>();
+        await transport.DisposeAsync();
     }
 }
