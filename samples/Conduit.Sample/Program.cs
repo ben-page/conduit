@@ -1,4 +1,3 @@
-using global::Conduit;
 using Conduit.Bridge.Http;
 using Conduit.Bridge.SignalR;
 using Conduit.Transport.SignalR;
