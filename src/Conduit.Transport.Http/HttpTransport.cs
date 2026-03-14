@@ -1,7 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Conduit.Dispatch;
-using Conduit.Routing;
 
 namespace Conduit.Transport.Http;
 
