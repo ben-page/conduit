@@ -1,9 +1,9 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.Http;
-using Conduit.Bridge.Http.Tests.TestApp;
+using Conduit.Bridge.Http.Tests.Support;
 using Conduit.Transport.SignalR;
 using Microsoft.Extensions.Hosting;
 using Conduit.Dispatch;
@@ -14,7 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Bridge.Http.Tests.Integration;
 
 [TestClass]
-public class BridgeHttpPipelineTests
+public class HttpBridgeShould
 {
     private static (WebApplication App, HttpClient Client) CreateTestHost()
     {
@@ -38,7 +38,7 @@ public class BridgeHttpPipelineTests
     private static async Task<string> CreateItem(HttpClient client, string name)
     {
         var payload = JsonSerializer.SerializeToElement(new { Name = name });
-        var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.CreateItemCommand", payload);
+        var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.CreateItemCommand", payload);
         var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -46,14 +46,14 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_CommandWithResult_ReturnsDataEnvelope()
+    public async Task ReturnDataForCommandWithResult()
     {
         var (app, client) = CreateTestHost();
         await using (app)
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Name = "Test Item" });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.CreateItemCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.CreateItemCommand", payload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
 
@@ -67,7 +67,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_VoidCommand_ReturnsNullData()
+    public async Task ReturnNullDataForVoidCommand()
     {
         var (app, client) = CreateTestHost();
         await using (app)
@@ -76,7 +76,7 @@ public class BridgeHttpPipelineTests
             var id = await CreateItem(client, "To Delete");
 
             var deletePayload = JsonSerializer.SerializeToElement(new { Id = id });
-            var deleteEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.DeleteItemCommand", deletePayload);
+            var deleteEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.DeleteItemCommand", deletePayload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", deleteEnvelope);
 
@@ -87,7 +87,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_Query_ReturnsResultEnvelope()
+    public async Task ReturnResultForQuery()
     {
         var (app, client) = CreateTestHost();
         await using (app)
@@ -96,7 +96,7 @@ public class BridgeHttpPipelineTests
             var id = await CreateItem(client, "Query Test");
 
             var queryPayload = JsonSerializer.SerializeToElement(new { Id = id });
-            var queryEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.GetItemQuery", queryPayload);
+            var queryEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.GetItemQuery", queryPayload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", queryEnvelope);
 
@@ -109,14 +109,14 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_HandlerThrowsNotFoundException_ReturnsErrorEnvelope()
+    public async Task Return404ForNotFoundException()
     {
         var (app, client) = CreateTestHost();
         await using (app)
         using (client)
         {
             var queryPayload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
-            var queryEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.GetItemQuery", queryPayload);
+            var queryEnvelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.GetItemQuery", queryPayload);
 
             var response = await client.PostAsJsonAsync("/api/dispatch", queryEnvelope);
 
@@ -129,7 +129,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_UnknownType_ReturnsError()
+    public async Task ReturnErrorForUnknownType()
     {
         var (app, client) = CreateTestHost();
         await using (app)
@@ -145,7 +145,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_PublishEndpoint_Returns200()
+    public async Task Return200ForPublishEndpoint()
     {
         // Arrange
         var (app, client) = CreateTestHost();
@@ -153,7 +153,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid(), Name = "Event" });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ItemCreatedEvent", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.ItemCreatedEvent", payload);
 
             // Act
             var response = await client.PostAsJsonAsync("/api/dispatch/publish", envelope);
@@ -164,7 +164,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_ConflictException_Returns409()
+    public async Task Return409ForConflictException()
     {
         // Arrange
         var (app, client) = CreateTestHost();
@@ -172,7 +172,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ThrowConflictCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.ThrowConflictCommand", payload);
 
             // Act
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
@@ -185,7 +185,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_UnauthorizedException_Returns401()
+    public async Task Return401ForUnauthorizedException()
     {
         // Arrange
         var (app, client) = CreateTestHost();
@@ -193,7 +193,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ThrowUnauthorizedCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.ThrowUnauthorizedCommand", payload);
 
             // Act
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
@@ -206,7 +206,7 @@ public class BridgeHttpPipelineTests
     }
 
     [TestMethod]
-    public async Task HttpDispatch_UnhandledException_Returns500WithInternalError()
+    public async Task Return500ForUnhandledException()
     {
         // Arrange
         var (app, client) = CreateTestHost();
@@ -214,7 +214,7 @@ public class BridgeHttpPipelineTests
         using (client)
         {
             var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.TestApp.ThrowGenericCommand", payload);
+            var envelope = new DispatchEnvelope("Conduit.Bridge.Http.Tests.Support.ThrowGenericCommand", payload);
 
             // Act
             var response = await client.PostAsJsonAsync("/api/dispatch", envelope);

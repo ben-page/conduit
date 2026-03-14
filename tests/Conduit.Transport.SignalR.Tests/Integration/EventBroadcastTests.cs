@@ -1,8 +1,8 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.Routing;
 using Conduit.TestUtils;
-using Conduit.Transport.SignalR.Tests.TestApp;
+using Conduit.Transport.SignalR.Tests.Support;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,10 +10,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Transport.SignalR.Tests.Integration;
 
 [TestClass]
-public class EventBroadcastTests
+public class EventBroadcastShould
 {
     [TestMethod]
-    public async Task PublishAsync_SendsEvent_ToTransport()
+    public async Task SendEventToTransportOnPublish()
     {
         // Arrange
         var recordingTransport = new RecordingTransport();
@@ -28,7 +28,7 @@ public class EventBroadcastTests
                 {
                     conduit.AddEndpoint("recorder", endpoint =>
                         endpoint.UseTransport(recordingTransport));
-                    conduit.Route("Conduit.Transport.SignalR.Tests.TestApp").To("recorder");
+                    conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("recorder");
                 });
                 builder.Services.AddConduitHandlers();
             });
@@ -46,7 +46,7 @@ public class EventBroadcastTests
     }
 
     [TestMethod]
-    public async Task WireInboundEvent_DoesNotReBroadcast()
+    public async Task NotReBroadcastWireInboundEvent()
     {
         // Arrange
         var recordingTransport = new RecordingTransport();
@@ -61,7 +61,7 @@ public class EventBroadcastTests
                 {
                     conduit.AddEndpoint("recorder", endpoint =>
                         endpoint.UseTransport(recordingTransport));
-                    conduit.Route("Conduit.Transport.SignalR.Tests.TestApp").To("recorder");
+                    conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("recorder");
                 });
                 builder.Services.AddConduitHandlers();
             });
@@ -72,7 +72,7 @@ public class EventBroadcastTests
 
         // Act
         await router.DispatchEventAsync(
-            "Conduit.Transport.SignalR.Tests.TestApp.ItemCreatedEvent", payload, CancellationToken.None);
+            "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload, CancellationToken.None);
 
         // Assert
         await spy.WaitForCountAsync(1);

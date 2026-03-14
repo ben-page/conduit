@@ -1,7 +1,7 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Bridge.Http;
 using Conduit.TestUtils;
-using Conduit.Transport.Http.Tests.TestApp;
+using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Transport.Http.Tests.Integration;
 
 [TestClass]
-public class HttpTransportIntegrationTests
+public class HttpTransportShould
 {
     private static TestHost CreateHandlerHost()
     {
@@ -40,7 +40,7 @@ public class HttpTransportIntegrationTests
                     conduit.AddEndpoint("remote", endpoint =>
                         endpoint.UseTransport(new HttpTransport(
                             new HttpClient { BaseAddress = new Uri(remoteAddress) })));
-                    conduit.Route("Conduit.Transport.Http.Tests.TestApp").To("remote");
+                    conduit.Route("Conduit.Transport.Http.Tests.Support").To("remote");
                 });
                 builder.Services.AddConduitSignalR();
                 builder.Services.AddConduitHandlers();
@@ -49,7 +49,7 @@ public class HttpTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task CommandWithResult_RoundTrips_ThroughHttp()
+    public async Task RoundTripCommandWithResult()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -64,7 +64,7 @@ public class HttpTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task VoidCommand_RoundTrips_ThroughHttp()
+    public async Task RoundTripVoidCommand()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -82,7 +82,7 @@ public class HttpTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task Query_RoundTrips_ThroughHttp()
+    public async Task RoundTripQuery()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -99,7 +99,7 @@ public class HttpTransportIntegrationTests
     }
 
     [TestMethod]
-    public async Task NotFoundException_PropagatesAsHttpRequestException()
+    public async Task PropagateNotFoundAsHttpRequestException()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
