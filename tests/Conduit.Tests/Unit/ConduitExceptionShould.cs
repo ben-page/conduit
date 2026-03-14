@@ -1,12 +1,12 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class ExceptionTests
+public class ConduitExceptionShould
 {
     [TestMethod]
-    public void NotFoundException_HasCorrectCode()
+    public void HaveNotFoundCode()
     {
         var ex = new Exceptions.NotFoundException("not found");
         ex.Code.Should().Be("NotFound");
@@ -14,21 +14,21 @@ public class ExceptionTests
     }
 
     [TestMethod]
-    public void UnauthorizedException_HasCorrectCode()
+    public void HaveUnauthorizedCode()
     {
         var ex = new Exceptions.UnauthorizedException("denied");
         ex.Code.Should().Be("Unauthorized");
     }
 
     [TestMethod]
-    public void ConflictException_HasCorrectCode()
+    public void HaveConflictCode()
     {
         var ex = new Exceptions.ConflictException("conflict");
         ex.Code.Should().Be("Conflict");
     }
 
     [TestMethod]
-    public void ConduitException_IsException()
+    public void BeAssignableToException()
     {
         var ex = new Exceptions.NotFoundException("test");
         ex.Should().BeAssignableTo<Exception>();

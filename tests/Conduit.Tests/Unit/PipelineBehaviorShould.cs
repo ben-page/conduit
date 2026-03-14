@@ -1,11 +1,11 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Messages;
 using Conduit.Pipelines;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class PipelineBehaviorTests
+public class PipelineBehaviorShould
 {
     private record TestCommand(string Value) : ICommand<string>;
 
@@ -26,7 +26,7 @@ public class PipelineBehaviorTests
     }
 
     [TestMethod]
-    public async Task PipelineBehavior_WrapsHandler()
+    public async Task WrapHandler()
     {
         var behavior = new TrackingBehavior();
         var result = await behavior.HandleAsync(
@@ -55,7 +55,7 @@ public class PipelineBehaviorTests
     }
 
     [TestMethod]
-    public async Task EventPipelineBehavior_WrapsListener()
+    public async Task WrapEventListener()
     {
         var behavior = new TrackingEventBehavior();
         await behavior.HandleAsync(

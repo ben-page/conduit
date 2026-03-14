@@ -1,10 +1,10 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Messages;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class MarkerInterfaceTests
+public class MarkerInterfaceShould
 {
     private record TestVoidCommand : ICommand;
     private record TestResultCommand(string Value) : ICommand<string>;
@@ -12,21 +12,21 @@ public class MarkerInterfaceTests
     private record TestEvent(string Data) : IEvent;
 
     [TestMethod]
-    public void VoidCommand_ImplementsICommand()
+    public void AllowVoidCommandToImplementICommand()
     {
         ICommand command = new TestVoidCommand();
         command.Should().NotBeNull();
     }
 
     [TestMethod]
-    public void ResultCommand_ImplementsICommand()
+    public void AllowResultCommandToImplementICommand()
     {
         ICommand<string> command = new TestResultCommand("test");
         command.Should().BeAssignableTo<ICommand>();
     }
 
     [TestMethod]
-    public void Command_Validate_DefaultIsNoOp()
+    public void DefaultCommandValidateToNoOp()
     {
         ICommand command = new TestVoidCommand();
         // Should not throw - calls default interface method
@@ -34,7 +34,7 @@ public class MarkerInterfaceTests
     }
 
     [TestMethod]
-    public void Query_Validate_DefaultIsNoOp()
+    public void DefaultQueryValidateToNoOp()
     {
         IQuery<string> query = new TestQuery(1);
         query.Validate();

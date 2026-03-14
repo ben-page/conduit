@@ -6,10 +6,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class ServiceRegistrationTests
+public class ServiceRegistrationShould
 {
     [TestMethod]
-    public void AddConduit_RegistersRouteResolver()
+    public void RegisterRouteResolver()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -25,7 +25,7 @@ public class ServiceRegistrationTests
     }
 
     [TestMethod]
-    public void AddConduit_RegistersConduitOptions()
+    public void RegisterConduitOptions()
     {
         // Arrange
         var services = new ServiceCollection();
