@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Generated;
 using Conduit.Middleware;
 using Conduit.TestUtils;
@@ -8,7 +8,7 @@ using Conduit.Tests.Support;
 namespace Conduit.Tests.Integration;
 
 [TestClass]
-public class PipelineBehaviorIntegrationShould
+public class PipelineBehaviorShould
 {
     [TestMethod]
     public async Task InvokePipelineBehaviorAroundCommand()
