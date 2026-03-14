@@ -1,9 +1,8 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Dispatch;
-using Conduit.Transport.Http;
 
-namespace Conduit.Transport.Tests;
+namespace Conduit.Transport.Http.Tests.Unit;
 
 [TestClass]
 public class HttpTransportTests

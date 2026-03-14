@@ -1,7 +1,7 @@
 using Conduit.Attributes;
 using Conduit.Messages;
 
-namespace Conduit.Bridge.Tests.TestApp;
+namespace Conduit.Bridge.SignalR.Tests.TestApp;
 
 public class ItemStore
 {

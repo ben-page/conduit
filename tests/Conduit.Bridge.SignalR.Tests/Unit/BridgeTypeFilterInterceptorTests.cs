@@ -4,7 +4,7 @@ using Conduit.Bridge.SignalR;
 using Conduit.Dispatch;
 using Microsoft.Extensions.Options;
 
-namespace Conduit.Bridge.Tests;
+namespace Conduit.Bridge.SignalR.Tests.Unit;
 
 [TestClass]
 public class BridgeTypeFilterInterceptorTests

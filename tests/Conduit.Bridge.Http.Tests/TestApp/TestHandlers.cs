@@ -1,7 +1,7 @@
 using Conduit.Exceptions;
 using Conduit.Handlers;
 
-namespace Conduit.Bridge.Tests.TestApp;
+namespace Conduit.Bridge.Http.Tests.TestApp;
 
 public class CreateItemHandler(IMediator mediator, ItemStore store) : ICommandHandler<CreateItemCommand, Guid>
 {

@@ -4,14 +4,14 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.Http;
 using Conduit.Bridge.SignalR;
-using Conduit.Bridge.Tests.TestApp;
+using Conduit.Bridge.SignalR.Tests.TestApp;
 using Conduit.Transport.SignalR;
 using Conduit.Dispatch;
 using global::Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Bridge.Tests;
+namespace Conduit.Bridge.SignalR.Tests.Integration;
 
 [TestClass]
 public class InterceptorPipelineTests

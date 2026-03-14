@@ -3,14 +3,14 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Bridge.Http;
-using Conduit.Bridge.Tests.TestApp;
+using Conduit.Bridge.Http.Tests.TestApp;
 using Conduit.Transport.SignalR;
 using Conduit.Dispatch;
 using global::Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Bridge.Tests;
+namespace Conduit.Bridge.Http.Tests.Integration;
 
 [TestClass]
 public class BridgeHttpPipelineTests
