@@ -106,7 +106,8 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         }
 
         // Emit diagnostics
-        EmitDiagnostics(context, dispatchableTypes, handlers);
+        var remotePatterns = GetRemoteContractPatterns(compilation);
+        EmitDiagnostics(context, dispatchableTypes, handlers, remotePatterns);
 
         // Generate dispatch methods
         var dispatchSource = DispatchEmitter.Emit(dispatchableTypes, handlers);
@@ -136,10 +137,42 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         }
     }
 
+    private static List<string> GetRemoteContractPatterns(Compilation compilation)
+    {
+        const string attributeName = "Conduit.Attributes.RemoteContractsAttribute";
+        var patterns = new List<string>();
+
+        foreach (var attribute in compilation.Assembly.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() == attributeName
+                && attribute.ConstructorArguments.Length == 1
+                && attribute.ConstructorArguments[0].Value is string pattern)
+            {
+                patterns.Add(pattern);
+            }
+        }
+
+        return patterns;
+    }
+
+    private static bool IsRemoteContract(string fullTypeName, List<string> remotePatterns)
+    {
+        foreach (var pattern in remotePatterns)
+        {
+            if (fullTypeName.StartsWith(pattern, System.StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void EmitDiagnostics(
         SourceProductionContext context,
         IReadOnlyList<DispatchableTypeInfo> types,
-        IReadOnlyList<HandlerInfo> handlers)
+        IReadOnlyList<HandlerInfo> handlers,
+        List<string> remotePatterns)
     {
         foreach (var type in types)
         {
@@ -150,7 +183,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
             var matchingHandlers = handlers.Where(h => h.MessageFullTypeName == type.FullTypeName).ToList();
 
-            if (matchingHandlers.Count == 0)
+            if (matchingHandlers.Count == 0 && !IsRemoteContract(type.FullTypeName, remotePatterns))
             {
                 context.ReportDiagnostic(Diagnostic.Create(
                     DiagnosticDescriptors.NoHandler,

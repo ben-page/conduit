@@ -1,6 +1,9 @@
+using Conduit.Attributes;
 using Conduit.Generated;
 using Conduit.Transport.Http;
 using Conduit.Transport.SignalR;
+
+[assembly: RemoteContracts("Conduit.Sample.Inventory")]
 
 namespace Conduit.Sample.Orders;
 
