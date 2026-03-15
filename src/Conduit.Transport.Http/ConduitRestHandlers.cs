@@ -11,8 +11,12 @@ namespace Conduit.Transport.Http;
 /// Called by generated <c>ConduitRestEndpoints</c> extension methods only.
 /// </summary>
 /// <remarks>
-/// Queries use <c>[AsParameters]</c> for route/query string binding (GET/DELETE).
-/// Commands bind from the JSON body directly (POST/PUT/PATCH).
+/// Two binding strategies:
+/// <list type="bullet">
+///   <item><c>*Route</c> methods use <c>[AsParameters]</c> — bind from route/query (GET, DELETE)</item>
+///   <item><c>*Body</c> methods bind the entire type from JSON body (POST, PUT, PATCH)</item>
+/// </list>
+/// Queries always use route binding. Commands have both variants.
 /// </remarks>
 internal static class ConduitRestHandlers
 {
@@ -32,15 +36,12 @@ internal static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return Results.Problem(
-                        detail: ex.Message,
-                        statusCode: ex.Code.HttpStatusCode,
-                        title: ex.Code.Value);
+                    return ToProblem(ex);
                 }
             });
     }
 
-    internal static RouteHandlerBuilder MapCommand<TCommand, TResult>(
+    internal static RouteHandlerBuilder MapCommandBody<TCommand, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
@@ -56,15 +57,33 @@ internal static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return Results.Problem(
-                        detail: ex.Message,
-                        statusCode: ex.Code.HttpStatusCode,
-                        title: ex.Code.Value);
+                    return ToProblem(ex);
                 }
             });
     }
 
-    internal static RouteHandlerBuilder MapVoidCommand<TCommand>(
+    internal static RouteHandlerBuilder MapCommandRoute<TCommand, TResult>(
+        IEndpointRouteBuilder endpoints,
+        string pattern,
+        string method)
+        where TCommand : ICommand<TResult>
+    {
+        return endpoints.MapMethods(pattern, [method],
+            async ([AsParameters] TCommand command, IMediator mediator, CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await mediator.ExecuteAsync(command, cancellationToken);
+                    return Results.Ok(result);
+                }
+                catch (ConduitException ex)
+                {
+                    return ToProblem(ex);
+                }
+            });
+    }
+
+    internal static RouteHandlerBuilder MapVoidCommandBody<TCommand>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
@@ -80,11 +99,37 @@ internal static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return Results.Problem(
-                        detail: ex.Message,
-                        statusCode: ex.Code.HttpStatusCode,
-                        title: ex.Code.Value);
+                    return ToProblem(ex);
                 }
             });
+    }
+
+    internal static RouteHandlerBuilder MapVoidCommandRoute<TCommand>(
+        IEndpointRouteBuilder endpoints,
+        string pattern,
+        string method)
+        where TCommand : ICommand
+    {
+        return endpoints.MapMethods(pattern, [method],
+            async ([AsParameters] TCommand command, IMediator mediator, CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    await mediator.ExecuteAsync(command, cancellationToken);
+                    return Results.NoContent();
+                }
+                catch (ConduitException ex)
+                {
+                    return ToProblem(ex);
+                }
+            });
+    }
+
+    private static IResult ToProblem(ConduitException ex)
+    {
+        return Results.Problem(
+            detail: ex.Message,
+            statusCode: ex.Code.HttpStatusCode,
+            title: ex.Code.Value);
     }
 }
