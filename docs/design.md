@@ -362,6 +362,16 @@ Resolution priority: `[NotDispatchable]` wins over namespace match, which wins o
 
 `[DispatchableNamespace]` declarations also drive TypeScript file segmentation — each declaration produces a separate `.generated.ts` file.
 
+### Remote Contract Suppression
+
+When a service references a shared contracts library containing commands/queries handled by another service, the source generator emits CONDUIT001 ("no handler found") for those types. To suppress this without blanket-disabling the diagnostic:
+
+```csharp
+[assembly: RemoteContracts("Conduit.Sample.Inventory")]
+```
+
+The generator skips CONDUIT001 for types whose fully-qualified name starts with a declared `[RemoteContracts]` pattern. Types outside declared patterns still produce the warning if they lack a handler.
+
 ## Source Generator (`Conduit.SourceGen`)
 
 Roslyn incremental source generator that uses `Conduit.Analysis` to scan for dispatchable types and emits:
@@ -438,9 +448,9 @@ When the compilation references `Conduit.Transport.Http`, the generator emits `C
 ### Compile-Time Diagnostics
 
 The generator emits diagnostics for:
-- Command or query with no matching handler
-- Multiple handlers for the same command or query
-- `[Dispatchable]` on a type that doesn't implement a marker interface
+- `CONDUIT001` — Command or query with no matching handler (suppressed by `[assembly: RemoteContracts("Ns")]` for remote contract types)
+- `CONDUIT002` — Multiple handlers for the same command or query
+- `CONDUIT004` — Missing `[Authorize]` or `[AllowAnonymous]` on a dispatchable type
 
 ## HTTP Integration (`Conduit.Transport.Http`)
 
