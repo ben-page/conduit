@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "Orders/Inventory",
+    "Projects": [
+      {
+        "Path": "samples\\service-to-service\\Conduit.Sample.Inventory\\Conduit.Sample.Inventory.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "samples\\service-to-service\\Conduit.Sample.Orders\\Conduit.Sample.Orders.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]
