@@ -32,7 +32,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 - `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — `ICommand`, `IQuery`, `IEvent`, `Unit` (`src/Conduit/Messages/`)
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
-- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute` (`src/Conduit/Attributes/`)
+- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute` (`src/Conduit/Attributes/`)
 - `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException` (`src/Conduit/Exceptions/`)
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
@@ -101,6 +101,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `EnforceExtendedAnalyzerRules=true`, `IsRoslynComponent=true`, `NoWarn=RS2008`
 - Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` (no attributes needed)
 - Reads `[LocalOnly]` attribute to suppress event broadcast in generated code
+- Reads `[assembly: RemoteContracts("Ns")]` to suppress CONDUIT001 for types in remote contract namespaces
 - Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`, `ConduitRestEndpoints.g.cs` (conditional)
 - Generated `AddConduit()` calls `ConduitRuntime.AddConduitCore()` and registers handlers
 - Pipeline behaviors resolved via `ConduitRuntime.ResolvePipelines` (explicit ordering, not DI enumeration)
@@ -145,4 +146,4 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 
 ## Design Spec
 
-Original design specification at `docs/design.md` — covers interfaces, generated code patterns, TypeScript output structure, validation strategy, auth model, and future Rebus integration plans. Some sections are stale; this file (`CLAUDE.md`) has the current architecture summary.
+Full design specification at `docs/design.md` — covers interfaces, generated code patterns, TypeScript output structure, validation strategy, auth model, and future Rebus integration plans.
