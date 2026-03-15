@@ -11,19 +11,19 @@ namespace Conduit.TypeGen;
 public static class TypeMapEmitter
 {
     /// <summary>
-    /// Appends type map interfaces for the given namespace group.
+    /// Appends type map interfaces for the given dispatchable types.
     /// </summary>
     /// <param name="sb">The string builder to append to.</param>
-    /// <param name="group">The namespace group containing the dispatchable types.</param>
-    public static void EmitMaps(StringBuilder sb, NamespaceGroup group)
+    /// <param name="types">The dispatchable types to map.</param>
+    public static void EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types)
     {
         ArgumentNullException.ThrowIfNull(sb);
-        ArgumentNullException.ThrowIfNull(group);
+        ArgumentNullException.ThrowIfNull(types);
 
-        var commands = group.Types.Where(t => t.Kind == DispatchableKind.Command).ToList();
-        var voidCommands = group.Types.Where(t => t.Kind == DispatchableKind.VoidCommand).ToList();
-        var queries = group.Types.Where(t => t.Kind == DispatchableKind.Query).ToList();
-        var events = group.Types.Where(t => t.Kind == DispatchableKind.Event).ToList();
+        var commands = types.Where(t => t.Kind == DispatchableKind.Command).ToList();
+        var voidCommands = types.Where(t => t.Kind == DispatchableKind.VoidCommand).ToList();
+        var queries = types.Where(t => t.Kind == DispatchableKind.Query).ToList();
+        var events = types.Where(t => t.Kind == DispatchableKind.Event).ToList();
 
         if (commands.Count > 0)
         {

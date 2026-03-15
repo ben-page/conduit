@@ -14,61 +14,18 @@ public static class ReflectionScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery`1";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string ClientVisibleAttributeFullName = "Conduit.Attributes.ClientVisibleAttribute";
-    private const string DispatchableNamespaceAttributeFullName = "Conduit.Attributes.DispatchableNamespaceAttribute";
     private const string AuthorizeAttributeFullName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
     private const string AllowAnonymousAttributeFullName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
-
-    /// <summary>
-    /// Extracts namespaces declared via <c>[DispatchableNamespace]</c> on the assembly.
-    /// </summary>
-    /// <param name="assembly">The assembly to inspect.</param>
-    /// <returns>The list of declared dispatchable namespaces.</returns>
-    public static IReadOnlyList<string> GetDeclaredNamespaces(Assembly assembly)
-    {
-        ArgumentNullException.ThrowIfNull(assembly);
-
-        var namespaces = new List<string>();
-
-        foreach (var attribute in assembly.GetCustomAttributes())
-        {
-            var attrType = attribute.GetType();
-            if (attrType.FullName == DispatchableNamespaceAttributeFullName)
-            {
-                var nsProp = attrType.GetProperty("Namespace");
-                if (nsProp?.GetValue(attribute) is string ns)
-                {
-                    namespaces.Add(ns);
-                }
-            }
-        }
-
-        return namespaces.AsReadOnly();
-    }
-
-    /// <summary>
-    /// Scans the assembly for dispatchable types using automatically discovered namespaces.
-    /// </summary>
-    /// <param name="assembly">The assembly to scan.</param>
-    /// <returns>The discovered dispatchable types.</returns>
-    public static IReadOnlyList<DispatchableTypeInfo> Scan(Assembly assembly)
-    {
-        var declaredNamespaces = GetDeclaredNamespaces(assembly);
-        return Scan(assembly, declaredNamespaces);
-    }
 
     /// <summary>
     /// Scans the assembly for all dispatchable types implementing
     /// <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c>.
     /// </summary>
     /// <param name="assembly">The assembly to scan.</param>
-    /// <param name="declaredNamespaces">The namespaces to include.</param>
     /// <returns>The discovered dispatchable types.</returns>
-    public static IReadOnlyList<DispatchableTypeInfo> Scan(
-        Assembly assembly,
-        IReadOnlyList<string> declaredNamespaces)
+    public static IReadOnlyList<DispatchableTypeInfo> Scan(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
-        ArgumentNullException.ThrowIfNull(declaredNamespaces);
 
         var results = new List<DispatchableTypeInfo>();
 
