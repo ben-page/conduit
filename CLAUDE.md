@@ -61,6 +61,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 |---|---|---|
 | `[LocalOnly]` | Type | Prevent event from being broadcast to transports |
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
+| `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
 
 ## Build & Test
 
