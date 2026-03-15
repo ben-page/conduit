@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conduit Notes Sample</title>
+    <style>
+        body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 0 20px; }
+        input { padding: 8px; width: 300px; }
+        button { padding: 8px 16px; cursor: pointer; }
+        ul { list-style: none; padding: 0; }
+        li { padding: 8px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+        li button { padding: 2px 8px; font-size: 0.85em; }
+        #status { font-size: 0.85em; color: #666; }
+        #events { margin-top: 24px; font-size: 0.85em; color: #888; max-height: 150px; overflow-y: auto; }
+        .error { color: #c00; }
+    </style>
+</head>
+<body>
+    <h1>Notes</h1>
+    <p id="status">Connecting...</p>
+
+    <div>
+        <input id="noteText" placeholder="Write a note..." />
+        <button id="addBtn">Add</button>
+    </div>
+
+    <ul id="noteList"></ul>
+
+    <div id="events">
+        <strong>Events:</strong>
+        <div id="eventLog"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
