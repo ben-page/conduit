@@ -21,6 +21,22 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
     [Required]
     public string OutputDirectory { get; set; } = "";
 
+    /// <summary>
+    /// Semicolon-delimited list of transports to include (e.g. "Http;SignalR").
+    /// Defaults to "Http;SignalR".
+    /// </summary>
+    public string Transports { get; set; } = "Http;SignalR";
+
+    /// <summary>
+    /// Parses the <see cref="Transports"/> property into a set of transport names.
+    /// </summary>
+    public HashSet<string> ParseTransports()
+    {
+        return new HashSet<string>(
+            this.Transports.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <inheritdoc />
     public override bool Execute()
     {
@@ -31,26 +47,21 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
         {
             var assembly = Assembly.LoadFrom(this.AssemblyPath);
             var types = ReflectionScanner.ScanClientVisible(assembly);
+            var transports = this.ParseTransports();
+            var includeSignalR = transports.Contains("SignalR");
 
             Directory.CreateDirectory(this.OutputDirectory);
 
-            // Emit base file (transport interfaces)
             File.WriteAllText(
                 Path.Combine(this.OutputDirectory, "conduit.ts"),
-                BaseFileEmitter.Emit());
+                BaseFileEmitter.Emit(transports));
 
-            // Emit types file (interfaces + type maps)
-            File.WriteAllText(
-                Path.Combine(this.OutputDirectory, "default.generated.ts"),
-                TypeScriptEmitter.Emit(types));
-
-            // Emit merge file (re-exports + typed mediator)
             File.WriteAllText(
                 Path.Combine(this.OutputDirectory, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(types));
+                MergeFileEmitter.Emit(types, includeSignalR));
 
             this.Log.LogMessage(MessageImportance.Normal,
-                "Conduit TypeGen: generated 3 files");
+                "Conduit TypeGen: generated 2 files");
 
             return true;
         }
