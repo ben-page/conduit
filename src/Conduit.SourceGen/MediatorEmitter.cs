@@ -65,6 +65,7 @@ public static class MediatorEmitter
             sb.AppendLine($"        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("        if (endpoint?.Transport != null)");
             sb.AppendLine("        {");
+            sb.AppendLine($"            ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
             sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
@@ -75,6 +76,7 @@ public static class MediatorEmitter
 
             if (hasHandler)
             {
+                sb.AppendLine($"        ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
                 sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
@@ -97,6 +99,7 @@ public static class MediatorEmitter
             sb.AppendLine($"        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("        if (endpoint?.Transport != null)");
             sb.AppendLine("        {");
+            sb.AppendLine($"            ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
             sb.AppendLine($"            await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
@@ -105,6 +108,7 @@ public static class MediatorEmitter
 
             if (hasHandler)
             {
+                sb.AppendLine($"        ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
                 sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
@@ -127,6 +131,7 @@ public static class MediatorEmitter
             sb.AppendLine($"        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{query.FullTypeName}\");");
             sb.AppendLine("        if (endpoint?.Transport != null)");
             sb.AppendLine("        {");
+            sb.AppendLine($"            ConduitRuntime.LogRouteDispatch(logger, \"{query.FullTypeName}\", endpoint.Name);");
             sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(query);");
             sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                new DispatchEnvelope(\"{query.FullTypeName}\", payload), cancellationToken);");
@@ -137,6 +142,7 @@ public static class MediatorEmitter
 
             if (hasHandler)
             {
+                sb.AppendLine($"        ConduitRuntime.LogLocalDispatch(logger, \"{query.FullTypeName}\");");
                 sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
@@ -338,6 +344,7 @@ public static class MediatorEmitter
         sb.AppendLine($"        {indent}var eventEnvelope = new DispatchEnvelope(");
         sb.AppendLine($"        {indent}    @event.GetType().FullName!,");
         sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event));");
+        sb.AppendLine($"        {indent}ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transports.Count());");
         sb.AppendLine($"        {indent}foreach (var transport in transports)");
         sb.AppendLine($"        {indent}{{");
         sb.AppendLine($"        {indent}    await ConduitRuntime.SafeExecute(() => transport.SendEventAsync(eventEnvelope, cancellationToken), logger);");
@@ -359,6 +366,7 @@ public static class MediatorEmitter
         sb.AppendLine("        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
         sb.AppendLine("        if (endpoint?.Transport != null)");
         sb.AppendLine("        {");
+        sb.AppendLine("            ConduitRuntime.LogWireForward(logger, type, endpoint.Name);");
         sb.AppendLine("            var result = await endpoint.Transport.SendRequestAsync(");
         sb.AppendLine("                new DispatchEnvelope(type, payload), cancellationToken);");
         sb.AppendLine("            return result;");

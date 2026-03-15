@@ -16,6 +16,7 @@ namespace Conduit.Dispatch;
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class ConduitRuntime
 {
+    // Error-level logs
     private static readonly Action<ILogger, string, Exception?> LogDispatchError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(1, "DispatchError"),
             "Unhandled exception dispatching '{Type}'");
@@ -27,6 +28,35 @@ public static class ConduitRuntime
     private static readonly Action<ILogger, Exception?> LogListenerError =
         LoggerMessage.Define(LogLevel.Error, new EventId(3, "ListenerError"),
             "Event listener or transport failed");
+
+    // Debug-level logs
+    private static readonly Action<ILogger, string, Exception?> LogDispatchingLocally =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(10, "DispatchingLocally"),
+            "Dispatching '{Type}' locally");
+
+    private static readonly Action<ILogger, string, string, Exception?> LogRoutingToEndpoint =
+        LoggerMessage.Define<string, string>(LogLevel.Debug, new EventId(11, "RoutingToEndpoint"),
+            "Routing '{Type}' to endpoint '{Endpoint}'");
+
+    private static readonly Action<ILogger, string, int, Exception?> LogBroadcastingEvent =
+        LoggerMessage.Define<string, int>(LogLevel.Debug, new EventId(12, "BroadcastingEvent"),
+            "Broadcasting '{Type}' to {Count} transport(s)");
+
+    private static readonly Action<ILogger, string, Exception?> LogWireRequestReceived =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(13, "WireRequestReceived"),
+            "Wire request received: '{Type}'");
+
+    private static readonly Action<ILogger, string, Exception?> LogWireEventReceived =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(14, "WireEventReceived"),
+            "Wire event received: '{Type}'");
+
+    private static readonly Action<ILogger, string, string, Exception?> LogForwardingWireRequest =
+        LoggerMessage.Define<string, string>(LogLevel.Debug, new EventId(15, "ForwardingWireRequest"),
+            "Forwarding wire request '{Type}' to endpoint '{Endpoint}'");
+
+    private static readonly Action<ILogger, string, int, Exception?> LogExecutingPipelines =
+        LoggerMessage.Define<string, int>(LogLevel.Debug, new EventId(16, "ExecutingPipelines"),
+            "Executing {Count} pipeline behavior(s) for '{Type}'");
     /// <summary>
     /// Resolves the first route for the given message type. Returns the matched endpoint,
     /// or null for local dispatch. Used for commands and queries only — events broadcast
@@ -129,6 +159,7 @@ public static class ConduitRuntime
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
+        LogWireRequestReceived(logger, envelope.Type, null);
         ArgumentNullException.ThrowIfNull(dispatch);
 
         Func<Task<object?>> chain = () =>
@@ -171,6 +202,7 @@ public static class ConduitRuntime
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(dispatch);
+        LogWireEventReceived(logger, envelope.Type, null);
 
         Func<Task> chain = () =>
             dispatch(envelope.Type, envelope.Payload, cancellationToken);
@@ -249,4 +281,27 @@ public static class ConduitRuntime
 
         return services;
     }
+
+    // Logging helpers called by generated mediator code.
+    // These are thin wrappers around the LoggerMessage delegates above.
+
+    /// <summary>Logs that a message is being dispatched locally.</summary>
+    public static void LogLocalDispatch(ILogger logger, string typeName)
+        => LogDispatchingLocally(logger, typeName, null);
+
+    /// <summary>Logs that a message is being routed to a remote endpoint.</summary>
+    public static void LogRouteDispatch(ILogger logger, string typeName, string endpointName)
+        => LogRoutingToEndpoint(logger, typeName, endpointName, null);
+
+    /// <summary>Logs that an event is being broadcast to transports.</summary>
+    public static void LogBroadcast(ILogger logger, string typeName, int transportCount)
+        => LogBroadcastingEvent(logger, typeName, transportCount, null);
+
+    /// <summary>Logs that a wire request is being forwarded to a route.</summary>
+    public static void LogWireForward(ILogger logger, string typeName, string endpointName)
+        => LogForwardingWireRequest(logger, typeName, endpointName, null);
+
+    /// <summary>Logs pipeline behavior count for a dispatch.</summary>
+    public static void LogPipelines(ILogger logger, string typeName, int count)
+        => LogExecutingPipelines(logger, typeName, count, null);
 }
