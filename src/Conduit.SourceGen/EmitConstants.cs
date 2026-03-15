@@ -38,4 +38,8 @@ internal static class EmitConstants
 
     // Transport types
     internal const string IConduitTransport = "Conduit.Dispatch.IConduitTransport";
+
+    // REST endpoint types (from Conduit.Transport.Http — only referenced in generated code)
+    internal const string ConduitRestHandlers = "Conduit.Transport.Http.ConduitRestHandlers";
+    internal const string ConduitRestHandlersShort = "ConduitRestHandlers";
 }
