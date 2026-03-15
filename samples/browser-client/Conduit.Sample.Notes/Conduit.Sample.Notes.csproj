@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);CS9057;IDE0005</NoWarn>
+    <ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>
+    <ConduitTypeGenTaskAssembly>$(MSBuildProjectDirectory)\..\..\..\src\Conduit.TypeGen\bin\Debug\net10.0\Conduit.TypeGen.dll</ConduitTypeGenTaskAssembly>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,5 +16,7 @@
     <ProjectReference Include="..\..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\..\src\Conduit.Analysis\Conduit.Analysis.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Import Project="..\..\..\src\Conduit.TypeGen\Conduit.TypeGen.targets" />
 
 </Project>

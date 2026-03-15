@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Conduit.Attributes;
 
 namespace Conduit.Sample.Notes;
 
@@ -22,4 +23,5 @@ public sealed class NoteStore
         this.notes.Select(kvp => new NoteDto(kvp.Key, kvp.Value)).ToList();
 }
 
+[ClientVisible]
 public record NoteDto(Guid Id, string Text);

@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup>
+    <ConduitTypeGenOutput Condition="'$(ConduitTypeGenOutput)' == ''">ClientApp/generated</ConduitTypeGenOutput>
+    <ConduitTransports Condition="'$(ConduitTransports)' == ''">Http;SignalR</ConduitTransports>
+  </PropertyGroup>
+
+  <!-- NuGet package layout: AssemblyFile resolves from package build/ folder -->
+  <UsingTask TaskName="Conduit.TypeGen.TypeGenTask"
+             AssemblyFile="$(MSBuildThisFileDirectory)../lib/net10.0/Conduit.TypeGen.dll"
+             Condition="'$(ConduitTypeGenTaskAssembly)' == ''" />
+
+  <!-- Project-reference layout: consumer sets ConduitTypeGenTaskAssembly to the built DLL path -->
+  <UsingTask TaskName="Conduit.TypeGen.TypeGenTask"
+             AssemblyFile="$(ConduitTypeGenTaskAssembly)"
+             Condition="'$(ConduitTypeGenTaskAssembly)' != ''" />
+
+  <Target Name="ConduitTypeGen" AfterTargets="Build"
+          Condition="'$(ConduitTypeGenEnabled)' == 'true'">
+    <TypeGenTask
+      AssemblyPath="$(TargetPath)"
+      OutputDirectory="$(ConduitTypeGenOutput)"
+      Transports="$(ConduitTransports)" />
+  </Target>
+</Project>
