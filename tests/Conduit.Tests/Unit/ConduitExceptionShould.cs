@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Exceptions;
 
 namespace Conduit.Tests.Unit;
 
@@ -8,29 +9,41 @@ public class ConduitExceptionShould
     [TestMethod]
     public void HaveNotFoundCode()
     {
-        var ex = new Exceptions.NotFoundException("not found");
-        ex.Code.Should().Be("NotFound");
+        // Arrange & Act
+        var ex = new NotFoundException("not found");
+
+        // Assert
+        ex.Code.Should().Be(ErrorCode.NotFound);
         ex.Message.Should().Be("not found");
     }
 
     [TestMethod]
     public void HaveUnauthorizedCode()
     {
-        var ex = new Exceptions.UnauthorizedException("denied");
-        ex.Code.Should().Be("Unauthorized");
+        // Arrange & Act
+        var ex = new UnauthorizedException("denied");
+
+        // Assert
+        ex.Code.Should().Be(ErrorCode.Unauthorized);
     }
 
     [TestMethod]
     public void HaveConflictCode()
     {
-        var ex = new Exceptions.ConflictException("conflict");
-        ex.Code.Should().Be("Conflict");
+        // Arrange & Act
+        var ex = new ConflictException("conflict");
+
+        // Assert
+        ex.Code.Should().Be(ErrorCode.Conflict);
     }
 
     [TestMethod]
     public void BeAssignableToException()
     {
-        var ex = new Exceptions.NotFoundException("test");
+        // Arrange & Act
+        var ex = new NotFoundException("test");
+
+        // Assert
         ex.Should().BeAssignableTo<Exception>();
     }
 }
