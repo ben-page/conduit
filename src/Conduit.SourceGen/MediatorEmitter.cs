@@ -167,7 +167,7 @@ public static class MediatorEmitter
         EmitPublishAsync(sb, listenerGroups, events);
 
         // Wire dispatch (private, called by HandleWireRequestAsync)
-        EmitWireDispatch(sb, commands, voidCommands, queries);
+        EmitWireDispatch(sb, commands, voidCommands, queries, handledTypes);
 
         // Wire publish (private, called by HandleWireEventAsync)
         EmitWirePublish(sb, events);
@@ -355,7 +355,8 @@ public static class MediatorEmitter
         StringBuilder sb,
         List<DispatchableTypeInfo> commands,
         List<DispatchableTypeInfo> voidCommands,
-        List<DispatchableTypeInfo> queries)
+        List<DispatchableTypeInfo> queries,
+        HashSet<string> handledTypes)
     {
         sb.AppendLine("    private async Task<object?> DispatchRequestAsync(");
         sb.AppendLine("        string type,");
@@ -375,7 +376,7 @@ public static class MediatorEmitter
         sb.AppendLine("        return type switch");
         sb.AppendLine("        {");
 
-        foreach (var cmd in commands)
+        foreach (var cmd in commands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
@@ -384,7 +385,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                cancellationToken),");
         }
 
-        foreach (var cmd in voidCommands)
+        foreach (var cmd in voidCommands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.ExecuteVoid(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
@@ -393,7 +394,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                cancellationToken),");
         }
 
-        foreach (var query in queries)
+        foreach (var query in queries.Where(q => handledTypes.Contains(q.FullTypeName)))
         {
             sb.AppendLine($"            \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{query.FullTypeName}>(payload)!,");
