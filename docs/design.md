@@ -542,227 +542,125 @@ app.MapConduitPost<CreateItemCommand>("/api/items");
 
 ## TypeScript Codegen (`Conduit.TypeGen`)
 
-MSBuild task that runs on `dotnet build`. Uses `Conduit.Analysis` to scan the compiled assembly.
+MSBuild task that runs on `dotnet build`. Scans the compiled assembly for `[ClientVisible]` types (both dispatchable and non-dispatchable DTOs) and emits a self-contained TypeScript client runtime — no npm package needed.
 
 ### Configuration
 
 ```xml
 <PropertyGroup>
   <ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>
-  <ConduitTypeGenOutput>../frontend/src/generated</ConduitTypeGenOutput>
+  <!-- Optional overrides: -->
+  <!-- <ConduitTypeGenOutput>src/generated</ConduitTypeGenOutput> -->  <!-- default: ClientApp/generated -->
+  <!-- <ConduitTransports>Http</ConduitTransports> -->                 <!-- default: Http;SignalR -->
 </PropertyGroup>
+
+<Import Project="path/to/Conduit.TypeGen.targets" />
 ```
 
-### Namespace Segmentation
-
-Driven by `[DispatchableNamespace]` assembly attributes:
-
-```csharp
-[assembly: DispatchableNamespace("Erp.Orders")]      // → erp-orders.generated.ts
-[assembly: DispatchableNamespace("Erp.Inventory")]    // → erp-inventory.generated.ts
-```
+The `.targets` file supports both NuGet package and project-reference layouts via `ConduitTypeGenTaskAssembly`.
 
 ### Output Structure
 
+Two files:
+
 ```
-frontend/src/generated/
-├── conduit.ts                    # DispatchResult, DispatchError, ConduitError, abstract transport
-├── erp-orders.generated.ts       # Interfaces + type maps for Erp.Orders namespace
-├── erp-inventory.generated.ts    # Interfaces + type maps for Erp.Inventory namespace
-└── conduit.generated.ts          # Merge file: composed type maps + typed Mediator class
+ClientApp/generated/
+├── conduit.ts              # Stable runtime: types, transport interface, HttpTransport, SignalRTransport
+└── conduit.generated.ts    # Per-project: interfaces, type maps, ConduitClient, re-exports
 ```
 
-### Generated Types Per Namespace
+### Runtime File (conduit.ts)
+
+Identical across all projects (modulo transport selection). Contains:
 
 ```typescript
-// erp-orders.generated.ts
+// Base types
+export interface DispatchResult<T> { data?: T; error?: ConduitError; }
+export interface ConduitError { code: string; message: string; details?: ConduitErrorDetail[]; }
+export interface ConduitErrorDetail { field?: string; message: string; }
 
-export interface CreateOrderCommand {
-  customerId: string;
-  items: OrderLineItem[];
+// Transport interface (mirrors C# IConduitTransport)
+export interface ConduitTransport {
+  sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>>;
+  sendEvent(type: string, data: unknown): Promise<void>;
+  subscribe(eventName: string, handler: (data: unknown) => void): Subscription;
 }
+export interface Subscription { unsubscribe(): void; }
 
-export interface OrderLineItem {
-  productId: string;
-  quantity: number;
-}
+// HttpTransport — native fetch, zero npm dependencies
+export class HttpTransport implements ConduitTransport { /* ... */ }
 
-export interface CreateOrderResult {
-  orderId: string;
-}
+// SignalRTransport — wraps HubConnection (conditionally emitted)
+export class SignalRTransport implements ConduitTransport { /* ... */ }
+```
 
-export interface GetOrderQuery {
-  orderId: string;
-}
+`SignalRTransport` and its `@microsoft/signalr` import are omitted when `<ConduitTransports>Http</ConduitTransports>`.
 
-export interface OrderDto {
-  id: string;
-  customerId: string;
-  status: OrderStatus;
-}
+### Generated File (conduit.generated.ts)
 
-export type OrderStatus = 'Pending' | 'Confirmed' | 'Shipped';
+Per-project types, maps, and typed client:
 
-export interface OrderCreatedEvent {
-  orderId: string;
-  customerId: string;
-}
+```typescript
+import type { ConduitTransport, DispatchResult, Subscription } from './conduit';
 
-export interface DeleteOrderCommand {
-  orderId: string;
-}
+// Type interfaces (from [ClientVisible] types)
+export interface CreateNoteCommand { text: string; }
+export interface NoteDto { id: string; text: string; }
 
+// Type maps (keys are FullTypeName to match C# wire discriminator)
 export interface CommandMap {
-  'CreateOrder': { request: CreateOrderCommand; response: CreateOrderResult };
+  'MyApp.Commands.CreateNoteCommand': { request: CreateNoteCommand; response: string };
+  'MyApp.Commands.DeleteNoteCommand': { request: DeleteNoteCommand; response: void };
 }
-
-export interface VoidCommandMap {
-  'DeleteOrder': { request: DeleteOrderCommand };
-}
-
 export interface QueryMap {
-  'GetOrder': { request: GetOrderQuery; response: OrderDto };
+  'MyApp.Queries.GetNotesQuery': { request: GetNotesQuery; response: NoteDto[] };
 }
-
 export interface EventMap {
-  'OrderCreated': OrderCreatedEvent;
+  'MyApp.Events.NoteCreatedEvent': NoteCreatedEvent;
 }
+
+// Typed client (not a mediator — thin dispatch client)
+export class ConduitClient {
+  constructor(private transport: ConduitTransport) {}
+
+  execute<K extends keyof AllCommands>(type: K, request: AllCommands[K]['request'])
+    : Promise<DispatchResult<AllCommands[K]['response']>> { /* ... */ }
+
+  fetch<K extends keyof AllQueries>(type: K, request: AllQueries[K]['request'])
+    : Promise<DispatchResult<AllQueries[K]['response']>> { /* ... */ }
+
+  publish<K extends keyof AllEvents>(type: K, data: AllEvents[K])
+    : Promise<void> { /* ... */ }
+
+  on<K extends keyof AllEvents>(event: K, handler: (data: AllEvents[K]) => void)
+    : Subscription { /* ... */ }
+}
+
+// Re-exports
+export { HttpTransport, SignalRTransport } from './conduit';
+export type { ConduitTransport, DispatchResult, ConduitError, ConduitErrorDetail, Subscription } from './conduit';
 ```
 
-### Base TypeScript (conduit.ts)
+Key design decisions:
+- `ConduitClient` returns `DispatchResult<T>` (does not throw) — consumers decide error handling
+- Void commands merged into `CommandMap` with `response: void` (no separate `VoidCommandMap`)
+- Type map keys use `FullTypeName` to match the C# wire discriminator
+- Non-dispatchable `[ClientVisible]` types (DTOs) get interfaces but don't appear in type maps
 
-Contains envelope types, error class, and abstract transport base. This file has no dependency on generated type maps — it is always valid regardless of what commands/queries exist.
-
-```typescript
-// conduit.ts
-
-export interface DispatchResult<T> {
-  data?: T;
-  error?: DispatchError;
-}
-
-export interface DispatchError {
-  code: string;
-  message: string;
-  details?: DispatchErrorDetail[];
-}
-
-export interface DispatchErrorDetail {
-  field?: string;
-  message: string;
-}
-
-export class ConduitError extends Error {
-  constructor(public readonly error: DispatchError) {
-    super(error.message);
-  }
-}
-
-export interface Subscription {
-  unsubscribe(): void;
-}
-
-export abstract class ConduitTransport {
-  abstract dispatch(type: string, request: unknown): Promise<DispatchResult<unknown>>;
-  abstract subscribe(event: string, handler: (data: unknown) => void): Subscription;
-}
-```
-
-### Merge File (conduit.generated.ts)
-
-Composes all namespace type maps and provides the typed `Mediator` class that references them. This file imports from `conduit.ts` (base types) and the namespace files (type maps) — no circular dependency.
+### Usage
 
 ```typescript
-// conduit.generated.ts
-import { ConduitTransport, ConduitError, DispatchResult, Subscription } from './conduit';
-import { CommandMap as OrdersCommands, VoidCommandMap as OrdersVoidCommands,
-         QueryMap as OrdersQueries, EventMap as OrdersEvents } from './erp-orders.generated';
-import { CommandMap as InventoryCommands, VoidCommandMap as InventoryVoidCommands,
-         QueryMap as InventoryQueries, EventMap as InventoryEvents } from './erp-inventory.generated';
+import { HubConnectionBuilder } from '@microsoft/signalr';
+import { ConduitClient, SignalRTransport } from '../generated/conduit.generated';
 
-export type AllCommands = OrdersCommands & InventoryCommands;
-export type AllVoidCommands = OrdersVoidCommands & InventoryVoidCommands;
-export type AllQueries = OrdersQueries & InventoryQueries;
-export type AllEvents = OrdersEvents & InventoryEvents;
+const connection = new HubConnectionBuilder().withUrl('/hub').build();
+const conduit = new ConduitClient(new SignalRTransport(connection));
+await connection.start();
 
-export abstract class Mediator {
-  constructor(protected transport: ConduitTransport) {}
-
-  async execute<K extends keyof AllCommands>(
-    type: K,
-    request: AllCommands[K]['request']
-  ): Promise<AllCommands[K]['response']> {
-    const result = await this.transport.dispatch(type, request) as DispatchResult<AllCommands[K]['response']>;
-    if (result.error) {
-      throw new ConduitError(result.error);
-    }
-    return result.data!;
-  }
-
-  async executeVoid<K extends keyof AllVoidCommands>(
-    type: K,
-    request: AllVoidCommands[K]['request']
-  ): Promise<void> {
-    const result = await this.transport.dispatch(type, request);
-    if (result.error) {
-      throw new ConduitError(result.error);
-    }
-  }
-
-  async fetch<K extends keyof AllQueries>(
-    type: K,
-    request: AllQueries[K]['request']
-  ): Promise<AllQueries[K]['response']> {
-    const result = await this.transport.dispatch(type, request) as DispatchResult<AllQueries[K]['response']>;
-    if (result.error) {
-      throw new ConduitError(result.error);
-    }
-    return result.data!;
-  }
-
-  on<K extends keyof AllEvents>(
-    event: K,
-    handler: (data: AllEvents[K]) => void
-  ): Subscription {
-    return this.transport.subscribe(event as string, handler as (data: unknown) => void);
-  }
-}
-```
-
-The consumer extends `Mediator` and provides a `ConduitTransport` implementation:
-
-```typescript
-// App-specific: SignalR transport
-@Injectable({ providedIn: 'root' })
-export class SignalRTransport extends ConduitTransport {
-  private hub: HubConnection;
-
-  constructor() {
-    super();
-    this.hub = new HubConnectionBuilder()
-      .withUrl('/hub')
-      .withAutomaticReconnect()
-      .build();
-    this.hub.start();
-  }
-
-  dispatch(type: string, request: unknown): Promise<DispatchResult<unknown>> {
-    return this.hub.invoke('Dispatch', type, request);
-  }
-
-  subscribe(event: string, handler: (data: unknown) => void): Subscription {
-    this.hub.on(event, handler);
-    return { unsubscribe: () => this.hub.off(event, handler) };
-  }
-}
-
-// App-specific: Mediator
-@Injectable({ providedIn: 'root' })
-export class AppMediator extends Mediator {
-  constructor(transport: SignalRTransport) {
-    super(transport);
-  }
-}
+// Fully typed — IDE autocomplete, compile-time checking
+const result = await conduit.execute('MyApp.Commands.CreateNoteCommand', { text: 'hello' });
+const notes = await conduit.fetch('MyApp.Queries.GetNotesQuery', {});
+conduit.on('MyApp.Events.NoteCreatedEvent', event => console.log(event.text));
 ```
 
 ### C# → TypeScript Type Mapping
