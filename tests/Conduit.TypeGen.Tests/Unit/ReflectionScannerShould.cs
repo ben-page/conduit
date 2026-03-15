@@ -64,11 +64,4 @@ public class ReflectionScannerShould
         type.Should().NotBeNull();
         type.HasValidateOverride.Should().BeTrue();
     }
-
-    [TestMethod]
-    public void GetDeclaredNamespacesFromAssemblyAttribute()
-    {
-        var namespaces = ReflectionScanner.GetDeclaredNamespaces(typeof(ReflectionScannerShould).Assembly);
-        namespaces.Should().HaveCount(0);
-    }
 }

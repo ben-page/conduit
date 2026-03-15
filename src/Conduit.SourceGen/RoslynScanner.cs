@@ -15,38 +15,9 @@ public static class RoslynScanner
     private const string CommandWithResultInterfaceName = "Conduit.Messages.ICommand<TResult>";
     private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
-    private const string DispatchableNamespaceAttributeName = "Conduit.Attributes.DispatchableNamespaceAttribute";
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
     private const string AuthorizeAttributeName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
     private const string AllowAnonymousAttributeName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
-
-    /// <summary>
-    /// Extracts namespaces declared via <c>[DispatchableNamespace]</c>
-    /// on the assembly.
-    /// </summary>
-    /// <param name="compilation">The Roslyn compilation to inspect.</param>
-    /// <returns>The list of declared dispatchable namespaces.</returns>
-    public static IReadOnlyList<string> GetDeclaredNamespaces(Compilation compilation)
-    {
-        if (compilation is null)
-        {
-            throw new ArgumentNullException(nameof(compilation));
-        }
-
-        var namespaces = new List<string>();
-
-        foreach (var attribute in compilation.Assembly.GetAttributes())
-        {
-            if (attribute.AttributeClass?.ToDisplayString() == DispatchableNamespaceAttributeName
-                && attribute.ConstructorArguments.Length == 1
-                && attribute.ConstructorArguments[0].Value is string ns)
-            {
-                namespaces.Add(ns);
-            }
-        }
-
-        return namespaces.AsReadOnly();
-    }
 
     /// <summary>
     /// Scans the compilation for all dispatchable types implementing

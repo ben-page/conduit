@@ -1,5 +1,4 @@
 using System.Reflection;
-using Conduit.Analysis;
 using Microsoft.Build.Framework;
 
 namespace Conduit.TypeGen;
@@ -32,32 +31,26 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
         {
             var assembly = Assembly.LoadFrom(this.AssemblyPath);
             var types = ReflectionScanner.ScanClientVisible(assembly);
-            var declaredNamespaces = ReflectionScanner.GetDeclaredNamespaces(assembly);
-            var groups = NamespaceGrouper.Group(types, declaredNamespaces);
 
             Directory.CreateDirectory(this.OutputDirectory);
 
-            // Emit base file
+            // Emit base file (transport interfaces)
             File.WriteAllText(
                 Path.Combine(this.OutputDirectory, "conduit.ts"),
                 BaseFileEmitter.Emit());
 
-            // Emit per-namespace files
-            foreach (var group in groups)
-            {
-                var content = TypeScriptEmitter.EmitNamespaceFile(group);
-                File.WriteAllText(
-                    Path.Combine(this.OutputDirectory, group.FileName),
-                    content);
-            }
+            // Emit types file (interfaces + type maps)
+            File.WriteAllText(
+                Path.Combine(this.OutputDirectory, "default.generated.ts"),
+                TypeScriptEmitter.Emit(types));
 
-            // Emit merge file
+            // Emit merge file (re-exports + typed mediator)
             File.WriteAllText(
                 Path.Combine(this.OutputDirectory, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(groups));
+                MergeFileEmitter.Emit(types));
 
             this.Log.LogMessage(MessageImportance.Normal,
-                $"Conduit TypeGen: generated {groups.Count + 2} files");
+                "Conduit TypeGen: generated 3 files");
 
             return true;
         }
