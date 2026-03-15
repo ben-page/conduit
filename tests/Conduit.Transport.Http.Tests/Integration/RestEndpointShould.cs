@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Transport.Http;
 using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
 using Conduit.Generated;
@@ -24,11 +23,9 @@ public class RestEndpointShould
 
         var app = builder.Build();
 
-        // Map REST endpoints using the internal helpers directly.
-        // In production, the generated MapConduitGet<T> calls these.
-        ConduitRestHandlers.MapQuery<GetItemQuery, string>(app, "/api/items/{id}", "GET");
-        ConduitRestHandlers.MapCommandBody<CreateItemCommand, Guid>(app, "/api/items", "POST");
-        ConduitRestHandlers.MapVoidCommandRoute<DeleteItemCommand>(app, "/api/items/{id}", "DELETE");
+        app.MapConduitGet<GetItemQuery>("/api/items/{id}");
+        app.MapConduitPost<CreateItemCommand>("/api/items");
+        app.MapConduitDelete<DeleteItemCommand>("/api/items/{id}");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
