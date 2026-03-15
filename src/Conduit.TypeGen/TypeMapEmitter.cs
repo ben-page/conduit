@@ -5,8 +5,10 @@ using Conduit.Analysis;
 namespace Conduit.TypeGen;
 
 /// <summary>
-/// Emits TypeScript type map interfaces (CommandMap, QueryMap, etc.) that associate
+/// Emits TypeScript type map interfaces (CommandMap, QueryMap, EventMap) that associate
 /// request types with their response types for type-safe dispatching.
+/// Uses <see cref="DispatchableTypeInfo.FullTypeName"/> as map keys and merges void commands
+/// into CommandMap with <c>response: void</c>.
 /// </summary>
 public static class TypeMapEmitter
 {
@@ -20,8 +22,7 @@ public static class TypeMapEmitter
         ArgumentNullException.ThrowIfNull(sb);
         ArgumentNullException.ThrowIfNull(types);
 
-        var commands = types.Where(t => t.Kind == DispatchableKind.Command).ToList();
-        var voidCommands = types.Where(t => t.Kind == DispatchableKind.VoidCommand).ToList();
+        var commands = types.Where(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand).ToList();
         var queries = types.Where(t => t.Kind == DispatchableKind.Query).ToList();
         var events = types.Where(t => t.Kind == DispatchableKind.Event).ToList();
 
@@ -30,20 +31,11 @@ public static class TypeMapEmitter
             sb.AppendLine("export interface CommandMap {");
             foreach (var cmd in commands)
             {
-                var resultType = TypeMapper.MapTypeName(cmd.ResultTypeName ?? "unknown");
-                sb.Append(CultureInfo.InvariantCulture, $"  {cmd.TypeName}: {{ request: {cmd.TypeName}; response: {resultType} }};").AppendLine();
-            }
-
-            sb.AppendLine("}");
-            sb.AppendLine();
-        }
-
-        if (voidCommands.Count > 0)
-        {
-            sb.AppendLine("export interface VoidCommandMap {");
-            foreach (var cmd in voidCommands)
-            {
-                sb.Append(CultureInfo.InvariantCulture, $"  {cmd.TypeName}: {{ request: {cmd.TypeName} }};").AppendLine();
+                var resultType = cmd.Kind == DispatchableKind.VoidCommand
+                    ? "void"
+                    : ResolveResultType(cmd);
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"  '{cmd.FullTypeName}': {{ request: {cmd.TypeName}; response: {resultType} }};").AppendLine();
             }
 
             sb.AppendLine("}");
@@ -55,8 +47,9 @@ public static class TypeMapEmitter
             sb.AppendLine("export interface QueryMap {");
             foreach (var query in queries)
             {
-                var resultType = TypeMapper.MapTypeName(query.ResultTypeName ?? "unknown");
-                sb.Append(CultureInfo.InvariantCulture, $"  {query.TypeName}: {{ request: {query.TypeName}; response: {resultType} }};").AppendLine();
+                var resultType = ResolveResultType(query);
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"  '{query.FullTypeName}': {{ request: {query.TypeName}; response: {resultType} }};").AppendLine();
             }
 
             sb.AppendLine("}");
@@ -68,11 +61,26 @@ public static class TypeMapEmitter
             sb.AppendLine("export interface EventMap {");
             foreach (var evt in events)
             {
-                sb.Append(CultureInfo.InvariantCulture, $"  {evt.TypeName}: {evt.TypeName};").AppendLine();
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"  '{evt.FullTypeName}': {evt.TypeName};").AppendLine();
             }
 
             sb.AppendLine("}");
             sb.AppendLine();
         }
+    }
+
+    private static string ResolveResultType(DispatchableTypeInfo typeInfo)
+    {
+        if (typeInfo.ResultFullTypeName is not null)
+        {
+            var resolvedType = TypeScriptEmitter.FindType(typeInfo.ResultFullTypeName);
+            if (resolvedType is not null)
+            {
+                return TypeMapper.MapType(resolvedType);
+            }
+        }
+
+        return TypeMapper.MapTypeName(typeInfo.ResultTypeName ?? "unknown");
     }
 }
