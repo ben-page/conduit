@@ -126,6 +126,14 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
         var mediatorSource = MediatorEmitter.Emit(dispatchableTypes, handlers, groups);
         context.AddSource("ConduitMediator.g.cs", mediatorSource);
+
+        // Generate REST endpoint mappings (only if Conduit.Transport.Http is referenced)
+        var restHandlersType = compilation.GetTypeByMetadataName(EmitConstants.ConduitRestHandlers);
+        if (restHandlersType != null)
+        {
+            var restSource = RestEmitter.Emit(dispatchableTypes);
+            context.AddSource("ConduitRestEndpoints.g.cs", restSource);
+        }
     }
 
     private static void EmitDiagnostics(

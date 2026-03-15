@@ -18,9 +18,9 @@ namespace Conduit.Transport.Http;
 /// </list>
 /// Queries always use route binding. Commands have both variants.
 /// </remarks>
-internal static class ConduitRestHandlers
+public static class ConduitRestHandlers
 {
-    internal static RouteHandlerBuilder MapQuery<TQuery, TResult>(
+    public static RouteHandlerBuilder MapQuery<TQuery, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
@@ -41,7 +41,7 @@ internal static class ConduitRestHandlers
             });
     }
 
-    internal static RouteHandlerBuilder MapCommandBody<TCommand, TResult>(
+    public static RouteHandlerBuilder MapCommandBody<TCommand, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
@@ -62,7 +62,7 @@ internal static class ConduitRestHandlers
             });
     }
 
-    internal static RouteHandlerBuilder MapCommandRoute<TCommand, TResult>(
+    public static RouteHandlerBuilder MapCommandRoute<TCommand, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
@@ -83,7 +83,7 @@ internal static class ConduitRestHandlers
             });
     }
 
-    internal static RouteHandlerBuilder MapVoidCommandBody<TCommand>(
+    public static RouteHandlerBuilder MapVoidCommandBody<TCommand>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
@@ -104,7 +104,7 @@ internal static class ConduitRestHandlers
             });
     }
 
-    internal static RouteHandlerBuilder MapVoidCommandRoute<TCommand>(
+    public static RouteHandlerBuilder MapVoidCommandRoute<TCommand>(
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
