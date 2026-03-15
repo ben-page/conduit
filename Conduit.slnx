@@ -2,6 +2,9 @@
   <Folder Name="/samples/browser-client/">
     <Project Path="samples/browser-client/Conduit.Sample.Notes/Conduit.Sample.Notes.csproj" />
   </Folder>
+  <Folder Name="/samples/rest-api/">
+    <Project Path="samples/rest-api/Conduit.Sample.Todos/Conduit.Sample.Todos.csproj" />
+  </Folder>
   <Folder Name="/samples/service-to-service/">
     <Project Path="samples/service-to-service/Conduit.Sample.Orders/Conduit.Sample.Orders.csproj" />
     <Project Path="samples/service-to-service/Conduit.Sample.Inventory/Conduit.Sample.Inventory.csproj" />
