@@ -136,8 +136,4 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 
 ## Design Spec
 
-Full design specification at `docs/design.md` — covers interfaces, generated code patterns, TypeScript output structure, validation strategy, auth model, and future Rebus integration plans.
-
-Routing and event transport redesign spec at `docs/superpowers/specs/2026-03-14-routing-and-event-transport-design.md`.
-
-RESTful endpoint mapping spec at `docs/superpowers/specs/2026-03-14-restful-endpoint-mapping-design.md`.
+Original design specification at `docs/design.md` — covers interfaces, generated code patterns, TypeScript output structure, validation strategy, auth model, and future Rebus integration plans. Some sections are stale; this file (`CLAUDE.md`) has the current architecture summary.

@@ -30,14 +30,14 @@ Conduit/
 │   ├── Conduit/                        # Core interfaces and types
 │   ├── Conduit.Analysis/               # Shared type model (DispatchableTypeInfo, etc.)
 │   ├── Conduit.SourceGen/              # Roslyn source generator + RoslynScanner
-│   ├── Conduit.Transport.AspNetCore/   # HTTP dispatch endpoint + HTTP transport
+│   ├── Conduit.Transport.Http/   # HTTP dispatch endpoint + HTTP transport
 │   ├── Conduit.Transport.SignalR/      # SignalR hub + SignalR transport
 │   └── Conduit.TypeGen/                # MSBuild task for TypeScript emission + ReflectionScanner
 ├── tests/
 │   ├── Conduit.Tests/
 │   ├── Conduit.Analysis.Tests/
 │   ├── Conduit.SourceGen.Tests/
-│   ├── Conduit.Transport.AspNetCore.Tests/
+│   ├── Conduit.Transport.Http.Tests/
 │   └── Conduit.TypeGen.Tests/
 ├── samples/
 │   └── Conduit.Sample/
@@ -49,7 +49,7 @@ Conduit/
 ```
 Conduit.SourceGen ──→ Conduit.Analysis ──→ (Roslyn APIs)
 Conduit.TypeGen   ──→ Conduit.Analysis ──→ (Roslyn APIs)
-Conduit.Transport.AspNetCore ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+Conduit.Transport.Http ──→ Conduit ──→ MS.Extensions.DI.Abstractions
 Conduit.Transport.SignalR    ──→ Conduit ──→ MS.Extensions.DI.Abstractions
 
 Scanners live in their consumers:
@@ -203,33 +203,35 @@ builder.Services.AddConduit(conduit =>
 public interface IConduitTransport
 {
     public Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
-    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
+    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
 }
 ```
 
 Transports are bidirectional pipes between endpoints. Both methods use `DispatchEnvelope`:
 - `SendRequestAsync` — request/response dispatch (outbound commands/queries)
-- `SendMessageAsync` — fire-and-forget delivery (outbound events)
+- `SendEventAsync` — fire-and-forget delivery (outbound events)
 
 When `PublishAsync` is called, the mediator:
 1. Runs all in-process `IEventListener<T>` implementations (continue on failure)
-2. Delivers to all registered `IConduitTransport` implementations
+2. If the event is NOT `[LocalOnly]`, broadcasts to all DI-registered `IConduitTransport` instances (server-mode transports)
 
-### Dispatch Router
+### Wire Mediator
 
 ```csharp
-public interface IDispatchRouter
+public interface IWireMediator : IMediator
 {
-    public Task<object?> DispatchRequestAsync(string type, JsonElement payload, CancellationToken cancellationToken);
-    public Task DispatchEventAsync(string type, JsonElement payload, CancellationToken cancellationToken);
+    Task<DispatchResult<object>> HandleWireRequestAsync(
+        DispatchEnvelope envelope, CancellationToken cancellationToken);
+    Task HandleWireEventAsync(
+        DispatchEnvelope envelope, CancellationToken cancellationToken);
 }
 ```
 
-Bridges external transports (HTTP, SignalR) with the generated mediator. The generated `ConduitMediator` implements both `IMediator` and `IDispatchRouter`. `DispatchRequestAsync` handles inbound commands/queries; `DispatchEventAsync` handles inbound events from external clients (e.g. TypeScript → SignalR → C# listeners).
+Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IWireInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events with fire-and-forget semantics.
 
-### Endpoint-Based Routing
+### Endpoint-Based Routing (Commands and Queries Only)
 
-Named endpoints with pluggable transports enable cross-service dispatch:
+Routes assign a destination endpoint for request/response messages. Events don't route — they broadcast to all DI-registered transports. The producer configures routes because it owns the deployment topology.
 
 ```csharp
 public sealed class ConduitEndpoint
@@ -248,28 +250,34 @@ public sealed class ConduitOptions
 {
     public Dictionary<string, ConduitEndpoint> Endpoints { get; } = new();
     public List<ConduitRoute> Routes { get; } = [];
-}
-
-public interface IRouteResolver
-{
-    public ConduitEndpoint? Resolve(string messageFullTypeName);
+    public List<Type> PipelineTypes { get; } = [];
 }
 ```
 
-The generated mediator checks the route table before local dispatch. If a message type matches a route, it serializes the request into a `DispatchEnvelope` and sends it via the endpoint's transport. If no route matches, dispatch is local.
+`ConduitRuntime.ResolveRoute` checks the route table before local dispatch. If a message type matches a route, it serializes the request into a `DispatchEnvelope` and sends it via the endpoint's transport. If no route matches, dispatch is local.
 
-Configuration uses a fluent builder API:
+Configuration uses a fluent builder API (runtime only — no attribute-based routing):
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
-    conduit.AddEndpoint("orders-api", endpoint =>
-        endpoint.UseHttp(httpClient));
+    conduit.AddEndpoint("inventory", endpoint =>
+        endpoint.UseSignalR(new Uri(config["InventoryServiceUrl"])));
 
-    conduit.Route<OrderCommands.CreateOrder>().To("orders-api");
-    conduit.Route("Inventory.Commands").To("orders-api");
+    conduit.Route("Inventory.Commands").To("inventory");
 });
 ```
+
+### Event Broadcast
+
+Events broadcast — they don't route. `PublishAsync` dispatches to local listeners then broadcasts to all DI-registered `IConduitTransport` instances. Events marked `[LocalOnly]` skip the broadcast step entirely (compile-time, zero runtime cost).
+
+```csharp
+[LocalOnly]
+public record UserPasswordChangedEvent(Guid UserId) : IEvent;
+```
+
+Inbound filtering is handled by `TypeFilterInterceptor` (rejects unauthorized types arriving from transports). `[LocalOnly]` is the outbound complement — preventing events from leaving.
 
 ### Error Model
 
@@ -415,79 +423,17 @@ public static IServiceCollection AddConduitHandlers(this IServiceCollection serv
 
 ### 4. Mediator Implementation
 
-Generated with strongly-typed overloads, route-aware dispatch, and wire publish support:
+The generated `ConduitMediator` implements `IWireMediator` (which extends `IMediator`). Key behaviors:
 
-```csharp
-internal sealed class ConduitMediator(
-    IServiceProvider serviceProvider,
-    IEnumerable<IConduitTransport> transports,
-    IRouteResolver routeResolver,
-    ILogger<ConduitMediator> logger) : IMediator, IDispatchRouter
-{
-    // Strongly-typed overloads — compiler picks these, zero boxing
-    // Each checks the route table before local dispatch
-    public async Task<Guid> ExecuteAsync(
-        CreateOrderCommand command,
-        CancellationToken cancellationToken)
-    {
-        var endpoint = routeResolver.Resolve("App.Commands.CreateOrderCommand");
-        if (endpoint?.Transport != null)
-        {
-            var payload = JsonSerializer.SerializeToElement(command);
-            var result = await endpoint.Transport.SendRequestAsync(
-                new DispatchEnvelope("CreateOrder", payload), cancellationToken);
-            return (Guid)result!;
-        }
-        return await ConduitDispatch.Execute(command, serviceProvider, cancellationToken);
-    }
+- **Strongly-typed overloads** per command/query — compiler picks these, zero boxing
+- **Route-aware dispatch** — checks `ConduitRuntime.ResolveRoute` before local dispatch; if a route matches, serializes to `DispatchEnvelope` and sends via the endpoint's transport
+- **Event broadcast** — `PublishAsync` dispatches to local listeners via `PublishLocalAsync`, then broadcasts to all DI-registered `IConduitTransport` instances (unless `[LocalOnly]`)
+- **Wire dispatch** — `HandleWireRequestAsync`/`HandleWireEventAsync` chain `IWireInterceptor` instances, deserialize by type name, and dispatch locally
+- **Pipeline behaviors** — resolved via `ConduitRuntime.ResolvePipelines` in registration order (first = outermost)
 
-    // Generic interface fallbacks, void command fallbacks... (same pattern)
+### 5. REST Endpoint Mappings (conditional)
 
-    // Events — continue on failure, deliver to transports
-    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken)
-    {
-        switch (@event)
-        {
-            case OrderCreatedEvent e:
-                await SafeExecute(
-                    () => serviceProvider.GetRequiredService<OrderCreatedListener>()
-                        .HandleAsync(e, cancellationToken));
-                break;
-        }
-        var eventEnvelope = new DispatchEnvelope(
-            @event.GetType().Name,
-            JsonSerializer.SerializeToElement(@event));
-        foreach (var transport in transports)
-        {
-            await SafeExecute(() => transport.SendMessageAsync(eventEnvelope, cancellationToken));
-        }
-    }
-
-    // Wire dispatch — inbound commands/queries from external transports
-    public async Task<object?> DispatchRequestAsync(
-        string type, JsonElement payload, CancellationToken cancellationToken)
-        => type switch
-        {
-            "CreateOrder" => await ConduitDispatch.Execute(
-                JsonSerializer.Deserialize<CreateOrderCommand>(payload)!, serviceProvider, cancellationToken),
-            _ => throw new InvalidOperationException($"Unknown dispatch type: {type}")
-        };
-
-    // Wire event dispatch — inbound events from external clients (e.g. TypeScript → SignalR)
-    public async Task DispatchEventAsync(
-        string type, JsonElement payload, CancellationToken cancellationToken)
-    {
-        IEvent @event = type switch
-        {
-            "OrderCreated" => JsonSerializer.Deserialize<OrderCreatedEvent>(payload)!,
-            _ => throw new InvalidOperationException($"Unknown event type: {type}")
-        };
-        await PublishAsync(@event, cancellationToken);
-    }
-
-    private async Task SafeExecute(Func<Task> action) { /* try/catch + log */ }
-}
-```
+When the compilation references `Conduit.Transport.Http`, the generator emits `ConduitRestEndpoints` with `MapConduitGet<T>`, `MapConduitPost<T>`, etc. — compile-time type switches that delegate to `ConduitRestHandlers`.
 
 ### Compile-Time Diagnostics
 
@@ -496,46 +442,15 @@ The generator emits diagnostics for:
 - Multiple handlers for the same command or query
 - `[Dispatchable]` on a type that doesn't implement a marker interface
 
-## ASP.NET Core Integration (`Conduit.Transport.AspNetCore`)
+## HTTP Integration (`Conduit.Transport.Http`)
 
-### HTTP Dispatch Endpoint
+### Envelope Dispatch Endpoint
 
-Maps two POST endpoints via `IDispatchRouter`:
+`MapConduitEndpoint()` maps two POST endpoints for Conduit-aware consumers (service-to-service, TypeScript mediator):
 - `POST /api/dispatch` — commands and queries (returns `DispatchResult<object>`)
 - `POST /api/dispatch/publish` — events (fire-and-forget, returns 200 OK)
 
-```csharp
-public static class EndpointRouteBuilderExtensions
-{
-    public static IEndpointRouteBuilder MapConduit(
-        this IEndpointRouteBuilder endpoints,
-        string path = "/api/dispatch")
-    {
-        endpoints.MapPost(path, async (
-            DispatchEnvelope envelope,
-            IDispatchRouter router,
-            CancellationToken cancellationToken) =>
-        {
-            var result = await router.DispatchRequestAsync(
-                envelope.Type, envelope.Payload, cancellationToken);
-            return Results.Ok(new DispatchResult<object> { Data = result });
-            // + ConduitException → structured error, catch-all → 500
-        });
-
-        endpoints.MapPost(path + "/publish", async (
-            DispatchEnvelope envelope,
-            IDispatchRouter router,
-            CancellationToken cancellationToken) =>
-        {
-            await router.DispatchEventAsync(
-                envelope.Type, envelope.Payload, cancellationToken);
-            return Results.Ok();
-        });
-
-        return endpoints;
-    }
-}
-```
+Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `MapStatusCode()`. Returns `DispatchResult` envelope format.
 
 ### RESTful Endpoint Mapping
 
@@ -570,51 +485,17 @@ app.MapConduitGet<GetItemQuery>("/api/items/{id}")
 
 **Verb-to-message restrictions:** `MapConduitGet` accepts queries only. All other verbs accept any command or query type.
 
-Design spec: `docs/superpowers/specs/2026-03-14-restful-endpoint-mapping-design.md`
-
 ## SignalR Integration (`Conduit.Transport.SignalR`)
 
 ### SignalR Hub
 
-Dual purpose — handles client-to-server dispatch/publish and server-to-client event delivery:
-
-```csharp
-public class ConduitHub : Hub
-{
-    public async Task<DispatchResult<object>> Dispatch(string type, JsonElement payload)
-    {
-        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IDispatchRouter>();
-        var result = await router.DispatchRequestAsync(type, payload, Context.ConnectionAborted);
-        return new DispatchResult<object> { Data = result };
-        // + ConduitException → structured error, catch-all → 500
-    }
-
-    public async Task Publish(string type, JsonElement payload)
-    {
-        var router = Context.GetHttpContext()!.RequestServices.GetRequiredService<IDispatchRouter>();
-        await router.DispatchEventAsync(type, payload, Context.ConnectionAborted);
-        // Fire-and-forget; errors logged by SafeExecute in mediator
-    }
-}
-```
+`ConduitHub` handles client-to-server dispatch/publish and server-to-client event delivery. `Dispatch` and `Publish` methods delegate to `IWireMediator`.
 
 ### SignalR Transport
 
-Bidirectional transport implementing `IConduitTransport`:
-
-```csharp
-public class SignalRTransport(IHubContext<ConduitHub> hubContext) : IConduitTransport
-{
-    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(envelope);
-        return hubContext.Clients.All.SendAsync(envelope.Type, envelope.Payload, cancellationToken);
-    }
-
-    public Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
-        => throw new NotSupportedException("Use HTTP transport for outbound request/response dispatch.");
-}
-```
+Dual-mode transport implementing `IConduitTransport`:
+- **Server mode** (`IHubContext<ConduitHub>`) — pushes events to connected clients via hub broadcast. Registered in DI by `AddConduitSignalR()`.
+- **Client mode** (`HubConnection`) — sends commands/queries to a remote hub, receives events back on the same connection. Uses lazy connect (`EnsureConnectedAsync`).
 
 ### HTTP Transport
 
@@ -623,7 +504,7 @@ Sends commands and queries to a remote Conduit endpoint via HTTP POST:
 ```csharp
 public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
 {
-    public Task SendMessageAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw new NotSupportedException("HTTP transport does not support fire-and-forget events.");
 
     public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
@@ -641,44 +522,22 @@ public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch")
 ### Registration
 
 ```csharp
-// Conduit.Transport.AspNetCore — routing infrastructure
-public static class ServiceCollectionExtensions
-{
-    public static IServiceCollection AddConduit(
-        this IServiceCollection services,
-        Action<ConduitBuilder>? configure = null)
-    {
-        var builder = new ConduitBuilder(services);
-        configure?.Invoke(builder);
-
-        services.AddSingleton(builder.Options);
-        services.AddSingleton<IRouteResolver, DefaultRouteResolver>();
-        return services;
-    }
-}
-
-// Conduit.Transport.SignalR — SignalR transport
-public static class ServiceCollectionExtensions
-{
-    public static IServiceCollection AddConduitSignalR(this IServiceCollection services)
-    {
-        services.AddSignalR();
-        services.AddSingleton<IConduitTransport, SignalRTransport>();
-        return services;
-    }
-}
-
 // Program.cs
-builder.Services.AddConduit(conduit =>
+builder.Services.AddConduit(conduit =>       // generated — registers handlers, mediator, core infra
 {
-    conduit.AddEndpoint("orders-api", ep => ep.UseHttp(httpClient));
-    conduit.Route("Orders.Commands").To("orders-api");
+    conduit.AddEndpoint("inventory", ep =>
+        ep.UseSignalR(new Uri(config["InventoryUrl"])));
+    conduit.Route("Inventory.Commands").To("inventory");
+    conduit.AddPipeline(typeof(LoggingBehavior<,>));
 });
-builder.Services.AddConduitSignalR();
-builder.Services.AddConduitHandlers(); // generated
+builder.Services.AddConduitSignalR();        // registers SignalR hub + server-mode transport
 
-app.MapConduit();
-app.MapHub<ConduitHub>("/hub");
+app.MapConduitEndpoint();                    // envelope dispatch for Conduit-aware consumers
+app.MapHub<ConduitHub>("/hub");              // SignalR hub
+
+// RESTful endpoints for external consumers
+app.MapConduitGet<GetItemQuery>("/api/items/{id}");
+app.MapConduitPost<CreateItemCommand>("/api/items");
 ```
 
 ## TypeScript Codegen (`Conduit.TypeGen`)
@@ -976,8 +835,8 @@ mediator.PublishAsync(new OrderCreatedEvent(...))
 ```
 TypeScript client calls hub.invoke("Publish", "OrderCreated", payload)
     │
-    └─ ConduitHub.Publish → IDispatchRouter.DispatchEventAsync(type, payload)
-        └─ Deserialize → mediator.PublishAsync(IEvent) → listeners + transports
+    └─ ConduitHub.Publish → IWireMediator.HandleWireEventAsync(envelope)
+        └─ Deserialize → PublishLocalAsync(IEvent) → listeners only (no re-broadcast)
 ```
 
 The publisher doesn't know or care who's listening or which transports are configured.
@@ -1005,7 +864,7 @@ The publisher doesn't know or care who's listening or which transports are confi
 - Missing handler produces compile-time diagnostic
 - Missing `[Authorize]`/`[AllowAnonymous]` on dispatchable type produces diagnostic
 
-**Conduit.Transport.AspNetCore.Tests:**
+**Conduit.Transport.Http.Tests:**
 - Integration tests with full HTTP + SignalR pipeline
 - HTTP POST dispatch returns correct envelope for success, `ConduitException`, unexpected exception
 - SignalR dispatch returns correct envelope
