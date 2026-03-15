@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Six source projects, six test projects, one shared test utility, three sample apps:
+Six source projects, six test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -50,7 +50,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 - **Transport limitations**: HTTP has no server→client push — events only flow client→server over HTTP. SignalR supports bidirectional event flow. Cross-pod unsolicited events require a SignalR backplane.
 - **Wire discriminator**: `FullTypeName` (e.g. `"Orders.Commands.CreateOrder"`) is used as the type discriminator in `DispatchEnvelope` on the wire.
 - **Dual-mode SignalRTransport**: Server mode (IHubContext, pushes events) and client mode (HubConnection, sends commands + receives events). Client mode uses lazy connect (auto-starts on first use via `EnsureConnectedAsync`).
-- **ConduitException is transport-agnostic**: Carries a machine-readable `Code` string but no HTTP status code. HTTP status mapping lives in `Transport.Http/EndpointRouteBuilderExtensions.MapStatusCode()`.
+- **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `MapStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization.
 - **TypeScript generation**: Only types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This is separate from C# source gen (which includes all types).
 - **Wire dispatch route forwarding**: The generated `DispatchRequestAsync` checks routes before the local type switch. Unknown types matching a route are forwarded as raw envelopes to the transport without deserializing locally.
@@ -100,7 +100,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `EnforceExtendedAnalyzerRules=true`, `IsRoslynComponent=true`, `NoWarn=RS2008`
 - Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` (no attributes needed)
 - Reads `[LocalOnly]` attribute to suppress event broadcast in generated code
-- Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`
+- Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`, `ConduitRestEndpoints.g.cs` (conditional)
 - Generated `AddConduit()` calls `ConduitRuntime.AddConduitCore()` and registers handlers
 - Pipeline behaviors resolved via `ConduitRuntime.ResolvePipelines` (explicit ordering, not DI enumeration)
 - Types without handlers get route-only overloads (throw if no route matches)
@@ -108,8 +108,10 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 
 ### Conduit.Transport.Http
 - `HttpTransport` — outbound C#→C# request/response via HTTP POST
-- `MapConduitEndpoint()` — inbound HTTP dispatch endpoint, maps POST `/api/dispatch` and `/api/dispatch/publish`
-- Maps `DispatchResult` error codes to HTTP status codes
+- `MapConduitEndpoint()` — inbound HTTP envelope dispatch endpoint, maps POST `/api/dispatch` and `/api/dispatch/publish`
+- `ConduitRestHandlers` — typed handler helpers for RESTful endpoint mapping (query→route binding, command→body binding)
+- RESTful extension methods (`MapConduitGet<T>`, `MapConduitPost<T>`, etc.) are source-generated into `ConduitRestEndpoints` — conditionally emitted only when `Conduit.Transport.Http` is referenced
+- Maps `DispatchResult` error codes to HTTP status codes (envelope endpoint); `ConduitException` → Problem Details (RESTful endpoints)
 
 ### Conduit.Transport.SignalR
 - `ConduitHub` — inbound SignalR hub with `Dispatch` and `Publish` methods, delegates to `IWireMediator`
@@ -122,16 +124,20 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Contains `ReflectionScanner` for post-compilation assembly scanning
 
 ### Conduit.Exceptions
-- `ConduitException` is the abstract base with a `Code` string
+- `ErrorCode` — enumeration class pairing a machine-readable code string with HTTP status code. Value-based equality. Built-in codes: `NotFound`, `Unauthorized`, `Conflict`, `InternalError`, `BadRequest`. Consumers define their own.
+- `ConduitException` — abstract base with `ErrorCode Code` property
 - Concrete: `NotFoundException`, `UnauthorizedException`, `ConflictException` — all sealed
 
 ### Sample Apps
-- `samples/Conduit.Sample.Notes/` — browser-facing single service with SignalR hub, notes CRUD, events pushed to browser
-- `samples/Conduit.Sample.Orders/` — order service that routes commands to InventoryService via SignalR, exposes HTTP dispatch
-- `samples/Conduit.Sample.Inventory/` — internal inventory service handling commands via SignalR hub
+- `samples/browser-client/Conduit.Sample.Notes/` — browser-facing single service with SignalR hub, notes CRUD, events pushed to browser
+- `samples/service-to-service/Conduit.Sample.Orders/` — order service that routes commands to InventoryService via SignalR, exposes HTTP dispatch
+- `samples/service-to-service/Conduit.Sample.Inventory/` — internal inventory service handling commands via SignalR hub
+- `samples/rest-api/Conduit.Sample.Todos/` — REST API demonstrating `MapConduitGet/Post/Put/Delete` with OpenAPI/Swagger UI
 
 ## Design Spec
 
 Full design specification at `docs/design.md` — covers interfaces, generated code patterns, TypeScript output structure, validation strategy, auth model, and future Rebus integration plans.
 
 Routing and event transport redesign spec at `docs/superpowers/specs/2026-03-14-routing-and-event-transport-design.md`.
+
+RESTful endpoint mapping spec at `docs/superpowers/specs/2026-03-14-restful-endpoint-mapping-design.md`.

@@ -276,32 +276,41 @@ builder.Services.AddConduit(conduit =>
 Exceptions flow naturally through .NET. The dispatch endpoint (HTTP/SignalR) is the single mapping point to a structured envelope for the wire.
 
 ```csharp
-public abstract class ConduitException(string code, int statusCode, string message)
+public record ErrorCode(string Value, int HttpStatusCode)
+{
+    public static readonly ErrorCode NotFound = new("NotFound", 404);
+    public static readonly ErrorCode Unauthorized = new("Unauthorized", 401);
+    public static readonly ErrorCode Conflict = new("Conflict", 409);
+    public static readonly ErrorCode InternalError = new("InternalError", 500);
+    public static readonly ErrorCode BadRequest = new("BadRequest", 400);
+}
+
+public abstract class ConduitException(ErrorCode code, string message)
     : Exception(message)
 {
-    public string Code => code;
-    public int StatusCode => statusCode;
+    public ErrorCode Code => code;
 }
 
 // Built-in subclasses
-public class ValidationException(string message)
-    : ConduitException("Validation", 422, message);
+public sealed class NotFoundException(string message)
+    : ConduitException(ErrorCode.NotFound, message);
 
-public class NotFoundException(string message)
-    : ConduitException("NotFound", 404, message);
+public sealed class UnauthorizedException(string message)
+    : ConduitException(ErrorCode.Unauthorized, message);
 
-public class UnauthorizedException(string message)
-    : ConduitException("Unauthorized", 401, message);
-
-public class ConflictException(string message)
-    : ConduitException("Conflict", 409, message);
+public sealed class ConflictException(string message)
+    : ConduitException(ErrorCode.Conflict, message);
 ```
 
-Consumers extend `ConduitException` for domain-specific errors:
+`ErrorCode` is an enumeration class — equality is based on `Value` only. The `HttpStatusCode` is used by RESTful endpoints for Problem Details responses. On the wire (`DispatchError.Code`), only `Value` is serialized.
+
+Consumers extend `ConduitException` with domain-specific error codes:
 
 ```csharp
+public static readonly ErrorCode InsufficientCredit = new("InsufficientCredit", 422);
+
 public class InsufficientCreditException(string message)
-    : ConduitException("InsufficientCredit", 422, message);
+    : ConduitException(InsufficientCredit, message);
 ```
 
 ### Wire Envelope
@@ -527,6 +536,41 @@ public static class EndpointRouteBuilderExtensions
     }
 }
 ```
+
+### RESTful Endpoint Mapping
+
+Maps individual HTTP routes to Conduit message types — conventional REST for external consumers. Coexists with the envelope-based dispatch endpoint above. The source generator emits `MapConduitGet<T>`, `MapConduitPost<T>`, `MapConduitPut<T>`, `MapConduitDelete<T>`, `MapConduitPatch<T>`, and a generic `MapConduit<T>(method, path)` escape hatch:
+
+```csharp
+app.MapConduitGet<GetItemQuery>("/api/items/{id}");
+app.MapConduitPost<CreateItemCommand>("/api/items");
+app.MapConduitPut<UpdateItemCommand>("/api/items/{id}");
+app.MapConduitDelete<DeleteItemCommand>("/api/items/{id}");
+```
+
+Each returns `RouteHandlerBuilder`, so standard ASP.NET Core endpoint metadata chains naturally (auth, OpenAPI, rate limiting, etc.):
+
+```csharp
+app.MapConduitGet<GetItemQuery>("/api/items/{id}")
+    .RequireAuthorization("ItemReader")
+    .WithTags("Items")
+    .ProducesProblem(404);
+```
+
+**Binding strategy:**
+- Queries use `[AsParameters]` — bind from route values and query strings (GET/DELETE)
+- Commands bind the entire type from the JSON request body (POST/PUT/PATCH)
+
+**Response behavior:**
+- `IQuery<TResult>` / `ICommand<TResult>` → 200 OK with result
+- `ICommand` (void) → 204 No Content
+- `ConduitException` → Problem Details (RFC 9457) with status from `ErrorCode.HttpStatusCode`
+
+**Implementation:** Two-layer architecture. `ConduitRestHandlers` in `Conduit.Transport.Http` provides typed handler helpers. The source generator emits `ConduitRestEndpoints` with compile-time type switches that delegate to the helpers — zero per-request reflection. Generated only when the compilation references `Conduit.Transport.Http`.
+
+**Verb-to-message restrictions:** `MapConduitGet` accepts queries only. All other verbs accept any command or query type.
+
+Design spec: `docs/superpowers/specs/2026-03-14-restful-endpoint-mapping-design.md`
 
 ## SignalR Integration (`Conduit.Transport.SignalR`)
 
