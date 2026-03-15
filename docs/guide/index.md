@@ -18,4 +18,17 @@ Mark C# types with `[ClientVisible]` and Conduit generates a fully typed TypeScr
 
 Conduit provides messaging patterns for distributed .NET services — command dispatch, event transport, typed clients — without the ceremony of a full service bus framework. Start simple, add infrastructure as you grow.
 
-Next: [Getting Started](getting-started.md)
+## Guide
+
+1. [Getting Started](getting-started.md)
+2. [Core Concepts](core-concepts.md)
+3. [TypeScript Client](typescript-client.md)
+4. [Event Transport](event-transport.md)
+5. [SignalR Transport](signalr-transport.md)
+6. [HTTP Transport](http-transport.md)
+7. [Cross-Service Routing](cross-service-routing.md)
+8. [Pipeline Behaviors](pipeline-behaviors.md)
+9. [Error Handling](error-handling.md)
+10. [Security](security.md)
+11. [Configuration Reference](configuration-reference.md)
+12. [AI-Assisted Development](ai-development.md)
