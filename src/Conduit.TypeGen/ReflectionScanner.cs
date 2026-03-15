@@ -60,10 +60,10 @@ public static class ReflectionScanner
     }
 
     /// <summary>
-    /// Scans the assembly for dispatchable types that are marked with <c>[ClientVisible]</c>.
-    /// Only types implementing <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c> that also
-    /// have the <c>[ClientVisible]</c> attribute are included. Used by TypeGen to emit
-    /// TypeScript only for types explicitly opted-in to client visibility.
+    /// Scans the assembly for types marked with <c>[ClientVisible]</c>.
+    /// Includes dispatchable types (<c>ICommand</c>, <c>IQuery</c>, <c>IEvent</c>) with their
+    /// resolved kind, and non-dispatchable types (DTOs, models) as <see cref="DispatchableKind.Model"/>.
+    /// Used by TypeGen to emit TypeScript only for types explicitly opted-in to client visibility.
     /// </summary>
     /// <param name="assembly">The assembly to scan.</param>
     /// <returns>The discovered client-visible dispatchable types.</returns>
@@ -86,11 +86,32 @@ public static class ReflectionScanner
 
         var results = new List<DispatchableTypeInfo>();
 
+        // Include dispatchable types that are [ClientVisible]
         foreach (var typeInfo in allTypes)
         {
             if (clientVisibleFullNames.Contains(typeInfo.FullTypeName))
             {
                 results.Add(typeInfo);
+                clientVisibleFullNames.Remove(typeInfo.FullTypeName);
+            }
+        }
+
+        // Include non-dispatchable types that are [ClientVisible] (DTOs, models)
+        foreach (var type in assemblyTypes)
+        {
+            var fullName = type.FullName ?? type.Name;
+            if (clientVisibleFullNames.Contains(fullName) && !type.IsAbstract && !type.IsInterface)
+            {
+                results.Add(new DispatchableTypeInfo
+                {
+                    TypeName = type.Name,
+                    FullTypeName = fullName,
+                    Namespace = type.Namespace ?? "",
+                    Kind = DispatchableKind.Model,
+                    HasValidateOverride = false,
+                    HasAuthorizeAttribute = false,
+                    HasAllowAnonymousAttribute = false,
+                });
             }
         }
 

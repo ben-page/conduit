@@ -56,6 +56,7 @@ public static class DispatchEmitter
                     EmitQuery(sb, type, handler, behaviors);
                     break;
                 case DispatchableKind.Event:
+                case DispatchableKind.Model:
                 default:
                     break;
             }

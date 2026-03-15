@@ -15,5 +15,8 @@ public enum DispatchableKind
     Query,
 
     /// <summary>An event published to multiple listeners.</summary>
-    Event
+    Event,
+
+    /// <summary>A non-dispatchable type (DTO, model) included for client visibility.</summary>
+    Model
 }

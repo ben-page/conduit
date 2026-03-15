@@ -176,7 +176,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             DispatchableKind.VoidCommand => $"ICommandHandler<{type.TypeName}>",
             DispatchableKind.Query => $"IQueryHandler<{type.TypeName}, {type.ResultTypeName}>",
             DispatchableKind.Event => $"IEventListener<{type.TypeName}>",
-            _ => "IHandler",
+            DispatchableKind.Model or _ => "IHandler",
         };
     }
 }

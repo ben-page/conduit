@@ -54,7 +54,7 @@ public static class TypeScriptEmitter
         sb.AppendLine("}");
     }
 
-    private static Type? FindType(string fullTypeName)
+    internal static Type? FindType(string fullTypeName)
     {
         // Use Type.GetType which searches the calling assembly and mscorlib/System first,
         // then falls back to all loaded assemblies. This works correctly in the MSBuild
