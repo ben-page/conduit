@@ -10,12 +10,15 @@ public class HttpTransportShould
     [TestMethod]
     public async Task ThrowOnSendEvent()
     {
+        // Arrange
         var httpClient = new HttpClient();
         var transport = new HttpTransport(httpClient);
         var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
 
+        // Act
         var action = () => transport.SendEventAsync(envelope, CancellationToken.None);
 
+        // Assert
         await action.Should().ThrowExactlyAsync<NotSupportedException>();
     }
 
