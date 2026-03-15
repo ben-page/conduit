@@ -33,6 +33,15 @@ public sealed record DispatchResult<T>
     /// </summary>
     public static DispatchResult<T> Fail(string code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
         => new() { Error = new DispatchError(code, message, details) };
+
+    /// <summary>
+    /// Creates a failed result from an <see cref="Conduit.Exceptions.ErrorCode"/>.
+    /// </summary>
+    public static DispatchResult<T> Fail(Exceptions.ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
+    {
+        ArgumentNullException.ThrowIfNull(code);
+        return new() { Error = new DispatchError(code.Value, message, details) };
+    }
 #pragma warning restore CA1000
 }
 

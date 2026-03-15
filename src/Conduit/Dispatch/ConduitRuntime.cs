@@ -178,7 +178,7 @@ public static class ConduitRuntime
         }
         catch (ConduitException ex)
         {
-            return DispatchResult<object>.Fail(ex.Code, ex.Message);
+            return DispatchResult<object>.Fail(ex.Code.Value, ex.Message);
         }
 #pragma warning disable CA1031
         catch (Exception ex)
