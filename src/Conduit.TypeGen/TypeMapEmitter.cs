@@ -79,6 +79,15 @@ public static class TypeMapEmitter
             {
                 return TypeMapper.MapType(resolvedType);
             }
+
+            // FindType fails for generic types formatted in C#-style (e.g.
+            // "System.Collections.Generic.IReadOnlyList<Namespace.NoteDto>").
+            // Fall back to string-based mapping for these cases.
+            var mapped = TypeMapper.MapFullTypeName(typeInfo.ResultFullTypeName);
+            if (mapped is not null)
+            {
+                return mapped;
+            }
         }
 
         return TypeMapper.MapTypeName(typeInfo.ResultTypeName ?? "unknown");

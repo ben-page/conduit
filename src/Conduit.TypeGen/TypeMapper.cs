@@ -108,6 +108,74 @@ public static class TypeMapper
         return csharpTypeName;
     }
 
+    /// <summary>
+    /// Maps a fully-qualified C#-style type name (e.g. "System.Collections.Generic.IReadOnlyList&lt;Namespace.NoteDto&gt;")
+    /// to a TypeScript type string. Handles generic collection types that cannot be resolved via reflection
+    /// because their full name uses C#-style angle brackets instead of CLR backtick notation.
+    /// </summary>
+    /// <param name="fullTypeName">The fully-qualified C#-style type name.</param>
+    /// <returns>The TypeScript type string, or <see langword="null"/> if the type could not be mapped.</returns>
+    public static string? MapFullTypeName(string fullTypeName)
+    {
+        ArgumentNullException.ThrowIfNull(fullTypeName);
+
+        var angleBracketIndex = fullTypeName.IndexOf('<', StringComparison.Ordinal);
+        if (angleBracketIndex < 0)
+        {
+            // Not a generic type — try simple mapping on the short name
+            var shortName = GetShortName(fullTypeName);
+            if (SimpleTypeMappings.TryGetValue(shortName, out var tsType))
+            {
+                return tsType;
+            }
+
+            return null;
+        }
+
+        // Extract outer generic type name and inner type argument(s)
+        var outerFullName = fullTypeName[..angleBracketIndex];
+        var outerShortName = GetShortName(outerFullName);
+        var innerContent = fullTypeName[(angleBracketIndex + 1)..^1]; // strip < and >
+
+        // Collection types → T[]
+        if (CollectionShortNames.Contains(outerShortName))
+        {
+            var elementTs = MapFullTypeName(innerContent);
+            if (elementTs is not null)
+            {
+                return $"{elementTs}[]";
+            }
+
+            // Try resolving the element type via reflection
+            var elementType = TypeScriptEmitter.FindType(innerContent);
+            if (elementType is not null)
+            {
+                return $"{MapType(elementType)}[]";
+            }
+
+            // Last resort: use the short name of the element type
+            return $"{GetShortName(innerContent)}[]";
+        }
+
+        return null;
+    }
+
+    private static string GetShortName(string fullTypeName)
+    {
+        var lastDot = fullTypeName.LastIndexOf('.');
+        return lastDot >= 0 ? fullTypeName[(lastDot + 1)..] : fullTypeName;
+    }
+
+    private static readonly HashSet<string> CollectionShortNames =
+    [
+        "List",
+        "IList",
+        "IEnumerable",
+        "IReadOnlyList",
+        "ICollection",
+        "IReadOnlyCollection",
+    ];
+
     private static bool IsCollectionType(Type genericDef)
     {
         return genericDef == typeof(List<>)
