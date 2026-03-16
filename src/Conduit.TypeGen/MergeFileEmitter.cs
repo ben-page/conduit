@@ -144,7 +144,7 @@ public static class MergeFileEmitter
             foreach (var property in properties)
             {
                 var tsType = TypeMapper.MapType(property.PropertyType);
-                var propName = char.ToLowerInvariant(property.Name[0]) + property.Name[1..];
+                var propName = TypeScriptEmitter.ToCamelCase(property.Name);
                 sb.Append(CultureInfo.InvariantCulture, $"  {propName}: {tsType};").AppendLine();
             }
         }
