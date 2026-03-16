@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using Conduit.Analysis;
 
@@ -17,7 +18,8 @@ public static class TypeMapEmitter
     /// </summary>
     /// <param name="sb">The string builder to append to.</param>
     /// <param name="types">The dispatchable types to map.</param>
-    public static void EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types)
+    /// <param name="assembly">Optional assembly for type resolution (may be from MetadataLoadContext).</param>
+    public static void EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types, Assembly? assembly = null)
     {
         ArgumentNullException.ThrowIfNull(sb);
         ArgumentNullException.ThrowIfNull(types);
@@ -33,7 +35,7 @@ public static class TypeMapEmitter
             {
                 var resultType = cmd.Kind == DispatchableKind.VoidCommand
                     ? "void"
-                    : ResolveResultType(cmd);
+                    : ResolveResultType(cmd, assembly);
                 sb.Append(CultureInfo.InvariantCulture,
                     $"  '{cmd.FullTypeName}': {{ request: {cmd.TypeName}; response: {resultType} }};").AppendLine();
             }
@@ -47,7 +49,7 @@ public static class TypeMapEmitter
             sb.AppendLine("export interface QueryMap {");
             foreach (var query in queries)
             {
-                var resultType = ResolveResultType(query);
+                var resultType = ResolveResultType(query, assembly);
                 sb.Append(CultureInfo.InvariantCulture,
                     $"  '{query.FullTypeName}': {{ request: {query.TypeName}; response: {resultType} }};").AppendLine();
             }
@@ -70,19 +72,25 @@ public static class TypeMapEmitter
         }
     }
 
-    private static string ResolveResultType(DispatchableTypeInfo typeInfo)
+    private static string ResolveResultType(DispatchableTypeInfo typeInfo, Assembly? assembly)
     {
         if (typeInfo.ResultFullTypeName is not null)
         {
-            var resolvedType = TypeScriptEmitter.FindType(typeInfo.ResultFullTypeName);
+            // Try resolving via the assembly (works with MetadataLoadContext)
+            var resolvedType = assembly?.GetType(typeInfo.ResultFullTypeName);
             if (resolvedType is not null)
             {
                 return TypeMapper.MapType(resolvedType);
             }
 
-            // FindType fails for generic types formatted in C#-style (e.g.
-            // "System.Collections.Generic.IReadOnlyList<Namespace.NoteDto>").
-            // Fall back to string-based mapping for these cases.
+            // Try runtime resolution (works when assembly loaded via LoadFrom)
+            resolvedType = TypeScriptEmitter.FindType(typeInfo.ResultFullTypeName);
+            if (resolvedType is not null)
+            {
+                return TypeMapper.MapType(resolvedType);
+            }
+
+            // Fall back to string-based mapping for generic types formatted in C#-style
             var mapped = TypeMapper.MapFullTypeName(typeInfo.ResultFullTypeName);
             if (mapped is not null)
             {

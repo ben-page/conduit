@@ -1,7 +1,11 @@
+using System.Reflection;
+
 namespace Conduit.TypeGen;
 
 /// <summary>
 /// Maps .NET types to their TypeScript equivalents for code generation.
+/// Uses string-based type name comparisons to support both runtime types
+/// and <see cref="System.Reflection.MetadataLoadContext"/> types.
 /// </summary>
 public static class TypeMapper
 {
@@ -24,8 +28,26 @@ public static class TypeMapper
         ["TimeSpan"] = "string",
     };
 
+    private static readonly HashSet<string> CollectionFullNames =
+    [
+        "System.Collections.Generic.List`1",
+        "System.Collections.Generic.IList`1",
+        "System.Collections.Generic.IEnumerable`1",
+        "System.Collections.Generic.IReadOnlyList`1",
+        "System.Collections.Generic.ICollection`1",
+        "System.Collections.Generic.IReadOnlyCollection`1",
+    ];
+
+    private static readonly HashSet<string> DictionaryFullNames =
+    [
+        "System.Collections.Generic.Dictionary`2",
+        "System.Collections.Generic.IDictionary`2",
+        "System.Collections.Generic.IReadOnlyDictionary`2",
+    ];
+
     /// <summary>
     /// Maps a .NET <see cref="Type"/> to a TypeScript type string.
+    /// Works with both runtime types and <see cref="System.Reflection.MetadataLoadContext"/> types.
     /// </summary>
     /// <param name="type">The .NET type to map.</param>
     /// <returns>The corresponding TypeScript type expression.</returns>
@@ -33,11 +55,12 @@ public static class TypeMapper
     {
         ArgumentNullException.ThrowIfNull(type);
 
-        // Handle nullable value types
-        var underlyingNullable = Nullable.GetUnderlyingType(type);
-        if (underlyingNullable != null)
+        // Handle nullable value types (check by name since Nullable.GetUnderlyingType
+        // doesn't work with MetadataLoadContext types)
+        if (type.IsGenericType && type.GetGenericTypeDefinition().FullName == "System.Nullable`1")
         {
-            return $"{MapType(underlyingNullable)} | null";
+            var underlyingType = type.GetGenericArguments()[0];
+            return $"{MapType(underlyingType)} | null";
         }
 
         // Handle arrays
@@ -51,18 +74,17 @@ public static class TypeMapper
         if (type.IsGenericType)
         {
             var genericDef = type.GetGenericTypeDefinition();
-            var genericName = genericDef.Name;
+            var genericFullName = genericDef.FullName ?? "";
 
             // List<T>, IList<T>, IEnumerable<T>, IReadOnlyList<T>, ICollection<T>
-            if (IsCollectionType(genericDef))
+            if (CollectionFullNames.Contains(genericFullName))
             {
                 var elementType = type.GetGenericArguments()[0];
                 return $"{MapType(elementType)}[]";
             }
 
             // Dictionary<string, T> → Record<string, T>
-            if (genericDef == typeof(Dictionary<,>) || genericDef == typeof(IDictionary<,>)
-                || genericDef == typeof(IReadOnlyDictionary<,>))
+            if (DictionaryFullNames.Contains(genericFullName))
             {
                 var keyType = type.GetGenericArguments()[0];
                 var valueType = type.GetGenericArguments()[1];
@@ -73,8 +95,10 @@ public static class TypeMapper
         // Handle enums → string literal union
         if (type.IsEnum)
         {
-            var values = Enum.GetNames(type);
-            return string.Join(" | ", values.Select(v => $"'{v}'"));
+            // Use GetFields instead of Enum.GetNames — works with MetadataLoadContext
+            var fields = type.GetFields(BindingFlags.Public | BindingFlags.Static);
+            var values = fields.Select(f => $"'{f.Name}'");
+            return string.Join(" | ", values);
         }
 
         // Simple type mappings
@@ -83,8 +107,8 @@ public static class TypeMapper
             return tsType;
         }
 
-        // Object/unknown → unknown
-        if (type == typeof(object))
+        // Object/unknown
+        if (type.FullName == "System.Object")
         {
             return "unknown";
         }
@@ -175,14 +199,4 @@ public static class TypeMapper
         "ICollection",
         "IReadOnlyCollection",
     ];
-
-    private static bool IsCollectionType(Type genericDef)
-    {
-        return genericDef == typeof(List<>)
-            || genericDef == typeof(IList<>)
-            || genericDef == typeof(IEnumerable<>)
-            || genericDef == typeof(IReadOnlyList<>)
-            || genericDef == typeof(ICollection<>)
-            || genericDef == typeof(IReadOnlyCollection<>);
-    }
 }

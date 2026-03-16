@@ -46,30 +46,32 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
         try
         {
-            var assemblyDir = Path.GetDirectoryName(this.AssemblyPath) ?? ".";
+            var assemblyDir = Path.GetDirectoryName(Path.GetFullPath(this.AssemblyPath)) ?? ".";
             var runtimeDir = RuntimeEnvironment.GetRuntimeDirectory();
             var resolver = new PathAssemblyResolver(
                 GetAssemblyPaths(assemblyDir, runtimeDir));
 
             using var metadataContext = new MetadataLoadContext(resolver);
-            var assembly = metadataContext.LoadFromAssemblyPath(this.AssemblyPath);
+            var assembly = metadataContext.LoadFromAssemblyPath(
+                Path.GetFullPath(this.AssemblyPath));
 
             var types = ReflectionScanner.ScanClientVisible(assembly);
             var transports = this.ParseTransports();
             var includeSignalR = transports.Contains("SignalR");
 
-            Directory.CreateDirectory(this.OutputDirectory);
+            var outputDir = Path.GetFullPath(this.OutputDirectory);
+            Directory.CreateDirectory(outputDir);
 
             File.WriteAllText(
-                Path.Combine(this.OutputDirectory, "conduit.ts"),
+                Path.Combine(outputDir, "conduit.ts"),
                 BaseFileEmitter.Emit(transports));
 
             File.WriteAllText(
-                Path.Combine(this.OutputDirectory, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(types, includeSignalR));
+                Path.Combine(outputDir, "conduit.generated.ts"),
+                MergeFileEmitter.Emit(types, assembly, includeSignalR));
 
             this.Log.LogMessage(MessageImportance.Normal,
-                "Conduit TypeGen: generated 2 files");
+                $"Conduit TypeGen: generated 2 files ({types.Count} types)");
 
             return true;
         }
@@ -78,6 +80,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 #pragma warning restore CA1031
         {
             this.Log.LogError($"Conduit TypeGen failed: {ex.Message}");
+            this.Log.LogMessage(MessageImportance.High, ex.ToString());
             return false;
         }
     }
