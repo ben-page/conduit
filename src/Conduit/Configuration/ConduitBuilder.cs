@@ -28,6 +28,16 @@ public class ConduitBuilder
     }
 
     /// <summary>
+    /// Application name used by transports for queue/topic naming.
+    /// Defaults to IHostEnvironment.ApplicationName at transport startup if not set.
+    /// </summary>
+    public string? ApplicationName
+    {
+        get => this.Options.ApplicationName;
+        set => this.Options.ApplicationName = value;
+    }
+
+    /// <summary>
     /// Adds a named remote endpoint that messages can be routed to.
     /// Configure the endpoint's transport using extension methods on <see cref="EndpointBuilder"/>.
     /// </summary>
@@ -38,7 +48,7 @@ public class ConduitBuilder
     {
         ArgumentNullException.ThrowIfNull(configure);
         var endpoint = new ConduitEndpoint { Name = name };
-        var endpointBuilder = new EndpointBuilder(endpoint);
+        var endpointBuilder = new EndpointBuilder(endpoint, this.Services);
         configure(endpointBuilder);
         this.Options.Endpoints[name] = endpoint;
         return this;

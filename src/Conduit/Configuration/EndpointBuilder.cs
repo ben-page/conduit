@@ -1,4 +1,5 @@
 using Conduit.Dispatch;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Configuration;
 
@@ -15,11 +16,17 @@ public sealed class EndpointBuilder
     internal ConduitEndpoint Endpoint { get; }
 
     /// <summary>
+    /// The service collection, for transport extensions that need to register DI services.
+    /// </summary>
+    public IServiceCollection Services { get; }
+
+    /// <summary>
     /// Creates a new builder for the given endpoint.
     /// </summary>
-    internal EndpointBuilder(ConduitEndpoint endpoint)
+    internal EndpointBuilder(ConduitEndpoint endpoint, IServiceCollection services)
     {
         this.Endpoint = endpoint;
+        this.Services = services;
     }
 
     /// <summary>
