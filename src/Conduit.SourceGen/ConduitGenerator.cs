@@ -46,8 +46,6 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         // Find handlers and listeners
         var handlers = new List<HandlerInfo>();
         var listenerGroups = new Dictionary<string, List<string>>();
-        var handlerTypeNames = new List<string>();
-        var listenerTypeNames = new List<string>();
 
         foreach (var typeSymbol in typeSymbols)
         {
@@ -68,7 +66,6 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                         MessageFullTypeName = commandFullName,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
                     });
-                    handlerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
                 else if (ifaceOriginal == "Conduit.Handlers.ICommandHandler<TCommand>" && iface.TypeArguments.Length == 1)
                 {
@@ -78,7 +75,6 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                         MessageFullTypeName = commandFullName,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
                     });
-                    handlerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
                 else if (ifaceOriginal == "Conduit.Handlers.IQueryHandler<TQuery, TResult>" && iface.TypeArguments.Length == 2)
                 {
@@ -88,7 +84,6 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                         MessageFullTypeName = queryFullName,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
                     });
-                    handlerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
                 else if (ifaceOriginal == "Conduit.Handlers.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
                 {
@@ -100,7 +95,6 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     }
 
                     listeners.Add(typeSymbol.ToDisplayString());
-                    listenerTypeNames.Add(typeSymbol.ToDisplayString());
                 }
             }
         }
@@ -113,17 +107,17 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         var dispatchSource = DispatchEmitter.Emit(dispatchableTypes, handlers);
         context.AddSource("ConduitDispatch.g.cs", dispatchSource);
 
-        // Generate DI registration
-        var registrationSource = RegistrationEmitter.Emit(handlerTypeNames, listenerTypeNames, dispatchableTypes);
-        context.AddSource("ConduitRegistration.g.cs", registrationSource);
-
-        // Generate mediator
+        // Generate mediator (build groups first — shared with registration)
         var groups = listenerGroups.Select(kvp => new ListenerGroup
         {
             EventFullTypeName = kvp.Key,
             ListenerFullTypeNames = kvp.Value.AsReadOnly(),
             IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
         }).ToList();
+
+        // Generate DI registration (interface-based)
+        var registrationSource = RegistrationEmitter.Emit(handlers, groups, dispatchableTypes);
+        context.AddSource("ConduitRegistration.g.cs", registrationSource);
 
         var mediatorSource = MediatorEmitter.Emit(dispatchableTypes, handlers, groups);
         context.AddSource("ConduitMediator.g.cs", mediatorSource);

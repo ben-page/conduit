@@ -418,7 +418,7 @@ internal static class ConduitDispatch
         CancellationToken cancellationToken)
     {
         command.Validate();
-        var handler = serviceProvider.GetRequiredService<CreateOrderHandler>();
+        var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
         return await handler.HandleAsync(command, cancellationToken);
     }
 }
@@ -437,7 +437,7 @@ public static async Task<Guid> Execute(
     command.Validate();
     var behavior1 = serviceProvider.GetRequiredService<LoggingBehavior<CreateOrderCommand, Guid>>();
     var behavior2 = serviceProvider.GetRequiredService<AuthBehavior<CreateOrderCommand, Guid>>();
-    var handler = serviceProvider.GetRequiredService<CreateOrderHandler>();
+    var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
 
     return await behavior1.HandleAsync(command,
         () => behavior2.HandleAsync(command,
@@ -449,12 +449,14 @@ public static async Task<Guid> Execute(
 
 ### 3. DI Registration
 
+Handlers and listeners are registered by their interface types. This enables test substitution and service bus listener discovery.
+
 ```csharp
 public static IServiceCollection AddConduitHandlers(this IServiceCollection services)
 {
-    services.AddTransient<CreateOrderHandler>();
-    services.AddTransient<DeleteOrderHandler>();
-    services.AddTransient<OrderCreatedListener>();
+    services.AddTransient<ICommandHandler<CreateOrderCommand, Guid>, CreateOrderHandler>();
+    services.AddTransient<ICommandHandler<DeleteOrderCommand>, DeleteOrderHandler>();
+    services.AddTransient<IEventListener<OrderCreatedEvent>, OrderCreatedListener>();
     services.AddTransient<ConduitMediator>();
     services.AddTransient<IMediator>(sp => sp.GetRequiredService<ConduitMediator>());
     services.AddTransient<IWireMediator>(sp => sp.GetRequiredService<ConduitMediator>());

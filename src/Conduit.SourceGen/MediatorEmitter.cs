@@ -330,23 +330,22 @@ public static class MediatorEmitter
             sb.AppendLine($"            case {group.EventFullTypeName} e:");
             sb.AppendLine($"            {{");
 
-            // Build the innermost delegate: all listeners called in sequence, wrapped as Func<Task<object>>
-            // Each listener is wrapped in try/catch to ensure continue-on-failure
+            // Build the innermost delegate: resolve all listeners by interface, iterate with try/catch
             sb.AppendLine($"                Func<Task<object>> listenerChain = async () =>");
             sb.AppendLine($"                {{");
-            foreach (var listener in group.ListenerFullTypeNames)
-            {
-                sb.AppendLine($"                    try");
-                sb.AppendLine($"                    {{");
-                sb.AppendLine($"                        await serviceProvider.GetRequiredService<{listener}>()");
-                sb.AppendLine($"                            .HandleAsync(e, cancellationToken);");
-                sb.AppendLine($"                    }}");
-                sb.AppendLine($"                    catch (Exception ex)");
-                sb.AppendLine($"                    {{");
-                sb.AppendLine($"                        ConduitRuntime.LogListenerFailure(logger, \"{listener}\", ex);");
-                sb.AppendLine($"                        exceptions.Add(ex);");
-                sb.AppendLine($"                    }}");
-            }
+            sb.AppendLine($"                    var listeners = serviceProvider.GetServices<{EmitConstants.NamespaceHandlers}.IEventListener<{group.EventFullTypeName}>>();");
+            sb.AppendLine($"                    foreach (var listener in listeners)");
+            sb.AppendLine($"                    {{");
+            sb.AppendLine($"                        try");
+            sb.AppendLine($"                        {{");
+            sb.AppendLine($"                            await listener.HandleAsync(e, cancellationToken);");
+            sb.AppendLine($"                        }}");
+            sb.AppendLine($"                        catch (Exception ex)");
+            sb.AppendLine($"                        {{");
+            sb.AppendLine($"                            ConduitRuntime.LogListenerFailure(logger, listener.GetType().Name, ex);");
+            sb.AppendLine($"                            exceptions.Add(ex);");
+            sb.AppendLine($"                        }}");
+            sb.AppendLine($"                    }}");
 
             sb.AppendLine($"                    return {EmitConstants.Unit}.Value;");
             sb.AppendLine($"                }};");
