@@ -62,28 +62,30 @@ public static class MediatorEmitter
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            sb.AppendLine($"        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
-            sb.AppendLine("        if (endpoint?.Transport != null)");
-            sb.AppendLine("        {");
-            sb.AppendLine($"            ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
-            sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
-            sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
-            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
-            sb.AppendLine($"            return result is JsonElement je");
-            sb.AppendLine($"                ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je)!");
-            sb.AppendLine($"                : ({cmd.ResultFullTypeName})result!;");
-            sb.AppendLine("        }");
+            EmitContextStart(sb);
+            sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
+            sb.AppendLine("            if (endpoint?.Transport != null)");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command);");
+            sb.AppendLine($"                var result = await endpoint.Transport.SendRequestAsync(");
+            sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"                return result is JsonElement je");
+            sb.AppendLine($"                    ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je)!");
+            sb.AppendLine($"                    : ({cmd.ResultFullTypeName})result!;");
+            sb.AppendLine("            }");
 
             if (hasHandler)
             {
-                sb.AppendLine($"        ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
-                sb.AppendLine($"        return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+                sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
+                sb.AppendLine($"            return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
             {
-                sb.AppendLine($"        throw new InvalidOperationException(\"No local handler for {cmd.FullTypeName} and no route matched.\");");
+                sb.AppendLine($"            throw new InvalidOperationException(\"No local handler for {cmd.FullTypeName} and no route matched.\");");
             }
 
+            EmitContextEnd(sb);
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -96,26 +98,28 @@ public static class MediatorEmitter
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            sb.AppendLine($"        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
-            sb.AppendLine("        if (endpoint?.Transport != null)");
-            sb.AppendLine("        {");
-            sb.AppendLine($"            ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
-            sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(command);");
-            sb.AppendLine($"            await endpoint.Transport.SendRequestAsync(");
-            sb.AppendLine($"                new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
-            sb.AppendLine("            return;");
-            sb.AppendLine("        }");
+            EmitContextStart(sb);
+            sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
+            sb.AppendLine("            if (endpoint?.Transport != null)");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command);");
+            sb.AppendLine($"                await endpoint.Transport.SendRequestAsync(");
+            sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            sb.AppendLine("                return;");
+            sb.AppendLine("            }");
 
             if (hasHandler)
             {
-                sb.AppendLine($"        ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
-                sb.AppendLine($"        await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+                sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
+                sb.AppendLine($"            await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
             {
-                sb.AppendLine($"        throw new InvalidOperationException(\"No local handler for {cmd.FullTypeName} and no route matched.\");");
+                sb.AppendLine($"            throw new InvalidOperationException(\"No local handler for {cmd.FullTypeName} and no route matched.\");");
             }
 
+            EmitContextEnd(sb);
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -128,28 +132,30 @@ public static class MediatorEmitter
             sb.AppendLine($"        {query.FullTypeName} query,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            sb.AppendLine($"        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{query.FullTypeName}\");");
-            sb.AppendLine("        if (endpoint?.Transport != null)");
-            sb.AppendLine("        {");
-            sb.AppendLine($"            ConduitRuntime.LogRouteDispatch(logger, \"{query.FullTypeName}\", endpoint.Name);");
-            sb.AppendLine($"            var payload = JsonSerializer.SerializeToElement(query);");
-            sb.AppendLine($"            var result = await endpoint.Transport.SendRequestAsync(");
-            sb.AppendLine($"                new DispatchEnvelope(\"{query.FullTypeName}\", payload), cancellationToken);");
-            sb.AppendLine($"            return result is JsonElement je");
-            sb.AppendLine($"                ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je)!");
-            sb.AppendLine($"                : ({query.ResultFullTypeName})result!;");
-            sb.AppendLine("        }");
+            EmitContextStart(sb);
+            sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{query.FullTypeName}\");");
+            sb.AppendLine("            if (endpoint?.Transport != null)");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{query.FullTypeName}\", endpoint.Name);");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(query);");
+            sb.AppendLine($"                var result = await endpoint.Transport.SendRequestAsync(");
+            sb.AppendLine($"                    new DispatchEnvelope(\"{query.FullTypeName}\", payload), cancellationToken);");
+            sb.AppendLine($"                return result is JsonElement je");
+            sb.AppendLine($"                    ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je)!");
+            sb.AppendLine($"                    : ({query.ResultFullTypeName})result!;");
+            sb.AppendLine("            }");
 
             if (hasHandler)
             {
-                sb.AppendLine($"        ConduitRuntime.LogLocalDispatch(logger, \"{query.FullTypeName}\");");
-                sb.AppendLine($"        return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
+                sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{query.FullTypeName}\");");
+                sb.AppendLine($"            return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
             {
-                sb.AppendLine($"        throw new InvalidOperationException(\"No local handler for {query.FullTypeName} and no route matched.\");");
+                sb.AppendLine($"            throw new InvalidOperationException(\"No local handler for {query.FullTypeName} and no route matched.\");");
             }
 
+            EmitContextEnd(sb);
             sb.AppendLine("    }");
             sb.AppendLine();
         }
@@ -255,6 +261,7 @@ public static class MediatorEmitter
         // Events marked [LocalOnly] skip the broadcast step entirely.
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
+        EmitContextStart(sb);
         sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
         sb.AppendLine();
 
@@ -286,6 +293,7 @@ public static class MediatorEmitter
             sb.AppendLine("        }");
         }
 
+        EmitContextEnd(sb);
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -429,5 +437,22 @@ public static class MediatorEmitter
         sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
         sb.AppendLine("    }");
         sb.AppendLine();
+    }
+
+    private static void EmitContextStart(StringBuilder sb)
+    {
+        sb.AppendLine($"        var previousContext = {EmitConstants.MessageContext}.Current;");
+        sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch();");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+    }
+
+    private static void EmitContextEnd(StringBuilder sb)
+    {
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            {EmitConstants.MessageContext}.RestoreContext(previousContext);");
+        sb.AppendLine("        }");
     }
 }
