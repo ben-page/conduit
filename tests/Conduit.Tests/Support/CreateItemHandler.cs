@@ -1,4 +1,4 @@
-﻿using Conduit.Handlers;
+using Conduit.Handlers;
 
 namespace Conduit.Tests.Support;
 
@@ -9,6 +9,7 @@ public class CreateItemHandler(IMediator mediator, ItemStore store) : ICommandHa
         var id = Guid.NewGuid();
         store.Add(id, command.Name);
         await mediator.PublishAsync(new ItemCreatedEvent(id, command.Name), cancellationToken);
+        await mediator.PublishAsync(new ItemDeletedEvent(id), cancellationToken);
         return id;
     }
 }

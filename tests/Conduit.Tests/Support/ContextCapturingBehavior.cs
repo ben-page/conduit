@@ -4,13 +4,23 @@ using Conduit.Middleware;
 namespace Conduit.Tests.Support;
 
 /// <summary>
-/// Holds the last captured MessageContext. Non-generic to avoid CA1000.
+/// Holds captured MessageContexts. Non-generic to avoid CA1000.
 /// </summary>
 public static class CapturedContext
 {
-    public static MessageContext? Last { get; set; }
+    private static readonly List<(string RequestType, MessageContext Context)> Entries = [];
 
-    public static void Reset() => Last = null;
+    public static MessageContext? Last => Entries.Count > 0 ? Entries[^1].Context : null;
+
+    public static IReadOnlyList<(string RequestType, MessageContext Context)> All => Entries;
+
+    public static MessageContext? ForType(string typeName) =>
+        Entries.Find(e => e.RequestType == typeName).Context;
+
+    public static void Reset() => Entries.Clear();
+
+    internal static void Capture<TRequest>(MessageContext context) =>
+        Entries.Add((typeof(TRequest).FullName!, context));
 }
 
 /// <summary>
@@ -23,7 +33,12 @@ public sealed class ContextCapturingBehavior<TRequest, TResult> : IPipelineBehav
         Func<Task<TResult>> next,
         CancellationToken cancellationToken)
     {
-        CapturedContext.Last = MessageContext.Current;
+        var context = MessageContext.Current;
+        if (context is not null)
+        {
+            CapturedContext.Capture<TRequest>(context);
+        }
+
         return await next();
     }
 }
