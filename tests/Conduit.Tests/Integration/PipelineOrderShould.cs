@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Generated;
+using Conduit.Middleware;
 using Conduit.TestUtils;
 using Conduit.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
@@ -91,5 +92,38 @@ public class PipelineOrderShould
         log.Entries.Should().BeEquivalentTo(
             ["Outer:before", "Inner:before", "Inner:after", "Outer:after"],
             options => options.WithStrictOrdering());
+    }
+}
+
+file class PipelineLog
+{
+    public List<string> Entries { get; } = [];
+}
+
+file class OuterPipeline<TRequest, TResult>(PipelineLog log) : IPipelineBehavior<TRequest, TResult>
+{
+    public async Task<TResult> HandleAsync(
+        TRequest request,
+        Func<Task<TResult>> next,
+        CancellationToken cancellationToken)
+    {
+        log.Entries.Add("Outer:before");
+        var result = await next();
+        log.Entries.Add("Outer:after");
+        return result;
+    }
+}
+
+file class InnerPipeline<TRequest, TResult>(PipelineLog log) : IPipelineBehavior<TRequest, TResult>
+{
+    public async Task<TResult> HandleAsync(
+        TRequest request,
+        Func<Task<TResult>> next,
+        CancellationToken cancellationToken)
+    {
+        log.Entries.Add("Inner:before");
+        var result = await next();
+        log.Entries.Add("Inner:after");
+        return result;
     }
 }

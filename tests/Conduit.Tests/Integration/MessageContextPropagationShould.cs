@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.Generated;
 using Conduit.Tests.Support;
-using Conduit.Tests.Support.ContextChain;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
