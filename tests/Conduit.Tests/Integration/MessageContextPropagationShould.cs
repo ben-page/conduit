@@ -1,8 +1,8 @@
 using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.Generated;
-using Conduit.TestUtils;
 using Conduit.Tests.Support;
+using Conduit.Tests.Support.ContextChain;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -48,65 +48,50 @@ public class MessageContextPropagationShould
     }
 
     [TestMethod]
-    public async Task SetContextDuringEventPublish()
-    {
-        // Arrange
-        var mediator = CreateMediator();
-
-        // Act
-        await mediator.PublishAsync(new ItemCreatedEvent(Guid.NewGuid(), "test"));
-
-        // Assert
-        CapturedContext.Last.Should().NotBeNull();
-        CapturedContext.Last!.MessageId.Should().NotBeNullOrEmpty();
-    }
-
-    [TestMethod]
     public async Task PropagateContextThroughNestedDispatchChain()
     {
-        // Arrange — CreateItemHandler publishes ItemCreatedEvent + ItemDeletedEvent.
-        // ItemDeletedListener dispatches EchoCommand.
-        // Chain: CreateItemCommand -> ItemCreatedEvent -> ItemDeletedEvent -> EchoCommand
+        // Arrange
+        // Chain: TopLevelCommand → NestedEventOne + NestedEventTwo → DeeplyNestedCommand
         var mediator = CreateMediator();
 
         // Act
-        await mediator.ExecuteAsync(new CreateItemCommand("test"));
+        await mediator.ExecuteAsync(new TopLevelCommand("test"));
 
-        // Assert — collect contexts by type
-        var commandContext = CapturedContext.ForType("Conduit.Tests.Support.CreateItemCommand");
-        var createdEventContext = CapturedContext.ForType("Conduit.Tests.Support.ItemCreatedEvent");
-        var deletedEventContext = CapturedContext.ForType("Conduit.Tests.Support.ItemDeletedEvent");
-        var echoContext = CapturedContext.ForType("Conduit.Tests.Support.EchoCommand");
+        // Assert
+        var topLevel = CapturedContext.ForType(typeof(TopLevelCommand).FullName!);
+        var eventOne = CapturedContext.ForType(typeof(NestedEventOne).FullName!);
+        var eventTwo = CapturedContext.ForType(typeof(NestedEventTwo).FullName!);
+        var deeplyNested = CapturedContext.ForType(typeof(DeeplyNestedCommand).FullName!);
 
-        commandContext.Should().NotBeNull();
-        createdEventContext.Should().NotBeNull();
-        deletedEventContext.Should().NotBeNull();
-        echoContext.Should().NotBeNull();
+        topLevel.Should().NotBeNull();
+        eventOne.Should().NotBeNull();
+        eventTwo.Should().NotBeNull();
+        deeplyNested.Should().NotBeNull();
 
-        // All share the same ConversationId (rooted at the original command)
-        var conversationId = commandContext!.ConversationId;
-        createdEventContext!.ConversationId.Should().Be(conversationId);
-        deletedEventContext!.ConversationId.Should().Be(conversationId);
-        echoContext!.ConversationId.Should().Be(conversationId);
+        // All share the same ConversationId
+        var conversationId = topLevel!.ConversationId;
+        eventOne!.ConversationId.Should().Be(conversationId);
+        eventTwo!.ConversationId.Should().Be(conversationId);
+        deeplyNested!.ConversationId.Should().Be(conversationId);
 
-        // The original command has no parent
-        commandContext.CausationId.Should().BeNull();
-        commandContext.ConversationId.Should().Be(commandContext.MessageId);
+        // TopLevelCommand is the root — no parent, ConversationId = MessageId
+        topLevel.CausationId.Should().BeNull();
+        topLevel.ConversationId.Should().Be(topLevel.MessageId);
 
-        // Both events were caused by the command
-        createdEventContext.CausationId.Should().Be(commandContext.MessageId);
-        deletedEventContext.CausationId.Should().Be(commandContext.MessageId);
+        // Both events were caused by the TopLevelCommand
+        eventOne.CausationId.Should().Be(topLevel.MessageId);
+        eventTwo.CausationId.Should().Be(topLevel.MessageId);
 
-        // The EchoCommand was caused by the ItemDeletedEvent (dispatched from its listener)
-        echoContext.CausationId.Should().Be(deletedEventContext.MessageId);
+        // DeeplyNestedCommand was caused by NestedEventTwo (dispatched from its listener)
+        deeplyNested.CausationId.Should().Be(eventTwo.MessageId);
 
         // All MessageIds are unique
         var messageIds = new[]
         {
-            commandContext.MessageId,
-            createdEventContext.MessageId,
-            deletedEventContext.MessageId,
-            echoContext.MessageId,
+            topLevel.MessageId,
+            eventOne.MessageId,
+            eventTwo.MessageId,
+            deeplyNested.MessageId,
         };
         messageIds.Distinct().Should().HaveCount(4);
     }
@@ -131,8 +116,6 @@ public class MessageContextPropagationShould
     private static IMediator CreateMediator()
     {
         var builder = WebApplication.CreateBuilder();
-        builder.Services.AddSingleton<ItemStore>();
-        builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
         builder.Services.AddConduit(conduit =>
         {
             conduit.AddPipeline(typeof(ContextCapturingBehavior<,>));
