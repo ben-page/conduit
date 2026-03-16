@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Microsoft.Build.Framework;
 
 namespace Conduit.TypeGen;
@@ -45,7 +46,14 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
         try
         {
-            var assembly = Assembly.LoadFrom(this.AssemblyPath);
+            var assemblyDir = Path.GetDirectoryName(this.AssemblyPath) ?? ".";
+            var runtimeDir = RuntimeEnvironment.GetRuntimeDirectory();
+            var resolver = new PathAssemblyResolver(
+                GetAssemblyPaths(assemblyDir, runtimeDir));
+
+            using var metadataContext = new MetadataLoadContext(resolver);
+            var assembly = metadataContext.LoadFromAssemblyPath(this.AssemblyPath);
+
             var types = ReflectionScanner.ScanClientVisible(assembly);
             var transports = this.ParseTransports();
             var includeSignalR = transports.Contains("SignalR");
@@ -72,5 +80,52 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
             this.Log.LogError($"Conduit TypeGen failed: {ex.Message}");
             return false;
         }
+    }
+
+    private static IEnumerable<string> GetAssemblyPaths(string assemblyDir, string runtimeDir)
+    {
+        // Include all DLLs from the application output directory
+        foreach (var dll in Directory.GetFiles(assemblyDir, "*.dll"))
+        {
+            yield return dll;
+        }
+
+        // Include shared framework assemblies from the runtime directory
+        foreach (var dll in Directory.GetFiles(runtimeDir, "*.dll"))
+        {
+            yield return dll;
+        }
+
+        // Include ASP.NET Core shared framework if available
+        var aspNetDir = FindAspNetCoreSharedFramework(runtimeDir);
+        if (aspNetDir != null)
+        {
+            foreach (var dll in Directory.GetFiles(aspNetDir, "*.dll"))
+            {
+                yield return dll;
+            }
+        }
+    }
+
+    private static string? FindAspNetCoreSharedFramework(string runtimeDir)
+    {
+        // runtimeDir is like: /usr/lib/dotnet/shared/Microsoft.NETCore.App/10.0.x/
+        // ASP.NET Core is at: /usr/lib/dotnet/shared/Microsoft.AspNetCore.App/10.0.x/
+        // Normalize trailing separator
+        var normalized = runtimeDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        // normalized = /usr/lib/dotnet/shared/Microsoft.NETCore.App/10.0.x
+        var runtimeVersion = Path.GetFileName(normalized);       // 10.0.x
+        var frameworkDir = Path.GetDirectoryName(normalized);     // .../Microsoft.NETCore.App
+        var sharedDir = Path.GetDirectoryName(frameworkDir);      // .../shared
+
+        if (sharedDir == null || runtimeVersion == null)
+        {
+            return null;
+        }
+
+        var aspNetDir = Path.Combine(sharedDir, "Microsoft.AspNetCore.App", runtimeVersion);
+
+        return Directory.Exists(aspNetDir) ? aspNetDir : null;
     }
 }

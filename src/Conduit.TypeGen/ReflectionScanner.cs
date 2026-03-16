@@ -5,7 +5,8 @@ namespace Conduit.TypeGen;
 
 /// <summary>
 /// Scans a loaded <see cref="Assembly"/> for dispatchable types using reflection.
-/// Used at runtime and by the TypeGen MSBuild task.
+/// Supports both runtime-loaded assemblies and <see cref="System.Reflection.MetadataLoadContext"/>
+/// assemblies (where attribute instantiation is unavailable).
 /// </summary>
 public static class ReflectionScanner
 {
@@ -51,8 +52,8 @@ public static class ReflectionScanner
                 ResultTypeName = GetResultTypeName(type, kind.Value),
                 ResultFullTypeName = GetResultFullTypeName(type, kind.Value),
                 HasValidateOverride = HasValidateOverride(type),
-                HasAuthorizeAttribute = HasAttributeByName(type, AuthorizeAttributeFullName),
-                HasAllowAnonymousAttribute = HasAttributeByName(type, AllowAnonymousAttributeFullName),
+                HasAuthorizeAttribute = HasAttributeByFullName(type, AuthorizeAttributeFullName),
+                HasAllowAnonymousAttribute = HasAttributeByFullName(type, AllowAnonymousAttributeFullName),
             });
         }
 
@@ -77,7 +78,7 @@ public static class ReflectionScanner
 
         foreach (var type in assemblyTypes)
         {
-            if (HasAttributeByName(type, ClientVisibleAttributeFullName))
+            if (HasAttributeByFullName(type, ClientVisibleAttributeFullName))
             {
                 var fullName = type.FullName ?? type.Name;
                 clientVisibleFullNames.Add(fullName);
@@ -227,11 +228,15 @@ public static class ReflectionScanner
         return method.DeclaringType == type;
     }
 
-    private static bool HasAttributeByName(Type type, string attributeFullName)
+    /// <summary>
+    /// Checks for an attribute by full type name using <see cref="CustomAttributeData"/>.
+    /// Works with both runtime-loaded and <see cref="System.Reflection.MetadataLoadContext"/> assemblies.
+    /// </summary>
+    private static bool HasAttributeByFullName(Type type, string attributeFullName)
     {
-        foreach (var attribute in type.GetCustomAttributes(true))
+        foreach (var attributeData in type.GetCustomAttributesData())
         {
-            if (attribute.GetType().FullName == attributeFullName)
+            if (attributeData.AttributeType.FullName == attributeFullName)
             {
                 return true;
             }
