@@ -13,6 +13,7 @@ internal static class EmitConstants
     internal const string NamespaceMiddleware = "Conduit.Middleware";
     internal const string NamespaceMessages = "Conduit.Messages";
     internal const string NamespaceHandlers = "Conduit.Handlers";
+    internal const string NamespaceExceptions = "Conduit.Exceptions";
 
     // Core types (fully qualified, used in generated code)
     internal const string IMediator = "Conduit.IMediator";

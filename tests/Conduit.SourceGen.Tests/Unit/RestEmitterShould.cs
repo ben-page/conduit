@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Analysis;
 using Conduit.SourceGen.Tests.Support;
 
@@ -218,7 +218,7 @@ public record GetItemQuery(System.Guid Id) : IQuery<string>;
 
     private static string ExtractMethod(string source, string methodName)
     {
-        var start = source.IndexOf($"{methodName}<T>(", System.StringComparison.Ordinal);
+        var start = source.IndexOf($"{methodName}<T>(", StringComparison.Ordinal);
         if (start == -1)
         {
             return string.Empty;

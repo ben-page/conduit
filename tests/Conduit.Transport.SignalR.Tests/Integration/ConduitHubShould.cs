@@ -90,10 +90,11 @@ public class ConduitHubShould
     }
 
     [TestMethod]
-    public async Task SwallowListenerException()
+    public async Task PropagateListenerFailureAsHubError()
     {
         // Arrange — ExplodingEventListener throws InvalidOperationException.
-        // The hub's Publish method should catch it and not propagate to the client.
+        // The wire event dispatch now propagates EventListenerException so
+        // transports (service bus, SignalR) can decide how to handle the failure.
         await using var host = CreateHost();
         await using var connection = await ConnectToHub(host.Address);
         var payload = JsonSerializer.SerializeToElement(new { Data = "boom" });
@@ -104,7 +105,7 @@ public class ConduitHubShould
             "Conduit.Transport.SignalR.Tests.Support.ExplodingEvent",
             payload);
 
-        // Assert — no exception propagated to the caller
-        await act.Should().NotThrowAsync();
+        // Assert — exception propagates to the caller
+        await act.Should().ThrowAsync<Exception>();
     }
 }

@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Dispatch;
 
 namespace Conduit.Tests.Unit;
@@ -70,7 +70,7 @@ public class MessageContextShould
 
         // Assert
         MessageContext.Current.Should().NotBeNull();
-        MessageContext.Current!.MessageId.Should().Be(parentMessageId);
+        MessageContext.Current.MessageId.Should().Be(parentMessageId);
     }
 
     [TestMethod]

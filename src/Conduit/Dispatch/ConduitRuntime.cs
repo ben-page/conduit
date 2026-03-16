@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Conduit.Configuration;
@@ -25,9 +25,9 @@ public static class ConduitRuntime
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(2, "PublishError"),
             "Unhandled exception publishing event '{Type}'");
 
-    private static readonly Action<ILogger, Exception?> LogListenerError =
-        LoggerMessage.Define(LogLevel.Error, new EventId(3, "ListenerError"),
-            "Event listener or transport failed");
+    private static readonly Action<ILogger, string, Exception?> LogListenerFailed =
+        LoggerMessage.Define<string>(LogLevel.Error, new EventId(4, "ListenerFailed"),
+            "Event listener '{Listener}' threw an exception");
 
     // Debug-level logs
     private static readonly Action<ILogger, string, Exception?> LogDispatchingLocally =
@@ -198,7 +198,8 @@ public static class ConduitRuntime
 
     /// <summary>
     /// Chains interceptors and executes a wire event dispatch.
-    /// Swallows all exceptions (fire-and-forget).
+    /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter.
+    /// Swallows all other exceptions.
     /// </summary>
     public static async Task HandleWireEvent(
         DispatchEnvelope envelope,
@@ -226,6 +227,10 @@ public static class ConduitRuntime
         try
         {
             await chain();
+        }
+        catch (EventListenerException)
+        {
+            throw;
         }
 #pragma warning disable CA1031
         catch (Exception ex)
@@ -261,36 +266,16 @@ public static class ConduitRuntime
     }
 
     /// <summary>
-    /// Executes an action with error swallowing. Used for listener/transport calls
-    /// where individual failures should not prevent other listeners from executing.
-    /// </summary>
-    public static async Task SafeExecute(Func<Task> action, ILogger logger)
-    {
-        ArgumentNullException.ThrowIfNull(action);
-
-        try
-        {
-            await action();
-        }
-#pragma warning disable CA1031
-        catch (Exception ex)
-#pragma warning restore CA1031
-        {
-            LogListenerError(logger, ex);
-        }
-    }
-
-    /// <summary>
     /// Registers core Conduit infrastructure (options). Called by generated code.
     /// </summary>
-    public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddConduitCore(
-        Microsoft.Extensions.DependencyInjection.IServiceCollection services,
+    public static IServiceCollection AddConduitCore(
+        IServiceCollection services,
         Action<ConduitBuilder>? configure = null)
     {
         var builder = new ConduitBuilder(services);
         configure?.Invoke(builder);
 
-        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions
+        ServiceCollectionServiceExtensions
             .AddSingleton(services, builder.Options);
 
         return services;
@@ -318,4 +303,8 @@ public static class ConduitRuntime
     /// <summary>Logs pipeline behavior count for a dispatch.</summary>
     public static void LogPipelines(ILogger logger, string typeName, int count)
         => LogExecutingPipelines(logger, typeName, count, null);
+
+    /// <summary>Logs that an individual event listener threw an exception.</summary>
+    public static void LogListenerFailure(ILogger logger, string listenerName, Exception exception)
+        => LogListenerFailed(logger, listenerName, exception);
 }
