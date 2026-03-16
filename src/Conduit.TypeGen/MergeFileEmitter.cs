@@ -19,8 +19,9 @@ public static class MergeFileEmitter
     /// <param name="types">The dispatchable types.</param>
     /// <param name="assembly">The assembly to resolve types from (may be from MetadataLoadContext).</param>
     /// <param name="includeSignalR">Whether to re-export the SignalR transport.</param>
+    /// <param name="metadataContext">Optional MetadataLoadContext for resolving types from referenced assemblies.</param>
     /// <returns>The generated TypeScript source.</returns>
-    public static string Emit(IReadOnlyList<DispatchableTypeInfo> types, Assembly? assembly = null, bool includeSignalR = true)
+    public static string Emit(IReadOnlyList<DispatchableTypeInfo> types, Assembly? assembly = null, bool includeSignalR = true, MetadataLoadContext? metadataContext = null)
     {
         ArgumentNullException.ThrowIfNull(types);
 
@@ -30,11 +31,31 @@ public static class MergeFileEmitter
         sb.AppendLine("import type { ConduitTransport, DispatchResult, Subscription } from './conduit';");
         sb.AppendLine();
 
-        // Emit type interfaces (inline)
-        foreach (var type in types)
+        // Emit type interfaces for [ClientVisible] types
+        foreach (var typeInfo in types)
         {
-            EmitInterface(sb, type, assembly);
+            var resolvedType = assembly?.GetType(typeInfo.FullTypeName);
+            EmitInterface(sb, typeInfo.TypeName, resolvedType);
             sb.AppendLine();
+        }
+
+        // Discover and emit transitively-referenced types (Domain DTOs, etc.)
+        // Seeds from both [ClientVisible] type properties AND query/command result types
+        if (assembly != null)
+        {
+            var rootNames = types.Select(t => t.FullTypeName).ToList();
+            var resultTypes = types
+                .Where(t => t.ResultFullTypeName is not null)
+                .Select(t => ResolveResultRootType(t.ResultFullTypeName!, assembly, metadataContext))
+                .OfType<Type>()
+                .ToList();
+
+            var referencedTypes = TypeCollector.CollectReferencedTypes(rootNames, resultTypes, assembly);
+            foreach (var refType in referencedTypes)
+            {
+                EmitInterface(sb, refType.Name, refType);
+                sb.AppendLine();
+            }
         }
 
         // Emit type maps
@@ -65,10 +86,57 @@ public static class MergeFileEmitter
         return sb.ToString();
     }
 
-    private static void EmitInterface(StringBuilder sb, DispatchableTypeInfo typeInfo, Assembly? assembly)
+    /// <summary>
+    /// Resolves a result type name to its root complex type (unwrapping List, etc.).
+    /// Searches all assemblies loaded in the same context.
+    /// </summary>
+    private static Type? ResolveResultRootType(string resultFullTypeName, Assembly assembly, MetadataLoadContext? metadataContext)
     {
-        var type = assembly?.GetType(typeInfo.FullTypeName);
-        sb.Append(CultureInfo.InvariantCulture, $"export interface {typeInfo.TypeName} {{").AppendLine();
+        var typeName = resultFullTypeName;
+
+        // Handle generic types like "System.Collections.Generic.List`1<Namespace.Foo>"
+        var angleBracket = typeName.IndexOf('<', StringComparison.Ordinal);
+        if (angleBracket >= 0)
+        {
+            typeName = typeName[(angleBracket + 1)..^1];
+        }
+
+        // Search the primary assembly first
+        var type = assembly.GetType(typeName);
+        if (type != null)
+        {
+            return type;
+        }
+
+        // Search referenced assemblies via MetadataLoadContext
+        if (metadataContext != null)
+        {
+            foreach (var refAssemblyName in assembly.GetReferencedAssemblies())
+            {
+                try
+                {
+                    var refAssembly = metadataContext.LoadFromAssemblyName(refAssemblyName);
+                    type = refAssembly.GetType(typeName);
+                    if (type != null)
+                    {
+                        return type;
+                    }
+                }
+#pragma warning disable CA1031
+                catch
+#pragma warning restore CA1031
+                {
+                    // Assembly not loadable — skip
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static void EmitInterface(StringBuilder sb, string typeName, Type? type)
+    {
+        sb.Append(CultureInfo.InvariantCulture, $"export interface {typeName} {{").AppendLine();
 
         if (type != null)
         {

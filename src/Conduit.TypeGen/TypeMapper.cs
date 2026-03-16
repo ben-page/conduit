@@ -28,7 +28,7 @@ public static class TypeMapper
         ["TimeSpan"] = "string",
     };
 
-    private static readonly HashSet<string> CollectionFullNames =
+    internal static readonly HashSet<string> CollectionFullNames =
     [
         "System.Collections.Generic.List`1",
         "System.Collections.Generic.IList`1",
@@ -38,7 +38,7 @@ public static class TypeMapper
         "System.Collections.Generic.IReadOnlyCollection`1",
     ];
 
-    private static readonly HashSet<string> DictionaryFullNames =
+    internal static readonly HashSet<string> DictionaryFullNames =
     [
         "System.Collections.Generic.Dictionary`2",
         "System.Collections.Generic.IDictionary`2",
@@ -116,6 +116,21 @@ public static class TypeMapper
         // Complex types - use the type name
         return type.Name;
     }
+
+    /// <summary>
+    /// Returns true if the type name maps to a simple TypeScript type (string, number, boolean, etc.).
+    /// </summary>
+    internal static bool IsSimpleType(string typeName) => SimpleTypeMappings.ContainsKey(typeName);
+
+    /// <summary>
+    /// Returns true if the full name represents a collection generic type.
+    /// </summary>
+    internal static bool IsCollectionFullName(string fullName) => CollectionFullNames.Contains(fullName);
+
+    /// <summary>
+    /// Returns true if the full name represents a dictionary generic type.
+    /// </summary>
+    internal static bool IsDictionaryFullName(string fullName) => DictionaryFullNames.Contains(fullName);
 
     /// <summary>
     /// Maps a .NET type name (short name) to a TypeScript type string.

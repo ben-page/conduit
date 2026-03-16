@@ -68,7 +68,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
             File.WriteAllText(
                 Path.Combine(outputDir, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(types, assembly, includeSignalR));
+                MergeFileEmitter.Emit(types, assembly, includeSignalR, metadataContext));
 
             this.Log.LogMessage(MessageImportance.Normal,
                 $"Conduit TypeGen: generated 2 files ({types.Count} types)");
