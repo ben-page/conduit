@@ -259,10 +259,18 @@ public static class MediatorEmitter
 
         // PublishAsync dispatches to local listeners AND broadcasts to all registered transports.
         // Events marked [LocalOnly] skip the broadcast step entirely.
+        // Catches EventListenerException — local publish is fire-and-forget.
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
         EmitContextStart(sb);
-        sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine("        }");
+        sb.AppendLine($"        catch ({EmitConstants.NamespaceExceptions}.EventListenerException ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            logger.LogError(ex, \"One or more event listeners failed for {EventType}\", @event.GetType().FullName);");
+        sb.AppendLine("        }");
         sb.AppendLine();
 
         if (localOnlyTypes.Count == events.Count)
@@ -300,6 +308,7 @@ public static class MediatorEmitter
         // PublishLocalAsync dispatches only to local listeners (no transport broadcast).
         // Used by DispatchEventAsync for wire-inbound events to prevent echo loops.
         // Uses the unified IPipelineBehavior<TEvent, object> pipeline (same as commands/queries).
+        // Throws EventListenerException if any listener failed (all listeners still run).
         if (listenerGroups.Count == 0)
         {
             sb.AppendLine("    private Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
@@ -312,6 +321,7 @@ public static class MediatorEmitter
 
         sb.AppendLine("    private async Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
+        sb.AppendLine("        var exceptions = new List<Exception>();");
         sb.AppendLine("        switch (@event)");
         sb.AppendLine("        {");
 
@@ -321,13 +331,21 @@ public static class MediatorEmitter
             sb.AppendLine($"            {{");
 
             // Build the innermost delegate: all listeners called in sequence, wrapped as Func<Task<object>>
+            // Each listener is wrapped in try/catch to ensure continue-on-failure
             sb.AppendLine($"                Func<Task<object>> listenerChain = async () =>");
             sb.AppendLine($"                {{");
             foreach (var listener in group.ListenerFullTypeNames)
             {
-                sb.AppendLine($"                    await ConduitRuntime.SafeExecute(");
-                sb.AppendLine($"                        () => serviceProvider.GetRequiredService<{listener}>()");
-                sb.AppendLine($"                            .HandleAsync(e, cancellationToken), logger);");
+                sb.AppendLine($"                    try");
+                sb.AppendLine($"                    {{");
+                sb.AppendLine($"                        await serviceProvider.GetRequiredService<{listener}>()");
+                sb.AppendLine($"                            .HandleAsync(e, cancellationToken);");
+                sb.AppendLine($"                    }}");
+                sb.AppendLine($"                    catch (Exception ex)");
+                sb.AppendLine($"                    {{");
+                sb.AppendLine($"                        ConduitRuntime.LogListenerFailure(logger, \"{listener}\", ex);");
+                sb.AppendLine($"                        exceptions.Add(ex);");
+                sb.AppendLine($"                    }}");
             }
 
             sb.AppendLine($"                    return {EmitConstants.Unit}.Value;");
@@ -343,6 +361,12 @@ public static class MediatorEmitter
         }
 
         sb.AppendLine("        }");
+        sb.AppendLine("        if (exceptions.Count > 0)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            throw new Conduit.Exceptions.EventListenerException(");
+        sb.AppendLine("                $\"One or more listeners failed for event '{@event.GetType().FullName}'. See logs for details.\",");
+        sb.AppendLine("                exceptions);");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -355,7 +379,14 @@ public static class MediatorEmitter
         sb.AppendLine($"        {indent}ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transports.Count());");
         sb.AppendLine($"        {indent}foreach (var transport in transports)");
         sb.AppendLine($"        {indent}{{");
-        sb.AppendLine($"        {indent}    await ConduitRuntime.SafeExecute(() => transport.SendEventAsync(eventEnvelope, cancellationToken), logger);");
+        sb.AppendLine($"        {indent}    try");
+        sb.AppendLine($"        {indent}    {{");
+        sb.AppendLine($"        {indent}        await transport.SendEventAsync(eventEnvelope, cancellationToken);");
+        sb.AppendLine($"        {indent}    }}");
+        sb.AppendLine($"        {indent}    catch (Exception ex)");
+        sb.AppendLine($"        {indent}    {{");
+        sb.AppendLine($"        {indent}        ConduitRuntime.LogListenerFailure(logger, transport.GetType().Name, ex);");
+        sb.AppendLine($"        {indent}    }}");
         sb.AppendLine($"        {indent}}}");
     }
 

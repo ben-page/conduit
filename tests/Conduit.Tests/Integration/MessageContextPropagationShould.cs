@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Dispatch;
 using Conduit.Generated;
 using Conduit.Tests.Support;
@@ -28,7 +28,7 @@ public class MessageContextPropagationShould
 
         // Assert
         CapturedContext.Last.Should().NotBeNull();
-        CapturedContext.Last!.MessageId.Should().NotBeNullOrEmpty();
+        CapturedContext.Last.MessageId.Should().NotBeNullOrEmpty();
         CapturedContext.Last.ConversationId.Should().Be(CapturedContext.Last.MessageId);
         CapturedContext.Last.CausationId.Should().BeNull();
     }

@@ -81,8 +81,13 @@ namespace App.Events
         mediatorSource.Should().Contain("\"App.Commands.CreateOrder\"");
         mediatorSource.Should().Contain("\"App.Commands.DeleteOrder\"");
 
-        // SafeExecute via ConduitRuntime
-        mediatorSource.Should().Contain("ConduitRuntime.SafeExecute");
+        // Listener error collection and EventListenerException
+        mediatorSource.Should().Contain("var exceptions = new List<Exception>();");
+        mediatorSource.Should().Contain("exceptions.Add(ex);");
+        mediatorSource.Should().Contain("EventListenerException");
+
+        // PublishAsync catches EventListenerException (fire-and-forget)
+        mediatorSource.Should().Contain("catch (Conduit.Exceptions.EventListenerException ex)");
 
         // Routing infrastructure via ConduitRuntime
         mediatorSource.Should().Contain("ConduitOptions conduitOptions");

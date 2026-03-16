@@ -23,8 +23,8 @@ public class RoslynScannerShould
         };
 
         // Add runtime assemblies needed for compilation
-        var runtimeDir = System.IO.Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-        references.Add(MetadataReference.CreateFromFile(System.IO.Path.Combine(runtimeDir, "System.Runtime.dll")));
+        var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        references.Add(MetadataReference.CreateFromFile(Path.Combine(runtimeDir, "System.Runtime.dll")));
 
         return CSharpCompilation.Create(
             "TestAssembly",
