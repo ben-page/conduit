@@ -552,7 +552,7 @@ app.MapConduitPost<CreateItemCommand>("/api/items");
 
 ## TypeScript Codegen (`Conduit.TypeGen`)
 
-MSBuild task that runs on `dotnet build`. Scans the compiled assembly for `[ClientVisible]` types (both dispatchable and non-dispatchable DTOs) and emits a self-contained TypeScript client runtime — no npm package needed.
+MSBuild task that runs on `dotnet build`. Uses `MetadataLoadContext` to scan the compiled assembly for `[ClientVisible]` types, then recursively discovers all transitively-referenced complex types (including types from referenced assemblies like a Domain layer) and emits a self-contained TypeScript client runtime — no npm package needed.
 
 ### Configuration
 
@@ -656,6 +656,7 @@ Key design decisions:
 - Void commands merged into `CommandMap` with `response: void` (no separate `VoidCommandMap`)
 - Type map keys use `FullTypeName` to match the C# wire discriminator
 - Non-dispatchable `[ClientVisible]` types (DTOs) get interfaces but don't appear in type maps
+- **Recursive type discovery**: TypeGen walks the property type graph of `[ClientVisible]` types and query/command result types, automatically discovering and emitting interfaces for all transitively-referenced complex types — including types from referenced assemblies (e.g., Domain layer DTOs) that don't have `[ClientVisible]` themselves. Only `[ClientVisible]` is needed on the root dispatchable types; their property types are included automatically.
 
 ### Usage
 
