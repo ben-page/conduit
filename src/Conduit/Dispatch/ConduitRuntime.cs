@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Conduit.Configuration;
 using Conduit.Exceptions;
 using Conduit.Messages;
@@ -16,6 +17,16 @@ namespace Conduit.Dispatch;
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class ConduitRuntime
 {
+    /// <summary>
+    /// Shared JSON serializer options used by the generated mediator for wire serialization.
+    /// Uses camelCase naming and string enum conversion to match TypeGen output.
+    /// </summary>
+    public static JsonSerializerOptions JsonOptions { get; } = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
     // Error-level logs
     private static readonly Action<ILogger, string, Exception?> LogDispatchError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(1, "DispatchError"),
