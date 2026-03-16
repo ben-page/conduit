@@ -72,9 +72,9 @@ namespace App.Events
         mediatorSource.Should().Contain("IMediator.ExecuteAsync(");
         mediatorSource.Should().Contain("IMediator.FetchAsync<TResult>");
 
-        // PublishAsync with listener
+        // PublishAsync resolves listeners by interface
         mediatorSource.Should().Contain("PublishAsync");
-        mediatorSource.Should().Contain("OrderCreatedListener");
+        mediatorSource.Should().Contain("GetServices<Conduit.Handlers.IEventListener<App.Events.OrderCreated>>");
 
         // Wire dispatch (private methods called by HandleWire*)
         mediatorSource.Should().Contain("private async Task<object?> DispatchRequestAsync(");

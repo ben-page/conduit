@@ -141,7 +141,18 @@ public static class DispatchEmitter
         var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
         var resultType = isVoid ? "object" : type.ResultFullTypeName;
 
-        sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handler.HandlerFullTypeName}>();");
+        var handlerInterface = type.Kind switch
+        {
+            DispatchableKind.Command =>
+                $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}, {type.ResultFullTypeName}>",
+            DispatchableKind.VoidCommand =>
+                $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}>",
+            DispatchableKind.Query =>
+                $"{EmitConstants.NamespaceHandlers}.IQueryHandler<{type.FullTypeName}, {type.ResultFullTypeName}>",
+            DispatchableKind.Event or DispatchableKind.Model or _ => handler.HandlerFullTypeName,
+        };
+
+        sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, {resultType}>(conduitOptions, serviceProvider);");
         sb.AppendLine();
 

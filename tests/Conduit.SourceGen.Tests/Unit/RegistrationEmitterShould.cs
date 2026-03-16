@@ -44,7 +44,7 @@ namespace App.Events
         registrationSource.Should().NotBeNull();
         registrationSource.Should().Contain("AddConduit(");
         registrationSource.Should().Contain("AddConduitCore");
-        registrationSource.Should().Contain("AddTransient<App.Commands.CreateOrderHandler>()");
-        registrationSource.Should().Contain("AddTransient<App.Events.OrderCreatedListener>()");
+        registrationSource.Should().Contain("AddTransient<Conduit.Handlers.ICommandHandler<App.Commands.CreateOrder, System.Guid>, App.Commands.CreateOrderHandler>()");
+        registrationSource.Should().Contain("AddTransient<Conduit.Handlers.IEventListener<App.Events.OrderCreated>, App.Events.OrderCreatedListener>()");
     }
 }
