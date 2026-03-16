@@ -36,6 +36,9 @@ internal static class EmitConstants
     internal const string ICommandWithResult = "Conduit.Messages.ICommand";  // same base, generic param appended
     internal const string IQuery = "Conduit.Messages.IQuery";
 
+    // Context types
+    internal const string MessageContext = "Conduit.Dispatch.MessageContext";
+
     // Transport types
     internal const string IConduitTransport = "Conduit.Dispatch.IConduitTransport";
 
