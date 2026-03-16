@@ -444,9 +444,14 @@ public static IServiceCollection AddConduitHandlers(this IServiceCollection serv
     services.AddTransient<CreateOrderHandler>();
     services.AddTransient<DeleteOrderHandler>();
     services.AddTransient<OrderCreatedListener>();
+    services.AddTransient<ConduitMediator>();
+    services.AddTransient<IMediator>(sp => sp.GetRequiredService<ConduitMediator>());
+    services.AddTransient<IWireMediator>(sp => sp.GetRequiredService<ConduitMediator>());
     return services;
 }
 ```
+
+All registrations are **transient**. `ConduitMediator` is stateless — it resolves handlers from `IServiceProvider` per dispatch call. Transient registration allows `IMediator` to be injected into singletons (e.g., `BackgroundService`) without scope conflicts. Handlers still resolve from the correct scope in ASP.NET Core request pipelines because the `IServiceProvider` injected into the mediator is scope-aware.
 
 ### 4. Mediator Implementation
 
