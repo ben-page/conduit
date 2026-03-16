@@ -13,6 +13,8 @@
   <Folder Name="/src/">
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
     <Project Path="src/Conduit.Transport.Http/Conduit.Transport.Http.csproj" />
+    <Project Path="src/Conduit.Transport.AzureServiceBus/Conduit.Transport.AzureServiceBus.csproj" />
+    <Project Path="src/Conduit.Transport.RabbitMQ/Conduit.Transport.RabbitMQ.csproj" />
     <Project Path="src/Conduit.Transport.SignalR/Conduit.Transport.SignalR.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
     <Project Path="src/Conduit.TypeGen/Conduit.TypeGen.csproj" />
@@ -23,7 +25,9 @@
     <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.TestUtils/Conduit.TestUtils.csproj" />
+    <Project Path="tests/Conduit.Transport.AzureServiceBus.Tests/Conduit.Transport.AzureServiceBus.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.Http.Tests/Conduit.Transport.Http.Tests.csproj" />
+    <Project Path="tests/Conduit.Transport.RabbitMQ.Tests/Conduit.Transport.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.SignalR.Tests/Conduit.Transport.SignalR.Tests.csproj" />
     <Project Path="tests/Conduit.TypeGen.Tests/Conduit.TypeGen.Tests.csproj" />
   </Folder>

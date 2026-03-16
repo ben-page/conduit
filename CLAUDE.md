@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Six source projects, six test projects, one shared test utility, four sample apps:
+Eight source projects, eight test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -12,13 +12,17 @@ src/Conduit.Analysis/               Shared type model (DispatchableTypeInfo, etc
 src/Conduit.SourceGen/              Roslyn incremental source generator + RoslynScanner — netstandard2.0 (PolySharp)
 src/Conduit.TypeGen/                MSBuild task for TypeScript emission + ReflectionScanner — net10.0
 
-src/Conduit.Transport.Http/         HTTP transport (outbound HttpTransport + inbound MapConduitEndpoint) — net10.0
-src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport + inbound ConduitHub) — net10.0
+src/Conduit.Transport.Http/              HTTP transport (outbound HttpTransport + inbound MapConduitEndpoint) — net10.0
+src/Conduit.Transport.SignalR/           SignalR transport (outbound SignalRTransport + inbound ConduitHub) — net10.0
+src/Conduit.Transport.AzureServiceBus/   Azure Service Bus transport (IConduitTransport + IHostedService) — net10.0
+src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport + IHostedService) — net10.0
 ```
 
 **Dependency graph:**
 - `Transport.Http` → `Conduit` (core) + ASP.NET Core
 - `Transport.SignalR` → `Conduit` (core) + ASP.NET Core + SignalR
+- `Transport.AzureServiceBus` → `Conduit` (core) + Azure.Messaging.ServiceBus
+- `Transport.RabbitMQ` → `Conduit` (core) + RabbitMQ.Client
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
 - Core has no ASP.NET dependency. Depends only on DI abstractions, Logging abstractions, and Options.
@@ -121,6 +125,26 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `ConduitHub` — inbound SignalR hub with `Dispatch` and `Publish` methods, delegates to `IWireMediator`
 - `SignalRTransport` — outbound dual-mode transport with lazy connect (`EnsureConnectedAsync`)
 - `AddConduitSignalR()` registers SignalR services and server-mode transport as `IConduitTransport`
+
+### Conduit.Transport.AzureServiceBus
+- `AzureServiceBusTransport` — `IConduitTransport` + `IHostedService` for durable broker-based messaging
+- Wire format: message body = serialized message (JSON), type in `Subject` property, MessageContext in `MessageId`/`CorrelationId`/`CausationId` application property
+- Request/response via ASB sessions on a reply queue (`conduit-{appName}-replies`)
+- Events publish to shared topic (`conduit`), subscriptions with SQL filters forward to app queue
+- Topology: try-create with 409 swallowing, configurable via `AutoCreateTopology`
+- `UseAzureServiceBus(connectionString)` extension on `EndpointBuilder`
+- Receiver pools for concurrency isolation (`AddPool()` on options)
+- Event auto-subscription by scanning `IEventListener<T>` DI registrations
+
+### Conduit.Transport.RabbitMQ
+- `RabbitMQTransport` — `IConduitTransport` + `IHostedService` for RabbitMQ messaging
+- Wire format: message body = serialized message (JSON), type in `Type` property, MessageContext in `MessageId`/`CorrelationId`/`CausationId` header
+- Request/response via exclusive auto-delete reply queue + `ReplyTo` + `CorrelationId`
+- Events publish to topic exchange (`conduit`) with routing key = FullTypeName
+- Topology: idempotent `ExchangeDeclare`/`QueueDeclare`/`QueueBind`
+- `UseRabbitMQ(connectionString)` extension on `EndpointBuilder`
+- Concurrency via `BasicQos` prefetch count
+- Event auto-subscription by scanning `IEventListener<T>` DI registrations
 
 ### Conduit.TypeGen
 - MSBuild task using `Microsoft.Build.Utilities.Task` + `System.Reflection.MetadataLoadContext`
