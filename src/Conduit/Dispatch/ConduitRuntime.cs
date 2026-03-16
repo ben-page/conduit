@@ -162,6 +162,9 @@ public static class ConduitRuntime
         LogWireRequestReceived(logger, envelope.Type, null);
         ArgumentNullException.ThrowIfNull(dispatch);
 
+        var previousContext = MessageContext.Current;
+        MessageContext.StartDispatch();
+
         Func<Task<object?>> chain = () =>
             dispatch(envelope.Type, envelope.Payload, cancellationToken);
 
@@ -187,6 +190,10 @@ public static class ConduitRuntime
             LogDispatchError(logger, envelope.Type, ex);
             return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
         }
+        finally
+        {
+            MessageContext.RestoreContext(previousContext);
+        }
     }
 
     /// <summary>
@@ -203,6 +210,9 @@ public static class ConduitRuntime
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(dispatch);
         LogWireEventReceived(logger, envelope.Type, null);
+
+        var previousContext = MessageContext.Current;
+        MessageContext.StartDispatch();
 
         Func<Task> chain = () =>
             dispatch(envelope.Type, envelope.Payload, cancellationToken);
@@ -222,6 +232,10 @@ public static class ConduitRuntime
 #pragma warning restore CA1031
         {
             LogPublishError(logger, envelope.Type, ex);
+        }
+        finally
+        {
+            MessageContext.RestoreContext(previousContext);
         }
     }
 
