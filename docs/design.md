@@ -229,6 +229,23 @@ public interface IWireMediator : IMediator
 
 Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IWireInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events with fire-and-forget semantics.
 
+### Message Context
+
+`MessageContext` tracks causation through dispatch chains via `AsyncLocal`. Every dispatch gets a unique `MessageId`. Nested dispatches inherit `ConversationId` (the root message's ID) and set `CausationId` to the parent's `MessageId`.
+
+```
+CreateOrderCommand    (MessageId=A, CausationId=null, ConversationId=A)
+  ├─ OrderCreatedEvent  (MessageId=B, CausationId=A, ConversationId=A)
+  └─ AuditLogEvent      (MessageId=C, CausationId=A, ConversationId=A)
+       └─ NotifyCommand  (MessageId=D, CausationId=C, ConversationId=A)
+```
+
+Two factory methods:
+- `MessageContext.StartDispatch()` — local dispatch, generates IDs, inherits from parent if nested
+- `MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId)` — inbound wire dispatch, all values from broker message properties
+
+Access via `MessageContext.Current` (static property). Set automatically by the generated mediator and `ConduitRuntime` wire dispatch. Context is set before the `IWireInterceptor` chain runs.
+
 ### Endpoint-Based Routing (Commands and Queries Only)
 
 Routes assign a destination endpoint for request/response messages. Events don't route — they broadcast to all DI-registered transports. The producer configures routes because it owns the deployment topology.

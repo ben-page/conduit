@@ -28,7 +28,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes (`src/Conduit/Configuration/`)
-- `Conduit.Dispatch` — wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport` (`src/Conduit/Dispatch/`)
+- `Conduit.Dispatch` — wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport`, `MessageContext` (`src/Conduit/Dispatch/`)
 - `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — `ICommand`, `IQuery`, `IEvent`, `Unit` (`src/Conduit/Messages/`)
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
@@ -54,6 +54,7 @@ src/Conduit.Transport.SignalR/      SignalR transport (outbound SignalRTransport
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization.
 - **TypeScript generation**: Types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This includes both dispatchable types and non-dispatchable DTOs/models. TypeGen emits a self-contained runtime (`conduit.ts`) with transports and a per-project file (`conduit.generated.ts`) with `ConduitClient` — no npm package needed. `ConduitClient` is a thin dispatch client (not a mediator) with `execute`/`fetch`/`publish`/`on` methods.
 - **Wire dispatch route forwarding**: The generated `DispatchRequestAsync` checks routes before the local type switch. Unknown types matching a route are forwarded as raw envelopes to the transport without deserializing locally.
+- **MessageContext**: AsyncLocal-backed context tracking `MessageId`, `CausationId`, `ConversationId` through dispatch chains. Set automatically by the generated mediator. Nested dispatches inherit `ConversationId` and set `CausationId` to the parent's `MessageId`. Access via `MessageContext.Current`. `StartDispatch()` for local dispatch, `StartDispatchFromTransport(messageId, causationId, conversationId)` for inbound wire messages.
 
 ## Attributes
 
