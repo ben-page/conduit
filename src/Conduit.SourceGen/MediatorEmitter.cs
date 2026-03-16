@@ -67,11 +67,11 @@ public static class MediatorEmitter
             sb.AppendLine("            if (endpoint?.Transport != null)");
             sb.AppendLine("            {");
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
-            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command);");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var result = await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
             sb.AppendLine($"                return result is JsonElement je");
-            sb.AppendLine($"                    ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je)!");
+            sb.AppendLine($"                    ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je, ConduitRuntime.JsonOptions)!");
             sb.AppendLine($"                    : ({cmd.ResultFullTypeName})result!;");
             sb.AppendLine("            }");
 
@@ -103,7 +103,7 @@ public static class MediatorEmitter
             sb.AppendLine("            if (endpoint?.Transport != null)");
             sb.AppendLine("            {");
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
-            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command);");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
             sb.AppendLine("                return;");
@@ -137,11 +137,11 @@ public static class MediatorEmitter
             sb.AppendLine("            if (endpoint?.Transport != null)");
             sb.AppendLine("            {");
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{query.FullTypeName}\", endpoint.Name);");
-            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(query);");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(query, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var result = await endpoint.Transport.SendRequestAsync(");
             sb.AppendLine($"                    new DispatchEnvelope(\"{query.FullTypeName}\", payload), cancellationToken);");
             sb.AppendLine($"                return result is JsonElement je");
-            sb.AppendLine($"                    ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je)!");
+            sb.AppendLine($"                    ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je, ConduitRuntime.JsonOptions)!");
             sb.AppendLine($"                    : ({query.ResultFullTypeName})result!;");
             sb.AppendLine("            }");
 
@@ -375,7 +375,7 @@ public static class MediatorEmitter
     {
         sb.AppendLine($"        {indent}var eventEnvelope = new DispatchEnvelope(");
         sb.AppendLine($"        {indent}    @event.GetType().FullName!,");
-        sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event));");
+        sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event, @event.GetType(), ConduitRuntime.JsonOptions));");
         sb.AppendLine($"        {indent}ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transports.Count());");
         sb.AppendLine($"        {indent}foreach (var transport in transports)");
         sb.AppendLine($"        {indent}{{");
@@ -418,7 +418,7 @@ public static class MediatorEmitter
         foreach (var cmd in commands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
-            sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
+            sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                conduitOptions,");
             sb.AppendLine($"                cancellationToken),");
@@ -427,7 +427,7 @@ public static class MediatorEmitter
         foreach (var cmd in voidCommands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.ExecuteVoid(");
-            sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload)!,");
+            sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                conduitOptions,");
             sb.AppendLine($"                cancellationToken),");
@@ -436,7 +436,7 @@ public static class MediatorEmitter
         foreach (var query in queries.Where(q => handledTypes.Contains(q.FullTypeName)))
         {
             sb.AppendLine($"            \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
-            sb.AppendLine($"                JsonSerializer.Deserialize<{query.FullTypeName}>(payload)!,");
+            sb.AppendLine($"                JsonSerializer.Deserialize<{query.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                conduitOptions,");
             sb.AppendLine($"                cancellationToken),");
@@ -460,7 +460,7 @@ public static class MediatorEmitter
 
         foreach (var evt in events)
         {
-            sb.AppendLine($"            \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload)!,");
+            sb.AppendLine($"            \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
