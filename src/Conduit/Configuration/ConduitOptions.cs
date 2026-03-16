@@ -19,6 +19,12 @@ public sealed class ConduitOptions
     public List<ConduitRoute> Routes { get; } = [];
 
     /// <summary>
+    /// Application name used by transports for queue/topic naming.
+    /// Defaults to IHostEnvironment.ApplicationName at transport startup if not set.
+    /// </summary>
+    public string? ApplicationName { get; set; }
+
+    /// <summary>
     /// Open generic pipeline behavior types in registration order
     /// (first = outermost). Each type must implement
     /// <c>IPipelineBehavior&lt;,&gt;</c>. Applied to commands, queries,
