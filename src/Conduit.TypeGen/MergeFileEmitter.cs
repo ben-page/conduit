@@ -17,9 +17,10 @@ public static class MergeFileEmitter
     /// Generates the merge file content for the given types.
     /// </summary>
     /// <param name="types">The dispatchable types.</param>
+    /// <param name="assembly">The assembly to resolve types from (may be from MetadataLoadContext).</param>
     /// <param name="includeSignalR">Whether to re-export the SignalR transport.</param>
     /// <returns>The generated TypeScript source.</returns>
-    public static string Emit(IReadOnlyList<DispatchableTypeInfo> types, bool includeSignalR = true)
+    public static string Emit(IReadOnlyList<DispatchableTypeInfo> types, Assembly? assembly = null, bool includeSignalR = true)
     {
         ArgumentNullException.ThrowIfNull(types);
 
@@ -32,12 +33,12 @@ public static class MergeFileEmitter
         // Emit type interfaces (inline)
         foreach (var type in types)
         {
-            EmitInterface(sb, type);
+            EmitInterface(sb, type, assembly);
             sb.AppendLine();
         }
 
         // Emit type maps
-        TypeMapEmitter.EmitMaps(sb, types);
+        TypeMapEmitter.EmitMaps(sb, types, assembly);
 
         // Emit type aliases
         var hasCommands = types.Any(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand);
@@ -64,9 +65,9 @@ public static class MergeFileEmitter
         return sb.ToString();
     }
 
-    private static void EmitInterface(StringBuilder sb, DispatchableTypeInfo typeInfo)
+    private static void EmitInterface(StringBuilder sb, DispatchableTypeInfo typeInfo, Assembly? assembly)
     {
-        var type = TypeScriptEmitter.FindType(typeInfo.FullTypeName);
+        var type = assembly?.GetType(typeInfo.FullTypeName);
         sb.Append(CultureInfo.InvariantCulture, $"export interface {typeInfo.TypeName} {{").AppendLine();
 
         if (type != null)
