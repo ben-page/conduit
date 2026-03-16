@@ -161,31 +161,42 @@ public interface IEventPipelineBehavior<TEvent> where TEvent : IEvent
 }
 ```
 
-Separate from `IPipelineBehavior<TRequest, TResult>` because events have no result type and use continue-on-failure semantics. Each event listener gets its own behavior pipeline, wrapped in `SafeExecute`:
+Separate from `IPipelineBehavior<TRequest, TResult>` because events have no result type and use continue-on-failure semantics. Each event listener gets its own inline try/catch — failures are collected and thrown as `EventListenerException` after all listeners run:
 
 ```csharp
-// Generated — each listener gets its own pipeline, isolated by SafeExecute
+// Generated — each listener wrapped in try/catch, exceptions collected
 case OrderCreatedEvent e:
-    await SafeExecute(async () =>
+    Func<Task<object>> listenerChain = async () =>
     {
-        var behavior = serviceProvider.GetRequiredService<EventLoggingBehavior<OrderCreatedEvent>>();
-        var listener = serviceProvider.GetRequiredService<SendConfirmationListener>();
-        await behavior.HandleAsync(e,
-            () => listener.HandleAsync(e, cancellationToken),
-            cancellationToken);
-    });
-    await SafeExecute(async () =>
-    {
-        var behavior = serviceProvider.GetRequiredService<EventLoggingBehavior<OrderCreatedEvent>>();
-        var listener = serviceProvider.GetRequiredService<UpdateInventoryListener>();
-        await behavior.HandleAsync(e,
-            () => listener.HandleAsync(e, cancellationToken),
-            cancellationToken);
-    });
+        try
+        {
+            await serviceProvider.GetRequiredService<SendConfirmationListener>()
+                .HandleAsync(e, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ConduitRuntime.LogListenerFailure(logger, "SendConfirmationListener", ex);
+            exceptions.Add(ex);
+        }
+        try
+        {
+            await serviceProvider.GetRequiredService<UpdateInventoryListener>()
+                .HandleAsync(e, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ConduitRuntime.LogListenerFailure(logger, "UpdateInventoryListener", ex);
+            exceptions.Add(ex);
+        }
+        return Unit.Value;
+    };
+    var behaviors = ConduitRuntime.ResolvePipelines<OrderCreatedEvent, object>(...);
+    await ConduitRuntime.ExecuteWithBehaviors(e, behaviors, listenerChain, cancellationToken);
     break;
+// After switch: if (exceptions.Count > 0) throw new EventListenerException(...)
 ```
 
-A behavior failure within one listener's pipeline does not affect other listeners.
+A listener failure does not prevent other listeners from running. `PublishAsync` (local path) catches `EventListenerException` (fire-and-forget). `DispatchEventAsync` (wire path) lets it propagate so transports can retry/dead-letter.
 
 Event behaviors are registered alongside command/query behaviors:
 
@@ -227,7 +238,7 @@ public interface IWireMediator : IMediator
 }
 ```
 
-Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IWireInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events with fire-and-forget semantics.
+Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IWireInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events — lets `EventListenerException` propagate to the transport for retry/dead-letter, swallows other exceptions.
 
 ### Message Context
 
@@ -790,7 +801,7 @@ The publisher doesn't know or care who's listening or which transports are confi
 **Conduit.SourceGen.Tests:**
 - Generated dispatch routes to correct handler
 - Pipeline behaviors woven in correct order
-- Event pipeline behaviors woven per-listener inside SafeExecute
+- Event pipeline behaviors woven per-listener with inline try/catch
 - Void and result commands generate correct overloads
 - Missing handler produces compile-time diagnostic
 - Missing `[Authorize]`/`[AllowAnonymous]` on dispatchable type produces diagnostic
