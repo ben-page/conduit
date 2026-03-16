@@ -58,9 +58,9 @@ public static class RegistrationEmitter
         }
 
         sb.AppendLine();
-        sb.AppendLine("        services.AddScoped<ConduitMediator>();");
-        sb.AppendLine($"        services.AddScoped<{EmitConstants.IMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
-        sb.AppendLine($"        services.AddScoped<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
+        sb.AppendLine("        services.AddTransient<ConduitMediator>();");
+        sb.AppendLine($"        services.AddTransient<{EmitConstants.IMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
+        sb.AppendLine($"        services.AddTransient<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
 
         sb.AppendLine();
         sb.AppendLine("        return services;");
