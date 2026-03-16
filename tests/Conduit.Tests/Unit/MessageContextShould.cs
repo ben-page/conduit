@@ -77,10 +77,10 @@ public class MessageContextShould
     public void AcceptInboundValuesFromTransport()
     {
         // Act
-        var context = MessageContext.StartDispatch(
-            inboundMessageId: "msg-123",
-            inboundCausationId: "cause-456",
-            inboundConversationId: "conv-789");
+        var context = MessageContext.StartDispatchFromTransport(
+            messageId: "msg-123",
+            causationId: "cause-456",
+            conversationId: "conv-789");
 
         // Assert
         context.MessageId.Should().Be("msg-123");

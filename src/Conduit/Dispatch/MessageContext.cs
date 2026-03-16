@@ -32,23 +32,41 @@ public sealed class MessageContext
     }
 
     /// <summary>
-    /// Creates a new context for a dispatch. Called by the generated mediator.
-    /// If a current context exists, inherits <see cref="ConversationId"/> and sets
-    /// <see cref="CausationId"/> to the current <see cref="MessageId"/>.
-    /// Optionally accepts inbound values from a transport for cross-service propagation.
+    /// Creates a new context for a local dispatch. If a current context exists,
+    /// inherits <see cref="ConversationId"/> and sets <see cref="CausationId"/>
+    /// to the current <see cref="MessageId"/>. Called by the generated mediator.
     /// </summary>
-    public static MessageContext StartDispatch(
-        string? inboundMessageId = null,
-        string? inboundCausationId = null,
-        string? inboundConversationId = null)
+    public static MessageContext StartDispatch()
     {
         var parent = Current;
-        var messageId = inboundMessageId ?? Guid.NewGuid().ToString("N");
+        var messageId = Guid.NewGuid().ToString("N");
 
         var context = new MessageContext(
             messageId: messageId,
-            causationId: inboundCausationId ?? parent?.MessageId,
-            conversationId: inboundConversationId ?? parent?.ConversationId ?? messageId);
+            causationId: parent?.MessageId,
+            conversationId: parent?.ConversationId ?? messageId);
+
+        CurrentContext.Value = context;
+        return context;
+    }
+
+    /// <summary>
+    /// Creates a context from inbound transport values for cross-service propagation.
+    /// All three values are required — the sending service provides them via broker
+    /// message properties or HTTP headers.
+    /// </summary>
+    public static MessageContext StartDispatchFromTransport(
+        string messageId,
+        string? causationId,
+        string conversationId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+
+        var context = new MessageContext(
+            messageId: messageId,
+            causationId: causationId,
+            conversationId: conversationId);
 
         CurrentContext.Value = context;
         return context;
