@@ -298,7 +298,11 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         {
             try
             {
-                await channel.CloseAsync();
+                if (channel.IsOpen)
+                {
+                    await channel.CloseAsync();
+                }
+
                 channel.Dispose();
             }
 #pragma warning disable CA1031
@@ -311,14 +315,40 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
 
         if (this.publishChannel is not null)
         {
-            await this.publishChannel.CloseAsync();
-            this.publishChannel.Dispose();
+            try
+            {
+                if (this.publishChannel.IsOpen)
+                {
+                    await this.publishChannel.CloseAsync();
+                }
+
+                this.publishChannel.Dispose();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
         }
 
         if (this.connection is not null)
         {
-            await this.connection.CloseAsync();
-            this.connection.Dispose();
+            try
+            {
+                if (this.connection.IsOpen)
+                {
+                    await this.connection.CloseAsync();
+                }
+
+                this.connection.Dispose();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
         }
     }
 

@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="MSTest" />
     <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Testcontainers.ServiceBus" />
   </ItemGroup>
 
   <ItemGroup>
