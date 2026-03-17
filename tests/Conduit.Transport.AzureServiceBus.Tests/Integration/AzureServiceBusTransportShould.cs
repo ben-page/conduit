@@ -18,6 +18,7 @@ public class AzureServiceBusTransportShould
 {
     private static ServiceBusContainer? container;
     private static string? connectionString;
+    private static string? adminConnectionString;
 
     [ClassInitialize]
     public static async Task ClassInitialize(TestContext context)
@@ -27,6 +28,7 @@ public class AzureServiceBusTransportShould
         if (!string.IsNullOrWhiteSpace(envConnectionString))
         {
             connectionString = envConnectionString;
+            adminConnectionString = envConnectionString;
             return;
         }
 
@@ -37,6 +39,7 @@ public class AzureServiceBusTransportShould
                 .Build();
             await container.StartAsync();
             connectionString = container.GetConnectionString();
+            adminConnectionString = container.GetHttpConnectionString();
         }
 #pragma warning disable CA1031
         catch (Exception ex)
@@ -44,6 +47,7 @@ public class AzureServiceBusTransportShould
         {
             container = null;
             connectionString = null;
+            adminConnectionString = null;
             Console.WriteLine($"Skipping ASB emulator tests: {ex.Message}");
         }
     }
@@ -322,7 +326,7 @@ public class AzureServiceBusTransportShould
         // Arrange
         SkipIfNoConnectionString();
 
-        var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(connectionString!);
+        var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(adminConnectionString!);
         var options = new AzureServiceBusOptions { ConnectionString = connectionString! };
         var appName = $"test-{Guid.NewGuid():N}"[..20];
         var topologyManager = new AzureServiceBusTopologyManager(adminClient, options, appName);
@@ -361,6 +365,7 @@ public class AzureServiceBusTransportShould
         var asbOptions = new AzureServiceBusOptions
         {
             ConnectionString = connectionString!,
+            AdminConnectionString = adminConnectionString,
             DefaultConcurrency = 1,
         };
 
@@ -381,7 +386,7 @@ public class AzureServiceBusTransportShould
             await transport.DisposeAsync();
 
             // Cleanup
-            var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(connectionString!);
+            var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(adminConnectionString!);
             await TryCleanupAsync(adminClient, appName);
         }
     }
@@ -395,7 +400,7 @@ public class AzureServiceBusTransportShould
         var appName = $"test-{Guid.NewGuid():N}"[..20];
 
         // Create topology first
-        var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(connectionString!);
+        var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(adminConnectionString!);
         var options = new AzureServiceBusOptions { ConnectionString = connectionString! };
         var topologyManager = new AzureServiceBusTopologyManager(adminClient, options, appName);
         await topologyManager.EnsureTopologyAsync([], CancellationToken.None);
@@ -434,7 +439,7 @@ public class AzureServiceBusTransportShould
         SkipIfNoConnectionString();
 
         var appName = $"test-{Guid.NewGuid():N}"[..20];
-        var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(connectionString!);
+        var adminClient = new Azure.Messaging.ServiceBus.Administration.ServiceBusAdministrationClient(adminConnectionString!);
         var options = new AzureServiceBusOptions { ConnectionString = connectionString! };
         var topologyManager = new AzureServiceBusTopologyManager(adminClient, options, appName);
 

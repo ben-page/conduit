@@ -1,4 +1,4 @@
-using Azure;
+using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 
 namespace Conduit.Transport.AzureServiceBus;
@@ -108,7 +108,7 @@ internal sealed class AzureServiceBusTopologyManager
         {
             await this.adminClient.CreateTopicAsync(name, cancellationToken);
         }
-        catch (RequestFailedException ex) when (ex.Status == 409)
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
             // Topic already exists — another pod created it first.
         }
@@ -124,7 +124,7 @@ internal sealed class AzureServiceBusTopologyManager
             };
             await this.adminClient.CreateQueueAsync(queueOptions, cancellationToken);
         }
-        catch (RequestFailedException ex) when (ex.Status == 409)
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
             // Queue already exists — another pod created it first.
         }
@@ -148,11 +148,11 @@ internal sealed class AzureServiceBusTopologyManager
 
             var ruleOptions = new CreateRuleOptions(
                 "TypeFilter",
-                new SqlRuleFilter($"sys.Subject = '{messageType}'"));
+                new SqlRuleFilter($"Subject = '{messageType}'"));
 
             await this.adminClient.CreateSubscriptionAsync(subscriptionOptions, ruleOptions, cancellationToken);
         }
-        catch (RequestFailedException ex) when (ex.Status == 409)
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
             // Subscription already exists — another pod created it first.
         }

@@ -11,6 +11,13 @@ public sealed class AzureServiceBusOptions
     public required string ConnectionString { get; init; }
 
     /// <summary>
+    /// Connection string for the administration client (topology management).
+    /// Defaults to <see cref="ConnectionString"/> if not set. Required when using the
+    /// Azure Service Bus Emulator, which exposes AMQP and HTTP on different ports.
+    /// </summary>
+    public string? AdminConnectionString { get; init; }
+
+    /// <summary>
     /// Whether to create topology (topics, queues, subscriptions) on startup.
     /// Default: <see langword="true"/>. Set to <see langword="false"/> for environments
     /// where infrastructure is managed externally.
