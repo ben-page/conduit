@@ -1,6 +1,43 @@
 # TypeScript Client
 
+Conduit generates a fully-typed TypeScript client from your C# message types. The generated `ConduitClient` provides IDE autocomplete for type names, request shapes, and response types — no hand-written API contracts, no OpenAPI code generators, no runtime type checking.
+
+## What you get
+
+```typescript
+import { ConduitClient, SignalRTransport } from './generated/conduit.generated';
+
+const client = new ConduitClient(new SignalRTransport(connection));
+
+// Type key autocompletes. Request body is typed. Response is typed.
+const result = await client.execute(
+  'Conduit.Sample.Notes.Commands.CreateNoteCommand',
+  { text: 'Buy groceries' }
+);
+// result.data is string (the Guid returned by the C# handler)
+// result.error is ConduitError | undefined
+
+const notes = await client.fetch(
+  'Conduit.Sample.Notes.Queries.GetNotesQuery',
+  {}
+);
+// notes.data is NoteDto[]
+
+// Subscribe to server-pushed events (SignalR only)
+const subscription = client.on(
+  'Conduit.Sample.Notes.Events.NoteCreatedEvent',
+  (event) => {
+    // event is typed as NoteCreatedEvent
+    console.log('Note created:', event.id, event.text);
+  }
+);
+```
+
+`execute` and `fetch` return `DispatchResult<T>` — they never throw. Check `result.error` to handle failures. `publish` sends events fire-and-forget. `on` subscribes to server-pushed events and returns a `Subscription` with an `unsubscribe()` method.
+
 ## Mark types with `[ClientVisible]`
+
+Any type marked `[ClientVisible]` gets a TypeScript interface in the generated output. Dispatchable types (`ICommand`, `IQuery`, `IEvent`) also appear in the generated type maps that drive `ConduitClient`'s type safety.
 
 ```csharp
 using Conduit.Attributes;
@@ -19,7 +56,9 @@ public record NoteCreatedEvent(Guid Id, string Text) : IEvent;
 public record NoteDto(Guid Id, string Text);
 ```
 
-Dispatchable types (`ICommand`, `IQuery`, `IEvent`) appear in the generated `CommandMap`, `QueryMap`, or `EventMap`. Non-dispatchable types like `NoteDto` get a TypeScript interface but are not added to any type map -- they are referenced by the dispatchable types that use them.
+`NoteDto` is not a command, query, or event — it gets a TypeScript interface but does not appear in `CommandMap`, `QueryMap`, or `EventMap`. It is referenced by the dispatchable types that use it.
+
+Types referenced by `[ClientVisible]` command/query properties and return types are discovered transitively. If `GetNotesQuery` returns `IReadOnlyList<NoteDto>`, `NoteDto` gets a TypeScript interface automatically even without `[ClientVisible]`. The attribute is only required on the root dispatchable types and any standalone DTOs you want exported.
 
 ## Enable TypeGen in your `.csproj`
 
@@ -43,9 +82,7 @@ Dispatchable types (`ICommand`, `IQuery`, `IEvent`) appear in the generated `Com
 </Project>
 ```
 
-TypeGen runs after every build. It scans the compiled assembly for `[ClientVisible]` types and emits TypeScript.
-
-## MSBuild properties
+TypeGen runs as a post-build MSBuild task. It scans the compiled assembly for `[ClientVisible]` types and emits TypeScript into the configured output directory.
 
 | Property | Default | Description |
 |---|---|---|
@@ -55,13 +92,13 @@ TypeGen runs after every build. It scans the compiled assembly for `[ClientVisib
 
 ## Generated output
 
-TypeGen emits two files into the output directory:
+TypeGen emits two files:
 
-**`conduit.ts`** -- stable runtime, not project-specific. Contains `DispatchResult<T>`, `ConduitError`, `ConduitTransport` interface, `HttpTransport`, and `SignalRTransport`. Does not change between builds unless you change `ConduitTransports`.
+**`conduit.ts`** — stable runtime that does not change between builds (unless you change `ConduitTransports`). Contains `DispatchResult<T>`, `ConduitError`, the `ConduitTransport` interface, `HttpTransport`, and `SignalRTransport`.
 
-**`conduit.generated.ts`** -- per-project types and client. Contains TypeScript interfaces for every `[ClientVisible]` type, the `CommandMap`/`QueryMap`/`EventMap` type maps, the `ConduitClient` class, and re-exports from `conduit.ts`.
+**`conduit.generated.ts`** — per-project types and client, regenerated on every build. Contains TypeScript interfaces for every `[ClientVisible]` type, the type maps, the `ConduitClient` class, and re-exports from `conduit.ts`.
 
-The generated type maps use the full C# namespace as keys:
+The type maps use full C# namespaces as keys:
 
 ```typescript
 export interface CommandMap {
@@ -79,7 +116,11 @@ export interface EventMap {
 }
 ```
 
+These maps are what drive the type safety. When you call `client.execute('Conduit.Sample.Notes.Commands.CreateNoteCommand', ...)`, TypeScript infers the request type from `CommandMap` and the response type from the `response` field.
+
 ## Browser example with SignalR
+
+A complete setup from connection to dispatch:
 
 ```typescript
 import { HubConnectionBuilder } from '@microsoft/signalr';
@@ -140,7 +181,7 @@ All four methods are fully typed. The type key string autocompletes and the requ
 
 ## HTTP transport
 
-For HTTP-only projects, or when you do not need server-pushed events:
+For projects that don't need real-time server push, use `HttpTransport` instead:
 
 ```typescript
 import { ConduitClient, HttpTransport } from './generated/conduit.generated';
@@ -152,9 +193,9 @@ const client = new ConduitClient(new HttpTransport(''));
 const client = new ConduitClient(new HttpTransport('https://api.example.com'));
 ```
 
-`HttpTransport` takes two arguments: `baseUrl` (required) and `path` (optional, defaults to `'/api/dispatch'`). It uses the native `fetch` API with zero npm dependencies.
+`HttpTransport` uses the native `fetch` API with zero npm dependencies. It supports `execute`, `fetch`, and `publish`. Calling `on` throws — HTTP has no server-to-client push channel. Use `SignalRTransport` for event subscriptions.
 
-`HttpTransport` supports `execute`, `fetch`, and `publish`. Calling `on` throws -- HTTP has no server-to-client push. Use `SignalRTransport` for event subscriptions.
+`HttpTransport` takes two arguments: `baseUrl` (required) and `path` (optional, defaults to `'/api/dispatch'`).
 
 ## C# to TypeScript type mapping
 

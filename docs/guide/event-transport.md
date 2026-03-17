@@ -1,5 +1,7 @@
 # Event Transport
 
+Events let you decouple side effects from the operation that triggers them. A handler publishes an event, and any number of independent listeners respond — sending emails, updating caches, notifying external systems — without the handler knowing or caring who is listening. When transports are configured, events automatically broadcast to connected clients and remote services.
+
 ## Basic event publishing
 
 ```csharp

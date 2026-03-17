@@ -1,8 +1,8 @@
 # Getting Started
 
-A minimal single-project example: define a command, handle it, dispatch it.
+Install Conduit and dispatch your first command in a single ASP.NET Core project.
 
-## Project setup
+## Install packages
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk.Web">
@@ -12,16 +12,14 @@ A minimal single-project example: define a command, handle it, dispatch it.
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="path\to\Conduit.csproj" />
-    <ProjectReference Include="path\to\Conduit.SourceGen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="path\to\Conduit.Analysis.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Conduit" />
+    <PackageReference Include="Conduit.SourceGen" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Conduit.Analysis" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>
 ```
 
-Both `Conduit.SourceGen` and `Conduit.Analysis` must be referenced as analyzers. The source generator runs at compile time to discover your message types and emit the dispatch infrastructure.
-
-When Conduit ships as a NuGet package, this will be a single `<PackageReference>`.
+`Conduit.SourceGen` and `Conduit.Analysis` must be referenced as analyzers — the source generator runs at compile time and needs both to discover your message types and emit the dispatch infrastructure.
 
 ## Define a command and handler
 
@@ -42,7 +40,7 @@ public class CreateTodoHandler : ICommandHandler<CreateTodoCommand, Guid>
 }
 ```
 
-`ICommand<Guid>` declares a command that returns a `Guid`. The source generator finds `CreateTodoCommand` and its handler automatically — no registration attributes, no assembly scanning.
+`ICommand<Guid>` declares a command that returns a `Guid`. The source generator finds `CreateTodoCommand` and `CreateTodoHandler` at compile time — no registration attributes or assembly scanning required.
 
 ## Wire up and dispatch
 
@@ -64,18 +62,18 @@ app.MapGet("/", async (IMediator mediator) =>
 app.Run();
 ```
 
-`AddConduit()` is source-generated. It registers all discovered handlers and the mediator implementation with DI. No manual registration needed — if the source generator can see your type, it gets wired up.
+`AddConduit()` is source-generated. It registers all discovered handlers and the generated `ConduitMediator` with DI — no manual registration needed. If the source generator can see your type, it gets wired up.
 
-`IMediator` is the only interface your application code needs. Inject it anywhere and call `ExecuteAsync` for commands, `FetchAsync` for queries, or `PublishAsync` for events.
+`IMediator` is the dispatch interface your application code uses. Inject it anywhere and call `ExecuteAsync` for commands, `FetchAsync` for queries, or `PublishAsync` for events.
 
-## What happened
+## What the source generator produced
 
-The source generator found `CreateTodoCommand` and `CreateTodoHandler` at compile time and generated:
+At compile time, the source generator found `CreateTodoCommand` and `CreateTodoHandler` and emitted:
 
-- A `ConduitMediator` class implementing `IMediator` that dispatches `CreateTodoCommand` to `CreateTodoHandler`
-- An `AddConduit()` extension method on `IServiceCollection` that registers everything in DI
+- A `ConduitMediator` that dispatches `CreateTodoCommand` directly to `CreateTodoHandler` via a compiled type switch — no reflection, no `Dictionary<Type, ...>` lookups
+- An `AddConduit()` extension method that registers everything in DI
 
-No reflection. No assembly scanning at startup. The generated code is plain C# you can inspect in your IDE under Analyzers.
+The generated code is visible in your IDE under Analyzers → Conduit.SourceGen.
 
 You now have in-process dispatch. The next sections show how to extend this to the browser and other services.
 
