@@ -1,22 +1,25 @@
 # Conduit
 
-Source-generated distributed messaging for .NET. Define commands, queries, and events as plain C# records. The source generator wires dispatch, DI registration, and TypeScript clients at compile time with zero reflection.
+A source-generated mediator and messaging library for .NET 10. Define commands, queries, and events as plain C# records, and the Roslyn source generator emits the dispatch logic, DI registration, and optionally a fully-typed TypeScript client — all at compile time with zero reflection.
 
-## Scale as you grow
+## Why Conduit
 
-- **Start local.** In-process dispatch with no infrastructure. Commands and queries route to handlers, events broadcast to listeners, all within a single process.
-- **Add SignalR.** Real-time bidirectional communication with browsers and between services. Push events to connected clients, dispatch commands across service boundaries.
-- **Add a service bus.** Durable, decoupled messaging across services for production workloads that need reliability and persistence.
+Conduit is built around a simple idea: messaging should be easy to start and stay easy as your application grows. Define a C# record, implement a handler, and the source generator takes care of the rest — dispatch, DI registration, and TypeScript clients, all emitted at compile time as plain readable code.
 
-At each step, the same message types and handlers work unchanged. Routing configuration determines where messages go; your application code stays the same.
+A single-service app with in-process dispatch takes one line of setup. Adding real-time SignalR communication takes two more. Exposing REST endpoints is a one-liner per route. Connecting services through Azure Service Bus or RabbitMQ is a configuration change — your handlers and message types don't move. The API surface stays small and consistent whether you're building a weekend project or a distributed system.
 
-## Typed TypeScript clients
+The same commands and queries can be dispatched locally in-process, mapped directly to RESTful HTTP endpoints with full OpenAPI and auth support via ASP.NET Core minimal APIs, or streamed bidirectionally to the browser over SignalR with a generated TypeScript client that provides full IDE autocomplete against your C# contracts. Use conventional REST routes for external consumers, a real-time channel for your own UI, or both side by side — the browser isn't a separate app talking to your API, it's a participant in the same messaging topology.
 
-Mark C# types with `[ClientVisible]` and Conduit generates a fully typed TypeScript client with IDE autocomplete. Request and response types flow from your C# contracts to the browser with zero hand-written API contracts.
+## Scale without rewriting
 
-## What Conduit provides
+Your handlers implement `ICommandHandler<T>` or `IEventListener<T>` and receive the message directly — they never reference a transport. Where the message came from (in-process, SignalR, HTTP, a service bus) is determined by configuration, not code.
 
-Conduit provides messaging patterns for distributed .NET services — command dispatch, event transport, typed clients — without the ceremony of a full service bus framework. Start simple, add infrastructure as you grow.
+- **Start local.** In-process dispatch with zero infrastructure. Commands route to handlers, events broadcast to listeners, all within a single process. This is enough for many applications and costs nothing to set up.
+- **Add SignalR.** Two lines of setup give you bidirectional real-time communication. Browser clients dispatch commands through a hub and receive events on the same connection. Services call each other over persistent connections with automatic reconnect.
+- **Add REST endpoints.** Map commands and queries directly to conventional HTTP routes with `MapConduitGet`, `MapConduitPost`, and friends. Standard ASP.NET Core chaining — auth, OpenAPI, rate limiting — works on every route.
+- **Add a service bus.** Azure Service Bus and RabbitMQ transports provide durable, decoupled messaging for production workloads that need persistence, retry, and dead-lettering.
+
+At each step, the same message types and handler implementations work unchanged. Routing configuration determines where messages go.
 
 ## Guide
 
@@ -31,4 +34,4 @@ Conduit provides messaging patterns for distributed .NET services — command di
 9. [Error Handling](error-handling.md)
 10. [Security](security.md)
 11. [Configuration Reference](configuration-reference.md)
-12. [AI-Assisted Development](ai-development.md)
+12. [FAQ](faq.md)

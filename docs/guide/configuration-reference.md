@@ -44,3 +44,5 @@ Set in your project's `.csproj` to control TypeScript generation.
 | CONDUIT001 | Warning | No handler found for a command or query | Add a handler class implementing `ICommandHandler<T>` / `IQueryHandler<T, TResult>`, or add `[assembly: RemoteContracts("Namespace")]` if the type is handled by another service |
 | CONDUIT002 | Error | Multiple handlers found for a command or query | Remove the duplicate handler. Only one handler per command/query is allowed. |
 | CONDUIT004 | Warning | Dispatchable type has neither `[Authorize]` nor `[AllowAnonymous]` | Add `[Authorize]` or `[AllowAnonymous]` to the type |
+
+Next: [FAQ](faq.md)
