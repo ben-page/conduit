@@ -1,7 +1,6 @@
 # RabbitMQ
 
-The RabbitMQ transport provides durable, broker-based messaging over AMQP. Commands and queries use request/response with correlation IDs and a transient reply queue. Events publish to a topic exchange with routing keys. The transport runs as an `IHostedService` that manages topology, consumers, and reply correlation.
-
+- [Overview](#overview)
 - [Setup](#setup)
 - [Options](#options)
 - [Topology](#topology)
@@ -9,6 +8,10 @@ The RabbitMQ transport provides durable, broker-based messaging over AMQP. Comma
 - [Event auto-subscription](#event-auto-subscription)
 - [Wire format](#wire-format)
 - [Receiver pools](#receiver-pools)
+
+## Overview
+
+The RabbitMQ transport provides durable, broker-based messaging over AMQP. Commands and queries use request/response with correlation IDs and a transient reply queue. Events publish to a topic exchange with routing keys. The transport runs as an `IHostedService` that manages topology, consumers, and reply correlation.
 
 ## Setup
 

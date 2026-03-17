@@ -1,13 +1,16 @@
 # Core Concepts
 
-Conduit has three message types: commands, queries, and events. Each has a dedicated interface, handler type, and dispatch method. The source generator discovers all of them automatically.
-
+- [Overview](#overview)
 - [Commands](#commands)
 - [Queries](#queries)
 - [Events](#events)
 - [Dispatching](#dispatching)
 - [Validate()](#validate)
 - [Ownership model](#ownership-model)
+
+## Overview
+
+Conduit has three message types: commands, queries, and events. Each has a dedicated interface, handler type, and dispatch method. The source generator discovers all of them automatically.
 
 ## Commands
 

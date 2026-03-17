@@ -1,5 +1,15 @@
 # Transports
 
+- [Overview](#overview)
+- [Routing](#routing)
+- [Shared contracts](#shared-contracts)
+  - [\[RemoteContracts\]](#remotecontracts)
+- [Event broadcasting](#event-broadcasting)
+  - [\[LocalOnly\]](#localonly)
+  - [Inbound events](#inbound-events)
+
+## Overview
+
 Transports move messages between processes. A handler in one service can handle commands sent from another service, and events published on a server can reach browser clients or downstream services automatically.
 
 Conduit ships four transports in two categories.
@@ -15,10 +25,6 @@ Conduit ships four transports in two categories.
 - **RabbitMQ** provides exchanges, queues, and bindings with similar durability using the AMQP protocol.
 
 Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a service bus queue.
-
-- [Routing](#routing)
-- [Shared contracts](#shared-contracts)
-- [Event broadcasting](#event-broadcasting)
 
 ## Routing
 

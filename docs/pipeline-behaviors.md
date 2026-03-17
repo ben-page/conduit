@@ -1,11 +1,14 @@
 # Pipeline Behaviors
 
-Pipeline behaviors wrap dispatch calls with cross-cutting concerns like logging, validation, or timing. They form a chain: each behavior calls `next()` to continue or short-circuits by returning early. First registered is outermost.
-
+- [Overview](#overview)
 - [Defining a behavior](#defining-a-behavior)
 - [Registration](#registration)
 - [Unified across message types](#unified-across-message-types)
 - [Per-type filtering](#per-type-filtering)
+
+## Overview
+
+Pipeline behaviors wrap dispatch calls with cross-cutting concerns like logging, validation, or timing. They form a chain: each behavior calls `next()` to continue or short-circuits by returning early. First registered is outermost.
 
 ## Defining a behavior
 

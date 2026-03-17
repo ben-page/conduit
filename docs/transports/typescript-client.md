@@ -1,7 +1,6 @@
 # TypeScript Client
 
-Conduit generates a fully-typed TypeScript client from your C# message types. The generated `ConduitClient` provides IDE autocomplete for type names, request shapes, and response types. No hand-written API contracts, no OpenAPI generators, no runtime type checking.
-
+- [Overview](#overview)
 - [What you get](#what-you-get)
 - [Mark types with \[ClientVisible\]](#mark-types-with-clientvisible)
 - [Enable TypeGen](#enable-typegen)
@@ -9,6 +8,10 @@ Conduit generates a fully-typed TypeScript client from your C# message types. Th
 - [Browser example with SignalR](#browser-example-with-signalr)
 - [HTTP transport](#http-transport)
 - [Type mapping](#type-mapping)
+
+## Overview
+
+Conduit generates a fully-typed TypeScript client from your C# message types. The generated `ConduitClient` provides IDE autocomplete for type names, request shapes, and response types. No hand-written API contracts, no OpenAPI generators, no runtime type checking.
 
 ## What you get
 

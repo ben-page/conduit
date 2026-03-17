@@ -2,6 +2,11 @@
 
 - [Was this AI-generated?](#was-this-ai-generated)
 - [Why does Conduit use Task instead of ValueTask?](#why-does-conduit-use-task-instead-of-valuetask)
+  - [The dispatch path is always truly async](#the-dispatch-path-is-always-truly-async)
+  - [Interceptors already avoid the overhead](#interceptors-already-avoid-the-overhead)
+  - [The costs are real](#the-costs-are-real)
+  - [What Conduit does instead](#what-conduit-does-instead)
+  - [Ecosystem precedent](#ecosystem-precedent)
 
 ## Was this AI-generated?
 
