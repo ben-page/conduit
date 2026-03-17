@@ -23,9 +23,7 @@ public class MessageContextShould
             await container.StartAsync();
             connectionString = container.GetConnectionString();
         }
-#pragma warning disable CA1031
         catch (Exception ex)
-#pragma warning restore CA1031
         {
             container = null;
             connectionString = null;

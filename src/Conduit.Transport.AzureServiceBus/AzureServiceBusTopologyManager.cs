@@ -162,7 +162,7 @@ internal sealed class AzureServiceBusTopologyManager
     /// Azure Service Bus subscription names are limited to 50 characters and must be
     /// alphanumeric, hyphens, underscores, or periods. Replace dots with hyphens and truncate.
     /// </summary>
-    private static string SanitizeSubscriptionName(string messageType)
+    internal static string SanitizeSubscriptionName(string messageType)
     {
         var sanitized = messageType.Replace('.', '-');
         return sanitized.Length <= 50

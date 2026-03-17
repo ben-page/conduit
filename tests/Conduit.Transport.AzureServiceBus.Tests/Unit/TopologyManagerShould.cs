@@ -69,4 +69,22 @@ public class TopologyManagerShould
         // Assert
         commandQueueName.Should().Be("conduit-inventory");
     }
+
+    [TestMethod]
+    public void SanitizeSubscriptionNamesForAzureLimits()
+    {
+        // Arrange
+        var shortName = "App.Events.OrderCreated";
+        var longName = "MyApp.Domain.Events.VeryLongEventNameThatExceedsFiftyCharacterLimit";
+
+        // Act
+        var sanitizedShort = AzureServiceBusTopologyManager.SanitizeSubscriptionName(shortName);
+        var sanitizedLong = AzureServiceBusTopologyManager.SanitizeSubscriptionName(longName);
+
+        // Assert
+        sanitizedShort.Should().Be("App-Events-OrderCreated");
+        sanitizedShort.Should().NotContain(".");
+        sanitizedLong.Length.Should().BeLessThanOrEqualTo(50);
+        sanitizedLong.Should().NotContain(".");
+    }
 }
