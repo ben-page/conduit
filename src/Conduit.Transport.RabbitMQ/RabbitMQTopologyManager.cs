@@ -58,6 +58,15 @@ internal sealed class RabbitMQTopologyManager
             noWait: false,
             cancellationToken: cancellationToken);
 
+        // Bind app queue to direct exchange so it can receive commands/queries
+        await channel.QueueBindAsync(
+            queue: appQueueName,
+            exchange: $"{this.options.ExchangeName}.direct",
+            routingKey: appQueueName,
+            arguments: null,
+            noWait: false,
+            cancellationToken: cancellationToken);
+
         // Bind app queue to topic exchange for each subscribed event type
         foreach (var eventType in subscribedEventTypes)
         {
