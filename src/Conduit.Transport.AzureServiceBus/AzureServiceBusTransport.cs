@@ -186,7 +186,8 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         this.client = new ServiceBusClient(this.options.ConnectionString);
         this.topicSender = this.client.CreateSender(this.options.TopicName);
 
-        var adminClient = new ServiceBusAdministrationClient(this.options.ConnectionString);
+        var adminConnectionString = this.options.AdminConnectionString ?? this.options.ConnectionString;
+        var adminClient = new ServiceBusAdministrationClient(adminConnectionString);
         this.topologyManager = new AzureServiceBusTopologyManager(
             adminClient, this.options, this.applicationName);
 
