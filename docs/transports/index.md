@@ -45,7 +45,9 @@ Routes only apply to commands and queries. Events broadcast rather than route (s
 
 ## Shared contracts
 
-When two services communicate, put the shared message types in a standalone class library:
+When two services communicate, both need the message type definitions. The simplest approach is to copy the record declarations into the calling service. They just need to match by full type name and shape.
+
+For larger systems, put the shared types in a standalone class library that both services reference:
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
