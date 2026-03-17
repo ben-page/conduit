@@ -265,7 +265,7 @@ Routes assign a destination endpoint for request/response messages. Events don't
 public sealed class ConduitEndpoint
 {
     public required string Name { get; init; }
-    public IConduitTransport? Transport { get; internal set; }
+    // Transport is resolved from DI as a keyed IConduitTransport (key = Name)
 }
 
 public sealed class ConduitRoute
@@ -282,7 +282,7 @@ public sealed class ConduitOptions
 }
 ```
 
-`ConduitRuntime.ResolveRoute` checks the route table before local dispatch. If a message type matches a route, it serializes the request into a `DispatchEnvelope` and sends it via the endpoint's transport. If no route matches, dispatch is local.
+`ConduitRuntime.ResolveRoute` checks the route table before local dispatch. If a message type matches a route, the generated mediator resolves the transport via `ConduitRuntime.ResolveTransport(serviceProvider, endpoint)` (keyed DI lookup), serializes the request into a `DispatchEnvelope`, and sends it via the transport. If no route matches, dispatch is local.
 
 Configuration uses a fluent builder API (runtime only — no attribute-based routing):
 
@@ -471,7 +471,7 @@ All registrations are **transient**. `ConduitMediator` is stateless — it resol
 The generated `ConduitMediator` implements `IWireMediator` (which extends `IMediator`). Key behaviors:
 
 - **Strongly-typed overloads** per command/query — compiler picks these, zero boxing
-- **Route-aware dispatch** — checks `ConduitRuntime.ResolveRoute` before local dispatch; if a route matches, serializes to `DispatchEnvelope` and sends via the endpoint's transport
+- **Route-aware dispatch** — checks `ConduitRuntime.ResolveRoute` before local dispatch; if a route matches, resolves the transport via `ConduitRuntime.ResolveTransport` (keyed DI) and sends via `DispatchEnvelope`
 - **Event broadcast** — `PublishAsync` dispatches to local listeners via `PublishLocalAsync`, then broadcasts to all DI-registered `IConduitTransport` instances (unless `[LocalOnly]`)
 - **Wire dispatch** — `HandleWireRequestAsync`/`HandleWireEventAsync` chain `IWireInterceptor` instances, deserialize by type name, and dispatch locally
 - **Pipeline behaviors** — resolved via `ConduitRuntime.ResolvePipelines` in registration order (first = outermost)
