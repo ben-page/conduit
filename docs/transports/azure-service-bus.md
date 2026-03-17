@@ -2,6 +2,14 @@
 
 The Azure Service Bus transport provides durable, broker-based messaging. Commands and queries use request/response over session-enabled reply queues. Events publish to a shared topic with auto-created subscriptions. The transport runs as an `IHostedService` that manages topology, receivers, and reply correlation.
 
+- [Setup](#setup)
+- [Options](#options)
+- [Topology](#topology)
+- [Request/response](#requestresponse)
+- [Event auto-subscription](#event-auto-subscription)
+- [Wire format](#wire-format)
+- [Receiver pools](#receiver-pools)
+
 ## Setup
 
 ```csharp

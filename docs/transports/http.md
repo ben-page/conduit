@@ -2,6 +2,13 @@
 
 The HTTP transport maps commands and queries to HTTP endpoints. It supports two modes: RESTful routes for external APIs, and an envelope dispatch endpoint for internal service-to-service communication.
 
+- [RESTful endpoints](#restful-endpoints)
+- [Binding strategies](#binding-strategies)
+- [Responses](#responses)
+- [Envelope dispatch](#envelope-dispatch)
+- [When to use which](#when-to-use-which)
+- [Outbound HttpTransport](#outbound-httptransport)
+
 ## RESTful endpoints
 
 Map each message type to a conventional HTTP route. The source generator emits typed extension methods when your project references `Conduit.Transport.Http`.

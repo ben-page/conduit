@@ -2,6 +2,13 @@
 
 Conduit has three message types: commands, queries, and events. Each has a dedicated interface, handler type, and dispatch method. The source generator discovers all of them automatically.
 
+- [Commands](#commands)
+- [Queries](#queries)
+- [Events](#events)
+- [Dispatching](#dispatching)
+- [Validate()](#validate)
+- [Ownership model](#ownership-model)
+
 ## Commands
 
 Commands represent operations that change state. They optionally return a result.

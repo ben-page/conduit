@@ -2,6 +2,12 @@
 
 Conduit provides a structured error model that works across all transports. Handlers throw typed exceptions. Conduit translates them into Problem Details for REST endpoints, `DispatchResult` error envelopes for wire dispatch, and log entries for fire-and-forget events.
 
+- [ErrorCode](#errorcode)
+- [Built-in exceptions](#built-in-exceptions)
+- [Custom error codes](#custom-error-codes)
+- [Error flow](#error-flow)
+- [ErrorCode equality](#errorcode-equality)
+
 ## ErrorCode
 
 `ErrorCode` pairs a machine-readable string with an HTTP status code:

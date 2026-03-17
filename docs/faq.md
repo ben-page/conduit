@@ -1,5 +1,8 @@
 # FAQ
 
+- [Was this AI-generated?](#was-this-ai-generated)
+- [Why does Conduit use Task instead of ValueTask?](#why-does-conduit-use-task-instead-of-valuetask)
+
 ## Was this AI-generated?
 
 Conduit was built with significant AI assistance (Claude). The code, tests, and documentation were largely AI-generated.
