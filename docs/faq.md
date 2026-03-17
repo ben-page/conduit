@@ -50,7 +50,6 @@ Any interceptor or pipeline behavior can use this same pattern when its logic is
 
 Switching to `ValueTask<T>` on public interfaces would mean:
 
-- **Breaking change** for every handler, pipeline behavior, interceptor, and transport implementation.
 - **Lost optimizations** — `ConduitRuntime.CastTask` uses `Unsafe.As` to reinterpret `Task<TSource>` as `Task<TTarget>` with zero allocation. No equivalent exists for `ValueTask<T>` (it's a struct with different layout).
 - **Harder composition** — `Task.WhenAll` doesn't accept `ValueTask`. Event broadcasting fans out to multiple transports and would need conversion back to `Task` anyway.
 - **Consumer foot-guns** — `ValueTask<T>` can only be awaited once, can't be stored, and can't safely block with `.Result`. Library consumers must know these rules.
