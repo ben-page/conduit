@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.Http;
 
@@ -23,7 +24,10 @@ public static class EndpointBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(httpClient);
-        var transport = new HttpTransport(httpClient, path);
-        return builder.UseTransport(transport);
+
+        builder.Services.AddKeyedSingleton(
+            builder.EndpointName, new HttpTransport(httpClient, path));
+
+        return builder.UseTransport<HttpTransport>();
     }
 }

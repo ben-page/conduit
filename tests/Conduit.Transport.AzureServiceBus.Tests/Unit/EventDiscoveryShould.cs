@@ -17,10 +17,17 @@ public class EventDiscoveryShould
         var services = new ServiceCollection();
         services.AddTransient<IEventListener<ItemCreatedEvent>, ItemCreatedListener>();
         services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+        services.AddSingleton<IServiceCollection>(services);
+        services.AddLogging();
 
         var options = new AzureServiceBusOptions { ConnectionString = "not-used" };
-        var logger = new LoggerFactory().CreateLogger<AzureServiceBusTransport>();
-        var transport = new AzureServiceBusTransport(options, services, logger);
+        services.AddSingleton(options);
+
+        var serviceProvider = services.BuildServiceProvider();
+        var transport = new AzureServiceBusTransport(
+            options,
+            serviceProvider,
+            serviceProvider.GetRequiredService<ILogger<AzureServiceBusTransport>>());
 
         // Act — use reflection to test the private method
         var method = typeof(AzureServiceBusTransport)

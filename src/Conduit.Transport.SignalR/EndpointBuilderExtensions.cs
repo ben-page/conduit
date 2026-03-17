@@ -1,5 +1,6 @@
 using Conduit.Configuration;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR;
 
@@ -17,7 +18,7 @@ public static class EndpointBuilderExtensions
     /// <returns>The endpoint builder for chaining.</returns>
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Reliability", "CA2000:Dispose objects before losing scope",
-        Justification = "Transport ownership is transferred to the endpoint via UseTransport.")]
+        Justification = "Transport lifetime is managed by DI via keyed singleton registration.")]
     public static EndpointBuilder UseSignalR(this EndpointBuilder builder, Uri hubUri)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -28,7 +29,9 @@ public static class EndpointBuilderExtensions
             .WithAutomaticReconnect()
             .Build();
 
-        var transport = new SignalRTransport(hubConnection);
-        return builder.UseTransport(transport);
+        builder.Services.AddKeyedSingleton(
+            builder.EndpointName, new SignalRTransport(hubConnection));
+
+        return builder.UseTransport<SignalRTransport>();
     }
 }

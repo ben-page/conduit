@@ -1,6 +1,7 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Dispatch;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Tests.Unit;
 
@@ -21,7 +22,7 @@ public class ConduitRuntimeShould
     public void MatchNamespacePrefix()
     {
         var options = new ConduitOptions();
-        var endpoint = new ConduitEndpoint { Name = "orders-api", Transport = new StubTransport() };
+        var endpoint = new ConduitEndpoint { Name = "orders-api" };
         options.Endpoints["orders-api"] = endpoint;
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "orders-api" });
 
@@ -48,8 +49,8 @@ public class ConduitRuntimeShould
     public void PickFirstMatchWhenMultipleRoutesMatch()
     {
         var options = new ConduitOptions();
-        options.Endpoints["specific"] = new ConduitEndpoint { Name = "specific", Transport = new StubTransport() };
-        options.Endpoints["general"] = new ConduitEndpoint { Name = "general", Transport = new StubTransport() };
+        options.Endpoints["specific"] = new ConduitEndpoint { Name = "specific" };
+        options.Endpoints["general"] = new ConduitEndpoint { Name = "general" };
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands.Create", EndpointName = "specific" });
         options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "general" });
 
@@ -73,14 +74,34 @@ public class ConduitRuntimeShould
     [TestMethod]
     public void ThrowWhenEndpointHasNoTransport()
     {
-        var options = new ConduitOptions();
-        options.Endpoints["orders-api"] = new ConduitEndpoint { Name = "orders-api" };
-        options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "orders-api" });
+        // Arrange — endpoint exists but no keyed IConduitTransport registered
+        var services = new ServiceCollection();
+        var serviceProvider = services.BuildServiceProvider();
+        var endpoint = new ConduitEndpoint { Name = "orders-api" };
 
-        var action = () => ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
+        // Act
+        var action = () => ConduitRuntime.ResolveTransport(serviceProvider, endpoint);
 
+        // Assert
         action.Should().ThrowExactly<InvalidOperationException>()
             .WithMessage("*no transport configured*");
+    }
+
+    [TestMethod]
+    public void ResolveTransportFromKeyedService()
+    {
+        // Arrange
+        var stubTransport = new StubTransport();
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IConduitTransport>("orders-api", stubTransport);
+        var serviceProvider = services.BuildServiceProvider();
+        var endpoint = new ConduitEndpoint { Name = "orders-api" };
+
+        // Act
+        var result = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);
+
+        // Assert
+        result.Should().BeSameAs(stubTransport);
     }
 }
 

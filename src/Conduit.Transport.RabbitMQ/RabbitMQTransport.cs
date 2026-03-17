@@ -88,10 +88,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
 
         var applicationName = this.ResolveApplicationName();
         this.topologyManager = new RabbitMQTopologyManager(this.options, applicationName);
-
-        // Wire up the lazy proxy so the endpoint transport reference works after DI resolution
-        var proxy = this.serviceProvider.GetService<EndpointBuilderExtensions.LazyTransportProxy>();
-        proxy?.Initialize(this);
     }
 
     /// <inheritdoc />

@@ -26,13 +26,12 @@ namespace Conduit.Transport.AzureServiceBus;
 public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService, IAsyncDisposable
 {
     private readonly AzureServiceBusOptions options;
-    private readonly IServiceCollection serviceDescriptors;
+    private readonly IServiceProvider serviceProvider;
     private readonly ILogger<AzureServiceBusTransport> logger;
     private readonly List<ServiceBusProcessor> processors = [];
 
     private ServiceBusClient? client;
     private ServiceBusSender? topicSender;
-    private IServiceProvider? serviceProvider;
     private string? applicationName;
     private AzureServiceBusTopologyManager? topologyManager;
 
@@ -85,32 +84,20 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// Creates a new Azure Service Bus transport.
     /// </summary>
     /// <param name="options">Transport configuration.</param>
-    /// <param name="serviceDescriptors">
-    /// The service collection, used at startup to discover <c>IEventListener&lt;T&gt;</c>
-    /// registrations for auto-subscription.
-    /// </param>
+    /// <param name="serviceProvider">The application service provider for resolving services at runtime.</param>
     /// <param name="logger">Logger for transport diagnostics.</param>
     public AzureServiceBusTransport(
         AzureServiceBusOptions options,
-        IServiceCollection serviceDescriptors,
+        IServiceProvider serviceProvider,
         ILogger<AzureServiceBusTransport> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(serviceDescriptors);
+        ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         this.options = options;
-        this.serviceDescriptors = serviceDescriptors;
+        this.serviceProvider = serviceProvider;
         this.logger = logger;
-    }
-
-    /// <summary>
-    /// Sets the service provider for runtime DI resolution.
-    /// Called by the hosted service wrapper after the DI container is built.
-    /// </summary>
-    internal void SetServiceProvider(IServiceProvider provider)
-    {
-        this.serviceProvider = provider;
     }
 
     /// <inheritdoc />
@@ -251,19 +238,16 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// </summary>
     private string ResolveApplicationName()
     {
-        if (this.serviceProvider is not null)
+        var conduitOptions = this.serviceProvider.GetService<ConduitOptions>();
+        if (!string.IsNullOrWhiteSpace(conduitOptions?.ApplicationName))
         {
-            var conduitOptions = this.serviceProvider.GetService<ConduitOptions>();
-            if (!string.IsNullOrWhiteSpace(conduitOptions?.ApplicationName))
-            {
-                return conduitOptions.ApplicationName;
-            }
+            return conduitOptions.ApplicationName;
+        }
 
-            var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
-            if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
-            {
-                return hostEnvironment.ApplicationName;
-            }
+        var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
+        if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
+        {
+            return hostEnvironment.ApplicationName;
         }
 
         throw new InvalidOperationException(
@@ -277,10 +261,11 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// </summary>
     private List<string> DiscoverSubscribedEventTypes()
     {
+        var serviceDescriptors = this.serviceProvider.GetRequiredService<IServiceCollection>();
         var eventListenerOpenGeneric = typeof(IEventListener<>);
         var eventTypes = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var descriptor in this.serviceDescriptors)
+        foreach (var descriptor in serviceDescriptors)
         {
             var serviceType = descriptor.ServiceType;
             if (!serviceType.IsGenericType)
@@ -491,11 +476,6 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// </summary>
     private string ResolveEndpointName(string messageType)
     {
-        if (this.serviceProvider is null)
-        {
-            return this.applicationName ?? "default";
-        }
-
         var conduitOptions = this.serviceProvider.GetRequiredService<ConduitOptions>();
         var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, messageType);
         return endpoint?.Name ?? this.applicationName!;

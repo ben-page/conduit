@@ -92,7 +92,7 @@ namespace App.Events
         // Routing infrastructure via ConduitRuntime
         mediatorSource.Should().Contain("ConduitOptions conduitOptions");
         mediatorSource.Should().Contain("ConduitRuntime.ResolveRoute(conduitOptions,");
-        mediatorSource.Should().Contain("endpoint.Transport.SendRequestAsync");
+        mediatorSource.Should().Contain("ConduitRuntime.ResolveTransport(serviceProvider, endpoint)");
 
         // Wire event dispatch (private, called by HandleWireEventAsync)
         mediatorSource.Should().Contain("private async Task DispatchEventAsync(");

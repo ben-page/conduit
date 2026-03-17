@@ -16,6 +16,12 @@ public sealed class EndpointBuilder
     internal ConduitEndpoint Endpoint { get; }
 
     /// <summary>
+    /// The name of the endpoint being configured. Used by transport extensions
+    /// to register keyed services for this endpoint.
+    /// </summary>
+    public string EndpointName => this.Endpoint.Name;
+
+    /// <summary>
     /// The service collection, for transport extensions that need to register DI services.
     /// </summary>
     public IServiceCollection Services { get; }
@@ -30,12 +36,25 @@ public sealed class EndpointBuilder
     }
 
     /// <summary>
-    /// Sets the transport for this endpoint.
-    /// Typically called by transport-specific extension methods rather than directly.
+    /// Registers a DI-managed transport for this endpoint. The concrete type must be
+    /// pre-registered as a keyed singleton with this endpoint's name as the key.
+    /// Typically called by transport extension methods after their own keyed registration.
+    /// </summary>
+    public EndpointBuilder UseTransport<TTransport>() where TTransport : class, IConduitTransport
+    {
+        this.Services.AddKeyedSingleton<IConduitTransport>(
+            this.Endpoint.Name,
+            (serviceProvider, key) => serviceProvider.GetRequiredKeyedService<TTransport>(key));
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a transport instance for this endpoint. The instance is registered
+    /// as a keyed singleton in DI. Useful for simple transports and test spies.
     /// </summary>
     public EndpointBuilder UseTransport(IConduitTransport transport)
     {
-        this.Endpoint.Transport = transport;
+        this.Services.AddKeyedSingleton<IConduitTransport>(this.Endpoint.Name, transport);
         return this;
     }
 }

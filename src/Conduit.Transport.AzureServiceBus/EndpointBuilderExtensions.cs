@@ -2,8 +2,6 @@ using Conduit.Configuration;
 using Conduit.Dispatch;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Transport.AzureServiceBus;
 
@@ -21,9 +19,6 @@ public static class EndpointBuilderExtensions
     /// <param name="connectionString">The Azure Service Bus connection string.</param>
     /// <param name="configure">Optional callback to configure transport options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage(
-        "Reliability", "CA2000:Dispose objects before losing scope",
-        Justification = "Transport ownership is transferred to DI container via singleton registration.")]
     public static EndpointBuilder UseAzureServiceBus(
         this EndpointBuilder builder,
         string connectionString,
@@ -35,36 +30,26 @@ public static class EndpointBuilderExtensions
         var options = new AzureServiceBusOptions { ConnectionString = connectionString };
         configure?.Invoke(options);
 
-        var loggerFactory = GetLoggerFactory(builder.Services);
-        var logger = loggerFactory.CreateLogger<AzureServiceBusTransport>();
+        // Register options and IServiceCollection for event listener discovery at startup
+        builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton(builder.Services);
 
-        var transport = new AzureServiceBusTransport(options, builder.Services, logger);
-        builder.UseTransport(transport);
+        // Register transport as DI-managed singleton
+        builder.Services.AddSingleton<AzureServiceBusTransport>();
 
-        // Register as IHostedService via a wrapper that injects IServiceProvider at startup
-        builder.Services.AddSingleton<IHostedService>(serviceProvider =>
-        {
-            transport.SetServiceProvider(serviceProvider);
-            return transport;
-        });
+        // Register as IHostedService for background receive lifecycle
+        builder.Services.AddSingleton<IHostedService>(
+            serviceProvider => serviceProvider.GetRequiredService<AzureServiceBusTransport>());
 
         // Register as IConduitTransport for event broadcast
-        builder.Services.AddSingleton<IConduitTransport>(transport);
+        builder.Services.AddSingleton<IConduitTransport>(
+            serviceProvider => serviceProvider.GetRequiredService<AzureServiceBusTransport>());
 
-        return builder;
-    }
+        // Register keyed transport for endpoint routing
+        builder.Services.AddKeyedSingleton<AzureServiceBusTransport>(
+            builder.EndpointName,
+            (serviceProvider, _) => serviceProvider.GetRequiredService<AzureServiceBusTransport>());
 
-    private static ILoggerFactory GetLoggerFactory(IServiceCollection services)
-    {
-        // Try to find an already-registered ILoggerFactory instance
-        var descriptor = services.LastOrDefault(
-            d => d.ServiceType == typeof(ILoggerFactory));
-
-        if (descriptor?.ImplementationInstance is ILoggerFactory factory)
-        {
-            return factory;
-        }
-
-        return NullLoggerFactory.Instance;
+        return builder.UseTransport<AzureServiceBusTransport>();
     }
 }
