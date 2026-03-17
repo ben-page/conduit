@@ -84,4 +84,6 @@ public class ValidationBehavior<TRequest, TResult> : IPipelineBehavior<TRequest,
 
 Check `typeof(TRequest)`, cast to an interface, look for attributes. If the behavior does not apply, call `next()` and pass through.
 
-Next: [Error Handling](error-handling.md)
+---
+
+Previous: [RabbitMQ](transports/rabbitmq.md) | [Home](../README.md) | Next: [Error Handling](error-handling.md)

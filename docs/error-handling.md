@@ -108,4 +108,6 @@ a == b  // true
 
 `Value` is the wire identity. It appears in `DispatchError.Code` and travels across service boundaries. `HttpStatusCode` is a local concern used only for HTTP responses.
 
-Next: [Security](security.md)
+---
+
+Previous: [Pipeline Behaviors](pipeline-behaviors.md) | [Home](../README.md) | Next: [Security](security.md)

@@ -198,4 +198,6 @@ const client = new ConduitClient(new HttpTransport('https://api.example.com'));
 | `T?` (nullable) | `T \| null` |
 | `enum` | string literal union (e.g. `'Active' \| 'Inactive'`) |
 
-Next: [HTTP](http.md)
+---
+
+Previous: [SignalR](signalr.md) | [Home](../../README.md) | Next: [HTTP](http.md)

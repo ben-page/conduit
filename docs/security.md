@@ -106,4 +106,6 @@ app.MapHub<SecureConduitHub>("/hub");
 
 Use ASP.NET Core auth to verify identity. Use `TypeFilterInterceptor` to restrict which message types authenticated clients can dispatch.
 
-Next: [Configuration Reference](configuration-reference.md)
+---
+
+Previous: [Error Handling](error-handling.md) | [Home](../README.md) | Next: [Configuration Reference](configuration-reference.md)

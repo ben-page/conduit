@@ -183,4 +183,6 @@ Commands and queries are owned by the service that handles them. The handler def
 
 Events are owned by the service that publishes them. If the order service publishes `OrderCreated`, that event type lives there. Downstream listeners depend on it, not the other way around.
 
-Next: [Transports](transports/index.md)
+---
+
+Previous: [Getting Started](getting-started.md) | [Home](../README.md) | Next: [Transports](transports/index.md)

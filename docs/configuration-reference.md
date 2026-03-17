@@ -54,4 +54,6 @@ Available inside the `AddEndpoint` callback:
 | CONDUIT002 | Error | Multiple handlers for a command or query | Remove the duplicate handler |
 | CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
 
-Next: [FAQ](faq.md)
+---
+
+Previous: [Security](security.md) | [Home](../README.md) | Next: [FAQ](faq.md)

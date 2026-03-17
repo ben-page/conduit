@@ -99,4 +99,6 @@ endpoint.UseAzureServiceBus(connectionString, options =>
 
 This routes `BulkImportCommand` to a dedicated `conduit-{appName}-imports` queue processed with concurrency 2, while everything else uses the default queue at concurrency 20. Use pools to prevent slow or resource-intensive commands from blocking normal traffic.
 
-Next: [RabbitMQ](rabbitmq.md)
+---
+
+Previous: [HTTP](http.md) | [Home](../../README.md) | Next: [RabbitMQ](rabbitmq.md)
