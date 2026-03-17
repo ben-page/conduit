@@ -1,6 +1,6 @@
 # Security
 
-Conduit provides three layers of security that work alongside ASP.NET Core's authentication and authorization infrastructure: inbound type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent sensitive events from leaving the process, and `IWireInterceptor` for custom wire-level middleware like audit logging and rate limiting.
+Conduit provides three layers of security alongside ASP.NET Core's authentication and authorization: type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent events from leaving the process, and `IWireInterceptor` for custom wire-level middleware.
 
 ## TypeFilterInterceptor
 
@@ -16,46 +16,26 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-Any inbound wire dispatch (HTTP or SignalR) for a type not in the allowed set is rejected with an `UnauthorizedException` before the message reaches a handler. The type name matched against the filter is the full type name from the `DispatchEnvelope.Type` field -- the same `"Namespace.TypeName"` string used on the wire.
+Any inbound wire dispatch for a type not in the allowed set is rejected with `UnauthorizedException` before the message reaches a handler. The type name matched is the full type name from `DispatchEnvelope.Type`.
 
-`TypeFilterInterceptor` implements `IWireInterceptor`. It checks commands and queries only. Events pass through unfiltered because inbound events are server-initiated broadcasts, not client requests.
+`TypeFilterInterceptor` implements `IWireInterceptor`. It checks commands and queries only. Events pass through unfiltered because inbound events are server-initiated broadcasts.
 
-A real-world example from the Notes sample:
+The filter is transport-agnostic. It works the same whether the request arrives over HTTP, SignalR, or a service bus.
 
-```csharp
-builder.Services.AddConduit(conduit =>
-{
-    conduit.AddTypeFilter(filter =>
-    {
-        filter.AllowType("Conduit.Sample.Notes.Commands.CreateNoteCommand");
-        filter.AllowType("Conduit.Sample.Notes.Commands.DeleteNoteCommand");
-        filter.AllowType("Conduit.Sample.Notes.Queries.GetNotesQuery");
-    });
-});
-builder.Services.AddConduitSignalR();
-```
-
-Browser clients connecting through SignalR can dispatch these three types and nothing else. An attempt to dispatch `Conduit.Sample.Notes.Commands.PurgeAllDataCommand` would throw `UnauthorizedException` with the message `"Type 'Conduit.Sample.Notes.Commands.PurgeAllDataCommand' is not allowed by the type filter."`.
-
-The filter is transport-agnostic. It works the same whether the request arrives over HTTP (`MapConduitEndpoint`) or SignalR (`ConduitHub`).
-
-## `[LocalOnly]`
+## [LocalOnly]
 
 ```csharp
-using Conduit.Attributes;
-using Conduit.Messages;
-
 [LocalOnly]
 public record UserPasswordChanged(Guid UserId) : IEvent;
 ```
 
-Events marked `[LocalOnly]` never leave the process. The source generator omits the transport broadcast call at compile time -- there is no runtime check. Use this for PII events, security events, and internal coordination events.
+Events marked `[LocalOnly]` never leave the process. The source generator omits the transport broadcast call at compile time. Use this for PII, security events, and internal coordination.
 
-See [Event Transport](event-transport.md) for the full broadcast model and `[LocalOnly]` details.
+See [Transports](transports/index.md) for the full broadcast model.
 
 ## IWireInterceptor
 
-Wire interceptors wrap inbound dispatch calls with custom middleware. They sit between the transport endpoint and the generated mediator, operating on the raw `DispatchEnvelope` before deserialization into the concrete type.
+Wire interceptors wrap inbound dispatch calls with custom middleware. They operate on the raw `DispatchEnvelope` before deserialization.
 
 ```csharp
 using Conduit.Dispatch;
@@ -70,11 +50,8 @@ public class AuditInterceptor(ILogger<AuditInterceptor> logger) : IWireIntercept
         CancellationToken cancellationToken)
     {
         logger.LogInformation("Wire request: {Type}", envelope.Type);
-
         var result = await next();
-
         logger.LogInformation("Wire request completed: {Type}", envelope.Type);
-
         return result;
     }
 
@@ -84,30 +61,10 @@ public class AuditInterceptor(ILogger<AuditInterceptor> logger) : IWireIntercept
         CancellationToken cancellationToken)
     {
         logger.LogInformation("Wire event: {Type}", envelope.Type);
-
         await next();
     }
 }
 ```
-
-The interface:
-
-```csharp
-public interface IWireInterceptor
-{
-    Task<object?> InterceptRequestAsync(
-        DispatchEnvelope envelope,
-        Func<Task<object?>> next,
-        CancellationToken cancellationToken);
-
-    Task InterceptEventAsync(
-        DispatchEnvelope envelope,
-        Func<Task> next,
-        CancellationToken cancellationToken);
-}
-```
-
-`InterceptRequestAsync` wraps commands and queries. `InterceptEventAsync` wraps events. Call `next()` to continue the chain, or throw/return early to short-circuit.
 
 Register interceptors as singletons:
 
@@ -115,40 +72,30 @@ Register interceptors as singletons:
 builder.Services.AddSingleton<IWireInterceptor, AuditInterceptor>();
 ```
 
-Multiple interceptors chain in reverse registration order. Last registered is innermost (closest to the handler). First registered is outermost (sees the request first).
+Multiple interceptors chain in reverse registration order. First registered is outermost.
 
 ```
-First registered:  AuditInterceptor (enter)
-Second registered:   RateLimitInterceptor (enter)
-                       Handler
-Second registered:   RateLimitInterceptor (exit)
-First registered:  AuditInterceptor (exit)
+AuditInterceptor (enter)
+  RateLimitInterceptor (enter)
+    Handler
+  RateLimitInterceptor (exit)
+AuditInterceptor (exit)
 ```
 
-Note: `TypeFilterInterceptor` is itself an `IWireInterceptor`. When you call `conduit.AddTypeFilter(...)`, it registers `TypeFilterInterceptor` as a singleton `IWireInterceptor` in DI. You can combine it with your own interceptors -- they all participate in the same chain.
+`TypeFilterInterceptor` is itself an `IWireInterceptor`. When you call `AddTypeFilter(...)`, it registers into the same chain.
 
-## ASP.NET Core authentication and authorization
+## ASP.NET Core auth
 
-Conduit does not replace ASP.NET Core auth. The HTTP dispatch endpoint (`MapConduitEndpoint`) and SignalR hub (`ConduitHub`) are standard ASP.NET Core endpoints. All existing auth infrastructure works normally.
-
-Require authentication on the HTTP dispatch endpoint:
+Conduit does not replace ASP.NET Core auth. The dispatch endpoints are standard ASP.NET Core endpoints. All auth infrastructure works normally.
 
 ```csharp
 app.MapConduitEndpoint().RequireAuthorization();
-```
-
-Require authentication on the SignalR hub:
-
-```csharp
 app.MapHub<ConduitHub>("/hub").RequireAuthorization();
 ```
 
-Use `[Authorize]` on a custom hub subclass:
+Or use `[Authorize]` on a hub subclass:
 
 ```csharp
-using Microsoft.AspNetCore.Authorization;
-using Conduit.Transport.SignalR;
-
 [Authorize]
 public class SecureConduitHub : ConduitHub;
 ```
@@ -157,8 +104,6 @@ public class SecureConduitHub : ConduitHub;
 app.MapHub<SecureConduitHub>("/hub");
 ```
 
-Authentication middleware, cookie auth, JWT bearer tokens, policy-based authorization -- all work as they would with any ASP.NET Core endpoint. Conduit sits downstream of the middleware pipeline. By the time a dispatch request reaches `TypeFilterInterceptor` or a handler, the user is already authenticated by ASP.NET Core.
-
-**Layered security**: Use ASP.NET Core auth to verify identity, and `TypeFilterInterceptor` to restrict which message types authenticated clients can dispatch.
+Use ASP.NET Core auth to verify identity. Use `TypeFilterInterceptor` to restrict which message types authenticated clients can dispatch.
 
 Next: [Configuration Reference](configuration-reference.md)

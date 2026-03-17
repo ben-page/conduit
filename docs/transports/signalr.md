@@ -1,22 +1,8 @@
 # SignalR Transport
 
-SignalR gives you a persistent, bidirectional connection between clients and your server. Browser clients dispatch commands and receive events on the same connection — no polling, no separate webhook endpoints. Services can also connect to each other over SignalR for real-time cross-service dispatch with automatic reconnect.
+SignalR provides persistent, bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect.
 
-## Setup
-
-```csharp
-builder.Services.AddConduitSignalR();
-```
-
-```csharp
-app.MapHub<ConduitHub>("/hub");
-```
-
-`AddConduitSignalR()` does three things: calls `AddSignalR()` on the service collection, registers `SignalRTransport` as a singleton, and registers that same instance as `IConduitTransport`. The transport starts in server mode -- it holds an `IHubContext<ConduitHub>` and pushes events to connected clients.
-
-`MapHub<ConduitHub>` maps the inbound SignalR hub. The hub exposes two methods to clients: `Dispatch` (commands/queries) and `Publish` (events).
-
-Full server setup from the Notes sample:
+## Server setup
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
@@ -29,19 +15,23 @@ app.MapHub<ConduitHub>("/hub");
 app.Run();
 ```
 
+`AddConduitSignalR()` registers SignalR services, creates a `SignalRTransport` in server mode, and registers it as `IConduitTransport`. The transport holds an `IHubContext<ConduitHub>` and pushes events to connected clients.
+
+`MapHub<ConduitHub>` maps the inbound hub. It exposes two methods: `Dispatch` for commands/queries and `Publish` for events.
+
 ## Bidirectional communication
 
 A single SignalR connection carries traffic in both directions.
 
-**Client to server:** Commands and queries go through the hub's `Dispatch` method. The hub resolves `IWireMediator` from DI and delegates to `HandleWireRequestAsync`. Events go through `Publish`, which delegates to `HandleWireEventAsync`.
+**Client to server.** Commands and queries go through the hub's `Dispatch` method. Events go through `Publish`. Both delegate to `IWireMediator`.
 
-**Server to client:** When your handler calls `mediator.PublishAsync(event)`, the generated mediator dispatches to local listeners and then broadcasts to every registered `IConduitTransport`. The server-mode `SignalRTransport` calls `hubContext.Clients.All.SendAsync(type, payload)`, pushing the event to all connected clients over their existing connections.
+**Server to client.** When a handler calls `mediator.PublishAsync(event)`, the server-mode `SignalRTransport` pushes the event to all connected clients via `Clients.All.SendAsync`.
 
-No separate subscription step is needed. Clients receive events by listening for the event's full type name on the connection:
+No subscription step is needed. Clients receive events by listening for the event's full type name:
 
 ```typescript
 // TypeScript (browser)
-conduit.on('MyApp.Events.OrderShippedEvent', (event) => {
+client.on('MyApp.Events.OrderShippedEvent', (event) => {
   console.log('Shipped:', event.orderId);
 });
 ```
@@ -59,16 +49,16 @@ hubConnection.On<JsonElement>("MyApp.Events.OrderShippedEvent", payload =>
 The most common pattern: send a command, receive the resulting event on the same connection.
 
 ```csharp
-// Server: handler publishes an event after processing
-public class CreateNoteHandler(NoteStore store, IMediator mediator)
-    : ICommandHandler<CreateNoteCommand, Guid>
+// Server handler publishes an event after processing
+public class PlaceOrderHandler(IMediator mediator)
+    : ICommandHandler<PlaceOrderCommand, Guid>
 {
     public async Task<Guid> HandleAsync(
-        CreateNoteCommand command, CancellationToken cancellationToken)
+        PlaceOrderCommand command, CancellationToken cancellationToken)
     {
-        var id = store.Add(command.Text);
+        var id = orderStore.Add(command);
         await mediator.PublishAsync(
-            new NoteCreatedEvent(id, command.Text), cancellationToken);
+            new OrderPlacedEvent(id, command.Total), cancellationToken);
         return id;
     }
 }
@@ -76,42 +66,42 @@ public class CreateNoteHandler(NoteStore store, IMediator mediator)
 
 ```typescript
 // Browser: subscribe to the event, then send the command
-conduit.on('Conduit.Sample.Notes.Events.NoteCreatedEvent', (event) => {
-  console.log('Created:', event.id, event.text);
+client.on('MyApp.Events.OrderPlacedEvent', (event) => {
+  console.log('Order placed:', event.orderId);
 });
 
-const result = await conduit.execute(
-  'Conduit.Sample.Notes.Commands.CreateNoteCommand',
-  { text: 'Buy groceries' }
+const result = await client.execute(
+  'MyApp.Commands.PlaceOrderCommand',
+  { total: 59.99 }
 );
 ```
 
 The flow:
 
-1. Browser sends `CreateNoteCommand` via the hub's `Dispatch` method.
-2. Server handles the command, calls `PublishAsync(new NoteCreatedEvent(...))`.
-3. `PublishAsync` dispatches to local listeners, then the server-mode `SignalRTransport` broadcasts the event via `Clients.All.SendAsync`.
-4. Browser receives `NoteCreatedEvent` on the same connection.
-5. The `Dispatch` call also returns the command result (`Guid`) as a `DispatchResult<string>`.
+1. Browser sends `PlaceOrderCommand` via the hub's `Dispatch` method.
+2. Server handles the command and calls `PublishAsync(new OrderPlacedEvent(...))`.
+3. The server-mode `SignalRTransport` broadcasts the event to all connected clients.
+4. Browser receives `OrderPlacedEvent` on the same connection.
+5. The `Dispatch` call also returns the command result as a `DispatchResult`.
 
-The command response and the event arrive independently. The response comes back as the return value of `Dispatch`. The event arrives as a push on the connection. Your code handles them separately.
+The command response and the event arrive independently. The response is the return value of `Dispatch`. The event arrives as a push.
 
 ## Client mode (service-to-service)
 
-For C# services that need to send commands to a remote SignalR hub, configure an endpoint with `UseSignalR`:
+For a C# service that sends commands to a remote SignalR hub, configure an endpoint with `UseSignalR`:
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
-        endpoint.UseSignalR(new Uri("https://localhost:5101/hub")));
-    conduit.Route("Conduit.Sample.Inventory").To("inventory");
+        endpoint.UseSignalR(new Uri("https://inventory-service/hub")));
+    conduit.Route("Inventory.Commands").To("inventory");
 });
 ```
 
-This creates a `SignalRTransport` in client mode. Instead of an `IHubContext`, it wraps a `HubConnection` configured with `WithAutomaticReconnect()`. The connection is lazy -- it auto-starts on the first dispatch call via `EnsureConnectedAsync`, so your service starts without waiting for the remote hub to be available.
+This creates a `SignalRTransport` in client mode. It wraps a `HubConnection` with automatic reconnect. The connection is lazy and auto-starts on the first dispatch call, so your service starts without waiting for the remote hub.
 
-The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept inbound requests:
+The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept requests:
 
 ```csharp
 // Inventory service (remote)
@@ -123,35 +113,20 @@ app.MapHub<ConduitHub>("/hub");
 app.Run();
 ```
 
-```csharp
-// Order service (caller)
-builder.Services.AddConduit(conduit =>
-{
-    conduit.AddEndpoint("inventory", endpoint =>
-        endpoint.UseSignalR(new Uri("https://localhost:5101/hub")));
-    conduit.Route("Conduit.Sample.Inventory").To("inventory");
-});
-```
-
-When the order service dispatches a command in the `Conduit.Sample.Inventory` namespace, the generated mediator finds the route, serializes the command into a `DispatchEnvelope`, and sends it through the client-mode `SignalRTransport` to the inventory service's hub.
-
 ## Multi-pod deployment
 
-On a single pod (or single server), everything works without extra configuration. The server-mode `SignalRTransport` calls `Clients.All.SendAsync`, which reaches all connections on that server.
+On a single pod, server-mode `SignalRTransport` calls `Clients.All.SendAsync` and reaches all connections on that server.
 
-For multiple pods, unsolicited server-to-client events only reach clients connected to the pod that published the event. To broadcast across pods, add a SignalR backplane:
-
-- **Azure SignalR Service** -- managed, no infrastructure to maintain
-- **Redis backplane** -- `Microsoft.AspNetCore.SignalR.StackExchangeRedis`
+For multiple pods, unsolicited events only reach clients on the pod that published the event. To broadcast across pods, add a SignalR backplane:
 
 ```csharp
-// Example: Redis backplane
+// Redis backplane
 builder.Services.AddSignalR()
     .AddStackExchangeRedis("localhost:6379");
 ```
 
-This is a standard ASP.NET Core concern, not Conduit-specific. The backplane ensures `Clients.All.SendAsync` reaches every connected client regardless of which pod they are connected to. Conduit's `SignalRTransport` does not need any changes -- it calls the same `IHubContext` API either way.
+This is standard ASP.NET Core configuration, not Conduit-specific. The backplane ensures `Clients.All.SendAsync` reaches every connected client regardless of pod. Conduit's transport works the same either way.
 
-Solicited events (command triggers event on the same pod) work without a backplane as long as the client that sent the command is connected to the pod that handles it, which is always the case for direct hub calls.
+Solicited events (command triggers event on the same pod) work without a backplane because the client is always connected to the pod handling its request.
 
-Next: [HTTP Transport](http-transport.md)
+Next: [TypeScript Client](typescript-client.md)

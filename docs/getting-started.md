@@ -19,7 +19,7 @@ Install Conduit and dispatch your first command in a single ASP.NET Core project
 </Project>
 ```
 
-`Conduit.SourceGen` and `Conduit.Analysis` must be referenced as analyzers — the source generator runs at compile time and needs both to discover your message types and emit the dispatch infrastructure.
+`Conduit.SourceGen` and `Conduit.Analysis` must be referenced as analyzers. The source generator runs at compile time to discover your message types and emit dispatch infrastructure.
 
 ## Define a command and handler
 
@@ -40,7 +40,7 @@ public class CreateTodoHandler : ICommandHandler<CreateTodoCommand, Guid>
 }
 ```
 
-`ICommand<Guid>` declares a command that returns a `Guid`. The source generator finds `CreateTodoCommand` and `CreateTodoHandler` at compile time — no registration attributes or assembly scanning required.
+`ICommand<Guid>` declares a command that returns a `Guid`. The source generator finds `CreateTodoCommand` and `CreateTodoHandler` at compile time. No registration attributes or assembly scanning required.
 
 ## Wire up and dispatch
 
@@ -62,18 +62,18 @@ app.MapGet("/", async (IMediator mediator) =>
 app.Run();
 ```
 
-`AddConduit()` is source-generated. It registers all discovered handlers and the generated `ConduitMediator` with DI — no manual registration needed. If the source generator can see your type, it gets wired up.
+`AddConduit()` is source-generated. It registers all discovered handlers and the generated `ConduitMediator` with DI. If the source generator can see your type, it gets wired up.
 
 `IMediator` is the dispatch interface your application code uses. Inject it anywhere and call `ExecuteAsync` for commands, `FetchAsync` for queries, or `PublishAsync` for events.
 
 ## What the source generator produced
 
-At compile time, the source generator found `CreateTodoCommand` and `CreateTodoHandler` and emitted:
+At compile time, the source generator emitted:
 
-- A `ConduitMediator` that dispatches `CreateTodoCommand` directly to `CreateTodoHandler` via a compiled type switch — no reflection, no `Dictionary<Type, ...>` lookups
-- An `AddConduit()` extension method that registers everything in DI
+- A `ConduitMediator` that dispatches `CreateTodoCommand` directly to `CreateTodoHandler` via a compiled type switch. No reflection, no `Dictionary<Type, ...>` lookups.
+- An `AddConduit()` extension method that registers everything in DI.
 
-The generated code is visible in your IDE under Analyzers → Conduit.SourceGen.
+The generated code is visible in your IDE under Analyzers > Conduit.SourceGen.
 
 You now have in-process dispatch. The next sections show how to extend this to the browser and other services.
 

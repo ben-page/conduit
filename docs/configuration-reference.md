@@ -1,6 +1,6 @@
 # Configuration Reference
 
-## ConduitBuilder Methods
+## ConduitBuilder methods
 
 Available inside the `AddConduit` callback:
 
@@ -13,36 +13,45 @@ builder.Services.AddConduit(conduit =>
 
 | Method | Purpose | Example |
 |---|---|---|
-| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport | `conduit.AddEndpoint("orders-api", e => e.UseHttp("https://localhost:5002"))` |
-| `Route(pattern)` | Route commands/queries by namespace prefix to an endpoint | `conduit.Route("Orders.Commands").To("orders-api")` |
-| `Route<T>()` | Route commands/queries using a type's namespace as the pattern | `conduit.Route<CreateOrder>().To("orders-api")` |
-| `AddPipeline(behaviorType)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. Wraps commands, queries, and events uniformly. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
-| `AddTypeFilter(configure)` | Add a wire interceptor that restricts which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
+| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport | `conduit.AddEndpoint("orders", e => e.UseHttp(httpClient))` |
+| `Route(pattern)` | Route commands/queries by namespace prefix to an endpoint | `conduit.Route("Orders.Commands").To("orders")` |
+| `Route<T>()` | Route using a type's namespace as the pattern | `conduit.Route<CreateOrder>().To("orders")` |
+| `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
+| `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
+
+## Endpoint transports
+
+Available inside the `AddEndpoint` callback:
+
+| Method | Transport | Notes |
+|---|---|---|
+| `UseSignalR(uri)` | SignalR client mode | Connects to a remote `ConduitHub` |
+| `UseHttp(httpClient)` | HTTP | POSTs to `/api/dispatch` on the remote service |
+| `UseAzureServiceBus(conn)` | Azure Service Bus | Durable broker-based messaging |
+| `UseRabbitMQ(conn)` | RabbitMQ | Durable broker-based messaging over AMQP |
 
 ## Attributes
 
 | Attribute | Target | Purpose |
 |---|---|---|
-| `[LocalOnly]` | `class` (events) | Prevent event from being broadcast to transports. Dispatches only to local listeners. |
-| `[ClientVisible]` | `class` (any message or DTO) | Include type in TypeScript code generation output. No runtime effect. |
-| `[assembly: RemoteContracts("Ns")]` | `assembly` | Suppress CONDUIT001 for types whose namespace starts with the given pattern. Use when referencing shared contracts handled by another service. |
+| `[LocalOnly]` | Event types | Prevent event from broadcasting to transports |
+| `[ClientVisible]` | Any type | Include in TypeScript generation output |
+| `[assembly: RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace |
 
-## MSBuild Properties (TypeGen)
-
-Set in your project's `.csproj` to control TypeScript generation.
+## MSBuild properties (TypeGen)
 
 | Property | Default | Purpose |
 |---|---|---|
-| `ConduitTypeGenEnabled` | `false` | Set to `true` to enable TypeScript generation on build |
-| `ConduitTypeGenOutput` | `ClientApp/generated` | Output directory for generated `.ts` files |
-| `ConduitTransports` | `Http;SignalR` | Semicolon-separated list of transports to emit in `conduit.ts` |
+| `ConduitTypeGenEnabled` | `false` | Set to `true` to enable TypeScript generation |
+| `ConduitTypeGenOutput` | `ClientApp/generated` | Output directory for `.ts` files |
+| `ConduitTransports` | `Http;SignalR` | Transports to include in `conduit.ts` |
 
 ## Diagnostics
 
 | Code | Severity | Description | Resolution |
 |---|---|---|---|
-| CONDUIT001 | Warning | No handler found for a command or query | Add a handler class implementing `ICommandHandler<T>` / `IQueryHandler<T, TResult>`, or add `[assembly: RemoteContracts("Namespace")]` if the type is handled by another service |
-| CONDUIT002 | Error | Multiple handlers found for a command or query | Remove the duplicate handler. Only one handler per command/query is allowed. |
-| CONDUIT004 | Warning | Dispatchable type has neither `[Authorize]` nor `[AllowAnonymous]` | Add `[Authorize]` or `[AllowAnonymous]` to the type |
+| CONDUIT001 | Warning | No handler found for a command or query | Add a handler or use `[assembly: RemoteContracts("Ns")]` |
+| CONDUIT002 | Error | Multiple handlers for a command or query | Remove the duplicate handler |
+| CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
 
 Next: [FAQ](faq.md)
