@@ -1,5 +1,7 @@
 # SignalR Transport
 
+SignalR gives you a persistent, bidirectional connection between clients and your server. Browser clients dispatch commands and receive events on the same connection — no polling, no separate webhook endpoints. Services can also connect to each other over SignalR for real-time cross-service dispatch with automatic reconnect.
+
 ## Setup
 
 ```csharp
@@ -27,9 +29,9 @@ app.MapHub<ConduitHub>("/hub");
 app.Run();
 ```
 
-## Bidirectional events
+## Bidirectional communication
 
-SignalR gives you a single connection that carries traffic in both directions.
+A single SignalR connection carries traffic in both directions.
 
 **Client to server:** Commands and queries go through the hub's `Dispatch` method. The hub resolves `IWireMediator` from DI and delegates to `HandleWireRequestAsync`. Events go through `Publish`, which delegates to `HandleWireEventAsync`.
 

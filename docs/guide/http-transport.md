@@ -1,6 +1,6 @@
 # HTTP Transport
 
-Conduit.Transport.Http provides two ways to expose your messages over HTTP: RESTful endpoints for external APIs, and envelope dispatch for internal service-to-service communication.
+Conduit's HTTP transport maps your commands and queries directly to HTTP endpoints — either as conventional RESTful routes with full OpenAPI and ASP.NET Core middleware support, or as a unified envelope endpoint for internal service-to-service communication. Your message types become your API contracts without a separate controller or mapping layer.
 
 ## RESTful endpoints
 

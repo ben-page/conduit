@@ -1,5 +1,7 @@
 # Error Handling
 
+Conduit provides a structured error model that works consistently across all transports. Handlers throw typed exceptions, and Conduit translates them into the appropriate response format — Problem Details for RESTful endpoints, `DispatchResult` error envelopes for wire dispatch, and log entries for fire-and-forget events. Custom error codes with domain-specific HTTP status codes are supported out of the box.
+
 ## ErrorCode
 
 `ErrorCode` is a record that pairs a machine-readable string with an HTTP status code:

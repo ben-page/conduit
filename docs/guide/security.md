@@ -1,5 +1,7 @@
 # Security
 
+Conduit provides three layers of security that work alongside ASP.NET Core's authentication and authorization infrastructure: inbound type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent sensitive events from leaving the process, and `IWireInterceptor` for custom wire-level middleware like audit logging and rate limiting.
+
 ## TypeFilterInterceptor
 
 ```csharp

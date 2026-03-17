@@ -1,6 +1,6 @@
 # Pipeline Behaviors
 
-Pipeline behaviors are middleware that wrap every command, query, and event dispatch. They form a Russian-doll chain: each behavior calls `next()` to invoke the next behavior or the handler itself. First registered = outermost.
+Pipeline behaviors let you inject cross-cutting concerns — logging, validation, timing, authorization checks — into the dispatch pipeline without modifying individual handlers. They wrap every command, query, and event dispatch in a Russian-doll chain: each behavior calls `next()` to continue down the pipeline or short-circuits by returning early. First registered = outermost.
 
 ## Defining a behavior
 

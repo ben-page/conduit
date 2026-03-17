@@ -1,6 +1,6 @@
 # Cross-Service Routing
 
-Conduit routes commands and queries to remote services transparently. The calling code uses `IMediator` the same way it would for local dispatch -- the generated mediator checks the route table and sends over the wire when a match is found.
+Conduit routes commands and queries to remote services transparently — the calling code uses `IMediator` identically to local dispatch. Configure where messages go, and the generated mediator handles serialization, transport, and deserialization. The handler's location becomes a deployment concern, not a code concern.
 
 This walkthrough uses two services from the sample apps: an Orders service that sends commands, and an Inventory service that handles them.
 
@@ -16,7 +16,7 @@ Put message types in a standalone class library. Both services reference it. The
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\..\src\Conduit\Conduit.csproj" />
+    <PackageReference Include="Conduit" />
   </ItemGroup>
 </Project>
 ```
