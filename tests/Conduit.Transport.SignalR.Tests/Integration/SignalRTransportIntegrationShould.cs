@@ -10,9 +10,9 @@ namespace Conduit.Transport.SignalR.Tests.Integration;
 [TestClass]
 public class SignalRTransportShould
 {
-    private static TestHost CreateHandlerHost()
+    private static TestWebHost CreateHandlerHost()
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -23,9 +23,9 @@ public class SignalRTransportShould
             app => app.MapHub<ConduitHub>("/hub"));
     }
 
-    private static TestHost CreateCallerHost(string remoteAddress)
+    private static TestWebHost CreateCallerHost(string remoteAddress)
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();

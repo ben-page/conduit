@@ -14,7 +14,7 @@ public class PipelineShould
     public async Task WrapCommandExecution()
     {
         // Arrange
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<PipelineLog>();
             builder.Services.AddConduit(conduit =>
@@ -39,7 +39,7 @@ public class PipelineShould
     public async Task WrapVoidCommandExecution()
     {
         // Arrange
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
@@ -69,7 +69,7 @@ public class PipelineShould
     public async Task WrapQueryExecution()
     {
         // Arrange
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
@@ -99,7 +99,7 @@ public class PipelineShould
     public async Task WrapEventPublishing()
     {
         // Arrange — same open generic pipeline wraps events too
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();

@@ -9,9 +9,9 @@ namespace Conduit.Tests.Integration;
 [TestClass]
 public class MediatorShould
 {
-    private static TestHost CreateTestHost(Action<IServiceCollection>? configure = null)
+    private static TestWebHost CreateTestHost(Action<IServiceCollection>? configure = null)
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();

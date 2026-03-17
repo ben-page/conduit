@@ -14,9 +14,9 @@ namespace Conduit.Transport.SignalR.Tests.Integration;
 [TestClass]
 public class SignalRInterceptorShould
 {
-    private static TestHost CreateHostWithTypeFilter()
+    private static TestWebHost CreateHostWithTypeFilter()
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();

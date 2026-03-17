@@ -15,7 +15,7 @@ public class EventBroadcastShould
     {
         // Arrange
         var spyTransport = new SpyTransport();
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
@@ -40,7 +40,7 @@ public class EventBroadcastShould
         // Arrange
         var spyA = new SpyTransport();
         var spyB = new SpyTransport();
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
@@ -64,7 +64,7 @@ public class EventBroadcastShould
     public async Task NotBroadcastWhenNoTransportsRegistered()
     {
         // Arrange — no IConduitTransport in DI
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
@@ -85,7 +85,7 @@ public class EventBroadcastShould
     {
         // Arrange — DI transport should only receive events, not commands
         var broadcastTransport = new SpyTransport();
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
@@ -106,7 +106,7 @@ public class EventBroadcastShould
     {
         // Arrange
         var spyTransport = new SpyTransport();
-        await using var host = TestHost.Start(builder =>
+        await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();

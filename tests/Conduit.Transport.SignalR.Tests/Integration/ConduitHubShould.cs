@@ -13,9 +13,9 @@ namespace Conduit.Transport.SignalR.Tests.Integration;
 [TestClass]
 public class ConduitHubShould
 {
-    private static TestHost CreateHost()
+    private static TestWebHost CreateHost()
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();

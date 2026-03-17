@@ -17,7 +17,7 @@ public class EventBroadcastShould
         // Arrange
         var recordingTransport = new RecordingTransport();
 
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -49,7 +49,7 @@ public class EventBroadcastShould
         // Arrange
         var recordingTransport = new RecordingTransport();
 
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();

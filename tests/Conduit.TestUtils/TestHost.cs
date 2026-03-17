@@ -1,58 +1,47 @@
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace Conduit.TestUtils;
 
 /// <summary>
-/// Lightweight wrapper around <see cref="WebApplication"/> for integration tests.
-/// Creates a service scope so each test gets isolated scoped services,
-/// and exposes <see cref="GetRequiredService{T}"/> for convenience.
+/// Lightweight wrapper around <see cref="IHost"/> for broker transport integration tests.
+/// Starts hosted services (including transport receivers) before returning.
 /// </summary>
 public sealed class TestHost : IAsyncDisposable
 {
-    private readonly WebApplication app;
+    private readonly IHost host;
     private readonly IServiceScope scope;
-
-    /// <summary>
-    /// The base address of the running host (e.g. "http://127.0.0.1:12345").
-    /// Available after <see cref="Start"/>.
-    /// </summary>
-    public string Address => this.app.Urls.First();
 
     /// <summary>
     /// The scoped service provider for this test host.
     /// </summary>
     public IServiceProvider Services => this.scope.ServiceProvider;
 
-    private TestHost(WebApplication app)
+    private TestHost(IHost host)
     {
-        this.app = app;
-        this.scope = app.Services.CreateScope();
+        this.host = host;
+        this.scope = host.Services.CreateScope();
     }
 
     /// <summary>
-    /// Creates, configures, and starts a test host.
+    /// Creates, configures, and starts a test host with all hosted services.
     /// </summary>
-    /// <param name="configureBuilder">
-    /// Callback to register services. This is where tests call AddConduit(),
-    /// AddConduitSignalR(), and register their own types.
-    /// </param>
-    /// <param name="configureApp">
-    /// Callback to configure middleware and endpoints (e.g. MapHub, MapConduitEndpoint).
-    /// </param>
-    public static TestHost Start(
-        Action<WebApplicationBuilder> configureBuilder,
-        Action<WebApplication>? configureApp = null)
+    public static async Task<TestHost> StartAsync(
+        Action<HostApplicationBuilder> configureBuilder)
     {
-        var builder = WebApplication.CreateBuilder();
+        var builder = Host.CreateApplicationBuilder();
         configureBuilder(builder);
-
-        var app = builder.Build();
-        configureApp?.Invoke(app);
-        app.Urls.Add("http://127.0.0.1:0");
-        app.Start();
-        return new TestHost(app);
+        var host = builder.Build();
+        try
+        {
+            await host.StartAsync();
+            return new TestHost(host);
+        }
+        catch
+        {
+            host.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -65,6 +54,7 @@ public sealed class TestHost : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         this.scope.Dispose();
-        await this.app.DisposeAsync();
+        await this.host.StopAsync();
+        this.host.Dispose();
     }
 }

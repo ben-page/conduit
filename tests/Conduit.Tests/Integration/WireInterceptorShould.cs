@@ -12,9 +12,9 @@ namespace Conduit.Tests.Integration;
 [TestClass]
 public class WireInterceptorShould
 {
-    private static TestHost CreateTestHost(Action<IServiceCollection>? configure = null)
+    private static TestWebHost CreateTestHost(Action<IServiceCollection>? configure = null)
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -96,7 +96,7 @@ public class WireInterceptorShould
     public async Task RejectUnauthorizedTypeViaTypeFilter()
     {
         // Arrange
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -122,7 +122,7 @@ public class WireInterceptorShould
     public async Task AllowAuthorizedTypeViaTypeFilter()
     {
         // Arrange
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
