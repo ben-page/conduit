@@ -12,9 +12,9 @@ namespace Conduit.Transport.Http.Tests.Integration;
 [TestClass]
 public class HttpTransportShould
 {
-    private static TestHost CreateHandlerHost()
+    private static TestWebHost CreateHandlerHost()
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -28,9 +28,9 @@ public class HttpTransportShould
             });
     }
 
-    private static TestHost CreateCallerHost(string remoteAddress)
+    private static TestWebHost CreateCallerHost(string remoteAddress)
     {
-        return TestHost.Start(
+        return TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();

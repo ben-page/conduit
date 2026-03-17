@@ -14,7 +14,7 @@ public class RoutingShould
     {
         // Arrange — route configured for a different namespace
         var spyTransport = new SpyTransport();
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -43,7 +43,7 @@ public class RoutingShould
     {
         // Arrange — route matches the test type namespace
         var spyTransport = new SpyTransport { RequestResult = Guid.NewGuid() };
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -70,7 +70,7 @@ public class RoutingShould
     {
         // Arrange
         var spyTransport = new SpyTransport { RequestResult = "remote result" };
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -97,7 +97,7 @@ public class RoutingShould
     {
         // Arrange — route matches the event namespace, but events don't use routes
         var endpointTransport = new SpyTransport();
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
@@ -125,7 +125,7 @@ public class RoutingShould
     {
         // Arrange — use Route<T>() which routes by the type's namespace
         var spyTransport = new SpyTransport { RequestResult = Guid.NewGuid() };
-        await using var host = TestHost.Start(
+        await using var host = TestWebHost.Start(
             builder =>
             {
                 builder.Services.AddSingleton<ItemStore>();
