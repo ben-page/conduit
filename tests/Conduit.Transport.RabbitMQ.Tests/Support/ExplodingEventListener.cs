@@ -2,9 +2,9 @@ using Conduit.Handlers;
 
 namespace Conduit.Transport.RabbitMQ.Tests.Support;
 
-public class FailingEventListener : IEventListener<FailingEvent>
+public class ExplodingEventListener : IEventListener<ExplodingEvent>
 {
-    public Task HandleAsync(FailingEvent @event, CancellationToken cancellationToken)
+    public Task HandleAsync(ExplodingEvent @event, CancellationToken cancellationToken)
     {
         throw new InvalidOperationException("Listener failed intentionally");
     }
