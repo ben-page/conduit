@@ -91,18 +91,26 @@ public static class ConduitRuntime
                         $"Ensure AddEndpoint(\"{route.EndpointName}\", ...) is called in your Conduit configuration.");
                 }
 
-                if (endpoint.Transport is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Endpoint '{route.EndpointName}' has no transport configured. " +
-                        $"Call UseHttp() or UseSignalR(uri) in the endpoint configuration.");
-                }
-
                 return endpoint;
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the transport for a named endpoint from DI using keyed services.
+    /// Throws a descriptive error if no transport is registered for the endpoint.
+    /// </summary>
+    public static IConduitTransport ResolveTransport(IServiceProvider serviceProvider, ConduitEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(serviceProvider);
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        return serviceProvider.GetKeyedService<IConduitTransport>(endpoint.Name)
+            ?? throw new InvalidOperationException(
+                $"Endpoint '{endpoint.Name}' has no transport configured. " +
+                $"Call UseHttp(), UseSignalR(), UseAzureServiceBus(), or UseRabbitMQ() in the endpoint configuration.");
     }
 
     /// <summary>
