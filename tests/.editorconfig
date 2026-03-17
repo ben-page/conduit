@@ -5,4 +5,6 @@ dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA1852.severity = none
 # CA1062: Validate arguments of public methods (test methods don't need null guards)
 dotnet_diagnostic.CA1062.severity = none
+# CA1031: Do not catch general exception type (test infrastructure catches all container startup failures)
+dotnet_diagnostic.CA1031.severity = none
 
