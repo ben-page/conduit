@@ -1,6 +1,6 @@
 # Core Concepts
 
-Conduit uses three message types — commands, queries, and events — each with a dedicated interface, handler type, and dispatch method. The source generator discovers all of them automatically.
+Conduit has three message types: commands, queries, and events. Each has a dedicated interface, handler type, and dispatch method. The source generator discovers all of them automatically.
 
 ## Commands
 
@@ -9,11 +9,11 @@ Commands represent operations that change state. They optionally return a result
 ```csharp
 using Conduit.Messages;
 
-// Void command — performs a side effect, returns nothing
-public record DeleteNote(Guid Id) : ICommand;
+// Void command, returns nothing
+public record DeleteTodo(Guid Id) : ICommand;
 
-// Result-returning command — performs a side effect and returns data
-public record CreateNote(string Title, string Body) : ICommand<Guid>;
+// Result-returning command
+public record CreateTodo(string Title, string Body) : ICommand<Guid>;
 ```
 
 Each command has exactly one handler. The handler interface matches the command's return type:
@@ -21,35 +21,35 @@ Each command has exactly one handler. The handler interface matches the command'
 ```csharp
 using Conduit.Handlers;
 
-public class DeleteNoteHandler : ICommandHandler<DeleteNote>
+public class DeleteTodoHandler : ICommandHandler<DeleteTodo>
 {
-    public Task HandleAsync(DeleteNote command, CancellationToken cancellationToken)
+    public Task HandleAsync(DeleteTodo command, CancellationToken cancellationToken)
     {
-        // Delete the note
+        // Delete the todo
     }
 }
 
-public class CreateNoteHandler : ICommandHandler<CreateNote, Guid>
+public class CreateTodoHandler : ICommandHandler<CreateTodo, Guid>
 {
-    public Task<Guid> HandleAsync(CreateNote command, CancellationToken cancellationToken)
+    public Task<Guid> HandleAsync(CreateTodo command, CancellationToken cancellationToken)
     {
-        // Create the note, return its ID
+        // Create the todo, return its ID
     }
 }
 ```
 
-The source generator enforces one-handler-per-command. Multiple handlers for the same command produce a `CONDUIT002` compile error. A command with no handler produces a `CONDUIT001` warning.
+The source generator enforces one-handler-per-command. Multiple handlers produce a `CONDUIT002` compile error. A command with no handler produces a `CONDUIT001` warning.
 
 ## Queries
 
-Queries are read-only operations that always return data.
+Queries are read-only and always return data.
 
 ```csharp
 using Conduit.Messages;
 
-public record GetNoteById(Guid Id) : IQuery<NoteDto>;
+public record GetTodoById(Guid Id) : IQuery<TodoDto>;
 
-public record ListNotes(int Page, int PageSize) : IQuery<PagedResult<NoteDto>>;
+public record ListTodos(int Page, int PageSize) : IQuery<PagedResult<TodoDto>>;
 ```
 
 Handlers implement `IQueryHandler<TQuery, TResult>`:
@@ -57,77 +57,77 @@ Handlers implement `IQueryHandler<TQuery, TResult>`:
 ```csharp
 using Conduit.Handlers;
 
-public class GetNoteByIdHandler : IQueryHandler<GetNoteById, NoteDto>
+public class GetTodoByIdHandler : IQueryHandler<GetTodoById, TodoDto>
 {
-    public Task<NoteDto> HandleAsync(GetNoteById query, CancellationToken cancellationToken)
+    public Task<TodoDto> HandleAsync(GetTodoById query, CancellationToken cancellationToken)
     {
-        // Fetch and return the note
+        // Fetch and return the todo
     }
 }
 ```
 
-The same one-handler rule applies. The compiler enforces the distinction between commands and queries — a handler that implements `IQueryHandler` cannot be registered against an `ICommand` type.
+The same one-handler rule applies.
 
 ## Events
 
-Events represent something that already happened. They use pub/sub: zero, one, or many listeners can respond to the same event. Listeners run independently — if one throws, the rest still execute (continue-on-failure semantics).
+Events represent something that already happened. They use pub/sub: zero, one, or many listeners can respond to the same event. Listeners run independently. If one throws, the rest still execute.
 
 ```csharp
 using Conduit.Messages;
 
-public record NoteCreated(Guid Id, string Title) : IEvent;
+public record TodoCompleted(Guid Id, string Title) : IEvent;
 ```
 
-Listeners implement `IEventListener<TEvent>` (the name avoids collision with `System.EventHandler`):
+Listeners implement `IEventListener<TEvent>`:
 
 ```csharp
 using Conduit.Handlers;
 
-public class SendNoteNotification : IEventListener<NoteCreated>
+public class SendCompletionNotification : IEventListener<TodoCompleted>
 {
-    public Task HandleAsync(NoteCreated @event, CancellationToken cancellationToken)
+    public Task HandleAsync(TodoCompleted @event, CancellationToken cancellationToken)
     {
         // Send a push notification
     }
 }
 
-public class UpdateSearchIndex : IEventListener<NoteCreated>
+public class UpdateCompletionStats : IEventListener<TodoCompleted>
 {
-    public Task HandleAsync(NoteCreated @event, CancellationToken cancellationToken)
+    public Task HandleAsync(TodoCompleted @event, CancellationToken cancellationToken)
     {
-        // Index the new note for full-text search
+        // Increment completion counters
     }
 }
 ```
 
-Unlike commands and queries, events have no handler limit. An event with zero listeners is also valid — it simply has no effect locally (though it may still broadcast to transports).
+An event with zero listeners is valid. It has no effect locally but may still broadcast to transports.
 
 ## Dispatching
 
 Inject `IMediator` and use the method that matches the message type:
 
 ```csharp
-public class NotesController(IMediator mediator)
+public class TodoService(IMediator mediator)
 {
-    public async Task CreateAndNotify(CancellationToken cancellationToken)
+    public async Task CompleteAndNotify(Guid id, CancellationToken cancellationToken)
     {
-        // Commands use ExecuteAsync — performs an action
-        Guid id = await mediator.ExecuteAsync(new CreateNote("Title", "Body"), cancellationToken);
+        // Commands use ExecuteAsync
+        await mediator.ExecuteAsync(new DeleteTodo(id), cancellationToken);
 
-        // Queries use FetchAsync — reads data
-        NoteDto note = await mediator.FetchAsync(new GetNoteById(id), cancellationToken);
+        // Queries use FetchAsync
+        TodoDto todo = await mediator.FetchAsync(new GetTodoById(id), cancellationToken);
 
-        // Events use PublishAsync — broadcasts to listeners
-        await mediator.PublishAsync(new NoteCreated(id, "Title"), cancellationToken);
+        // Events use PublishAsync
+        await mediator.PublishAsync(new TodoCompleted(id, todo.Title), cancellationToken);
     }
 }
 ```
 
-The method names are intentionally distinct: `ExecuteAsync` performs an action, `FetchAsync` reads data, `PublishAsync` broadcasts. There is no ambiguous `Send` method that handles multiple message types.
+The method names are intentionally distinct. `ExecuteAsync` performs an action, `FetchAsync` reads data, `PublishAsync` broadcasts. There is no ambiguous `Send` method.
 
 ## Validate()
 
-`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards — invariants that are always invalid regardless of application state. The generated mediator calls `Validate()` before dispatch.
+`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` before dispatch.
 
 ```csharp
 public record TransferFunds(
@@ -152,7 +152,9 @@ public record TransferFunds(
 }
 ```
 
-These checks are structural — a transfer of zero dollars or a transfer to `Guid.Empty` is nonsensical regardless of what accounts exist in the system. Validation that depends on application state belongs in the handler:
+These checks are structural. A transfer of zero dollars or to `Guid.Empty` is nonsensical regardless of what accounts exist.
+
+Validation that depends on application state belongs in the handler:
 
 ```csharp
 public class TransferFundsHandler : ICommandHandler<TransferFunds>
@@ -163,7 +165,7 @@ public class TransferFundsHandler : ICommandHandler<TransferFunds>
             ?? throw new NotFoundException($"Account {command.FromAccountId} not found");
 
         if (account.Balance < command.Amount)
-            throw new InsufficientFundsException(
+            throw new ConflictException(
                 $"Balance {account.Balance} is less than {command.Amount}");
 
         // Perform the transfer
@@ -171,14 +173,14 @@ public class TransferFundsHandler : ICommandHandler<TransferFunds>
 }
 ```
 
-Whether the account exists and whether it has sufficient funds are business rules that require database state. They belong in the handler, not in `Validate()`.
+Whether the account exists and whether it has sufficient funds require database state. They belong in the handler.
 
-`IEvent` does not have `Validate()`. Events represent something that already happened; there is nothing to guard against.
+`IEvent` does not have `Validate()`. Events represent something that already happened.
 
 ## Ownership model
 
-Commands and queries are owned by the service that handles them. The handler defines the contract. If `OrderService` handles `CreateOrder`, that command type lives in `OrderService` (or a shared contracts library that `OrderService` publishes).
+Commands and queries are owned by the service that handles them. The handler defines the contract. If an order service handles `CreateOrder`, that command type lives in the order service or a shared contracts library it publishes.
 
-Events are owned by the service that publishes them. The publisher defines the contract. If `OrderService` publishes `OrderCreated`, that event type lives in `OrderService`. Downstream listeners depend on it, not the other way around.
+Events are owned by the service that publishes them. If the order service publishes `OrderCreated`, that event type lives there. Downstream listeners depend on it, not the other way around.
 
-Next: [TypeScript Client](typescript-client.md)
+Next: [Transports](transports/index.md)

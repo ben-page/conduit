@@ -1,22 +1,16 @@
 # Error Handling
 
-Conduit provides a structured error model that works consistently across all transports. Handlers throw typed exceptions, and Conduit translates them into the appropriate response format — Problem Details for RESTful endpoints, `DispatchResult` error envelopes for wire dispatch, and log entries for fire-and-forget events. Custom error codes with domain-specific HTTP status codes are supported out of the box.
+Conduit provides a structured error model that works across all transports. Handlers throw typed exceptions. Conduit translates them into Problem Details for REST endpoints, `DispatchResult` error envelopes for wire dispatch, and log entries for fire-and-forget events.
 
 ## ErrorCode
 
-`ErrorCode` is a record that pairs a machine-readable string with an HTTP status code:
+`ErrorCode` pairs a machine-readable string with an HTTP status code:
 
 ```csharp
-public record ErrorCode
-{
-    public string Value { get; }
-    public int HttpStatusCode { get; }
-
-    public ErrorCode(string value, int httpStatusCode);
-}
+public record ErrorCode(string Value, int HttpStatusCode);
 ```
 
-Conduit ships five built-in codes:
+Built-in codes:
 
 | Code | Value | HTTP Status |
 |---|---|---|
@@ -26,9 +20,9 @@ Conduit ships five built-in codes:
 | `ErrorCode.InternalError` | `"InternalError"` | 500 |
 | `ErrorCode.BadRequest` | `"BadRequest"` | 400 |
 
-## Built-in Exceptions
+## Built-in exceptions
 
-Each built-in exception takes a message string and maps to its corresponding `ErrorCode`:
+Each maps to its corresponding `ErrorCode`:
 
 ```csharp
 throw new NotFoundException("Order 42 was not found");
@@ -36,27 +30,18 @@ throw new UnauthorizedException("API key is invalid");
 throw new ConflictException("Order was already shipped");
 ```
 
-All three are `sealed` subclasses of `ConduitException`:
+All three are sealed subclasses of `ConduitException`:
 
 ```csharp
 public abstract class ConduitException(ErrorCode code, string message) : Exception(message)
 {
     public ErrorCode Code => code;
 }
-
-public sealed class NotFoundException(string message)
-    : ConduitException(ErrorCode.NotFound, message);
-
-public sealed class UnauthorizedException(string message)
-    : ConduitException(ErrorCode.Unauthorized, message);
-
-public sealed class ConflictException(string message)
-    : ConduitException(ErrorCode.Conflict, message);
 ```
 
-## Custom Error Codes
+## Custom error codes
 
-Define your own `ErrorCode` and exception subclass for domain-specific errors:
+Define your own `ErrorCode` and exception for domain-specific errors:
 
 ```csharp
 public static class AppErrorCodes
@@ -71,80 +56,56 @@ public sealed class InsufficientCreditException(string message)
 Throw it like any other `ConduitException`:
 
 ```csharp
-public class DeductCreditHandler : ICommandHandler<DeductCredit, Receipt>
+if (command.Amount > currentBalance)
 {
-    public Task<Receipt> HandleAsync(DeductCredit command, CancellationToken cancellationToken)
-    {
-        if (command.Amount > currentBalance)
-        {
-            throw new InsufficientCreditException(
-                $"Balance {currentBalance} is less than required {command.Amount}");
-        }
-
-        // ...
-    }
+    throw new InsufficientCreditException(
+        $"Balance {currentBalance} is less than required {command.Amount}");
 }
 ```
 
-## Error Flow
+## Error flow
 
-When a handler throws a `ConduitException`, the error propagates differently depending on the endpoint type.
+### RESTful endpoints
 
-### Envelope Endpoint (wire dispatch)
-
-`ConduitRuntime.HandleWireRequest` catches the exception and returns a `DispatchResult<object>` with a `DispatchError`:
+The handler catches the exception and returns an RFC 9457 Problem Details response. The `HttpStatusCode` from `ErrorCode` is used directly, so custom error codes like `InsufficientCredit` with status 422 work automatically.
 
 ```
 Handler throws ConduitException
-  -> ConduitRuntime catches it
-  -> Returns DispatchResult<object>.Fail(ex.Code.Value, ex.Message)
+  -> Results.Problem(detail: ex.Message, statusCode: ex.Code.HttpStatusCode, title: ex.Code.Value)
 ```
 
-The `DispatchError.Code` is always the string `ErrorCode.Value` -- for example `"NotFound"`, `"InsufficientCredit"`. The HTTP transport's `MapConduitEndpoint` then maps that code string to an HTTP status code for the response:
+### Envelope endpoint (wire dispatch)
 
-| Error Code | HTTP Status |
-|---|---|
-| `"NotFound"` | 404 |
-| `"Unauthorized"` | 401 |
-| `"Conflict"` | 409 |
-| `"InternalError"` | 500 |
-| Any other code | 400 |
-
-Unhandled exceptions (non-`ConduitException`) are caught separately, logged at Error level, and returned as `DispatchResult.Fail("InternalError", "An unexpected error occurred")` -- the original exception message is never leaked to the caller.
-
-### RESTful Endpoint (generated REST routes)
-
-`ConduitRestHandlers` catches the exception and returns an RFC 9457 Problem Details response:
+`ConduitRuntime.HandleWireRequest` catches the exception and wraps it in a `DispatchResult`:
 
 ```
 Handler throws ConduitException
-  -> ConduitRestHandlers catches it
-  -> Returns Results.Problem(
-       detail: ex.Message,
-       statusCode: ex.Code.HttpStatusCode,
-       title: ex.Code.Value)
+  -> DispatchResult.Fail(ex.Code.Value, ex.Message)
 ```
 
-The `HttpStatusCode` from the `ErrorCode` is used directly as the response status. The `Value` becomes the Problem Details `title`, and the exception message becomes `detail`. Custom error codes like `InsufficientCredit` with status 422 work automatically -- no mapping table needed.
+The HTTP transport's `MapConduitEndpoint` maps the error code string to an HTTP status using a hardcoded switch: `NotFound` to 404, `Unauthorized` to 401, `Conflict` to 409, `InternalError` to 500, everything else to 400.
 
-### Wire Events
+Custom error codes with non-standard HTTP status fall through to 400 on the envelope endpoint. For accurate status codes on custom errors, use RESTful endpoints.
 
-Wire events are fire-and-forget. `ConduitRuntime.HandleWireEvent` catches all exceptions (including `ConduitException`) and logs them. No error is returned to the caller.
+### Unhandled exceptions
 
-## ErrorCode Equality
+Non-`ConduitException` errors are caught, logged at Error level, and returned as `DispatchResult.Fail("InternalError", "An unexpected error occurred")`. The original message is never leaked to the caller.
 
-`ErrorCode` equality is based on `Value` only. Two `ErrorCode` instances with the same `Value` but different `HttpStatusCode` values are considered equal:
+### Wire events
+
+Wire events are fire-and-forget. Exceptions are caught and logged. No error is returned to the caller.
+
+## ErrorCode equality
+
+`ErrorCode` equality is based on `Value` only. Two instances with the same `Value` but different `HttpStatusCode` are considered equal:
 
 ```csharp
 var a = new ErrorCode("InsufficientCredit", 422);
 var b = new ErrorCode("InsufficientCredit", 400);
 
-a == b           // true -- same Value
-a.GetHashCode()  // same as b.GetHashCode()
+a == b  // true
 ```
 
-`Value` is the wire identity -- it is the string that appears in `DispatchError.Code` and travels across service boundaries. The `HttpStatusCode` is a local concern used only when translating to HTTP responses.
-
----
+`Value` is the wire identity. It appears in `DispatchError.Code` and travels across service boundaries. `HttpStatusCode` is a local concern used only for HTTP responses.
 
 Next: [Security](security.md)

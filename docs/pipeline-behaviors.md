@@ -1,6 +1,6 @@
 # Pipeline Behaviors
 
-Pipeline behaviors let you inject cross-cutting concerns — logging, validation, timing, authorization checks — into the dispatch pipeline without modifying individual handlers. They wrap every command, query, and event dispatch in a Russian-doll chain: each behavior calls `next()` to continue down the pipeline or short-circuits by returning early. First registered = outermost.
+Pipeline behaviors wrap dispatch calls with cross-cutting concerns like logging, validation, or timing. They form a chain: each behavior calls `next()` to continue or short-circuits by returning early. First registered is outermost.
 
 ## Defining a behavior
 
@@ -8,48 +8,28 @@ Pipeline behaviors let you inject cross-cutting concerns — logging, validation
 using Conduit.Middleware;
 using Microsoft.Extensions.Logging;
 
-public class LoggingBehavior<TRequest, TResult> : IPipelineBehavior<TRequest, TResult>
+public class LoggingBehavior<TRequest, TResult>(
+    ILogger<LoggingBehavior<TRequest, TResult>> logger)
+    : IPipelineBehavior<TRequest, TResult>
 {
-    private readonly ILogger<LoggingBehavior<TRequest, TResult>> logger;
-
-    public LoggingBehavior(ILogger<LoggingBehavior<TRequest, TResult>> logger)
-    {
-        this.logger = logger;
-    }
-
     public async Task<TResult> HandleAsync(
         TRequest request,
         Func<Task<TResult>> next,
         CancellationToken cancellationToken)
     {
         logger.LogInformation("Handling {RequestType}", typeof(TRequest).Name);
-
         var result = await next();
-
         logger.LogInformation("Handled {RequestType}", typeof(TRequest).Name);
-
         return result;
     }
 }
 ```
 
-The interface has one method:
-
-```csharp
-public interface IPipelineBehavior<TRequest, TResult>
-{
-    Task<TResult> HandleAsync(
-        TRequest request,
-        Func<Task<TResult>> next,
-        CancellationToken cancellationToken);
-}
-```
-
-Call `next()` to continue down the pipeline. Skip it to short-circuit (e.g., return a cached result or throw a validation exception before the handler runs).
+Call `next()` to continue down the pipeline. Skip it to short-circuit.
 
 ## Registration
 
-Register behaviors inside `AddConduit` using `AddPipeline` with the open generic type:
+Register behaviors inside `AddConduit` with the open generic type:
 
 ```csharp
 builder.Services.AddConduit(conduit =>
@@ -59,11 +39,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-Order matters. First registered is the outermost wrapper.
-
-## Execution order
-
-With the registration above, a command dispatch flows like this:
+Order matters. First registered is outermost:
 
 ```
 LoggingBehavior (enter)
@@ -73,17 +49,15 @@ LoggingBehavior (enter)
 LoggingBehavior (exit)
 ```
 
-The outermost behavior sees the raw request first and the final result last.
-
 ## Unified across message types
 
 The same `IPipelineBehavior<TRequest, TResult>` wraps commands, queries, and events. There is no separate event behavior interface.
 
-For void commands, `TResult` is `object` and the pipeline returns `Unit.Value`. For events, the same applies -- `TResult` is `object` returning `Unit.Value`. Your behavior code does not need to care about this; just call `next()` and return the result.
+For void commands and events, `TResult` is `object` and the pipeline returns `Unit.Value`. Your behavior does not need to care about this. Call `next()` and return the result.
 
 ## Per-type filtering
 
-Behaviors are registered globally -- they run for every dispatch. To apply logic selectively, filter inside the behavior itself:
+Behaviors are registered globally. To apply logic selectively, filter inside the behavior:
 
 ```csharp
 public class ValidationBehavior<TRequest, TResult> : IPipelineBehavior<TRequest, TResult>
@@ -108,6 +82,6 @@ public class ValidationBehavior<TRequest, TResult> : IPipelineBehavior<TRequest,
 }
 ```
 
-Check `typeof(TRequest)`, cast to an interface, look for attributes -- whatever you need. If the behavior does not apply, call `next()` and pass through.
+Check `typeof(TRequest)`, cast to an interface, look for attributes. If the behavior does not apply, call `next()` and pass through.
 
 Next: [Error Handling](error-handling.md)
