@@ -1,12 +1,19 @@
 # Error Handling
 
-Conduit provides a structured error model that works across all transports. Handlers throw typed exceptions. Conduit translates them into Problem Details for REST endpoints, `DispatchResult` error envelopes for wire dispatch, and log entries for fire-and-forget events.
-
+- [Overview](#overview)
 - [ErrorCode](#errorcode)
 - [Built-in exceptions](#built-in-exceptions)
 - [Custom error codes](#custom-error-codes)
 - [Error flow](#error-flow)
+  - [RESTful endpoints](#restful-endpoints)
+  - [Envelope endpoint (wire dispatch)](#envelope-endpoint-wire-dispatch)
+  - [Unhandled exceptions](#unhandled-exceptions)
+  - [Wire events](#wire-events)
 - [ErrorCode equality](#errorcode-equality)
+
+## Overview
+
+Conduit provides a structured error model that works across all transports. Handlers throw typed exceptions. Conduit translates them into Problem Details for REST endpoints, `DispatchResult` error envelopes for wire dispatch, and log entries for fire-and-forget events.
 
 ## ErrorCode
 

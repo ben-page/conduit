@@ -1,11 +1,14 @@
 # Getting Started
 
-Install Conduit and dispatch your first command in a single ASP.NET Core project.
-
+- [Overview](#overview)
 - [Install packages](#install-packages)
 - [Define a command and handler](#define-a-command-and-handler)
 - [Wire up and dispatch](#wire-up-and-dispatch)
 - [What the source generator produced](#what-the-source-generator-produced)
+
+## Overview
+
+Install Conduit and dispatch your first command in a single ASP.NET Core project.
 
 ## Install packages
 
