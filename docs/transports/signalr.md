@@ -129,4 +129,6 @@ This is standard ASP.NET Core configuration, not Conduit-specific. The backplane
 
 Solicited events (command triggers event on the same pod) work without a backplane because the client is always connected to the pod handling its request.
 
-Next: [TypeScript Client](typescript-client.md)
+---
+
+Previous: [Transports](index.md) | [Home](../../README.md) | Next: [TypeScript Client](typescript-client.md)

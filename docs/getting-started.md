@@ -77,4 +77,6 @@ The generated code is visible in your IDE under Analyzers > Conduit.SourceGen.
 
 You now have in-process dispatch. The next sections show how to extend this to the browser and other services.
 
-Next: [Core Concepts](core-concepts.md)
+---
+
+[Home](../README.md) | Next: [Core Concepts](core-concepts.md)

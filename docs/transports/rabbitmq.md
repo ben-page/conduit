@@ -99,4 +99,6 @@ This routes `BulkImportCommand` to a dedicated `conduit-{appName}-imports` queue
 
 Prefetch count controls how many unacknowledged messages RabbitMQ delivers to a consumer at once. Lower values limit throughput but prevent a slow consumer from buffering too many messages.
 
-Next: [Pipeline Behaviors](../pipeline-behaviors.md)
+---
+
+Previous: [Azure Service Bus](azure-service-bus.md) | [Home](../../README.md) | Next: [Pipeline Behaviors](../pipeline-behaviors.md)

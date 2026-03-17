@@ -138,4 +138,6 @@ Browser --SignalR--> ConduitHub.Publish()
 
 This prevents echo loops. If an inbound event were re-broadcast, it would bounce between services indefinitely. The generated mediator uses a private `PublishLocalAsync` method for wire-inbound events that skips broadcast entirely.
 
-Next: [SignalR](signalr.md)
+---
+
+Previous: [Core Concepts](../core-concepts.md) | [Home](../../README.md) | Next: [SignalR](signalr.md)

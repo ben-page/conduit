@@ -66,3 +66,7 @@ Rather than changing the return type, Conduit avoids unnecessary allocations whe
 ### Ecosystem precedent
 
 MediatR uses `Task<T>` everywhere. They considered `ValueTask<T>` and rejected it for the same reasons. ASP.NET Core uses `ValueTask` selectively in internal I/O hot paths (Kestrel read/write) but keeps `Task` for public API surfaces like middleware delegates. The .NET team's guidance: use `ValueTask` when profiling shows the allocation matters, not as a default.
+
+---
+
+Previous: [Configuration Reference](configuration-reference.md) | [Home](../README.md)

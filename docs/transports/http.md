@@ -146,4 +146,6 @@ builder.Services.AddConduit(conduit =>
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
 
-Next: [Azure Service Bus](azure-service-bus.md)
+---
+
+Previous: [TypeScript Client](typescript-client.md) | [Home](../../README.md) | Next: [Azure Service Bus](azure-service-bus.md)
