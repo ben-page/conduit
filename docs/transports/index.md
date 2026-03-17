@@ -16,6 +16,10 @@ Conduit ships four transports in two categories.
 
 Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a service bus queue.
 
+- [Routing](#routing)
+- [Shared contracts](#shared-contracts)
+- [Event broadcasting](#event-broadcasting)
+
 ## Routing
 
 By default, all messages dispatch locally. To send commands and queries to a remote service, define an endpoint and a route:

@@ -2,6 +2,12 @@
 
 SignalR provides persistent, bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect.
 
+- [Server setup](#server-setup)
+- [Bidirectional communication](#bidirectional-communication)
+- [Solicited events](#solicited-events)
+- [Client mode (service-to-service)](#client-mode-service-to-service)
+- [Multi-pod deployment](#multi-pod-deployment)
+
 ## Server setup
 
 ```csharp

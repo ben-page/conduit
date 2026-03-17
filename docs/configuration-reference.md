@@ -1,5 +1,11 @@
 # Configuration Reference
 
+- [ConduitBuilder methods](#conduitbuilder-methods)
+- [Endpoint transports](#endpoint-transports)
+- [Attributes](#attributes)
+- [MSBuild properties (TypeGen)](#msbuild-properties-typegen)
+- [Diagnostics](#diagnostics)
+
 ## ConduitBuilder methods
 
 Available inside the `AddConduit` callback:
