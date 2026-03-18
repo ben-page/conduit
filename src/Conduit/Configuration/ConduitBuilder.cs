@@ -37,6 +37,24 @@ public class ConduitBuilder
         set => this.Options.ApplicationName = value;
     }
 
+    public string SystemName
+    {
+        get => this.Options.SystemName;
+        set => this.Options.SystemName = value;
+    }
+
+    public TopologyMode TopologyMode
+    {
+        get => this.Options.TopologyMode;
+        set => this.Options.TopologyMode = value;
+    }
+
+    public string? DeveloperPrefix
+    {
+        get => this.Options.DeveloperPrefix;
+        set => this.Options.DeveloperPrefix = value;
+    }
+
     /// <summary>
     /// Adds a named remote endpoint that messages can be routed to.
     /// Configure the endpoint's transport using extension methods on <see cref="EndpointBuilder"/>.
