@@ -32,8 +32,7 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
 
     private ServiceBusClient? client;
     private ServiceBusSender? topicSender;
-    private string? applicationName;
-    private AzureServiceBusTopologyManager? topologyManager;
+    private ConduitOptions? conduitOptions;
 
     // LoggerMessage delegates
     private static readonly Action<ILogger, string, string, Exception?> LogSendingRequest =
@@ -80,6 +79,10 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         LoggerMessage.Define(LogLevel.Warning, new EventId(110, "SkippingNoSubject"),
             "Received message with no Subject (type discriminator) — completing and skipping");
 
+    private static readonly Action<ILogger, string, Exception?> LogAutoCreateTopologyOverride =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(111, "AutoCreateTopologyOverride"),
+            "AutoCreateTopology was false but TopologyMode is '{TopologyMode}' — overriding to true");
+
     /// <summary>
     /// Creates a new Azure Service Bus transport.
     /// </summary>
@@ -111,9 +114,10 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
                 "Transport has not been started. Ensure the host is running before sending messages.");
         }
 
-        // Commands route to the endpoint's dedicated command queue.
-        var queueName = AzureServiceBusTopologyManager.GetCommandQueueName(
-            this.ResolveEndpointName(envelope.Type));
+        // Commands route to the endpoint's app queue via TopologyNaming.
+        var endpointName = this.ResolveEndpointName(envelope.Type);
+        var endpointOptions = this.CreateEndpointConduitOptions(endpointName);
+        var queueName = TopologyNaming.CreateAppResourceName(endpointOptions, 260);
 
         LogSendingRequest(this.logger, envelope.Type, queueName, null);
 
@@ -121,12 +125,13 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         var messageBody = JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions);
 
+        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions!, "replies", 260);
         var serviceBusMessage = new ServiceBusMessage(messageBody)
         {
             Subject = envelope.Type,
             ContentType = "application/json",
             ReplyToSessionId = sessionId,
-            ReplyTo = this.topologyManager!.GetReplyQueueName(this.applicationName!),
+            ReplyTo = replyQueueName,
         };
 
         SeedOutboundMessageContext(serviceBusMessage);
@@ -168,33 +173,46 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// <inheritdoc />
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        this.applicationName = this.ResolveApplicationName();
+        this.conduitOptions = this.ResolveConduitOptions();
 
+        var topicName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 260);
         this.client = new ServiceBusClient(this.options.ConnectionString);
-        this.topicSender = this.client.CreateSender(this.options.TopicName);
+        this.topicSender = this.client.CreateSender(topicName);
 
         var adminConnectionString = this.options.AdminConnectionString ?? this.options.ConnectionString;
         var adminClient = new ServiceBusAdministrationClient(adminConnectionString);
-        this.topologyManager = new AzureServiceBusTopologyManager(
-            adminClient, this.options, this.applicationName);
+        var topologyManager = new AzureServiceBusTopologyManager(
+            adminClient, this.options, this.conduitOptions);
 
         // Discover event types from IEventListener<T> registrations in DI
         var subscribedEventTypes = this.DiscoverSubscribedEventTypes();
+        var handledCommandQueryTypes = this.DiscoverHandledCommandQueryTypes();
         LogDiscoveredEventTypes(this.logger, subscribedEventTypes.Count, null);
 
-        // Create topology if enabled
-        if (this.options.AutoCreateTopology)
+        // Non-production modes force AutoCreateTopology on
+        var autoCreate = this.options.AutoCreateTopology;
+        if (!autoCreate && this.conduitOptions.TopologyMode != TopologyMode.Production)
         {
-            await this.topologyManager.EnsureTopologyAsync(subscribedEventTypes, cancellationToken);
+            autoCreate = true;
+            LogAutoCreateTopologyOverride(
+                this.logger, this.conduitOptions.TopologyMode.ToString(), null);
+        }
+
+        // Create topology if enabled
+        if (autoCreate)
+        {
+            await topologyManager.EnsureTopologyAsync(
+                subscribedEventTypes, handledCommandQueryTypes, cancellationToken);
         }
 
         // Start processors
-        var defaultQueueName = this.topologyManager.GetQueueName(this.applicationName);
-        await this.StartProcessorAsync(defaultQueueName, this.options.DefaultConcurrency, cancellationToken);
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 260);
+        await this.StartProcessorAsync(appQueueName, this.options.DefaultConcurrency, cancellationToken);
 
         foreach (var pool in this.options.Pools)
         {
-            var poolQueueName = $"{defaultQueueName}-{pool.Name}";
+            var poolQueueName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, pool.Name, 260);
             await this.StartProcessorAsync(poolQueueName, pool.Concurrency, cancellationToken);
         }
 
@@ -234,25 +252,46 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     }
 
     /// <summary>
-    /// Resolves the application name from ConduitOptions or IHostEnvironment.
+    /// Resolves ConduitOptions from DI, ensuring ApplicationName is set.
+    /// Falls back to IHostEnvironment.ApplicationName if not set explicitly.
     /// </summary>
-    private string ResolveApplicationName()
+    private ConduitOptions ResolveConduitOptions()
     {
-        var conduitOptions = this.serviceProvider.GetService<ConduitOptions>();
-        if (!string.IsNullOrWhiteSpace(conduitOptions?.ApplicationName))
+        var resolvedOptions = this.serviceProvider.GetRequiredService<ConduitOptions>();
+
+        if (string.IsNullOrWhiteSpace(resolvedOptions.ApplicationName))
         {
-            return conduitOptions.ApplicationName;
+            var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
+            if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
+            {
+                resolvedOptions.ApplicationName = hostEnvironment.ApplicationName;
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "ApplicationName must be set on ConduitBuilder or IHostEnvironment must be available. " +
+                    "Set conduit.ApplicationName in your AddConduit() configuration.");
+            }
         }
 
-        var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
-        if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
-        {
-            return hostEnvironment.ApplicationName;
-        }
+        return resolvedOptions;
+    }
 
-        throw new InvalidOperationException(
-            "ApplicationName must be set on ConduitBuilder or IHostEnvironment must be available. " +
-            "Set conduit.ApplicationName in your AddConduit() configuration.");
+    /// <summary>
+    /// Creates a <see cref="ConduitOptions"/> snapshot with a different application name
+    /// for computing endpoint queue names. The endpoint name becomes the ApplicationName
+    /// so <see cref="TopologyNaming.CreateAppResourceName(ConduitOptions, int)"/> produces
+    /// the target service's queue name.
+    /// </summary>
+    private ConduitOptions CreateEndpointConduitOptions(string endpointName)
+    {
+        return new ConduitOptions
+        {
+            SystemName = this.conduitOptions!.SystemName,
+            TopologyMode = this.conduitOptions.TopologyMode,
+            DeveloperPrefix = this.conduitOptions.DeveloperPrefix,
+            ApplicationName = endpointName,
+        };
     }
 
     /// <summary>
@@ -287,6 +326,56 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         }
 
         return [.. eventTypes];
+    }
+
+    /// <summary>
+    /// Scans IServiceCollection for closed generic ICommandHandler&lt;T&gt;, ICommandHandler&lt;T,R&gt;,
+    /// and IQueryHandler&lt;T,R&gt; registrations and extracts the message type FullTypeName for each.
+    /// </summary>
+    private List<string> DiscoverHandledCommandQueryTypes()
+    {
+        var serviceDescriptors = this.serviceProvider.GetRequiredService<IServiceCollection>();
+        var handlerOpenGenerics = new[]
+        {
+            typeof(ICommandHandler<>),
+            typeof(ICommandHandler<,>),
+            typeof(IQueryHandler<,>),
+        };
+        var messageTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var descriptor in serviceDescriptors)
+        {
+            var serviceType = descriptor.ServiceType;
+            if (!serviceType.IsGenericType)
+            {
+                continue;
+            }
+
+            var genericDef = serviceType.GetGenericTypeDefinition();
+            var isHandler = false;
+            foreach (var handlerType in handlerOpenGenerics)
+            {
+                if (genericDef == handlerType)
+                {
+                    isHandler = true;
+                    break;
+                }
+            }
+
+            if (!isHandler)
+            {
+                continue;
+            }
+
+            var messageType = serviceType.GetGenericArguments()[0];
+            var fullTypeName = messageType.FullName;
+            if (fullTypeName is not null)
+            {
+                messageTypes.Add(fullTypeName);
+            }
+        }
+
+        return [.. messageTypes];
     }
 
     /// <summary>
@@ -418,7 +507,7 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// </summary>
     private async Task<object?> AwaitReplyAsync(string sessionId, CancellationToken cancellationToken)
     {
-        var replyQueueName = this.topologyManager!.GetReplyQueueName(this.applicationName!);
+        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions!, "replies", 260);
 
         await using var sessionReceiver = await this.client!.AcceptSessionAsync(
             replyQueueName,
@@ -476,8 +565,7 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
     /// </summary>
     private string ResolveEndpointName(string messageType)
     {
-        var conduitOptions = this.serviceProvider.GetRequiredService<ConduitOptions>();
-        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, messageType);
-        return endpoint?.Name ?? this.applicationName!;
+        var endpoint = ConduitRuntime.ResolveRoute(this.conduitOptions!, messageType);
+        return endpoint?.Name ?? this.conduitOptions!.ApplicationName!;
     }
 }

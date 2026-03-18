@@ -1,5 +1,6 @@
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Conduit.Configuration;
 
 namespace Conduit.Transport.AzureServiceBus;
 
@@ -11,102 +12,114 @@ internal sealed class AzureServiceBusTopologyManager
 {
     private readonly ServiceBusAdministrationClient adminClient;
     private readonly AzureServiceBusOptions options;
-    private readonly string applicationName;
+    private readonly ConduitOptions conduitOptions;
 
     internal AzureServiceBusTopologyManager(
         ServiceBusAdministrationClient adminClient,
         AzureServiceBusOptions options,
-        string applicationName)
+        ConduitOptions conduitOptions)
     {
         this.adminClient = adminClient;
         this.options = options;
-        this.applicationName = applicationName;
+        this.conduitOptions = conduitOptions;
     }
 
     /// <summary>
     /// Creates all required topology for the transport: topic, app queue, reply queue,
-    /// event subscriptions with forwarding rules, and pool queues.
+    /// event subscriptions (multicast, per-app) and command/query subscriptions (unicast, shared),
+    /// and pool queues.
     /// </summary>
     public async Task EnsureTopologyAsync(
         IReadOnlyList<string> subscribedEventTypes,
+        IReadOnlyList<string> handledCommandQueryTypes,
         CancellationToken cancellationToken)
     {
+        var ephemeralTtl = this.ComputeEphemeralTtl();
+
         // Shared event topic
-        await this.TryCreateTopicAsync(this.options.TopicName, cancellationToken);
+        var topicName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 260);
+        await this.TryCreateTopicAsync(topicName, ephemeralTtl, cancellationToken);
 
         // Default app queue for receiving events forwarded from subscriptions
-        var queueName = this.GetQueueName(this.applicationName);
-        await this.TryCreateQueueAsync(queueName, requiresSession: false, cancellationToken);
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 260);
+        await this.TryCreateQueueAsync(appQueueName, requiresSession: false, ephemeralTtl, cancellationToken);
 
         // Reply queue with sessions enabled for request/response correlation
-        var replyQueueName = $"{queueName}-replies";
-        await this.TryCreateQueueAsync(replyQueueName, requiresSession: true, cancellationToken);
+        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
+        await this.TryCreateQueueAsync(replyQueueName, requiresSession: true, ephemeralTtl, cancellationToken);
 
-        // Create subscriptions for each event type this app listens for,
-        // with SQL filter on Subject and forwarding to the app queue
+        // Event subscriptions: multicast (per-app, includes app name)
         foreach (var eventType in subscribedEventTypes)
         {
-            var targetQueue = this.GetTargetQueueForType(eventType, queueName);
+            var targetQueue = this.GetTargetQueueForType(eventType, appQueueName);
+            var subscriptionName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, eventType, 50);
             await this.TryCreateSubscriptionAsync(
-                this.options.TopicName, eventType, targetQueue, cancellationToken);
+                topicName, subscriptionName, eventType, targetQueue, ephemeralTtl, cancellationToken);
+        }
+
+        // Command/query subscriptions: unicast (shared, no app name)
+        foreach (var commandQueryType in handledCommandQueryTypes)
+        {
+            var targetQueue = this.GetTargetQueueForType(commandQueryType, appQueueName);
+            var subscriptionName = TopologyNaming.CreateSharedResourceName(
+                this.conduitOptions, commandQueryType, 50);
+            await this.TryCreateSubscriptionAsync(
+                topicName, subscriptionName, commandQueryType, targetQueue, ephemeralTtl, cancellationToken);
         }
 
         // Pool queues with separate processors
         foreach (var pool in this.options.Pools)
         {
-            var poolQueueName = $"{queueName}-{pool.Name}";
-            await this.TryCreateQueueAsync(poolQueueName, requiresSession: false, cancellationToken);
+            var poolQueueName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, pool.Name, 260);
+            await this.TryCreateQueueAsync(
+                poolQueueName, requiresSession: false, ephemeralTtl, cancellationToken);
         }
     }
 
     /// <summary>
-    /// Creates a command queue for an endpoint (used by senders routing commands
-    /// directly to a service's queue, bypassing the topic).
+    /// Determines which queue a message type should be routed to, considering pool assignments.
+    /// Returns the pool queue name if the type is assigned to a pool, otherwise the default queue.
     /// </summary>
-    public async Task EnsureCommandQueueAsync(string endpointName, CancellationToken cancellationToken)
-    {
-        var commandQueueName = GetCommandQueueName(endpointName);
-        await this.TryCreateQueueAsync(commandQueueName, requiresSession: false, cancellationToken);
-    }
-
-    /// <summary>
-    /// Gets the app receive queue name for the given application.
-    /// </summary>
-    internal string GetQueueName(string appName)
-    {
-        return this.options.QueuePrefix is not null
-            ? $"{this.options.QueuePrefix}-{appName}"
-            : $"conduit-{appName}";
-    }
-
-    /// <summary>
-    /// Gets the command queue name for the given endpoint.
-    /// </summary>
-    internal static string GetCommandQueueName(string endpointName) => $"conduit-{endpointName}";
-
-    /// <summary>
-    /// Gets the reply queue name for the given application.
-    /// </summary>
-    internal string GetReplyQueueName(string appName) => $"{this.GetQueueName(appName)}-replies";
-
-    private string GetTargetQueueForType(string eventType, string defaultQueueName)
+    internal string GetTargetQueueForType(string messageType, string defaultQueueName)
     {
         foreach (var pool in this.options.Pools)
         {
-            if (pool.MessageTypes.Contains(eventType, StringComparer.Ordinal))
+            if (pool.MessageTypes.Contains(messageType, StringComparer.Ordinal))
             {
-                return $"{defaultQueueName}-{pool.Name}";
+                return TopologyNaming.CreateAppResourceName(this.conduitOptions, pool.Name, 260);
             }
         }
 
         return defaultQueueName;
     }
 
-    private async Task TryCreateTopicAsync(string name, CancellationToken cancellationToken)
+    private TimeSpan? ComputeEphemeralTtl()
+    {
+        return this.conduitOptions.TopologyMode switch
+        {
+            TopologyMode.Production => null,
+            TopologyMode.Developer => TimeSpan.FromHours(4),
+            TopologyMode.Test => TimeSpan.FromMinutes(5),
+            _ => null,
+        };
+    }
+
+    private async Task TryCreateTopicAsync(
+        string name,
+        TimeSpan? autoDeleteOnIdle,
+        CancellationToken cancellationToken)
     {
         try
         {
-            await this.adminClient.CreateTopicAsync(name, cancellationToken);
+            var topicOptions = new CreateTopicOptions(name);
+            if (autoDeleteOnIdle.HasValue)
+            {
+                topicOptions.AutoDeleteOnIdle = autoDeleteOnIdle.Value;
+            }
+
+            await this.adminClient.CreateTopicAsync(topicOptions, cancellationToken);
         }
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
@@ -114,7 +127,11 @@ internal sealed class AzureServiceBusTopologyManager
         }
     }
 
-    private async Task TryCreateQueueAsync(string name, bool requiresSession, CancellationToken cancellationToken)
+    private async Task TryCreateQueueAsync(
+        string name,
+        bool requiresSession,
+        TimeSpan? autoDeleteOnIdle,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -122,6 +139,12 @@ internal sealed class AzureServiceBusTopologyManager
             {
                 RequiresSession = requiresSession,
             };
+
+            if (autoDeleteOnIdle.HasValue)
+            {
+                queueOptions.AutoDeleteOnIdle = autoDeleteOnIdle.Value;
+            }
+
             await this.adminClient.CreateQueueAsync(queueOptions, cancellationToken);
         }
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
@@ -132,13 +155,12 @@ internal sealed class AzureServiceBusTopologyManager
 
     private async Task TryCreateSubscriptionAsync(
         string topicName,
+        string subscriptionName,
         string messageType,
         string forwardTo,
+        TimeSpan? autoDeleteOnIdle,
         CancellationToken cancellationToken)
     {
-        // Subscription names have a 50-char limit. Use a safe, deterministic name.
-        var subscriptionName = SanitizeSubscriptionName(messageType);
-
         try
         {
             var subscriptionOptions = new CreateSubscriptionOptions(topicName, subscriptionName)
@@ -146,27 +168,21 @@ internal sealed class AzureServiceBusTopologyManager
                 ForwardTo = forwardTo,
             };
 
+            if (autoDeleteOnIdle.HasValue)
+            {
+                subscriptionOptions.AutoDeleteOnIdle = autoDeleteOnIdle.Value;
+            }
+
             var ruleOptions = new CreateRuleOptions(
                 "TypeFilter",
                 new SqlRuleFilter($"Subject = '{messageType}'"));
 
-            await this.adminClient.CreateSubscriptionAsync(subscriptionOptions, ruleOptions, cancellationToken);
+            await this.adminClient.CreateSubscriptionAsync(
+                subscriptionOptions, ruleOptions, cancellationToken);
         }
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
             // Subscription already exists — another pod created it first.
         }
-    }
-
-    /// <summary>
-    /// Azure Service Bus subscription names are limited to 50 characters and must be
-    /// alphanumeric, hyphens, underscores, or periods. Replace dots with hyphens and truncate.
-    /// </summary>
-    internal static string SanitizeSubscriptionName(string messageType)
-    {
-        var sanitized = messageType.Replace('.', '-');
-        return sanitized.Length <= 50
-            ? sanitized
-            : sanitized[..50];
     }
 }
