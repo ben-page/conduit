@@ -114,12 +114,10 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
                 "Transport has not been started. Ensure the host is running before sending messages.");
         }
 
-        // Commands route to the endpoint's app queue via TopologyNaming.
-        var endpointName = this.ResolveEndpointName(envelope.Type);
-        var endpointOptions = this.CreateEndpointConduitOptions(endpointName);
-        var queueName = TopologyNaming.CreateAppResourceName(endpointOptions, 260);
+        // Publish to the topic — subscriptions route to the correct handler's queue.
+        var topicName = TopologyNaming.CreateSharedResourceName(this.conduitOptions!, 260);
 
-        LogSendingRequest(this.logger, envelope.Type, queueName, null);
+        LogSendingRequest(this.logger, envelope.Type, topicName, null);
 
         var sessionId = Guid.NewGuid().ToString("N");
         var messageBody = JsonSerializer.SerializeToUtf8Bytes(
@@ -136,7 +134,7 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
 
         SeedOutboundMessageContext(serviceBusMessage);
 
-        await using var sender = this.client.CreateSender(queueName);
+        await using var sender = this.client.CreateSender(topicName);
         await sender.SendMessageAsync(serviceBusMessage, cancellationToken);
 
         // Await reply on the session-enabled reply queue
@@ -275,23 +273,6 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         }
 
         return resolvedOptions;
-    }
-
-    /// <summary>
-    /// Creates a <see cref="ConduitOptions"/> snapshot with a different application name
-    /// for computing endpoint queue names. The endpoint name becomes the ApplicationName
-    /// so <see cref="TopologyNaming.CreateAppResourceName(ConduitOptions, int)"/> produces
-    /// the target service's queue name.
-    /// </summary>
-    private ConduitOptions CreateEndpointConduitOptions(string endpointName)
-    {
-        return new ConduitOptions
-        {
-            SystemName = this.conduitOptions!.SystemName,
-            TopologyMode = this.conduitOptions.TopologyMode,
-            DeveloperPrefix = this.conduitOptions.DeveloperPrefix,
-            ApplicationName = endpointName,
-        };
     }
 
     /// <summary>
@@ -557,15 +538,5 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         {
             message.ApplicationProperties["CausationId"] = context.CausationId;
         }
-    }
-
-    /// <summary>
-    /// Resolves the endpoint name for a message type by checking routes.
-    /// Falls back to the application name if no route is configured.
-    /// </summary>
-    private string ResolveEndpointName(string messageType)
-    {
-        var endpoint = ConduitRuntime.ResolveRoute(this.conduitOptions!, messageType);
-        return endpoint?.Name ?? this.conduitOptions!.ApplicationName!;
     }
 }
