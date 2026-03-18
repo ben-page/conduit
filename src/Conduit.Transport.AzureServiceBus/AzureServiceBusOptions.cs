@@ -30,17 +30,6 @@ public sealed class AzureServiceBusOptions
     public int DefaultConcurrency { get; set; } = 10;
 
     /// <summary>
-    /// The shared topic name for event pub/sub. Default: "conduit".
-    /// </summary>
-    public string TopicName { get; set; } = "conduit";
-
-    /// <summary>
-    /// Optional prefix for queue names. When set, queues are named
-    /// <c>{QueuePrefix}-{ApplicationName}</c> instead of <c>conduit-{ApplicationName}</c>.
-    /// </summary>
-    public string? QueuePrefix { get; set; }
-
-    /// <summary>
     /// Named receiver pools for concurrency isolation.
     /// Each pool gets its own queue and <c>ServiceBusProcessor</c>.
     /// </summary>
