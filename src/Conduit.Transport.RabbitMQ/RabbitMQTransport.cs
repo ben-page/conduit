@@ -18,8 +18,8 @@ namespace Conduit.Transport.RabbitMQ;
 /// and <see cref="IHostedService"/> for inbound message consumption.
 /// </summary>
 /// <remarks>
-/// Outbound: publishes commands/queries to direct exchange (with reply-to for request/response)
-/// and events to topic exchange with routing key = FullTypeName.
+/// Outbound: publishes commands/queries to topic exchange with routing key = FullTypeName
+/// (with reply-to for request/response) and events to topic exchange with routing key = FullTypeName.
 /// Inbound: consumes from per-app queue, creates DI scope per message, dispatches via IWireMediator.
 /// </remarks>
 public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyncDisposable
@@ -27,12 +27,12 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
     private readonly RabbitMQOptions options;
     private readonly IServiceProvider serviceProvider;
     private readonly ILogger<RabbitMQTransport> logger;
-    private readonly RabbitMQTopologyManager topologyManager;
 
     private IConnection? connection;
     private IChannel? publishChannel;
     private IChannel? replyChannel;
     private string? replyQueueName;
+    private ConduitOptions? conduitOptions;
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<string> consumerTags = [];
@@ -45,7 +45,7 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
 
     private static readonly Action<ILogger, string, string, Exception?> LogSendingRequest =
         LoggerMessage.Define<string, string>(LogLevel.Debug, new EventId(101, "SendingRequest"),
-            "Sending request '{Type}' to queue '{Queue}'");
+            "Sending request '{Type}' to exchange with routing key '{RoutingKey}'");
 
     private static readonly Action<ILogger, string, Exception?> LogReceivedMessage =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(102, "ReceivedMessage"),
@@ -67,6 +67,10 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         LoggerMessage.Define(LogLevel.Information, new EventId(106, "TransportStopping"),
             "Stopping RabbitMQ transport");
 
+    private static readonly Action<ILogger, string, Exception?> LogAutoCreateTopologyOverride =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(107, "AutoCreateTopologyOverride"),
+            "AutoCreateTopology was false but TopologyMode is '{TopologyMode}' — overriding to true");
+
     /// <summary>
     /// Creates a new RabbitMQ transport instance.
     /// </summary>
@@ -85,9 +89,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         this.options = options;
         this.serviceProvider = serviceProvider;
         this.logger = logger;
-
-        var applicationName = this.ResolveApplicationName();
-        this.topologyManager = new RabbitMQTopologyManager(this.options, applicationName);
     }
 
     /// <inheritdoc />
@@ -95,21 +96,15 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
-        if (this.publishChannel is null || this.replyQueueName is null)
+        if (this.publishChannel is null || this.replyQueueName is null || this.conduitOptions is null)
         {
             throw new InvalidOperationException("RabbitMQ transport has not been started.");
         }
 
+        var exchangeName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 255);
         var correlationId = Guid.NewGuid().ToString("N");
 
-        // Determine the target queue — commands route to their endpoint queue
-        var conduitOptions = this.serviceProvider.GetRequiredService<ConduitOptions>();
-        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, envelope.Type);
-        var targetQueue = endpoint is not null
-            ? this.topologyManager.GetCommandQueueName(endpoint.Name)
-            : this.topologyManager.GetAppQueueName();
-
-        LogSendingRequest(this.logger, envelope.Type, targetQueue, null);
+        LogSendingRequest(this.logger, envelope.Type, envelope.Type, null);
 
         var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         this.pendingReplies[correlationId] = tcs;
@@ -130,8 +125,8 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
             };
 
             await this.publishChannel.BasicPublishAsync(
-                exchange: $"{this.options.ExchangeName}.direct",
-                routingKey: targetQueue,
+                exchange: exchangeName,
+                routingKey: envelope.Type,
                 mandatory: false,
                 basicProperties: properties,
                 body: body,
@@ -168,12 +163,14 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
-        if (this.publishChannel is null)
+        if (this.publishChannel is null || this.conduitOptions is null)
         {
             throw new InvalidOperationException("RabbitMQ transport has not been started.");
         }
 
         LogPublishingEvent(this.logger, envelope.Type, null);
+
+        var exchangeName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 255);
 
         var body = JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions);
@@ -187,7 +184,7 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         };
 
         await this.publishChannel.BasicPublishAsync(
-            exchange: this.options.ExchangeName,
+            exchange: exchangeName,
             routingKey: envelope.Type,
             mandatory: false,
             basicProperties: properties,
@@ -198,6 +195,8 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
     /// <inheritdoc />
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        this.conduitOptions = this.ResolveConduitOptions();
+
         var factory = new ConnectionFactory
         {
             Uri = new Uri(this.options.ConnectionString),
@@ -209,14 +208,25 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         this.publishChannel = await this.connection.CreateChannelAsync(
             cancellationToken: cancellationToken);
 
-        // Discover subscribed event types from DI
+        // Discover subscribed event types and handled command/query types from DI
         var subscribedEventTypes = this.DiscoverSubscribedEventTypes();
+        var handledCommandQueryTypes = this.DiscoverHandledCommandQueryTypes();
+
+        // Non-production modes force AutoCreateTopology on
+        var autoCreate = this.options.AutoCreateTopology;
+        if (!autoCreate && this.conduitOptions.TopologyMode != TopologyMode.Production)
+        {
+            autoCreate = true;
+            LogAutoCreateTopologyOverride(
+                this.logger, this.conduitOptions.TopologyMode.ToString(), null);
+        }
 
         // Declare topology
-        if (this.options.AutoCreateTopology)
+        if (autoCreate)
         {
-            await this.topologyManager.EnsureTopologyAsync(
-                this.publishChannel, subscribedEventTypes, cancellationToken);
+            var topologyManager = new RabbitMQTopologyManager(this.options, this.conduitOptions);
+            await topologyManager.EnsureTopologyAsync(
+                this.publishChannel, subscribedEventTypes, handledCommandQueryTypes, cancellationToken);
         }
 
         // Set up reply queue (exclusive auto-delete)
@@ -246,13 +256,14 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         LogStartingConsumers(this.logger, subscribedEventTypes.Count, null);
 
         // Start default app queue consumer
-        var appQueueName = this.topologyManager.GetAppQueueName();
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 255);
         await this.StartConsumerAsync(appQueueName, this.options.DefaultPrefetchCount, cancellationToken);
 
         // Start pool consumers
         foreach (var pool in this.options.Pools)
         {
-            var poolQueueName = $"{appQueueName}-{pool.Name}";
+            var poolQueueName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, pool.Name, 255);
             await this.StartConsumerAsync(poolQueueName, pool.PrefetchCount, cancellationToken);
         }
     }
@@ -477,9 +488,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         var eventTypes = new List<string>();
         var services = this.serviceProvider.GetRequiredService<IServiceCollection>();
 
-        // Scan IServiceCollection for IEventListener<T> registrations.
-        // IServiceCollection is registered by the generated AddConduit() code.
-        // Fallback: scan all service descriptors from the root provider.
         foreach (var descriptor in services)
         {
             if (!descriptor.ServiceType.IsGenericType)
@@ -503,21 +511,80 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         return eventTypes;
     }
 
-    private string ResolveApplicationName()
+    /// <summary>
+    /// Scans IServiceCollection for closed generic ICommandHandler&lt;T&gt;, ICommandHandler&lt;T,R&gt;,
+    /// and IQueryHandler&lt;T,R&gt; registrations and extracts the message type FullTypeName for each.
+    /// </summary>
+    private List<string> DiscoverHandledCommandQueryTypes()
     {
-        var conduitOptions = this.serviceProvider.GetService<ConduitOptions>();
-        if (!string.IsNullOrEmpty(conduitOptions?.ApplicationName))
+        var services = this.serviceProvider.GetRequiredService<IServiceCollection>();
+        var handlerOpenGenerics = new[]
         {
-            return conduitOptions.ApplicationName;
+            typeof(ICommandHandler<>),
+            typeof(ICommandHandler<,>),
+            typeof(IQueryHandler<,>),
+        };
+        var messageTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var descriptor in services)
+        {
+            var serviceType = descriptor.ServiceType;
+            if (!serviceType.IsGenericType)
+            {
+                continue;
+            }
+
+            var genericDef = serviceType.GetGenericTypeDefinition();
+            var isHandler = false;
+            foreach (var handlerType in handlerOpenGenerics)
+            {
+                if (genericDef == handlerType)
+                {
+                    isHandler = true;
+                    break;
+                }
+            }
+
+            if (!isHandler)
+            {
+                continue;
+            }
+
+            var messageType = serviceType.GetGenericArguments()[0];
+            var fullTypeName = messageType.FullName;
+            if (fullTypeName is not null)
+            {
+                messageTypes.Add(fullTypeName);
+            }
         }
 
-        var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
-        if (!string.IsNullOrEmpty(hostEnvironment?.ApplicationName))
+        return [.. messageTypes];
+    }
+
+    /// <summary>
+    /// Resolves ConduitOptions from DI, ensuring ApplicationName is set.
+    /// Falls back to IHostEnvironment.ApplicationName if not set explicitly.
+    /// </summary>
+    private ConduitOptions ResolveConduitOptions()
+    {
+        var resolvedOptions = this.serviceProvider.GetRequiredService<ConduitOptions>();
+
+        if (string.IsNullOrWhiteSpace(resolvedOptions.ApplicationName))
         {
-            return hostEnvironment.ApplicationName;
+            var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
+            if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
+            {
+                resolvedOptions.ApplicationName = hostEnvironment.ApplicationName;
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "ApplicationName must be set on ConduitBuilder or IHostEnvironment must be available. " +
+                    "Set conduit.ApplicationName in your AddConduit() configuration.");
+            }
         }
 
-        return "default";
+        return resolvedOptions;
     }
 
     private static Dictionary<string, object?> BuildOutboundHeaders()

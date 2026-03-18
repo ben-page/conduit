@@ -23,17 +23,6 @@ public sealed class RabbitMQOptions
     public ushort DefaultPrefetchCount { get; set; } = 10;
 
     /// <summary>
-    /// Name of the topic exchange used for event pub/sub.
-    /// </summary>
-    public string ExchangeName { get; set; } = "conduit";
-
-    /// <summary>
-    /// Prefix for queue names. When set, queues are named "{QueuePrefix}-{name}"
-    /// instead of "conduit-{name}".
-    /// </summary>
-    public string? QueuePrefix { get; set; }
-
-    /// <summary>
     /// Named receiver pools with separate consumer channels and prefetch settings.
     /// </summary>
     public List<ReceiverPoolOptions> Pools { get; } = [];

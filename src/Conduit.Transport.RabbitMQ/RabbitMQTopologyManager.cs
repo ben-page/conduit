@@ -1,3 +1,4 @@
+using Conduit.Configuration;
 using RabbitMQ.Client;
 
 namespace Conduit.Transport.RabbitMQ;
@@ -10,59 +11,45 @@ namespace Conduit.Transport.RabbitMQ;
 internal sealed class RabbitMQTopologyManager
 {
     private readonly RabbitMQOptions options;
-    private readonly string applicationName;
+    private readonly ConduitOptions conduitOptions;
 
-    public RabbitMQTopologyManager(RabbitMQOptions options, string applicationName)
+    public RabbitMQTopologyManager(RabbitMQOptions options, ConduitOptions conduitOptions)
     {
         this.options = options;
-        this.applicationName = applicationName;
+        this.conduitOptions = conduitOptions;
     }
 
     /// <summary>
-    /// Declares all topology: topic exchange for events, per-app queue with bindings
-    /// for subscribed event types, and pool queues with their own bindings.
+    /// Declares all topology: topic exchange, per-app queue with bindings
+    /// for subscribed event types and handled command/query types, and pool queues
+    /// with their own bindings.
     /// </summary>
     public async Task EnsureTopologyAsync(
         IChannel channel,
         IReadOnlyList<string> subscribedEventTypes,
+        IReadOnlyList<string> handledCommandQueryTypes,
         CancellationToken cancellationToken)
     {
-        // Topic exchange for events
+        var isEphemeral = this.conduitOptions.TopologyMode != TopologyMode.Production;
+
+        // Topic exchange for all message types
+        var exchangeName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 255);
         await channel.ExchangeDeclareAsync(
-            exchange: this.options.ExchangeName,
+            exchange: exchangeName,
             type: ExchangeType.Topic,
-            durable: true,
-            autoDelete: false,
+            durable: !isEphemeral,
+            autoDelete: isEphemeral,
             arguments: null,
             noWait: false,
             cancellationToken: cancellationToken);
 
-        // Direct exchange for command/query routing
-        await channel.ExchangeDeclareAsync(
-            exchange: $"{this.options.ExchangeName}.direct",
-            type: ExchangeType.Direct,
-            durable: true,
-            autoDelete: false,
-            arguments: null,
-            noWait: false,
-            cancellationToken: cancellationToken);
-
-        // Per-app queue for events
-        var appQueueName = this.GetAppQueueName();
+        // Per-app queue
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 255);
         await channel.QueueDeclareAsync(
             queue: appQueueName,
-            durable: true,
+            durable: !isEphemeral,
             exclusive: false,
-            autoDelete: false,
-            arguments: null,
-            noWait: false,
-            cancellationToken: cancellationToken);
-
-        // Bind app queue to direct exchange so it can receive commands/queries
-        await channel.QueueBindAsync(
-            queue: appQueueName,
-            exchange: $"{this.options.ExchangeName}.direct",
-            routingKey: appQueueName,
+            autoDelete: isEphemeral,
             arguments: null,
             noWait: false,
             cancellationToken: cancellationToken);
@@ -72,8 +59,20 @@ internal sealed class RabbitMQTopologyManager
         {
             await channel.QueueBindAsync(
                 queue: appQueueName,
-                exchange: this.options.ExchangeName,
+                exchange: exchangeName,
                 routingKey: eventType,
+                arguments: null,
+                noWait: false,
+                cancellationToken: cancellationToken);
+        }
+
+        // Bind app queue to topic exchange for each handled command/query type
+        foreach (var commandQueryType in handledCommandQueryTypes)
+        {
+            await channel.QueueBindAsync(
+                queue: appQueueName,
+                exchange: exchangeName,
+                routingKey: commandQueryType,
                 arguments: null,
                 noWait: false,
                 cancellationToken: cancellationToken);
@@ -82,12 +81,13 @@ internal sealed class RabbitMQTopologyManager
         // Pool queues
         foreach (var pool in this.options.Pools)
         {
-            var poolQueueName = $"{appQueueName}-{pool.Name}";
+            var poolQueueName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, pool.Name, 255);
             await channel.QueueDeclareAsync(
                 queue: poolQueueName,
-                durable: true,
+                durable: !isEphemeral,
                 exclusive: false,
-                autoDelete: false,
+                autoDelete: isEphemeral,
                 arguments: null,
                 noWait: false,
                 cancellationToken: cancellationToken);
@@ -96,7 +96,7 @@ internal sealed class RabbitMQTopologyManager
             {
                 await channel.QueueBindAsync(
                     queue: poolQueueName,
-                    exchange: this.options.ExchangeName,
+                    exchange: exchangeName,
                     routingKey: messageType,
                     arguments: null,
                     noWait: false,
@@ -104,48 +104,4 @@ internal sealed class RabbitMQTopologyManager
             }
         }
     }
-
-    /// <summary>
-    /// Declares a command queue for a specific endpoint and binds it to the direct exchange.
-    /// Called on first use when routing a command to a named endpoint.
-    /// </summary>
-    public async Task EnsureCommandQueueAsync(
-        IChannel channel,
-        string endpointName,
-        CancellationToken cancellationToken)
-    {
-        var queueName = this.GetCommandQueueName(endpointName);
-        await channel.QueueDeclareAsync(
-            queue: queueName,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null,
-            noWait: false,
-            cancellationToken: cancellationToken);
-
-        await channel.QueueBindAsync(
-            queue: queueName,
-            exchange: $"{this.options.ExchangeName}.direct",
-            routingKey: queueName,
-            arguments: null,
-            noWait: false,
-            cancellationToken: cancellationToken);
-    }
-
-    /// <summary>
-    /// Gets the application's main queue name for event consumption.
-    /// </summary>
-    public string GetAppQueueName() =>
-        this.options.QueuePrefix is not null
-            ? $"{this.options.QueuePrefix}-{this.applicationName}"
-            : $"conduit-{this.applicationName}";
-
-    /// <summary>
-    /// Gets the command queue name for a given endpoint.
-    /// </summary>
-    public string GetCommandQueueName(string endpointName) =>
-        this.options.QueuePrefix is not null
-            ? $"{this.options.QueuePrefix}-{endpointName}"
-            : $"conduit-{endpointName}";
 }
