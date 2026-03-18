@@ -6,6 +6,8 @@ namespace Conduit.Configuration;
 /// </summary>
 public sealed class ConduitOptions
 {
+    private readonly Lazy<string?> topologyPrefix;
+
     /// <summary>
     /// Named endpoints that messages can be routed to.
     /// Key is the endpoint name.
@@ -31,4 +33,21 @@ public sealed class ConduitOptions
     /// and events uniformly.
     /// </summary>
     public List<Type> PipelineTypes { get; } = [];
+
+    public string SystemName { get; set; } = "conduit";
+    public TopologyMode TopologyMode { get; set; } = TopologyMode.Production;
+    public string? DeveloperPrefix { get; set; }
+
+    public ConduitOptions()
+    {
+        this.topologyPrefix = new Lazy<string?>(() => this.TopologyMode switch
+        {
+            TopologyMode.Developer => this.DeveloperPrefix ?? Environment.UserName,
+            TopologyMode.Test => $"test-{Guid.NewGuid():N}"[..13],
+            TopologyMode.Production => null,
+            _ => null,
+        });
+    }
+
+    internal string? TopologyPrefix => this.topologyPrefix.Value;
 }
