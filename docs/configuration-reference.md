@@ -1,6 +1,7 @@
 # Configuration Reference
 
 - [ConduitBuilder methods](#conduitbuilder-methods)
+- [ConduitBuilder properties](#conduitbuilder-properties)
 - [Endpoint transports](#endpoint-transports)
 - [Attributes](#attributes)
 - [MSBuild properties (TypeGen)](#msbuild-properties-typegen)
@@ -24,6 +25,37 @@ builder.Services.AddConduit(conduit =>
 | `Route<T>()` | Route using a type's namespace as the pattern | `conduit.Route<CreateOrder>().To("orders")` |
 | `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
+
+## ConduitBuilder properties
+
+Properties set directly on the builder instance:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.SystemName = "myapp";
+    conduit.TopologyMode = TopologyMode.Developer;
+    conduit.DeveloperPrefix = "myprefix";
+    conduit.ApplicationName = "orders-service";
+});
+```
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `SystemName` | `string` | `"conduit"` | Base name for all broker resources (topic/exchange, queues). Replaces per-transport `TopicName`/`ExchangeName`. |
+| `TopologyMode` | `TopologyMode` | `Production` | Controls resource naming and durability. `Production` = durable, no prefix. `Developer` = prefixed, 4h auto-delete. `Test` = random prefix, 5min auto-delete. |
+| `DeveloperPrefix` | `string?` | `null` | Explicit prefix for Developer mode. Defaults to `Environment.UserName` when not set. Ignored in other modes. |
+| `ApplicationName` | `string?` | `null` | Application name used in queue naming. Defaults to `IHostEnvironment.ApplicationName` at transport startup if not set. |
+
+Example `appsettings.Development.json` for developer mode:
+
+```json
+{
+  "Conduit": {
+    "TopologyMode": "Developer"
+  }
+}
+```
 
 ## Endpoint transports
 

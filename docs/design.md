@@ -17,7 +17,7 @@ The library replaces MediatR (now commercial) with a custom implementation that 
 
 ## Non-Goals
 
-- Message broker integration (Rebus will be added in a future phase)
+- Rebus integration (Azure Service Bus and RabbitMQ transports are built-in; Rebus may be added in a future phase)
 - Built-in pipeline behaviors (validation, auth, logging, OTel) — consumers compose their own
 - npm package for Angular — TypeScript codegen produces everything the frontend needs
 - Streaming/subscription queries — SignalR streaming is a separate concern outside Conduit
@@ -279,6 +279,9 @@ public sealed class ConduitOptions
     public Dictionary<string, ConduitEndpoint> Endpoints { get; } = new();
     public List<ConduitRoute> Routes { get; } = [];
     public List<Type> PipelineTypes { get; } = [];
+    public string SystemName { get; set; } = "conduit";
+    public TopologyMode TopologyMode { get; set; } = TopologyMode.Production;
+    public string? DeveloperPrefix { get; set; }
 }
 ```
 
@@ -306,6 +309,68 @@ public record UserPasswordChangedEvent(Guid UserId) : IEvent;
 ```
 
 Inbound filtering is handled by `TypeFilterInterceptor` (rejects unauthorized types arriving from transports). `[LocalOnly]` is the outbound complement — preventing events from leaving.
+
+### Topology Naming
+
+`TopologyNaming` is a static class in `Conduit.Configuration` that generates all broker resource names consistently across transports. It provides two families of methods:
+
+- `CreateSharedResourceName(options, maxLength)` — names for resources shared across apps (topic/exchange, unicast subscriptions). Format: `{prefix}-{systemName}` or just `{systemName}` in Production mode.
+- `CreateAppResourceName(options, maxLength)` — names scoped to a specific app (queues, multicast subscriptions). Format: `{prefix}-{systemName}-{appName}` or `{systemName}-{appName}` in Production mode.
+
+Both families accept an optional `suffix` parameter for sub-resources (e.g. `"replies"`, pool names, type names). Type name suffixes containing dots are reversed and hyphenated (e.g. `Orders.Commands.CreateOrder` becomes `CreateOrder-Commands-Orders`). Names exceeding `maxLength` are truncated with an xxHash32 suffix to preserve uniqueness.
+
+### Topology Modes
+
+`TopologyMode` controls resource naming, durability, and lifetime:
+
+| Mode | Prefix | Durability | Auto-delete |
+|---|---|---|---|
+| `Production` | None | Durable | Never |
+| `Developer` | `{DeveloperPrefix}` (default: `Environment.UserName`) | Non-durable | 4 hours |
+| `Test` | `test-{random}` | Non-durable | 5 minutes |
+
+Developer mode gives each developer isolated broker resources (e.g. `bpage-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests that self-clean.
+
+Configuration:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.TopologyMode = TopologyMode.Developer;
+    conduit.DeveloperPrefix = "myprefix";  // optional, defaults to Environment.UserName
+    conduit.SystemName = "myapp";          // optional, defaults to "conduit"
+});
+```
+
+### Topic-Based Message Routing (Broker Transports)
+
+All broker transports (Azure Service Bus, RabbitMQ) use a unified topic-based routing model. All message types — commands, queries, and events — publish to a single shared topic/exchange. Subscriptions and queue bindings route messages from the topic to the appropriate app queue. Reply messages are the only exception; they bypass the topic and go point-to-point.
+
+**Azure Service Bus topology:**
+```
+Topic: {systemName}
+├── Subscription: {ReversedTypeName}
+│   (unicast — command/query, SQL filter: Subject = '{FullTypeName}',
+│    forwards to handler's app queue)
+├── Subscription: {appName}-{ReversedTypeName}
+│   (multicast — event, SQL filter: Subject = '{FullTypeName}',
+│    forwards to subscribing app's queue)
+Queue: {systemName}-{appName}
+Queue: {systemName}-{appName}-replies (session-enabled)
+Queue: {systemName}-{appName}-{poolName} (optional)
+```
+
+**RabbitMQ topology:**
+```
+Exchange: {systemName} (type: topic)
+Queue: {systemName}-{appName}
+├── Binding: routing key = {FullTypeName} (per handled type)
+Queue: {systemName}-{appName}-{poolName}
+├── Binding: routing key = {FullTypeName} (per pool type)
+Reply Queue: exclusive auto-delete (per connection)
+```
+
+Unicast correctness for commands/queries in RabbitMQ relies on only one app binding a given type's routing key. If two apps bind the same command type, RabbitMQ will round-robin — which is incorrect. ASB enforces unicast via shared subscription names.
 
 ### Error Model
 

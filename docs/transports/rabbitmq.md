@@ -4,14 +4,16 @@
 - [Setup](#setup)
 - [Options](#options)
 - [Topology](#topology)
+  - [Unicast correctness](#unicast-correctness)
+- [Developer and test modes](#developer-and-test-modes)
 - [Request/response](#requestresponse)
-- [Event auto-subscription](#event-auto-subscription)
+- [Auto-discovery](#auto-discovery)
 - [Wire format](#wire-format)
 - [Receiver pools](#receiver-pools)
 
 ## Overview
 
-The RabbitMQ transport provides durable, broker-based messaging over AMQP. Commands and queries use request/response with correlation IDs and a transient reply queue. Events publish to a topic exchange with routing keys. The transport runs as an `IHostedService` that manages topology, consumers, and reply correlation.
+The RabbitMQ transport provides durable, broker-based messaging over AMQP. All message types (commands, queries, events) flow through a single topic exchange with routing keys. Commands and queries use request/response with correlation IDs and a transient reply queue. The transport runs as an `IHostedService` that manages topology, consumers, and reply correlation.
 
 ## Setup
 
@@ -34,8 +36,6 @@ endpoint.UseRabbitMQ(connectionString, options =>
 {
     options.AutoCreateTopology = true;       // default: true
     options.DefaultPrefetchCount = 10;       // default: 10
-    options.ExchangeName = "conduit";        // default: "conduit"
-    options.QueuePrefix = "myapp";           // optional
 });
 ```
 
@@ -43,36 +43,72 @@ endpoint.UseRabbitMQ(connectionString, options =>
 |---|---|---|
 | `AutoCreateTopology` | `true` | Declare exchanges, queues, and bindings on startup |
 | `DefaultPrefetchCount` | `10` | Prefetch count for the default consumer channel |
-| `ExchangeName` | `"conduit"` | Topic exchange name for event pub/sub |
-| `QueuePrefix` | `null` | Queue name prefix. When set, queues are `{prefix}-{appName}` instead of `conduit-{appName}` |
+
+Exchange and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
 
 ## Topology
 
 When `AutoCreateTopology` is true, the transport declares:
 
-- **Topic exchange**: `conduit` for event pub/sub with routing keys.
-- **Direct exchange**: `conduit.direct` for command/query routing.
-- **App queue**: `conduit-{appName}`, durable, bound to the direct exchange.
-- **Event bindings**: The app queue is bound to the topic exchange with routing keys for each subscribed event type.
-- **Reply queue**: An exclusive auto-delete queue created per connection for request/response correlation.
+```
+Exchange: {systemName} (type: topic)
+Queue: {systemName}-{appName}
+├── Binding: routing key = {FullTypeName} (per handled type)
+Queue: {systemName}-{appName}-{poolName}
+├── Binding: routing key = {FullTypeName} (per pool type)
+Reply Queue: exclusive auto-delete (per connection)
+```
+
+All message types (commands, queries, events) flow through a single topic exchange. There is no direct exchange. Each handled type gets a queue binding with the full type name as the routing key. Reply messages bypass the exchange and go directly to the exclusive reply queue.
 
 All declarations are idempotent.
+
+### Unicast correctness
+
+RabbitMQ does not have a built-in unicast subscription concept like Azure Service Bus. Unicast correctness for commands and queries relies on only one app binding a given type's routing key. If two apps bind the same command type, RabbitMQ will round-robin between them, which is incorrect for request/response semantics. Ensure each command/query type is handled by exactly one service.
+
+## Developer and test modes
+
+`TopologyMode` on `ConduitOptions` controls resource naming and durability:
+
+| Mode | Prefix | Durability | Auto-delete |
+|---|---|---|---|
+| `Production` | None | Durable | Never |
+| `Developer` | `{DeveloperPrefix}` (default: username) | Non-durable | Auto-delete |
+| `Test` | `test-{random}` | Non-durable | Auto-delete |
+
+Developer mode gives each developer isolated broker resources (e.g. exchange `bpage-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests.
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.TopologyMode = TopologyMode.Developer;
+    conduit.DeveloperPrefix = "myprefix";  // optional, defaults to Environment.UserName
+
+    conduit.AddEndpoint("orders", endpoint =>
+        endpoint.UseRabbitMQ(connectionString));
+});
+```
 
 ## Request/response
 
 When the generated mediator routes a command to a RabbitMQ endpoint:
 
-1. The transport publishes the command to the direct exchange with the target queue as the routing key. The message includes `ReplyTo` and `CorrelationId` properties.
-2. The receiving service processes the command and publishes a reply to the sender's reply queue with the matching correlation ID.
-3. The sender matches the reply by correlation ID and deserializes the `DispatchResult`.
+1. The transport publishes the command to the topic exchange with the full type name as the routing key. The message includes `ReplyTo` and `CorrelationId` properties.
+2. The queue binding routes the message to the handler's app queue.
+3. The receiving service processes the command and publishes a reply directly to the sender's reply queue with the matching correlation ID.
+4. The sender matches the reply by correlation ID and deserializes the `DispatchResult`.
 
-Replies time out after 30 seconds.
+Replies time out after 30 seconds. Reply messages bypass the topic exchange.
 
-## Event auto-subscription
+## Auto-discovery
 
-The transport scans DI for `IEventListener<T>` registrations at startup and binds the app queue to the topic exchange with each event's full type name as the routing key.
+The transport scans DI at startup for all handler registrations:
 
-When an event is published, the transport sends it to the topic exchange with the event's full type name as the routing key. RabbitMQ routes the message to all queues with matching bindings.
+- `IEventListener<T>` — binds the app queue to the topic exchange for each event type
+- `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — binds the app queue for each command/query type
+
+No manual binding configuration is needed. When a message is published, the transport sends it to the topic exchange with the full type name as the routing key. RabbitMQ routes the message to all queues with matching bindings.
 
 ## Wire format
 
@@ -106,7 +142,7 @@ endpoint.UseRabbitMQ(connectionString, options =>
 });
 ```
 
-This routes `BulkImportCommand` to a dedicated `conduit-{appName}-imports` queue with prefetch 2. Everything else uses the default queue at prefetch 20.
+This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with prefetch 2. Everything else uses the default queue at prefetch 20.
 
 Prefetch count controls how many unacknowledged messages RabbitMQ delivers to a consumer at once. Lower values limit throughput but prevent a slow consumer from buffering too many messages.
 
