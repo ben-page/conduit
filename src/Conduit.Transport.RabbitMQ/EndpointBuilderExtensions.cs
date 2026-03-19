@@ -30,9 +30,6 @@ public static class EndpointBuilderExtensions
         var options = new RabbitMQOptions { ConnectionString = connectionString };
         configure?.Invoke(options);
 
-        // Register IServiceCollection for event listener discovery at startup
-        builder.Services.AddSingleton<IServiceCollection>(builder.Services);
-
         // Register options and transport as singletons
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton<RabbitMQTransport>();

@@ -4,7 +4,6 @@ using System.Text.Json;
 using Conduit.Configuration;
 using Conduit.Dispatch;
 using Conduit.Exceptions;
-using Conduit.Handlers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -208,9 +207,11 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         this.publishChannel = await this.connection.CreateChannelAsync(
             cancellationToken: cancellationToken);
 
-        // Discover subscribed event types and handled command/query types from DI
-        var subscribedEventTypes = this.DiscoverSubscribedEventTypes();
-        var handledCommandQueryTypes = this.DiscoverHandledCommandQueryTypes();
+        // Get registered types from compile-time registry
+        var registry = this.serviceProvider.GetRequiredService<ConduitTypeRegistry>();
+        var subscribedEventTypes = registry.GetEventListenerNames();
+        var handledCommandQueryTypes = registry.GetCommandHandlerNames()
+            .Concat(registry.GetQueryHandlerNames()).ToList();
 
         // Non-production modes force AutoCreateTopology on
         var autoCreate = this.options.AutoCreateTopology;
@@ -481,84 +482,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         }
 
         return Task.CompletedTask;
-    }
-
-    private List<string> DiscoverSubscribedEventTypes()
-    {
-        var eventTypes = new List<string>();
-        var services = this.serviceProvider.GetRequiredService<IServiceCollection>();
-
-        foreach (var descriptor in services)
-        {
-            if (!descriptor.ServiceType.IsGenericType)
-            {
-                continue;
-            }
-
-            if (descriptor.ServiceType.GetGenericTypeDefinition() != typeof(IEventListener<>))
-            {
-                continue;
-            }
-
-            var eventType = descriptor.ServiceType.GetGenericArguments()[0];
-            var fullTypeName = eventType.FullName;
-            if (fullTypeName is not null && !eventTypes.Contains(fullTypeName))
-            {
-                eventTypes.Add(fullTypeName);
-            }
-        }
-
-        return eventTypes;
-    }
-
-    /// <summary>
-    /// Scans IServiceCollection for closed generic ICommandHandler&lt;T&gt;, ICommandHandler&lt;T,R&gt;,
-    /// and IQueryHandler&lt;T,R&gt; registrations and extracts the message type FullTypeName for each.
-    /// </summary>
-    private List<string> DiscoverHandledCommandQueryTypes()
-    {
-        var services = this.serviceProvider.GetRequiredService<IServiceCollection>();
-        var handlerOpenGenerics = new[]
-        {
-            typeof(ICommandHandler<>),
-            typeof(ICommandHandler<,>),
-            typeof(IQueryHandler<,>),
-        };
-        var messageTypes = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var descriptor in services)
-        {
-            var serviceType = descriptor.ServiceType;
-            if (!serviceType.IsGenericType)
-            {
-                continue;
-            }
-
-            var genericDef = serviceType.GetGenericTypeDefinition();
-            var isHandler = false;
-            foreach (var handlerType in handlerOpenGenerics)
-            {
-                if (genericDef == handlerType)
-                {
-                    isHandler = true;
-                    break;
-                }
-            }
-
-            if (!isHandler)
-            {
-                continue;
-            }
-
-            var messageType = serviceType.GetGenericArguments()[0];
-            var fullTypeName = messageType.FullName;
-            if (fullTypeName is not null)
-            {
-                messageTypes.Add(fullTypeName);
-            }
-        }
-
-        return [.. messageTypes];
     }
 
     /// <summary>
