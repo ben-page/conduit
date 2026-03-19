@@ -87,6 +87,69 @@ public static class RegistrationEmitter
         sb.AppendLine($"        services.AddTransient<{EmitConstants.IMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
         sb.AppendLine($"        services.AddTransient<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
 
+        // Collect type lists for the registry
+        var eventTypeNames = listenerGroups.Select(g => g.EventFullTypeName).Distinct().ToList();
+        var commandTypeNames = handlers
+            .Where(h => typesByName.TryGetValue(h.MessageFullTypeName, out var t)
+                && (t.Kind == DispatchableKind.Command || t.Kind == DispatchableKind.VoidCommand))
+            .Select(h => h.MessageFullTypeName)
+            .Distinct()
+            .ToList();
+        var queryTypeNames = handlers
+            .Where(h => typesByName.TryGetValue(h.MessageFullTypeName, out var t)
+                && t.Kind == DispatchableKind.Query)
+            .Select(h => h.MessageFullTypeName)
+            .Distinct()
+            .ToList();
+
+        // Emit ConduitTypeRegistry registration
+        sb.AppendLine();
+        sb.AppendLine($"        // Compile-time type registry for transport topology discovery");
+        sb.Append($"        services.AddSingleton(new {EmitConstants.ConduitTypeRegistry}(");
+        sb.AppendLine();
+
+        // Event listeners
+        sb.Append("            eventListeners: [");
+        for (var i = 0; i < eventTypeNames.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append($"typeof({eventTypeNames[i]})");
+        }
+
+        sb.AppendLine("],");
+
+        // Command handlers
+        sb.Append("            commandHandlers: [");
+        for (var i = 0; i < commandTypeNames.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append($"typeof({commandTypeNames[i]})");
+        }
+
+        sb.AppendLine("],");
+
+        // Query handlers
+        sb.Append("            queryHandlers: [");
+        for (var i = 0; i < queryTypeNames.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append($"typeof({queryTypeNames[i]})");
+        }
+
+        sb.AppendLine("]));");
+
         sb.AppendLine();
         sb.AppendLine("        return services;");
         sb.AppendLine("    }");

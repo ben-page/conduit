@@ -27,6 +27,7 @@ internal static class EmitConstants
     // Configuration types
     internal const string ConduitBuilder = "Conduit.Configuration.ConduitBuilder";
     internal const string ConduitOptions = "Conduit.Configuration.ConduitOptions";
+    internal const string ConduitTypeRegistry = "Conduit.Configuration.ConduitTypeRegistry";
 
     // Middleware types
     internal const string IPipelineBehavior = "Conduit.Middleware.IPipelineBehavior";
