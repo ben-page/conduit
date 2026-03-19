@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Runtime;
 using Conduit.Tests.Support;
 
 namespace Conduit.Tests.Unit;

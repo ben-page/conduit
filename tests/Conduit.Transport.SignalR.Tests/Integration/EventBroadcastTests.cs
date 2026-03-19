@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Generated;
 using Conduit.Transport.SignalR.Tests.Support;

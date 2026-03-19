@@ -31,8 +31,8 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 - Each transport package has an **outbound** client (`HttpTransport`, `SignalRTransport`) and an **inbound** endpoint (`MapConduitEndpoint()`, `ConduitHub`). There is no separate "bridge" concept — browser clients and C# clients use the same transport infrastructure.
 
 **Namespace layout** (within `src/Conduit/`):
-- `Conduit.Configuration` — builder, options, endpoints, routes, `TopologyMode`, `TopologyNaming` (`src/Conduit/Configuration/`)
-- `Conduit.Dispatch` — wire types: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport`, `MessageContext` (`src/Conduit/Dispatch/`)
+- `Conduit.Configuration` — builder, options, endpoints, routes, `TopologyMode` (`src/Conduit/Configuration/`)
+- `Conduit.Runtime` — wire types + runtime: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport`, `MessageContext`, `TopologyNaming`, `ConduitTypeRegistry` (`src/Conduit/Runtime/`)
 - `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — `ICommand`, `IQuery`, `IEvent`, `Unit` (`src/Conduit/Messages/`)
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)

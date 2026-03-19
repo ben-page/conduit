@@ -1,4 +1,4 @@
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR;

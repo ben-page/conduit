@@ -1,4 +1,4 @@
-namespace Conduit.Dispatch;
+namespace Conduit.Runtime;
 
 /// <summary>
 /// Tracks message causation through dispatch chains via <see cref="AsyncLocal{T}"/>.

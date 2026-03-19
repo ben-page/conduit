@@ -46,7 +46,7 @@ See [Transports](transports/index.md) for the full broadcast model.
 Wire interceptors wrap inbound dispatch calls with custom middleware. They operate on the raw `DispatchEnvelope` before deserialization.
 
 ```csharp
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.Middleware;
 using Microsoft.Extensions.Logging;
 

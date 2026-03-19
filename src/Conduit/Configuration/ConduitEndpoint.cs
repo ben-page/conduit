@@ -3,7 +3,7 @@ namespace Conduit.Configuration;
 /// <summary>
 /// Represents a named remote destination that messages can be routed to.
 /// The transport for this endpoint is registered as a keyed service in DI
-/// and resolved at dispatch time via <see cref="Conduit.Dispatch.ConduitRuntime.ResolveTransport"/>.
+/// and resolved at dispatch time via <see cref="Conduit.Runtime.ConduitRuntime.ResolveTransport"/>.
 /// </summary>
 public sealed class ConduitEndpoint
 {

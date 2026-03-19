@@ -9,7 +9,7 @@ using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Conduit.Dispatch;
+namespace Conduit.Runtime;
 
 /// <summary>
 /// Runtime helpers used by the source-generated mediator. Not intended for direct use.

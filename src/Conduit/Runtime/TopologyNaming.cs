@@ -1,8 +1,9 @@
 using System.Globalization;
 using System.IO.Hashing;
 using System.Text;
+using Conduit.Configuration;
 
-namespace Conduit.Configuration;
+namespace Conduit.Runtime;
 
 public static class TopologyNaming
 {

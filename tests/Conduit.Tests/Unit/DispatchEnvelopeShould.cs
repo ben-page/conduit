@@ -1,6 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 
 namespace Conduit.Tests.Unit;
 

@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace Conduit.Dispatch;
+namespace Conduit.Runtime;
 
 /// <summary>
 /// The result of a dispatch operation, containing either the handler result

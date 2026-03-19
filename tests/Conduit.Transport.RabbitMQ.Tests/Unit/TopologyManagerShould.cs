@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Runtime;
 
 namespace Conduit.Transport.RabbitMQ.Tests.Unit;
 

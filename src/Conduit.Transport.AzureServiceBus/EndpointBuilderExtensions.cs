@@ -1,5 +1,5 @@
 using Conduit.Configuration;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 

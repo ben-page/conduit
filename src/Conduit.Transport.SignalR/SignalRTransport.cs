@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 
