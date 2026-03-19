@@ -30,9 +30,8 @@ public static class EndpointBuilderExtensions
         var options = new AzureServiceBusOptions { ConnectionString = connectionString };
         configure?.Invoke(options);
 
-        // Register options and IServiceCollection for event listener discovery at startup
+        // Register options
         builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton(builder.Services);
 
         // Register transport as DI-managed singleton
         builder.Services.AddSingleton<AzureServiceBusTransport>();

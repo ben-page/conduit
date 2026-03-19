@@ -4,7 +4,6 @@ using Azure.Messaging.ServiceBus.Administration;
 using Conduit.Configuration;
 using Conduit.Dispatch;
 using Conduit.Exceptions;
-using Conduit.Handlers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -65,7 +64,7 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
 
     private static readonly Action<ILogger, int, Exception?> LogDiscoveredEventTypes =
         LoggerMessage.Define<int>(LogLevel.Information, new EventId(107, "DiscoveredEventTypes"),
-            "Discovered {Count} subscribed event type(s) from DI registrations");
+            "Discovered {Count} subscribed event type(s) from type registry");
 
     private static readonly Action<ILogger, Exception?> LogStoppingProcessors =
         LoggerMessage.Define(LogLevel.Information, new EventId(108, "StoppingProcessors"),
@@ -182,9 +181,11 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         var topologyManager = new AzureServiceBusTopologyManager(
             adminClient, this.options, this.conduitOptions);
 
-        // Discover event types from IEventListener<T> registrations in DI
-        var subscribedEventTypes = this.DiscoverSubscribedEventTypes();
-        var handledCommandQueryTypes = this.DiscoverHandledCommandQueryTypes();
+        // Get registered types from compile-time registry
+        var registry = this.serviceProvider.GetRequiredService<ConduitTypeRegistry>();
+        var subscribedEventTypes = registry.GetEventListenerNames();
+        var handledCommandQueryTypes = registry.GetCommandHandlerNames()
+            .Concat(registry.GetQueryHandlerNames()).ToList();
         LogDiscoveredEventTypes(this.logger, subscribedEventTypes.Count, null);
 
         // Non-production modes force AutoCreateTopology on
@@ -273,90 +274,6 @@ public sealed class AzureServiceBusTransport : IConduitTransport, IHostedService
         }
 
         return resolvedOptions;
-    }
-
-    /// <summary>
-    /// Scans IServiceCollection for closed generic IEventListener&lt;T&gt; registrations
-    /// and extracts the event type FullTypeName for each.
-    /// </summary>
-    private List<string> DiscoverSubscribedEventTypes()
-    {
-        var serviceDescriptors = this.serviceProvider.GetRequiredService<IServiceCollection>();
-        var eventListenerOpenGeneric = typeof(IEventListener<>);
-        var eventTypes = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var descriptor in serviceDescriptors)
-        {
-            var serviceType = descriptor.ServiceType;
-            if (!serviceType.IsGenericType)
-            {
-                continue;
-            }
-
-            if (serviceType.GetGenericTypeDefinition() != eventListenerOpenGeneric)
-            {
-                continue;
-            }
-
-            var eventType = serviceType.GetGenericArguments()[0];
-            var fullTypeName = eventType.FullName;
-            if (fullTypeName is not null)
-            {
-                eventTypes.Add(fullTypeName);
-            }
-        }
-
-        return [.. eventTypes];
-    }
-
-    /// <summary>
-    /// Scans IServiceCollection for closed generic ICommandHandler&lt;T&gt;, ICommandHandler&lt;T,R&gt;,
-    /// and IQueryHandler&lt;T,R&gt; registrations and extracts the message type FullTypeName for each.
-    /// </summary>
-    private List<string> DiscoverHandledCommandQueryTypes()
-    {
-        var serviceDescriptors = this.serviceProvider.GetRequiredService<IServiceCollection>();
-        var handlerOpenGenerics = new[]
-        {
-            typeof(ICommandHandler<>),
-            typeof(ICommandHandler<,>),
-            typeof(IQueryHandler<,>),
-        };
-        var messageTypes = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var descriptor in serviceDescriptors)
-        {
-            var serviceType = descriptor.ServiceType;
-            if (!serviceType.IsGenericType)
-            {
-                continue;
-            }
-
-            var genericDef = serviceType.GetGenericTypeDefinition();
-            var isHandler = false;
-            foreach (var handlerType in handlerOpenGenerics)
-            {
-                if (genericDef == handlerType)
-                {
-                    isHandler = true;
-                    break;
-                }
-            }
-
-            if (!isHandler)
-            {
-                continue;
-            }
-
-            var messageType = serviceType.GetGenericArguments()[0];
-            var fullTypeName = messageType.FullName;
-            if (fullTypeName is not null)
-            {
-                messageTypes.Add(fullTypeName);
-            }
-        }
-
-        return [.. messageTypes];
     }
 
     /// <summary>
