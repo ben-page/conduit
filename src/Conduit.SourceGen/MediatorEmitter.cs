@@ -38,7 +38,7 @@ public static class MediatorEmitter
         sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using Conduit;");
         sb.AppendLine($"using {EmitConstants.NamespaceConfiguration};");
-        sb.AppendLine($"using {EmitConstants.NamespaceDispatch};");
+        sb.AppendLine($"using {EmitConstants.NamespaceRuntime};");
         sb.AppendLine($"using {EmitConstants.NamespaceMiddleware};");
         sb.AppendLine($"using {EmitConstants.NamespaceMessages};");
         sb.AppendLine($"using {EmitConstants.NamespaceHandlers};");

@@ -1,5 +1,5 @@
 ﻿using AwesomeAssertions;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.Generated;
 using Conduit.Tests.Support;
 using Microsoft.AspNetCore.Builder;

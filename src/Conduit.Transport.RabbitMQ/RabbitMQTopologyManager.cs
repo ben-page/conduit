@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Conduit.Runtime;
 using RabbitMQ.Client;
 
 namespace Conduit.Transport.RabbitMQ;

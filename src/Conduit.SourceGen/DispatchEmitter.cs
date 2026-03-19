@@ -28,7 +28,7 @@ public static class DispatchEmitter
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine($"using {EmitConstants.NamespaceConfiguration};");
-        sb.AppendLine($"using {EmitConstants.NamespaceDispatch};");
+        sb.AppendLine($"using {EmitConstants.NamespaceRuntime};");
         sb.AppendLine();
         sb.AppendLine($"namespace {EmitConstants.NamespaceGenerated};");
         sb.AppendLine();

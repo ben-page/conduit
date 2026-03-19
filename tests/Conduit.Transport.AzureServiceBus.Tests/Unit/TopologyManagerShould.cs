@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Azure.Messaging.ServiceBus.Administration;
 using Conduit.Configuration;
+using Conduit.Runtime;
 
 namespace Conduit.Transport.AzureServiceBus.Tests.Unit;
 

@@ -5,7 +5,7 @@ using AwesomeAssertions;
 using Conduit.Transport.Http;
 using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;

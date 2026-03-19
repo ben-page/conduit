@@ -1,4 +1,4 @@
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.Handlers;
 
 namespace Conduit.Transport.RabbitMQ.Tests.Support;

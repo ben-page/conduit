@@ -1,7 +1,7 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Configuration;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.Middleware;
 using Microsoft.Extensions.Options;
 

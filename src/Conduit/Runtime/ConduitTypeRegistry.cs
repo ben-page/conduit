@@ -1,4 +1,4 @@
-namespace Conduit.Configuration;
+namespace Conduit.Runtime;
 
 /// <summary>
 /// Compile-time registry of message types handled by this application.

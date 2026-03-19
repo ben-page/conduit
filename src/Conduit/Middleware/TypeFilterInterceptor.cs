@@ -1,5 +1,5 @@
 using Conduit.Configuration;
-using Conduit.Dispatch;
+using Conduit.Runtime;
 using Conduit.Exceptions;
 using Microsoft.Extensions.Options;
 

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Conduit.Dispatch;
+namespace Conduit.Runtime;
 
 /// <summary>
 /// A wire-format envelope containing a type discriminator and JSON payload,

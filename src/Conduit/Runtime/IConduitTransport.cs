@@ -1,4 +1,4 @@
-namespace Conduit.Dispatch;
+namespace Conduit.Runtime;
 
 /// <summary>
 /// Bidirectional transport for delivering messages between Conduit nodes.
