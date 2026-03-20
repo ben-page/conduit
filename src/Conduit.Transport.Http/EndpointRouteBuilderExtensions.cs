@@ -1,3 +1,4 @@
+using Conduit.Exceptions;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -30,7 +31,7 @@ public static class EndpointRouteBuilderExtensions
 
             if (result.Error is not null)
             {
-                return Results.Json(result, statusCode: MapStatusCode(result.Error.Code));
+                return Results.Json(result, statusCode: ErrorCode.ToHttpStatusCode(result.Error.Code));
             }
 
             return Results.Ok(result);
@@ -47,13 +48,4 @@ public static class EndpointRouteBuilderExtensions
 
         return endpoints;
     }
-
-    private static int MapStatusCode(string code) => code switch
-    {
-        "NotFound" => 404,
-        "Unauthorized" => 401,
-        "Conflict" => 409,
-        "InternalError" => 500,
-        _ => 400,
-    };
 }

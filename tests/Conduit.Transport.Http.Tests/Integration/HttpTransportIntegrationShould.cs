@@ -97,7 +97,7 @@ public class HttpTransportShould
     }
 
     [TestMethod]
-    public async Task PropagateNotFoundAsHttpRequestException()
+    public async Task PropagateNotFoundAsStructuredError()
     {
         // Arrange
         await using var handlerHost = CreateHandlerHost();
@@ -107,7 +107,8 @@ public class HttpTransportShould
         // Act
         var action = () => mediator.FetchAsync(new GetItemQuery(Guid.NewGuid()));
 
-        // Assert
-        await action.Should().ThrowAsync<HttpRequestException>();
+        // Assert — HTTP transport now reads structured DispatchResult errors, consistent with other transports
+        var exception = await action.Should().ThrowAsync<InvalidOperationException>();
+        exception.WithMessage("*NotFound*");
     }
 }

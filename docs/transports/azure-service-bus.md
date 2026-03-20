@@ -36,14 +36,12 @@ Pass a configuration callback for additional settings:
 ```csharp
 endpoint.UseAzureServiceBus(connectionString, options =>
 {
-    options.AutoCreateTopology = true;     // default: true
     options.DefaultConcurrency = 10;       // default: 10
 });
 ```
 
 | Property | Default | Description |
 |---|---|---|
-| `AutoCreateTopology` | `true` | Create queues, topics, and subscriptions on startup |
 | `DefaultConcurrency` | `10` | Max concurrent message processing on the default receiver |
 | `AdminConnectionString` | `null` | Separate connection string for topology management. Required when using the ASB Emulator with different AMQP/HTTP ports |
 
@@ -51,7 +49,7 @@ Topic and queue names are controlled by `SystemName` and `TopologyMode` on `Cond
 
 ## Topology
 
-When `AutoCreateTopology` is true, the transport creates the following on startup:
+The transport creates the following on startup (idempotent — safe to run on every startup):
 
 ```
 Topic: {systemName}
@@ -70,7 +68,6 @@ All messages (commands, queries, events) publish to the shared topic. Subscripti
 
 All creation is idempotent. Multiple pods starting simultaneously will not conflict (409 responses are swallowed).
 
-Set `AutoCreateTopology = false` if your topology is managed externally through infrastructure-as-code.
 
 ### Unicast vs multicast subscriptions
 

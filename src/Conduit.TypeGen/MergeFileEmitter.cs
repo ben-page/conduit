@@ -87,19 +87,12 @@ public static class MergeFileEmitter
     }
 
     /// <summary>
-    /// Resolves a result type name to its root complex type (unwrapping List, etc.).
-    /// Searches all assemblies loaded in the same context.
+    /// Resolves a result type name to its root complex type, recursively unwrapping
+    /// collections and dictionaries (e.g. <c>List&lt;Dict&lt;string, MyDto&gt;&gt;</c> → <c>MyDto</c>).
     /// </summary>
     private static Type? ResolveResultRootType(string resultFullTypeName, Assembly assembly, MetadataLoadContext? metadataContext)
     {
-        var typeName = resultFullTypeName;
-
-        // Handle generic types like "System.Collections.Generic.List`1<Namespace.Foo>"
-        var angleBracket = typeName.IndexOf('<', StringComparison.Ordinal);
-        if (angleBracket >= 0)
-        {
-            typeName = typeName[(angleBracket + 1)..^1];
-        }
+        var typeName = UnwrapToInnerType(resultFullTypeName);
 
         // Search the primary assembly first
         var type = assembly.GetType(typeName);
@@ -132,6 +125,65 @@ public static class MergeFileEmitter
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Recursively strips generic wrappers (List, IReadOnlyList, Dictionary value types, etc.)
+    /// to find the innermost type name.
+    /// </summary>
+    private static string UnwrapToInnerType(string typeName)
+    {
+        while (true)
+        {
+            var angleBracket = typeName.IndexOf('<', StringComparison.Ordinal);
+            if (angleBracket < 0)
+            {
+                return typeName;
+            }
+
+            var outerName = typeName[..angleBracket];
+            var innerContent = typeName[(angleBracket + 1)..^1];
+
+            if (TypeMapper.IsDictionaryFullName(outerName))
+            {
+                // For dictionaries, extract the value type (after the first comma at depth 0)
+                var commaIndex = FindTopLevelComma(innerContent);
+                if (commaIndex >= 0)
+                {
+                    typeName = innerContent[(commaIndex + 1)..].TrimStart();
+                    continue;
+                }
+            }
+
+            // For collections or unknown generics, take the inner content
+            typeName = innerContent;
+        }
+    }
+
+    /// <summary>
+    /// Finds the index of the first comma at bracket depth 0.
+    /// </summary>
+    private static int FindTopLevelComma(string text)
+    {
+        var depth = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            switch (text[i])
+            {
+                case '<':
+                    depth++;
+                    break;
+                case '>':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    return i;
+                default:
+                    break;
+            }
+        }
+
+        return -1;
     }
 
     private static void EmitInterface(StringBuilder sb, string typeName, Type? type)

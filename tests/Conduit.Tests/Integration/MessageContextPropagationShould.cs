@@ -2,7 +2,6 @@
 using Conduit.Runtime;
 using Conduit.Generated;
 using Conduit.Tests.Support;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Tests.Integration;
@@ -11,24 +10,40 @@ namespace Conduit.Tests.Integration;
 [DoNotParallelize]
 public class MessageContextPropagationShould
 {
+    private ServiceProvider? serviceProvider;
+
     [TestInitialize]
     public void Setup()
     {
         CapturedContext.Reset();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddConduit(conduit =>
+        {
+            conduit.AddPipeline(typeof(ContextCapturingBehavior<,>));
+        });
+        this.serviceProvider = services.BuildServiceProvider();
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        this.serviceProvider?.Dispose();
     }
 
     [TestMethod]
     public async Task SetContextDuringCommandDispatch()
     {
         // Arrange
-        var mediator = CreateMediator();
+        var mediator = this.serviceProvider!.GetRequiredService<IMediator>();
 
         // Act
         await mediator.ExecuteAsync(new EchoCommand("test"));
 
         // Assert
         CapturedContext.Last.Should().NotBeNull();
-        CapturedContext.Last.MessageId.Should().NotBeNullOrEmpty();
+        CapturedContext.Last!.MessageId.Should().NotBeNullOrEmpty();
         CapturedContext.Last.ConversationId.Should().Be(CapturedContext.Last.MessageId);
         CapturedContext.Last.CausationId.Should().BeNull();
     }
@@ -37,7 +52,7 @@ public class MessageContextPropagationShould
     public async Task ReturnNullContextAfterDispatchCompletes()
     {
         // Arrange
-        var mediator = CreateMediator();
+        var mediator = this.serviceProvider!.GetRequiredService<IMediator>();
 
         // Act
         await mediator.ExecuteAsync(new EchoCommand("test"));
@@ -51,7 +66,7 @@ public class MessageContextPropagationShould
     {
         // Arrange
         // Chain: TopLevelCommand → NestedEventOne + NestedEventTwo → DeeplyNestedCommand
-        var mediator = CreateMediator();
+        var mediator = this.serviceProvider!.GetRequiredService<IMediator>();
 
         // Act
         await mediator.ExecuteAsync(new TopLevelCommand("test"));
@@ -99,7 +114,7 @@ public class MessageContextPropagationShould
     public async Task StartSeparateConversationsForIndependentDispatches()
     {
         // Arrange
-        var mediator = CreateMediator();
+        var mediator = this.serviceProvider!.GetRequiredService<IMediator>();
 
         // Act — two independent dispatches from a clean scope
         await mediator.ExecuteAsync(new EchoCommand("first"));
@@ -110,16 +125,5 @@ public class MessageContextPropagationShould
 
         // Assert — each dispatch starts its own conversation
         firstConversation.Should().NotBe(secondConversation);
-    }
-
-    private static IMediator CreateMediator()
-    {
-        var builder = WebApplication.CreateBuilder();
-        builder.Services.AddConduit(conduit =>
-        {
-            conduit.AddPipeline(typeof(ContextCapturingBehavior<,>));
-        });
-        var app = builder.Build();
-        return app.Services.CreateScope().ServiceProvider.GetRequiredService<IMediator>();
     }
 }

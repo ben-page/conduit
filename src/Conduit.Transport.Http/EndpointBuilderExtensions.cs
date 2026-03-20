@@ -10,8 +10,8 @@ public static class EndpointBuilderExtensions
 {
     /// <summary>
     /// Configures this endpoint to use HTTP POST to a remote Conduit dispatch endpoint.
-    /// The caller is responsible for managing the <paramref name="httpClient"/> lifetime
-    /// (typically via <c>IHttpClientFactory</c>).
+    /// The <paramref name="httpClient"/> is captured at configuration time and registered
+    /// as a keyed singleton — its lifetime is tied to the DI container.
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="httpClient">An HttpClient with BaseAddress set to the remote service.</param>

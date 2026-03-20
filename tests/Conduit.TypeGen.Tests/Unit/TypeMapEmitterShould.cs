@@ -21,9 +21,6 @@ public class TypeMapEmitterShould
                 Kind = DispatchableKind.Command,
                 ResultTypeName = "Guid",
                 ResultFullTypeName = "System.Guid",
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();
@@ -48,9 +45,6 @@ public class TypeMapEmitterShould
                 FullTypeName = "MyApp.Commands.DeleteCommand",
                 Namespace = "MyApp.Commands",
                 Kind = DispatchableKind.VoidCommand,
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();
@@ -79,9 +73,6 @@ public class TypeMapEmitterShould
                 Kind = DispatchableKind.Command,
                 ResultTypeName = "Guid",
                 ResultFullTypeName = "System.Guid",
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             },
             new()
             {
@@ -89,9 +80,6 @@ public class TypeMapEmitterShould
                 FullTypeName = "MyApp.Commands.DeleteCommand",
                 Namespace = "MyApp.Commands",
                 Kind = DispatchableKind.VoidCommand,
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();
@@ -119,9 +107,6 @@ public class TypeMapEmitterShould
                 Kind = DispatchableKind.Query,
                 ResultTypeName = "String",
                 ResultFullTypeName = "System.String",
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();
@@ -146,9 +131,6 @@ public class TypeMapEmitterShould
                 FullTypeName = "MyApp.Events.ItemCreatedEvent",
                 Namespace = "MyApp.Events",
                 Kind = DispatchableKind.Event,
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();
@@ -173,9 +155,6 @@ public class TypeMapEmitterShould
                 FullTypeName = "MyApp.Commands.DeleteCommand",
                 Namespace = "MyApp.Commands",
                 Kind = DispatchableKind.VoidCommand,
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();
@@ -199,9 +178,6 @@ public class TypeMapEmitterShould
                 FullTypeName = "MyApp.Models.ItemDto",
                 Namespace = "MyApp.Models",
                 Kind = DispatchableKind.Model,
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
             }
         };
         var sb = new StringBuilder();

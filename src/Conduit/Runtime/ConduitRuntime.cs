@@ -27,6 +27,23 @@ public static class ConduitRuntime
         PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() },
     };
+
+    /// <summary>
+    /// Checks a reply <see cref="DispatchResult{T}"/> for errors and returns the data.
+    /// Throws <see cref="InvalidOperationException"/> if the result contains an error.
+    /// Used by all transports after receiving a reply from a remote endpoint.
+    /// </summary>
+    public static object? UnwrapReply(DispatchResult<JsonElement?>? result)
+    {
+        if (result?.Error is not null)
+        {
+            throw new InvalidOperationException(
+                $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
+        }
+
+        return result?.Data;
+    }
+
     // Error-level logs
     private static readonly Action<ILogger, string, Exception?> LogDispatchError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(1, "DispatchError"),
@@ -178,8 +195,8 @@ public static class ConduitRuntime
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
-        LogWireRequestReceived(logger, envelope.Type, null);
         ArgumentNullException.ThrowIfNull(dispatch);
+        LogWireRequestReceived(logger, envelope.Type, null);
 
         var previousContext = MessageContext.Current;
         MessageContext.StartDispatch();
@@ -294,8 +311,24 @@ public static class ConduitRuntime
         var builder = new ConduitBuilder(services);
         configure?.Invoke(builder);
 
-        ServiceCollectionServiceExtensions
-            .AddSingleton(services, builder.Options);
+        var options = builder.Options;
+
+        // Register as factory so ApplicationName can default from IHostEnvironment at resolution time
+        ServiceCollectionServiceExtensions.AddSingleton(services, serviceProvider =>
+        {
+            if (string.IsNullOrWhiteSpace(options.ApplicationName))
+            {
+                var hostEnvironment = serviceProvider
+                    .GetService<Microsoft.Extensions.Hosting.IHostEnvironment>();
+
+                if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
+                {
+                    options.ApplicationName = hostEnvironment.ApplicationName;
+                }
+            }
+
+            return options;
+        });
 
         return services;
     }

@@ -8,6 +8,7 @@
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.5" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.5" />
     <PackageVersion Include="System.IO.Hashing" Version="10.0.5" />
+    <PackageVersion Include="System.Memory.Data" Version="10.0.5" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.5" />
     <PackageVersion Include="PolySharp" Version="1.15.0" />

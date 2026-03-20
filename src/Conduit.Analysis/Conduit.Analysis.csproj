@@ -7,7 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="PolySharp" PrivateAssets="all" />
   </ItemGroup>
 

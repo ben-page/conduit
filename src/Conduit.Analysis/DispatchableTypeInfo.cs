@@ -24,15 +24,6 @@ public sealed class DispatchableTypeInfo
     /// <summary>The fully-qualified result type name, or <see langword="null"/> for void commands and events.</summary>
     public string? ResultFullTypeName { get; init; }
 
-    /// <summary>Whether the type overrides the <c>Validate()</c> method.</summary>
-    public required bool HasValidateOverride { get; init; }
-
-    /// <summary>Whether the type has an <c>[Authorize]</c> attribute.</summary>
-    public required bool HasAuthorizeAttribute { get; init; }
-
-    /// <summary>Whether the type has an <c>[AllowAnonymous]</c> attribute.</summary>
-    public required bool HasAllowAnonymousAttribute { get; init; }
-
     /// <summary>Whether the type has a <c>[LocalOnly]</c> attribute (events only).</summary>
     public bool IsLocalOnly { get; init; }
 }

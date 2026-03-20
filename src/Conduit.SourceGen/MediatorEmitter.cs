@@ -378,8 +378,9 @@ public static class MediatorEmitter
         sb.AppendLine($"        {indent}var eventEnvelope = new DispatchEnvelope(");
         sb.AppendLine($"        {indent}    @event.GetType().FullName!,");
         sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event, @event.GetType(), ConduitRuntime.JsonOptions));");
-        sb.AppendLine($"        {indent}ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transports.Count());");
-        sb.AppendLine($"        {indent}foreach (var transport in transports)");
+        sb.AppendLine($"        {indent}var transportList = transports.ToArray();");
+        sb.AppendLine($"        {indent}ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transportList.Length);");
+        sb.AppendLine($"        {indent}foreach (var transport in transportList)");
         sb.AppendLine($"        {indent}{{");
         sb.AppendLine($"        {indent}    try");
         sb.AppendLine($"        {indent}    {{");

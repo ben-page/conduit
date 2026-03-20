@@ -55,9 +55,24 @@ internal sealed class RabbitMQTopologyManager
             noWait: false,
             cancellationToken: cancellationToken);
 
-        // Bind app queue to topic exchange for each subscribed event type
+        // Collect pool-assigned types so they are only bound to their pool queue, not the default queue
+        var poolAssignedTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var pool in this.options.Pools)
+        {
+            foreach (var messageType in pool.MessageTypes)
+            {
+                poolAssignedTypes.Add(messageType);
+            }
+        }
+
+        // Bind app queue to topic exchange for each subscribed event type (excluding pool-assigned)
         foreach (var eventType in subscribedEventTypes)
         {
+            if (poolAssignedTypes.Contains(eventType))
+            {
+                continue;
+            }
+
             await channel.QueueBindAsync(
                 queue: appQueueName,
                 exchange: exchangeName,
@@ -67,9 +82,14 @@ internal sealed class RabbitMQTopologyManager
                 cancellationToken: cancellationToken);
         }
 
-        // Bind app queue to topic exchange for each handled command/query type
+        // Bind app queue to topic exchange for each handled command/query type (excluding pool-assigned)
         foreach (var commandQueryType in handledCommandQueryTypes)
         {
+            if (poolAssignedTypes.Contains(commandQueryType))
+            {
+                continue;
+            }
+
             await channel.QueueBindAsync(
                 queue: appQueueName,
                 exchange: exchangeName,

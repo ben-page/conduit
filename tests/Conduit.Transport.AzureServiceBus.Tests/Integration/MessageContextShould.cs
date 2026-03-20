@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Generated;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Transport.AzureServiceBus.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,7 +64,7 @@ public class MessageContextShould
     }
 
     [TestMethod]
-    public async Task PropagateContextThroughCommandDispatch()
+    public async Task PropagateConversationIdThroughCommandDispatch()
     {
         // Arrange
         SkipIfNoConnectionString();
@@ -99,11 +100,60 @@ public class MessageContextShould
 
         var mediator = callerHost.GetRequiredService<IMediator>();
 
+        // Capture the caller-side context so we can verify it propagated
+        var callerContext = MessageContext.StartDispatch();
+
         // Act
         var snapshot = await mediator.ExecuteAsync(new CaptureContextCommand());
 
-        // Assert
+        // Assert — handler should see the same ConversationId the caller established
         snapshot.MessageId.Should().NotBeNullOrEmpty();
-        snapshot.ConversationId.Should().NotBeNullOrEmpty();
+        snapshot.ConversationId.Should().Be(callerContext.ConversationId);
+        snapshot.CausationId.Should().NotBeNullOrEmpty();
+    }
+
+    [TestMethod]
+    public async Task AssignFreshMessageIdOnHandlerSide()
+    {
+        // Arrange
+        SkipIfNoConnectionString();
+
+        var handlerAppName = $"asb-{Guid.NewGuid():N}"[..15];
+        var callerAppName = $"asb-{Guid.NewGuid():N}"[..15];
+
+        await using var handlerHost = await TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.ApplicationName = handlerAppName;
+                conduit.AddEndpoint("self", endpoint =>
+                    endpoint.UseAzureServiceBus(connectionString!, options =>
+                        options.AdminConnectionString = adminConnectionString));
+            });
+        });
+
+        await using var callerHost = await TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.ApplicationName = callerAppName;
+                conduit.AddEndpoint(handlerAppName, endpoint =>
+                    endpoint.UseAzureServiceBus(connectionString!, options =>
+                        options.AdminConnectionString = adminConnectionString));
+                conduit.Route("Conduit.Transport.AzureServiceBus.Tests.Support").To(handlerAppName);
+            });
+        });
+
+        var mediator = callerHost.GetRequiredService<IMediator>();
+
+        // Act — dispatch two commands and verify they get distinct MessageIds
+        var snapshot1 = await mediator.ExecuteAsync(new CaptureContextCommand());
+        var snapshot2 = await mediator.ExecuteAsync(new CaptureContextCommand());
+
+        // Assert
+        snapshot1.MessageId.Should().NotBe(snapshot2.MessageId);
     }
 }

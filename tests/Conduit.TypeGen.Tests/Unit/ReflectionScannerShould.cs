@@ -56,12 +56,4 @@ public class ReflectionScannerShould
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestOrphanCommand");
         type.Should().NotBeNull();
     }
-
-    [TestMethod]
-    public void DetectValidateOverride()
-    {
-        var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestValidatedCommand");
-        type.Should().NotBeNull();
-        type.HasValidateOverride.Should().BeTrue();
-    }
 }

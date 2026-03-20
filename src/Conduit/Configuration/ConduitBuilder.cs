@@ -1,5 +1,6 @@
 using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Conduit.Configuration;
 
@@ -141,7 +142,8 @@ public class ConduitBuilder
             }
         });
 
-        this.Services.AddSingleton<IWireInterceptor, TypeFilterInterceptor>();
+        this.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IWireInterceptor, TypeFilterInterceptor>());
         return this;
     }
 }

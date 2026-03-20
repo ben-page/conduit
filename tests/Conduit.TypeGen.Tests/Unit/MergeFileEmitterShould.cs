@@ -16,9 +16,6 @@ public class MergeFileEmitterShould
             Kind = DispatchableKind.Command,
             ResultTypeName = "Guid",
             ResultFullTypeName = "System.Guid",
-            HasValidateOverride = false,
-            HasAuthorizeAttribute = false,
-            HasAllowAnonymousAttribute = false,
         },
         new()
         {
@@ -28,9 +25,6 @@ public class MergeFileEmitterShould
             Kind = DispatchableKind.Query,
             ResultTypeName = "String",
             ResultFullTypeName = "System.String",
-            HasValidateOverride = false,
-            HasAuthorizeAttribute = false,
-            HasAllowAnonymousAttribute = false,
         },
         new()
         {
@@ -38,9 +32,6 @@ public class MergeFileEmitterShould
             FullTypeName = "MyApp.Events.ItemCreatedEvent",
             Namespace = "MyApp.Events",
             Kind = DispatchableKind.Event,
-            HasValidateOverride = false,
-            HasAuthorizeAttribute = false,
-            HasAllowAnonymousAttribute = false,
         },
     ];
 

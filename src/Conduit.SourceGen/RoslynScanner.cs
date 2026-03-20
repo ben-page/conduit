@@ -16,8 +16,6 @@ public static class RoslynScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
-    private const string AuthorizeAttributeName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
-    private const string AllowAnonymousAttributeName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
 
     /// <summary>
     /// Scans the compilation for all dispatchable types implementing
@@ -64,9 +62,6 @@ public static class RoslynScanner
                 Kind = kind.Value,
                 ResultTypeName = resultTypeName,
                 ResultFullTypeName = resultFullTypeName,
-                HasValidateOverride = HasValidateOverride(typeSymbol),
-                HasAuthorizeAttribute = HasAttribute(typeSymbol, AuthorizeAttributeName),
-                HasAllowAnonymousAttribute = HasAttribute(typeSymbol, AllowAnonymousAttributeName),
                 IsLocalOnly = HasAttribute(typeSymbol, LocalOnlyAttributeName),
             });
         }
@@ -175,19 +170,6 @@ public static class RoslynScanner
         }
 
         return null;
-    }
-
-    private static bool HasValidateOverride(INamedTypeSymbol typeSymbol)
-    {
-        foreach (var member in typeSymbol.GetMembers("Validate"))
-        {
-            if (member is IMethodSymbol method && method.Parameters.Length == 0)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static bool HasAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)

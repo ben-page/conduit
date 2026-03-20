@@ -1,11 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text;
-using System.Text.Json;
 using Conduit.Configuration;
 using Conduit.Runtime;
-using Conduit.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -13,31 +10,28 @@ using RabbitMQ.Client.Events;
 namespace Conduit.Transport.RabbitMQ;
 
 /// <summary>
-/// RabbitMQ transport implementing <see cref="IConduitTransport"/> for outbound messaging
-/// and <see cref="IHostedService"/> for inbound message consumption.
+/// RabbitMQ transport extending <see cref="BrokerTransportBase{TMessage}"/>.
+/// Inbound dispatch, lifecycle, and outbound serialization are handled by the base class.
+/// This class implements the RabbitMQ-specific primitives: AMQP channels, topic exchange
+/// publishing, reply queue correlation, and consumer management.
 /// </summary>
-/// <remarks>
-/// Outbound: publishes commands/queries to topic exchange with routing key = FullTypeName
-/// (with reply-to for request/response) and events to topic exchange with routing key = FullTypeName.
-/// Inbound: consumes from per-app queue, creates DI scope per message, dispatches via IWireMediator.
-/// </remarks>
-public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyncDisposable
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Design", "CA1062:Validate arguments of public methods",
+    Justification = "Protected override methods are called by the base class which validates parameters.")]
+public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessage>
 {
     private readonly RabbitMQOptions options;
-    private readonly IServiceProvider serviceProvider;
-    private readonly ILogger<RabbitMQTransport> logger;
 
     private IConnection? connection;
     private IChannel? publishChannel;
     private IChannel? replyChannel;
     private string? replyQueueName;
-    private ConduitOptions? conduitOptions;
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<string> consumerTags = [];
     private readonly List<IChannel> consumerChannels = [];
 
-    // High-performance logging delegates
+    // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
             "Publishing event '{Type}' to RabbitMQ exchange");
@@ -45,18 +39,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
     private static readonly Action<ILogger, string, string, Exception?> LogSendingRequest =
         LoggerMessage.Define<string, string>(LogLevel.Debug, new EventId(101, "SendingRequest"),
             "Sending request '{Type}' to exchange with routing key '{RoutingKey}'");
-
-    private static readonly Action<ILogger, string, Exception?> LogReceivedMessage =
-        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(102, "ReceivedMessage"),
-            "Received message '{Type}' from RabbitMQ");
-
-    private static readonly Action<ILogger, string, Exception?> LogEventNacked =
-        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(103, "EventNacked"),
-            "Event '{Type}' nacked due to listener failure — broker will redeliver");
-
-    private static readonly Action<ILogger, string, Exception?> LogMessageProcessingError =
-        LoggerMessage.Define<string>(LogLevel.Error, new EventId(104, "MessageProcessingError"),
-            "Error processing message '{Type}'");
 
     private static readonly Action<ILogger, int, Exception?> LogStartingConsumers =
         LoggerMessage.Define<int>(LogLevel.Information, new EventId(105, "StartingConsumers"),
@@ -66,172 +48,49 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         LoggerMessage.Define(LogLevel.Information, new EventId(106, "TransportStopping"),
             "Stopping RabbitMQ transport");
 
-    private static readonly Action<ILogger, string, Exception?> LogAutoCreateTopologyOverride =
-        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(107, "AutoCreateTopologyOverride"),
-            "AutoCreateTopology was false but TopologyMode is '{TopologyMode}' — overriding to true");
-
     /// <summary>
     /// Creates a new RabbitMQ transport instance.
     /// </summary>
-    /// <param name="options">RabbitMQ connection and topology options.</param>
-    /// <param name="serviceProvider">The application service provider for resolving IWireMediator per scope.</param>
-    /// <param name="logger">Logger instance.</param>
     public RabbitMQTransport(
         RabbitMQOptions options,
+        ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
         ILogger<RabbitMQTransport> logger)
+        : base(conduitOptions, serviceProvider, logger)
     {
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(serviceProvider);
-        ArgumentNullException.ThrowIfNull(logger);
-
         this.options = options;
-        this.serviceProvider = serviceProvider;
-        this.logger = logger;
     }
 
-    /// <inheritdoc />
-    public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(envelope);
-
-        if (this.publishChannel is null || this.replyQueueName is null || this.conduitOptions is null)
-        {
-            throw new InvalidOperationException("RabbitMQ transport has not been started.");
-        }
-
-        var exchangeName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 255);
-        var correlationId = Guid.NewGuid().ToString("N");
-
-        LogSendingRequest(this.logger, envelope.Type, envelope.Type, null);
-
-        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        this.pendingReplies[correlationId] = tcs;
-
-        try
-        {
-            var body = JsonSerializer.SerializeToUtf8Bytes(
-                envelope.Payload, ConduitRuntime.JsonOptions);
-
-            var properties = new BasicProperties
-            {
-                ContentType = "application/json",
-                Type = envelope.Type,
-                CorrelationId = correlationId,
-                ReplyTo = this.replyQueueName,
-                MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
-                Headers = BuildOutboundHeaders(),
-            };
-
-            await this.publishChannel.BasicPublishAsync(
-                exchange: exchangeName,
-                routingKey: envelope.Type,
-                mandatory: false,
-                basicProperties: properties,
-                body: body,
-                cancellationToken: cancellationToken);
-
-            // Wait for reply with timeout
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-
-            using var registration = timeoutCts.Token.Register(() =>
-                tcs.TrySetCanceled(timeoutCts.Token));
-
-            var replyBody = await tcs.Task;
-
-            var result = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
-                replyBody, ConduitRuntime.JsonOptions);
-
-            if (result?.Error is not null)
-            {
-                throw new InvalidOperationException(
-                    $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
-            }
-
-            return result?.Data;
-        }
-        finally
-        {
-            this.pendingReplies.TryRemove(correlationId, out _);
-        }
-    }
+    // -----------------------------------------------------------------------
+    // Lifecycle
+    // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    public async Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    protected override async Task ConnectAsync(CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(envelope);
-
-        if (this.publishChannel is null || this.conduitOptions is null)
-        {
-            throw new InvalidOperationException("RabbitMQ transport has not been started.");
-        }
-
-        LogPublishingEvent(this.logger, envelope.Type, null);
-
-        var exchangeName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 255);
-
-        var body = JsonSerializer.SerializeToUtf8Bytes(
-            envelope.Payload, ConduitRuntime.JsonOptions);
-
-        var properties = new BasicProperties
-        {
-            ContentType = "application/json",
-            Type = envelope.Type,
-            MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
-            Headers = BuildOutboundHeaders(),
-        };
-
-        await this.publishChannel.BasicPublishAsync(
-            exchange: exchangeName,
-            routingKey: envelope.Type,
-            mandatory: false,
-            basicProperties: properties,
-            body: body,
-            cancellationToken: cancellationToken);
-    }
-
-    /// <inheritdoc />
-    public async Task StartAsync(CancellationToken cancellationToken)
-    {
-        this.conduitOptions = this.ResolveConduitOptions();
-
         var factory = new ConnectionFactory
         {
             Uri = new Uri(this.options.ConnectionString),
         };
 
         this.connection = await factory.CreateConnectionAsync(cancellationToken);
-
-        // Channel for publishing
         this.publishChannel = await this.connection.CreateChannelAsync(
             cancellationToken: cancellationToken);
+    }
 
-        // Get registered types from compile-time registry
-        var registry = this.serviceProvider.GetRequiredService<ConduitTypeRegistry>();
-        var subscribedEventTypes = registry.GetEventListenerNames();
-        var handledCommandQueryTypes = registry.GetCommandHandlerNames()
-            .Concat(registry.GetQueryHandlerNames()).ToList();
-
-        // Non-production modes force AutoCreateTopology on
-        var autoCreate = this.options.AutoCreateTopology;
-        if (!autoCreate && this.conduitOptions.TopologyMode != TopologyMode.Production)
-        {
-            autoCreate = true;
-            LogAutoCreateTopologyOverride(
-                this.logger, this.conduitOptions.TopologyMode.ToString(), null);
-        }
-
-        // Declare topology
-        if (autoCreate)
-        {
-            var topologyManager = new RabbitMQTopologyManager(this.options, this.conduitOptions);
-            await topologyManager.EnsureTopologyAsync(
-                this.publishChannel, subscribedEventTypes, handledCommandQueryTypes, cancellationToken);
-        }
+    /// <inheritdoc />
+    protected override async Task EnsureTopologyAsync(
+        IReadOnlyList<string> eventTypeNames,
+        IReadOnlyList<string> commandQueryTypeNames,
+        CancellationToken cancellationToken)
+    {
+        var topologyManager = new RabbitMQTopologyManager(this.options, this.ConduitOptions);
+        await topologyManager.EnsureTopologyAsync(
+            this.publishChannel!, eventTypeNames, commandQueryTypeNames, cancellationToken);
 
         // Set up reply queue (exclusive auto-delete)
-        this.replyChannel = await this.connection.CreateChannelAsync(
+        this.replyChannel = await this.connection!.CreateChannelAsync(
             cancellationToken: cancellationToken);
         var replyDeclare = await this.replyChannel.QueueDeclareAsync(
             queue: string.Empty,
@@ -253,26 +112,31 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
             cancellationToken: cancellationToken);
         this.consumerTags.Add(replyTag);
         this.consumerChannels.Add(this.replyChannel);
+    }
 
-        LogStartingConsumers(this.logger, subscribedEventTypes.Count, null);
+    /// <inheritdoc />
+    protected override async Task StartConsumersAsync(CancellationToken cancellationToken)
+    {
+        var registry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
+        LogStartingConsumers(this.Logger, registry.EventTypeNames.Count, null);
 
         // Start default app queue consumer
-        var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 255);
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 255);
         await this.StartConsumerAsync(appQueueName, this.options.DefaultPrefetchCount, cancellationToken);
 
         // Start pool consumers
         foreach (var pool in this.options.Pools)
         {
             var poolQueueName = TopologyNaming.CreateAppResourceName(
-                this.conduitOptions, pool.Name, 255);
+                this.ConduitOptions, pool.Name, 255);
             await this.StartConsumerAsync(poolQueueName, pool.PrefetchCount, cancellationToken);
         }
     }
 
     /// <inheritdoc />
-    public async Task StopAsync(CancellationToken cancellationToken)
+    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
     {
-        LogTransportStopping(this.logger, null);
+        LogTransportStopping(this.Logger, null);
 
         // Cancel all consumers
         for (var i = 0; i < this.consumerTags.Count; i++)
@@ -290,7 +154,7 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
             }
         }
 
-        // Cancel pending replies
+        // Cancel pending outbound reply waiters
         foreach (var pending in this.pendingReplies.Values)
         {
             pending.TrySetCanceled(cancellationToken);
@@ -300,7 +164,7 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
         foreach (var channel in this.consumerChannels)
         {
@@ -360,6 +224,152 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Inbound dispatch primitives
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override string? GetMessageType(RabbitMQInboundMessage message) =>
+        message.Args.BasicProperties.Type;
+
+    /// <inheritdoc />
+    protected override BinaryData GetMessageBody(RabbitMQInboundMessage message) =>
+        new(message.Args.Body.ToArray());
+
+    /// <inheritdoc />
+    protected override bool IsRequest(RabbitMQInboundMessage message) =>
+        !string.IsNullOrEmpty(message.Args.BasicProperties.ReplyTo);
+
+    /// <inheritdoc />
+    protected override (string MessageId, string? CausationId, string ConversationId) ExtractContext(
+        RabbitMQInboundMessage message)
+    {
+        var messageId = message.Args.BasicProperties.MessageId ?? Guid.NewGuid().ToString("N");
+        var causationId = GetHeaderString(message.Args.BasicProperties.Headers, "CausationId");
+        var conversationId = GetHeaderString(message.Args.BasicProperties.Headers, "ConversationId") ?? messageId;
+
+        return (messageId, causationId, conversationId);
+    }
+
+    /// <inheritdoc />
+    protected override async Task SendReplyAsync(RabbitMQInboundMessage message, BinaryData replyBody)
+    {
+        if (this.publishChannel is null || string.IsNullOrEmpty(message.Args.BasicProperties.ReplyTo))
+        {
+            return;
+        }
+
+        var replyProperties = new BasicProperties
+        {
+            ContentType = "application/json",
+            CorrelationId = message.Args.BasicProperties.CorrelationId,
+        };
+
+        await this.publishChannel.BasicPublishAsync(
+            exchange: string.Empty,
+            routingKey: message.Args.BasicProperties.ReplyTo,
+            mandatory: false,
+            basicProperties: replyProperties,
+            body: replyBody.ToMemory());
+    }
+
+    /// <inheritdoc />
+    protected override Task AcknowledgeAsync(RabbitMQInboundMessage message) =>
+        message.Channel.BasicAckAsync(message.Args.DeliveryTag, multiple: false).AsTask();
+
+    /// <inheritdoc />
+    protected override Task AbandonAsync(RabbitMQInboundMessage message) =>
+        message.Channel.BasicNackAsync(message.Args.DeliveryTag, multiple: false, requeue: true).AsTask();
+
+    // -----------------------------------------------------------------------
+    // Outbound primitives
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override bool IsStarted =>
+        this.publishChannel is not null && this.replyQueueName is not null;
+
+    /// <inheritdoc />
+    protected override async Task<BinaryData> PublishRequestAsync(
+        DispatchEnvelope envelope,
+        BinaryData body,
+        CancellationToken cancellationToken)
+    {
+        var exchangeName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 255);
+        var correlationId = Guid.NewGuid().ToString("N");
+
+        LogSendingRequest(this.Logger, envelope.Type, envelope.Type, null);
+
+        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        this.pendingReplies[correlationId] = tcs;
+
+        try
+        {
+            var properties = new BasicProperties
+            {
+                ContentType = "application/json",
+                Type = envelope.Type,
+                CorrelationId = correlationId,
+                ReplyTo = this.replyQueueName,
+                MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
+                Headers = BuildOutboundHeaders(),
+            };
+
+            await this.publishChannel!.BasicPublishAsync(
+                exchange: exchangeName,
+                routingKey: envelope.Type,
+                mandatory: false,
+                basicProperties: properties,
+                body: body.ToMemory(),
+                cancellationToken: cancellationToken);
+
+            // Wait for reply with timeout
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+            using var registration = timeoutCts.Token.Register(() =>
+                tcs.TrySetCanceled(timeoutCts.Token));
+
+            var replyBytes = await tcs.Task;
+            return new BinaryData(replyBytes);
+        }
+        finally
+        {
+            this.pendingReplies.TryRemove(correlationId, out _);
+        }
+    }
+
+    /// <inheritdoc />
+    protected override async Task PublishEventAsync(
+        DispatchEnvelope envelope,
+        BinaryData body,
+        CancellationToken cancellationToken)
+    {
+        LogPublishingEvent(this.Logger, envelope.Type, null);
+
+        var exchangeName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 255);
+
+        var properties = new BasicProperties
+        {
+            ContentType = "application/json",
+            Type = envelope.Type,
+            MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
+            Headers = BuildOutboundHeaders(),
+        };
+
+        await this.publishChannel!.BasicPublishAsync(
+            exchange: exchangeName,
+            routingKey: envelope.Type,
+            mandatory: false,
+            basicProperties: properties,
+            body: body.ToMemory(),
+            cancellationToken: cancellationToken);
+    }
+
+    // -----------------------------------------------------------------------
+    // Private helpers
+    // -----------------------------------------------------------------------
+
     private async Task StartConsumerAsync(
         string queueName,
         ushort prefetchCount,
@@ -375,7 +385,8 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
             cancellationToken: cancellationToken);
 
         var consumer = new AsyncEventingBasicConsumer(channel);
-        consumer.ReceivedAsync += (sender, args) => this.OnMessageReceivedAsync(channel, args);
+        consumer.ReceivedAsync += (sender, args) =>
+            this.ProcessInboundMessageAsync(new RabbitMQInboundMessage(channel, args));
 
         var tag = await channel.BasicConsumeAsync(
             queue: queueName,
@@ -385,91 +396,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
 
         this.consumerTags.Add(tag);
         this.consumerChannels.Add(channel);
-    }
-
-    private async Task OnMessageReceivedAsync(IChannel channel, BasicDeliverEventArgs args)
-    {
-        var typeName = args.BasicProperties.Type;
-        if (string.IsNullOrEmpty(typeName))
-        {
-            // Missing type header — ack and discard
-            await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
-            return;
-        }
-
-        LogReceivedMessage(this.logger, typeName, null);
-
-        var isReplyExpected = !string.IsNullOrEmpty(args.BasicProperties.ReplyTo);
-
-        try
-        {
-            await using var scope = this.serviceProvider.CreateAsyncScope();
-            var wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>();
-
-            // Seed MessageContext from inbound message properties
-            var messageId = args.BasicProperties.MessageId ?? Guid.NewGuid().ToString("N");
-            var causationId = GetHeaderString(args.BasicProperties.Headers, "CausationId");
-            var conversationId = args.BasicProperties.CorrelationId ?? messageId;
-
-            MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId);
-
-            var payload = JsonSerializer.Deserialize<JsonElement>(args.Body.Span, ConduitRuntime.JsonOptions);
-            var envelope = new DispatchEnvelope(typeName, payload);
-
-            if (isReplyExpected)
-            {
-                // Command/query — dispatch and send reply
-                var result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
-                await this.SendReplyAsync(args.BasicProperties, result);
-                await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
-            }
-            else
-            {
-                // Event — dispatch to local listeners
-                try
-                {
-                    await wireMediator.HandleWireEventAsync(envelope, CancellationToken.None);
-                    await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
-                }
-                catch (EventListenerException)
-                {
-                    // Listener failure — nack for broker redelivery
-                    LogEventNacked(this.logger, typeName, null);
-                    await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
-                }
-            }
-        }
-#pragma warning disable CA1031
-        catch (Exception ex)
-#pragma warning restore CA1031
-        {
-            LogMessageProcessingError(this.logger, typeName, ex);
-            // Always ack to prevent poison message loops for unexpected errors
-            await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
-        }
-    }
-
-    private async Task SendReplyAsync(IReadOnlyBasicProperties requestProperties, DispatchResult<object> result)
-    {
-        if (this.publishChannel is null || string.IsNullOrEmpty(requestProperties.ReplyTo))
-        {
-            return;
-        }
-
-        var replyBody = JsonSerializer.SerializeToUtf8Bytes(result, ConduitRuntime.JsonOptions);
-
-        var replyProperties = new BasicProperties
-        {
-            ContentType = "application/json",
-            CorrelationId = requestProperties.CorrelationId,
-        };
-
-        await this.publishChannel.BasicPublishAsync(
-            exchange: string.Empty,
-            routingKey: requestProperties.ReplyTo,
-            mandatory: false,
-            basicProperties: replyProperties,
-            body: replyBody);
     }
 
     private Task OnReplyReceivedAsync(object sender, BasicDeliverEventArgs args)
@@ -482,32 +408,6 @@ public sealed class RabbitMQTransport : IConduitTransport, IHostedService, IAsyn
         }
 
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Resolves ConduitOptions from DI, ensuring ApplicationName is set.
-    /// Falls back to IHostEnvironment.ApplicationName if not set explicitly.
-    /// </summary>
-    private ConduitOptions ResolveConduitOptions()
-    {
-        var resolvedOptions = this.serviceProvider.GetRequiredService<ConduitOptions>();
-
-        if (string.IsNullOrWhiteSpace(resolvedOptions.ApplicationName))
-        {
-            var hostEnvironment = this.serviceProvider.GetService<IHostEnvironment>();
-            if (!string.IsNullOrWhiteSpace(hostEnvironment?.ApplicationName))
-            {
-                resolvedOptions.ApplicationName = hostEnvironment.ApplicationName;
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    "ApplicationName must be set on ConduitBuilder or IHostEnvironment must be available. " +
-                    "Set conduit.ApplicationName in your AddConduit() configuration.");
-            }
-        }
-
-        return resolvedOptions;
     }
 
     private static Dictionary<string, object?> BuildOutboundHeaders()

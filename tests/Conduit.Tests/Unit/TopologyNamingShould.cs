@@ -129,29 +129,66 @@ public class TopologyNamingShould
     }
 
     [TestMethod]
-    public void CreateSharedResourceName_WithTypeName_ReversesSegments()
+    public void CreateSharedResourceName_WithTypeName_IncludesBaseAndReversesSegments()
     {
         // Arrange
         var options = new ConduitOptions { SystemName = "conduit" };
 
         // Act
-        var name = TopologyNaming.CreateSharedResourceName(options, "Orders.Commands.CreateOrder", maxLength: 50);
+        var name = TopologyNaming.CreateSharedResourceName(options, "Orders.Commands.CreateOrder", maxLength: 260);
 
         // Assert
-        name.Should().Be("CreateOrder-Commands-Orders");
+        name.Should().Be("conduit-CreateOrder-Commands-Orders");
     }
 
     [TestMethod]
-    public void CreateAppResourceName_WithTypeName_IncludesAppName()
+    public void CreateSharedResourceName_WithTypeName_DeveloperMode_IncludesPrefix()
+    {
+        // Arrange
+        var options = new ConduitOptions
+        {
+            SystemName = "conduit",
+            TopologyMode = TopologyMode.Developer,
+            DeveloperPrefix = "bpage",
+        };
+
+        // Act
+        var name = TopologyNaming.CreateSharedResourceName(options, "Orders.Commands.CreateOrder", maxLength: 260);
+
+        // Assert
+        name.Should().Be("bpage-conduit-CreateOrder-Commands-Orders");
+    }
+
+    [TestMethod]
+    public void CreateAppResourceName_WithTypeName_IncludesBaseAndAppName()
     {
         // Arrange
         var options = new ConduitOptions { SystemName = "conduit", ApplicationName = "orders" };
 
         // Act
-        var name = TopologyNaming.CreateAppResourceName(options, "Orders.Events.OrderShipped", maxLength: 50);
+        var name = TopologyNaming.CreateAppResourceName(options, "Orders.Events.OrderShipped", maxLength: 260);
 
         // Assert
-        name.Should().Be("orders-OrderShipped-Events-Orders");
+        name.Should().Be("conduit-orders-OrderShipped-Events-Orders");
+    }
+
+    [TestMethod]
+    public void CreateAppResourceName_WithTypeName_DeveloperMode_IncludesPrefix()
+    {
+        // Arrange
+        var options = new ConduitOptions
+        {
+            SystemName = "conduit",
+            ApplicationName = "orders",
+            TopologyMode = TopologyMode.Developer,
+            DeveloperPrefix = "bpage",
+        };
+
+        // Act
+        var name = TopologyNaming.CreateAppResourceName(options, "Orders.Events.OrderShipped", maxLength: 260);
+
+        // Assert
+        name.Should().Be("bpage-conduit-orders-OrderShipped-Events-Orders");
     }
 
     [TestMethod]
@@ -200,7 +237,7 @@ public class TopologyNamingShould
     }
 
     [TestMethod]
-    public void CreateAppResourceName_Generic_IncludesAppName()
+    public void CreateAppResourceName_Generic_IncludesBaseAndAppName()
     {
         // Arrange
         var options = new ConduitOptions { SystemName = "conduit", ApplicationName = "orders" };
@@ -209,7 +246,7 @@ public class TopologyNamingShould
         var name = TopologyNaming.CreateAppResourceName<SampleCommand>(options, maxLength: 260);
 
         // Assert
-        name.Should().StartWith("orders-");
+        name.Should().StartWith("conduit-orders-");
         name.Should().Contain("SampleCommand");
     }
 
@@ -257,5 +294,46 @@ public class TopologyNamingShould
 
         // Assert
         act.Should().Throw<ArgumentException>();
+    }
+
+    [TestMethod]
+    public void TestMode_TopologyPrefix_IsStableAcrossMultipleAccesses()
+    {
+        // Arrange
+        var options = new ConduitOptions
+        {
+            SystemName = "conduit",
+            TopologyMode = TopologyMode.Test,
+        };
+
+        // Act — access prefix multiple times
+        var name1 = TopologyNaming.CreateSharedResourceName(options, maxLength: 260);
+        var name2 = TopologyNaming.CreateSharedResourceName(options, maxLength: 260);
+
+        // Assert — same options instance should produce the same prefix
+        name1.Should().Be(name2);
+    }
+
+    [TestMethod]
+    public void TestMode_TopologyPrefix_DiffersPerOptionsInstance()
+    {
+        // Arrange
+        var options1 = new ConduitOptions
+        {
+            SystemName = "conduit",
+            TopologyMode = TopologyMode.Test,
+        };
+        var options2 = new ConduitOptions
+        {
+            SystemName = "conduit",
+            TopologyMode = TopologyMode.Test,
+        };
+
+        // Act
+        var name1 = TopologyNaming.CreateSharedResourceName(options1, maxLength: 260);
+        var name2 = TopologyNaming.CreateSharedResourceName(options2, maxLength: 260);
+
+        // Assert — different options instances should produce different prefixes
+        name1.Should().NotBe(name2);
     }
 }

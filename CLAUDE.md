@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Eight source projects, eight test projects, one shared test utility, four sample apps:
+Eight source projects, seven test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -25,7 +25,7 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 - `Transport.RabbitMQ` → `Conduit` (core) + RabbitMQ.Client
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
-- Core has no ASP.NET dependency. Depends only on DI abstractions, Logging abstractions, and Options.
+- Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, and Options.
 
 **Transport packages contain both sides:**
 - Each transport package has an **outbound** client (`HttpTransport`, `SignalRTransport`) and an **inbound** endpoint (`MapConduitEndpoint()`, `ConduitHub`). There is no separate "bridge" concept — browser clients and C# clients use the same transport infrastructure.
@@ -41,7 +41,7 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
 **Key design decisions:**
-- **Auto-discovery**: The source generator automatically discovers ALL types implementing `ICommand`, `IQuery`, or `IEvent`. No opt-in attributes needed. Abstract and inaccessible types are excluded automatically.
+- **Auto-discovery**: The source generator discovers ALL types implementing `ICommand`, `IQuery`, or `IEvent` across the entire compilation — including referenced assemblies. This is intentional: contract types defined in a shared library (e.g., `MyApp.Contracts`) are discovered when referenced by the handler project. Types from NuGet packages may also be discovered; use `[RemoteContracts("Ns")]` to suppress CONDUIT001 for types without local handlers. Abstract and inaccessible types are excluded automatically.
 - **Runtime routing (commands/queries only)**: `conduit.Route("namespace").To("endpoint")` assigns command/query types to named endpoints. Events don't route — they broadcast. Unrouted messages dispatch locally.
 - **Endpoint-based routing**: Messages route to named endpoints via `ConduitBuilder.AddEndpoint()`. Endpoints are just names — the transport is registered as a keyed `IConduitTransport` singleton in DI (key = endpoint name) and resolved at dispatch time via `ConduitRuntime.ResolveTransport()`. Routes define WHERE command/query types go. Transport extensions call `builder.UseTransport<T>()` which registers the keyed DI forwarding.
 - **Topic-based message flow (broker transports)**: All messages (commands, queries, events) flow through the topic/exchange. Subscriptions route messages from the topic to the appropriate queue. Reply messages are the only exception — they bypass the topic and go point-to-point to the reply queue.
@@ -57,7 +57,7 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 - **Transport limitations**: HTTP has no server→client push — events only flow client→server over HTTP. SignalR supports bidirectional event flow. Cross-pod unsolicited events require a SignalR backplane.
 - **Wire discriminator**: `FullTypeName` (e.g. `"Orders.Commands.CreateOrder"`) is used as the type discriminator in `DispatchEnvelope` on the wire.
 - **Dual-mode SignalRTransport**: Server mode (IHubContext, pushes events) and client mode (HubConnection, sends commands + receives events). Client mode uses lazy connect (auto-starts on first use via `EnsureConnectedAsync`).
-- **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `MapStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
+- **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `ErrorCode.ToHttpStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization.
 - **TypeScript generation**: Types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This includes both dispatchable types and non-dispatchable DTOs/models. TypeGen emits a self-contained runtime (`conduit.ts`) with transports and a per-project file (`conduit.generated.ts`) with `ConduitClient` — no npm package needed. `ConduitClient` is a thin dispatch client (not a mediator) with `execute`/`fetch`/`publish`/`on` methods.
 - **Wire dispatch route forwarding**: The generated `DispatchRequestAsync` checks routes before the local type switch. Unknown types matching a route are forwarded as raw envelopes to the transport without deserializing locally.
@@ -95,27 +95,29 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 ## Project-Specific Notes
 
 ### Conduit (core)
-- No ASP.NET dependency — only DI abstractions, Logging abstractions, Options
+- No ASP.NET dependency — only DI abstractions, Hosting abstractions, Logging abstractions, Options
 - `ConduitRuntime` — static class centralizing route resolution, transport resolution (keyed DI), pipeline chaining, interceptor chaining, error handling
 - `TypeFilterInterceptor` (in `Conduit.Middleware`) — access control interceptor, rejects types not in `TypeFilterOptions.AllowedTypes`
 - `AddConduit()` is generated by source gen. All configuration goes through `ConduitBuilder`: `AddEndpoint`, `Route`, `AddPipeline`, `AddTypeFilter`.
 - `TopologyMode` enum (Production/Developer/Test) and `SystemName`/`DeveloperPrefix` properties on `ConduitOptions` — controls topology resource naming and durability across broker transports
 - `TopologyNaming` static class — generates shared resource names (`CreateSharedResourceName`) and app-scoped resource names (`CreateAppResourceName`) with consistent prefix/truncation/hashing across all transports
-- `ConduitTypeRegistry` — compile-time registry of event listener, command handler, and query handler types. Populated by source generator in `AddConduit()` with `typeof()` expressions. Broker transports resolve from DI for topology discovery instead of scanning `IServiceCollection` at runtime.
+- `ConduitTypeRegistry` — compile-time registry of event, command, and query message types. Properties: `EventTypes`, `CommandTypes`, `QueryTypes` (Type lists) and pre-computed `EventTypeNames`, `CommandTypeNames`, `QueryTypeNames` (string lists). Populated by source generator in `AddConduit()` with `typeof()` expressions. Broker transports resolve from DI for topology discovery instead of scanning `IServiceCollection` at runtime.
+- `ApplicationName` on `ConduitOptions` defaults from `IHostEnvironment.ApplicationName` at first resolution via factory registration in `AddConduitCore`. No transport-side mutation needed.
+- `BrokerTransportBase<TMessage>` — abstract base class for broker transports (ASB, RMQ). Owns `IHostedService` lifecycle (connect → topology → consumers), inbound dispatch orchestration (context save/restore, scope creation, request/event branching, error handling), and outbound send (serialization, reply unwrap via `ConduitRuntime.UnwrapReply`). Transports implement ~15 abstract methods for transport-specific primitives. Uses `BinaryData` for payload passing.
 
 ### Conduit.Analysis (netstandard2.0)
 - Target netstandard2.0 for Roslyn analyzer compatibility
 - Use PolySharp NuGet for modern C# features (`required`, file-scoped namespaces, etc.)
-- Contains shared type model only (`DispatchableTypeInfo`, `DispatchableKind`, `NamespaceGrouper`)
+- Contains shared type model only (`DispatchableTypeInfo`, `DispatchableKind`)
 
 ### Conduit.SourceGen (netstandard2.0)
 - `EnforceExtendedAnalyzerRules=true`, `IsRoslynComponent=true`, `NoWarn=RS2008`
-- Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` (no attributes needed)
+- Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` across the full compilation graph (no attributes needed). Cross-assembly discovery is intentional for shared contract libraries. Uses `compilation.GlobalNamespace` walk — not incremental, but necessary for cross-assembly support.
 - Reads `[LocalOnly]` attribute to suppress event broadcast in generated code
 - Reads `[assembly: RemoteContracts("Ns")]` to suppress CONDUIT001 for types in remote contract namespaces
 - Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`, `ConduitRestEndpoints.g.cs` (conditional)
 - Generated `AddConduit()` calls `ConduitRuntime.AddConduitCore()` and registers handlers/listeners by interface type (e.g. `ICommandHandler<T,R>`, `IEventListener<T>`) — enables test substitution
-- Generated `AddConduit()` also registers `ConduitTypeRegistry` with `typeof()` expressions for all discovered handler/listener message types — compile-time verified, no runtime DI scanning needed by transports
+- Generated `AddConduit()` also registers `ConduitTypeRegistry` with `typeof()` expressions for all discovered message types (`eventTypes:`, `commandTypes:`, `queryTypes:`) — compile-time verified, no runtime DI scanning needed by transports
 - Pipeline behaviors resolved via `ConduitRuntime.ResolvePipelines` (explicit ordering, not DI enumeration)
 - Types without handlers get route-only overloads (throw if no route matches)
 - Microsoft.CodeAnalysis.CSharp version must be ≤ the SDK's Roslyn version (currently 4.12.0 for .NET 10 SDK)
@@ -125,32 +127,32 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `MapConduitEndpoint()` — inbound HTTP envelope dispatch endpoint, maps POST `/api/dispatch` and `/api/dispatch/publish`
 - `ConduitRestHandlers` — typed handler helpers for RESTful endpoint mapping (query→route binding, command→body binding)
 - RESTful extension methods (`MapConduitGet<T>`, `MapConduitPost<T>`, etc.) are source-generated into `ConduitRestEndpoints` — conditionally emitted only when `Conduit.Transport.Http` is referenced
-- Maps `DispatchResult` error codes to HTTP status codes (envelope endpoint); `ConduitException` → Problem Details (RESTful endpoints)
+- Maps `DispatchResult` error codes to HTTP status codes via `ErrorCode.ToHttpStatusCode()` (envelope endpoint); `ConduitException` → Problem Details (RESTful endpoints)
 
 ### Conduit.Transport.SignalR
-- `ConduitHub` — inbound SignalR hub with `Dispatch` and `Publish` methods, delegates to `IWireMediator`
+- `ConduitHub` — inbound SignalR hub with `Dispatch` and `Publish` methods, injects `IWireMediator` via constructor
 - `SignalRTransport` — outbound dual-mode transport with lazy connect (`EnsureConnectedAsync`). `UseSignalR(hubUri)` registers as keyed singleton by endpoint name and calls `UseTransport<SignalRTransport>()`
 - `AddConduitSignalR()` registers SignalR services and server-mode transport as non-keyed `IConduitTransport` (for event broadcast to connected clients)
 
 ### Conduit.Transport.AzureServiceBus
-- `AzureServiceBusTransport` — DI-managed singleton implementing `IConduitTransport` + `IHostedService` for durable broker-based messaging. Constructor takes `(AzureServiceBusOptions, IServiceProvider, ILogger<>)`.
+- `AzureServiceBusTransport` — extends `BrokerTransportBase<ProcessMessageEventArgs>`. Inbound dispatch, lifecycle, and outbound serialization handled by base class. Implements ASB-specific primitives: session-based replies, topic publishing, processor management, topology creation.
 - `UseAzureServiceBus(connectionString)` registers: singleton transport, `IHostedService` forwarding, non-keyed `IConduitTransport` (for event broadcast), keyed `IConduitTransport` (for endpoint routing), and calls `UseTransport<AzureServiceBusTransport>()`
 - Wire format: message body = serialized message (JSON), type in `Subject` property, MessageContext in `MessageId`/`CorrelationId`/`CausationId` application property
 - Request/response via ASB sessions on a reply queue (`{systemName}-{appName}-replies`)
 - **All messages flow through the topic**: commands, queries, and events all publish to the shared topic. Subscriptions with SQL filters (`Subject = '{FullTypeName}'`) forward to the handler's app queue. Replies are the only exception (point-to-point to reply queue).
 - **Unicast subscriptions** (commands/queries): shared name via `TopologyNaming.CreateSharedResourceName` — only one app receives each message
 - **Multicast subscriptions** (events): per-app name via `TopologyNaming.CreateAppResourceName` — every subscribing app gets a copy
-- Topology: try-create with 409 swallowing, configurable via `AutoCreateTopology`. Supports topology modes (Production = durable, Developer = 4h auto-delete, Test = 5min auto-delete). Resource names generated by `TopologyNaming`.
+- Topology: try-create with 409 swallowing, always created on startup (idempotent). Supports topology modes (Production = durable, Developer = 4h auto-delete, Test = 5min auto-delete). Resource names generated by `TopologyNaming`.
 - Receiver pools for concurrency isolation (`AddPool()` on options)
 - Type discovery via `ConduitTypeRegistry` (source-generated, compile-time verified) — no runtime DI scanning
 
 ### Conduit.Transport.RabbitMQ
-- `RabbitMQTransport` — DI-managed singleton implementing `IConduitTransport` + `IHostedService` for RabbitMQ messaging. Constructor takes `(RabbitMQOptions, IServiceProvider, ILogger<>)`.
+- `RabbitMQTransport` — extends `BrokerTransportBase<RabbitMQInboundMessage>`. Inbound dispatch, lifecycle, and outbound serialization handled by base class. Implements RMQ-specific primitives: AMQP channel management, topic exchange publishing, TCS-based reply correlation, consumer management.
 - `UseRabbitMQ(connectionString)` registers: singleton transport, `IHostedService` forwarding, non-keyed `IConduitTransport` (for event broadcast), keyed `IConduitTransport` (for endpoint routing), and calls `UseTransport<RabbitMQTransport>()`
-- Wire format: message body = serialized message (JSON), type in `Type` property, MessageContext in `MessageId`/`CorrelationId`/`CausationId` header
-- Request/response via exclusive auto-delete reply queue + `ReplyTo` + `CorrelationId`
+- Wire format: message body = serialized message (JSON), type in `Type` property, MessageContext in `MessageId` property + `CausationId`/`ConversationId` headers
+- Request/response via exclusive auto-delete reply queue + `ReplyTo` + `CorrelationId` (used only for reply correlation, not MessageContext)
 - **All messages flow through the topic exchange**: commands, queries, and events all publish to the single topic exchange with routing key = FullTypeName. Queue bindings route messages to the correct app queue. Reply messages bypass the exchange (direct to reply queue).
-- Topology: idempotent `ExchangeDeclare`/`QueueDeclare`/`QueueBind`. Supports topology modes (Production = durable, Developer/Test = auto-delete). Resource names generated by `TopologyNaming`. No direct exchange — single topic exchange only.
+- Topology: idempotent `ExchangeDeclare`/`QueueDeclare`/`QueueBind`, always created on startup. Supports topology modes (Production = durable, Developer/Test = auto-delete). Resource names generated by `TopologyNaming`. No direct exchange — single topic exchange only. Pool-assigned types are excluded from the default app queue bindings to prevent dual delivery.
 - Concurrency via `BasicQos` prefetch count
 - Type discovery via `ConduitTypeRegistry` (source-generated, compile-time verified) — no runtime DI scanning
 
@@ -172,7 +174,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Void commands merged into `CommandMap` with `response: void` (no separate `VoidCommandMap`)
 
 ### Conduit.Exceptions
-- `ErrorCode` — enumeration class pairing a machine-readable code string with HTTP status code. Value-based equality. Built-in codes: `NotFound`, `Unauthorized`, `Conflict`, `InternalError`, `BadRequest`. Consumers define their own.
+- `ErrorCode` — enumeration class pairing a machine-readable code string with HTTP status code. Value-based equality. Built-in codes: `NotFound`, `Unauthorized`, `Conflict`, `InternalError`, `BadRequest`. `ErrorCode.ToHttpStatusCode(string)` maps wire code strings to HTTP status codes (single source of truth for both RESTful and envelope endpoints). Consumers define their own.
 - `ConduitException` — abstract base with `ErrorCode Code` property
 - Concrete: `NotFoundException`, `UnauthorizedException`, `ConflictException` — all sealed
 - `EventListenerException` — infrastructure exception (not a `ConduitException`) thrown when event listeners fail during wire dispatch. Carries `IReadOnlyList<Exception> ListenerExceptions`. Transports catch this to decide complete vs abandon.

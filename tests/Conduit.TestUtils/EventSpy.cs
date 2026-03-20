@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Conduit.TestUtils;
 
 /// <summary>
@@ -6,13 +8,14 @@ namespace Conduit.TestUtils;
 /// Listeners inject <see cref="EventSpy{T}"/> and call <see cref="Record"/>
 /// in HandleAsync. Tests use <see cref="WaitForCountAsync"/> to poll
 /// for expected event counts rather than relying on Task.Delay.
+/// Thread-safe — broker transports deliver events on background threads.
 /// </summary>
 public class EventSpy<T>
 {
-    private readonly List<T> events = [];
+    private readonly ConcurrentQueue<T> events = new();
 
-    public void Record(T @event) => this.events.Add(@event);
-    public IReadOnlyList<T> Events => this.events;
+    public void Record(T @event) => this.events.Enqueue(@event);
+    public IReadOnlyList<T> Events => this.events.ToArray();
     public int Count => this.events.Count;
 
     /// <summary>
