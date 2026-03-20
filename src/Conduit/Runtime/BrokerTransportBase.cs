@@ -161,84 +161,113 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var previousContext = MessageContext.Current;
         try
         {
-            var (messageId, causationId, conversationId) = this.ExtractContext(message);
-            MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId);
-
-            await using var scope = this.ServiceProvider.CreateAsyncScope();
-            var wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>();
-
-            var body = this.GetMessageBody(message);
-            var payload = JsonSerializer.Deserialize<JsonElement>(body, ConduitRuntime.JsonOptions);
-            var envelope = new DispatchEnvelope(messageType, payload);
-
-            if (this.IsRequest(message))
+            // Phase 1: Setup — extract context, create scope, deserialize.
+            // If this fails, acknowledge and bail (prevent poison loop).
+            DispatchEnvelope envelope;
+            IWireMediator wireMediator;
+            AsyncServiceScope scope;
+            try
             {
-                // Request/response: dispatch, send reply, complete.
-                // On any failure, send an error reply and complete to prevent poison loops.
-                try
-                {
-                    var result = await wireMediator.HandleWireRequestAsync(
-                        envelope, CancellationToken.None);
+                var (messageId, causationId, conversationId) = this.ExtractContext(message);
+                MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId);
 
-                    var replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
-                        result, ConduitRuntime.JsonOptions));
+                scope = this.ServiceProvider.CreateAsyncScope();
+                wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>();
 
-                    await this.SendReplyAsync(message, replyData);
-                }
+                var body = this.GetMessageBody(message);
+                var payload = JsonSerializer.Deserialize<JsonElement>(body, ConduitRuntime.JsonOptions);
+                envelope = new DispatchEnvelope(messageType, payload);
+            }
 #pragma warning disable CA1031
-                catch (Exception ex)
+            catch (Exception ex)
 #pragma warning restore CA1031
-                {
-                    LogMessageProcessingError(this.Logger, messageType, ex);
-
-                    // Best-effort: send an error reply so the caller doesn't hang
-                    try
-                    {
-                        var errorResult = DispatchResult<object>.Fail("InternalError", ex.Message);
-                        var errorReplyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
-                            errorResult, ConduitRuntime.JsonOptions));
-
-                        await this.SendReplyAsync(message, errorReplyData);
-                    }
-#pragma warning disable CA1031
-                    catch (Exception replyEx)
-#pragma warning restore CA1031
-                    {
-                        LogReplyError(this.Logger, messageType, replyEx);
-                    }
-                }
-
+            {
+                LogMessageProcessingError(this.Logger, messageType, ex);
                 await this.AcknowledgeAsync(message);
-                LogMessageCompleted(this.Logger, messageType, null);
+                return;
             }
-            else
+
+            // Phase 2: Dispatch and acknowledge.
+            // Each branch owns its own ack/abandon — no shared catch can double-ack.
+            await using (scope)
             {
-                // Event: complete on success, abandon on EventListenerException
-                try
+                if (this.IsRequest(message))
                 {
-                    await wireMediator.HandleWireEventAsync(envelope, CancellationToken.None);
-                    await this.AcknowledgeAsync(message);
-                    LogMessageCompleted(this.Logger, messageType, null);
+                    await this.DispatchRequestAsync(message, messageType, envelope, wireMediator);
                 }
-                catch (EventListenerException ex)
+                else
                 {
-                    LogMessageAbandoned(this.Logger, messageType, ex);
-                    await this.AbandonAsync(message);
+                    await this.DispatchEventAsync(message, messageType, envelope, wireMediator);
                 }
             }
+        }
+        finally
+        {
+            MessageContext.RestoreContext(previousContext);
+        }
+    }
+
+    private async Task DispatchRequestAsync(
+        TMessage message,
+        string messageType,
+        DispatchEnvelope envelope,
+        IWireMediator wireMediator)
+    {
+        // Dispatch and build reply. On failure, build an error reply.
+        BinaryData replyData;
+        try
+        {
+            var result = await wireMediator.HandleWireRequestAsync(
+                envelope, CancellationToken.None);
+
+            replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
+                result, ConduitRuntime.JsonOptions));
         }
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            // Outer catch: fires only if context extraction, scope creation,
-            // or deserialization fails before reaching the request/event branch.
             LogMessageProcessingError(this.Logger, messageType, ex);
-            await this.AcknowledgeAsync(message);
+
+            replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
+                DispatchResult<object>.Fail("InternalError", ex.Message),
+                ConduitRuntime.JsonOptions));
         }
-        finally
+
+        // Send reply (best-effort)
+        try
         {
-            MessageContext.RestoreContext(previousContext);
+            await this.SendReplyAsync(message, replyData);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogReplyError(this.Logger, messageType, ex);
+        }
+
+        // Acknowledge exactly once
+        await this.AcknowledgeAsync(message);
+        LogMessageCompleted(this.Logger, messageType, null);
+    }
+
+    private async Task DispatchEventAsync(
+        TMessage message,
+        string messageType,
+        DispatchEnvelope envelope,
+        IWireMediator wireMediator)
+    {
+        // Dispatch, acknowledge on success, abandon on listener failure
+        try
+        {
+            await wireMediator.HandleWireEventAsync(envelope, CancellationToken.None);
+            await this.AcknowledgeAsync(message);
+            LogMessageCompleted(this.Logger, messageType, null);
+        }
+        catch (EventListenerException ex)
+        {
+            LogMessageAbandoned(this.Logger, messageType, ex);
+            await this.AbandonAsync(message);
         }
     }
 
