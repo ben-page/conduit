@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Conduit.Runtime;
 using Conduit.Middleware;
 
@@ -8,19 +9,31 @@ namespace Conduit.Tests.Support;
 /// </summary>
 public static class CapturedContext
 {
-    private static readonly List<(string RequestType, MessageContext Context)> Entries = [];
+    private static readonly ConcurrentQueue<(string RequestType, MessageContext Context)> Entries = new();
 
-    public static MessageContext? Last => Entries.Count > 0 ? Entries[^1].Context : null;
+    public static MessageContext? Last =>
+        Entries.TryPeek(out _) ? Entries.ToArray()[^1].Context : null;
 
-    public static IReadOnlyList<(string RequestType, MessageContext Context)> All => Entries;
+    public static IReadOnlyList<(string RequestType, MessageContext Context)> All =>
+        Entries.ToArray();
 
-    public static MessageContext? ForType(string typeName) =>
-        Entries.Find(e => e.RequestType == typeName).Context;
+    public static MessageContext? ForType(string typeName)
+    {
+        foreach (var entry in Entries)
+        {
+            if (entry.RequestType == typeName)
+            {
+                return entry.Context;
+            }
+        }
+
+        return null;
+    }
 
     public static void Reset() => Entries.Clear();
 
     internal static void Capture<TRequest>(MessageContext context) =>
-        Entries.Add((typeof(TRequest).FullName!, context));
+        Entries.Enqueue((typeof(TRequest).FullName!, context));
 }
 
 /// <summary>

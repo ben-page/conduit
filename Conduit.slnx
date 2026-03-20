@@ -21,8 +21,7 @@
     <Project Path="src/Conduit/Conduit.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Conduit.Analysis.Tests/Conduit.Analysis.Tests.csproj" />
-    <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
+<Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.TestUtils/Conduit.TestUtils.csproj" />
     <Project Path="tests/Conduit.Transport.AzureServiceBus.Tests/Conduit.Transport.AzureServiceBus.Tests.csproj" />

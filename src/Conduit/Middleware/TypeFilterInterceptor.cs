@@ -37,7 +37,7 @@ public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IWireI
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(next);
-        // Events are server->client, no filtering needed
+        // Events flow both directions but are not filtered — type filter applies to commands/queries only
         return next();
     }
 }

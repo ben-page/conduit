@@ -8,42 +8,38 @@ namespace Conduit.Runtime;
 public sealed class ConduitTypeRegistry
 {
     public ConduitTypeRegistry(
-        IReadOnlyList<Type> eventListeners,
-        IReadOnlyList<Type> commandHandlers,
-        IReadOnlyList<Type> queryHandlers)
+        IReadOnlyList<Type> eventTypes,
+        IReadOnlyList<Type> commandTypes,
+        IReadOnlyList<Type> queryTypes)
     {
-        ArgumentNullException.ThrowIfNull(eventListeners);
-        ArgumentNullException.ThrowIfNull(commandHandlers);
-        ArgumentNullException.ThrowIfNull(queryHandlers);
+        ArgumentNullException.ThrowIfNull(eventTypes);
+        ArgumentNullException.ThrowIfNull(commandTypes);
+        ArgumentNullException.ThrowIfNull(queryTypes);
 
-        this.EventListeners = eventListeners;
-        this.CommandHandlers = commandHandlers;
-        this.QueryHandlers = queryHandlers;
+        this.EventTypes = eventTypes;
+        this.CommandTypes = commandTypes;
+        this.QueryTypes = queryTypes;
+
+        this.EventTypeNames = eventTypes.Select(t => t.FullName!).ToList();
+        this.CommandTypeNames = commandTypes.Select(t => t.FullName!).ToList();
+        this.QueryTypeNames = queryTypes.Select(t => t.FullName!).ToList();
     }
 
     /// <summary>Event types with registered IEventListener implementations.</summary>
-    public IReadOnlyList<Type> EventListeners { get; }
+    public IReadOnlyList<Type> EventTypes { get; }
 
     /// <summary>Command types with registered ICommandHandler implementations.</summary>
-    public IReadOnlyList<Type> CommandHandlers { get; }
+    public IReadOnlyList<Type> CommandTypes { get; }
 
     /// <summary>Query types with registered IQueryHandler implementations.</summary>
-    public IReadOnlyList<Type> QueryHandlers { get; }
+    public IReadOnlyList<Type> QueryTypes { get; }
 
-    /// <summary>Returns FullName of each event listener type.</summary>
-    public IReadOnlyList<string> GetEventListenerNames() =>
-        this.EventListeners.Select(t => t.FullName!).ToList();
+    /// <summary>Pre-computed FullName of each event type.</summary>
+    public IReadOnlyList<string> EventTypeNames { get; }
 
-    /// <summary>Returns FullName of each command handler type.</summary>
-    public IReadOnlyList<string> GetCommandHandlerNames() =>
-        this.CommandHandlers.Select(t => t.FullName!).ToList();
+    /// <summary>Pre-computed FullName of each command type.</summary>
+    public IReadOnlyList<string> CommandTypeNames { get; }
 
-    /// <summary>Returns FullName of each query handler type.</summary>
-    public IReadOnlyList<string> GetQueryHandlerNames() =>
-        this.QueryHandlers.Select(t => t.FullName!).ToList();
-
-    /// <summary>Returns FullName of all handled types (events + commands + queries).</summary>
-    public IReadOnlyList<string> GetAllHandledTypeNames() =>
-        this.EventListeners.Concat(this.CommandHandlers).Concat(this.QueryHandlers)
-            .Select(t => t.FullName!).ToList();
+    /// <summary>Pre-computed FullName of each query type.</summary>
+    public IReadOnlyList<string> QueryTypeNames { get; }
 }

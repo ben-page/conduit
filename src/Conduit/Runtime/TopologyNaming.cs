@@ -21,12 +21,14 @@ public static class TopologyNaming
 
         if (suffix.Contains('.', StringComparison.Ordinal))
         {
+            var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
             var sanitized = SanitizeSuffix(suffix);
-            return Truncate(sanitized, suffix, maxLength);
+            var name = $"{baseName}-{sanitized}";
+            return Truncate(name, suffix, maxLength);
         }
 
-        var name = $"{BuildBase(options.TopologyPrefix, options.SystemName)}-{suffix}";
-        return Truncate(name, name, maxLength);
+        var fullName = $"{BuildBase(options.TopologyPrefix, options.SystemName)}-{suffix}";
+        return Truncate(fullName, fullName, maxLength);
     }
 
     public static string CreateSharedResourceName<T>(ConduitOptions options, int maxLength)
@@ -50,14 +52,15 @@ public static class TopologyNaming
         ArgumentNullException.ThrowIfNull(suffix);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ApplicationName, nameof(options.ApplicationName));
 
+        var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
+
         if (suffix.Contains('.', StringComparison.Ordinal))
         {
             var sanitized = SanitizeSuffix(suffix);
-            var name = $"{options.ApplicationName}-{sanitized}";
+            var name = $"{baseName}-{options.ApplicationName}-{sanitized}";
             return Truncate(name, suffix, maxLength);
         }
 
-        var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
         var plainName = $"{baseName}-{options.ApplicationName}-{suffix}";
         return Truncate(plainName, plainName, maxLength);
     }

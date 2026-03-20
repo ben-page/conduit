@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -26,6 +27,17 @@ public static class EndpointBuilderExtensions
 
         var hubConnection = new HubConnectionBuilder()
             .WithUrl(hubUri)
+            .AddJsonProtocol(options =>
+            {
+                options.PayloadSerializerOptions.PropertyNamingPolicy =
+                    ConduitRuntime.JsonOptions.PropertyNamingPolicy;
+                options.PayloadSerializerOptions.PropertyNameCaseInsensitive =
+                    ConduitRuntime.JsonOptions.PropertyNameCaseInsensitive;
+                foreach (var converter in ConduitRuntime.JsonOptions.Converters)
+                {
+                    options.PayloadSerializerOptions.Converters.Add(converter);
+                }
+            })
             .WithAutomaticReconnect()
             .Build();
 

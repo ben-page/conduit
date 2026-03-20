@@ -560,7 +560,7 @@ The generator emits diagnostics for:
 - `POST /api/dispatch` — commands and queries (returns `DispatchResult<object>`)
 - `POST /api/dispatch/publish` — events (fire-and-forget, returns 200 OK)
 
-Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `MapStatusCode()`. Returns `DispatchResult` envelope format.
+Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `ErrorCode.ToHttpStatusCode()`. Returns `DispatchResult` envelope format.
 
 ### RESTful Endpoint Mapping
 
@@ -885,20 +885,42 @@ The publisher doesn't know or care who's listening or which transports are confi
 - Merge file composition
 - Generated TypeScript compiles (`tsc --noEmit`)
 
+## Broker Transport Base Class (`BrokerTransportBase<TMessage>`)
+
+Broker transports (Azure Service Bus, RabbitMQ) share a common lifecycle and message processing pattern. `BrokerTransportBase<TMessage>` in `Conduit.Runtime` uses the template method pattern to own the shared orchestration while transports implement ~15 abstract methods for transport-specific primitives.
+
+**Template methods (not overridable):**
+- `StartAsync` — resolves `ConduitOptions` + `ConduitTypeRegistry`, then calls `ConnectAsync` → `EnsureTopologyAsync` → `StartConsumersAsync`
+- `StopAsync` — calls `StopConsumersAsync`
+- `SendRequestAsync` — serializes to `BinaryData`, calls `PublishRequestAsync`, deserializes reply, calls `ConduitRuntime.UnwrapReply`
+- `SendEventAsync` — serializes to `BinaryData`, calls `PublishEventAsync`
+- `ProcessInboundMessageAsync` — full inbound dispatch: save/restore `MessageContext`, create DI scope, resolve `IWireMediator`, deserialize, branch request/event, handle errors, ack/abandon
+
+**Abstract methods (transport-specific):**
+- Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `StartConsumersAsync`, `StopConsumersAsync`, `DisposeAsync`
+- Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync`
+- Outbound: `IsStarted`, `PublishRequestAsync`, `PublishEventAsync`
+
+**Design decisions:**
+- `BinaryData` used for all payload passing between base and transport — zero-copy for ASB (native type), single allocation for RMQ
+- Reply serialization owned by base class — `SendReplyAsync` receives pre-serialized `BinaryData`, not `DispatchResult<object>`
+- Error reply on request failure is standardized — all broker transports send an `InternalError` reply on handler failure, preventing caller timeouts
+- HTTP and SignalR transports do not extend this base — they lack inbound dispatch, topology, and hosted service lifecycle
+
 ## Shared Analysis Library (`Conduit.Analysis`)
 
-`Conduit.Analysis` provides a shared type model (`DispatchableTypeInfo`, `DispatchableKind`, `NamespaceGroup`) and resolution logic used by both scanning paths. The scanners themselves live in their consumers:
+`Conduit.Analysis` provides a shared type model (`DispatchableTypeInfo`, `DispatchableKind`) used by both scanning paths. The scanners themselves live in their consumers:
 
-- **`RoslynScanner`** (in `Conduit.SourceGen`) — uses Roslyn symbol API (`INamedTypeSymbol`) at compile time. Works on source code during compilation.
+- **`RoslynScanner`** (in `Conduit.SourceGen`) — uses Roslyn symbol API (`INamedTypeSymbol`) at compile time. Walks `compilation.GlobalNamespace` to discover dispatchable types across the full compilation graph, including referenced assemblies. This is intentional for cross-assembly contract support (e.g., shared contract libraries referenced by handler projects). Types from NuGet packages may also be discovered; use `[RemoteContracts("Ns")]` to suppress CONDUIT001 for types without local handlers.
 - **`ReflectionScanner`** (in `Conduit.TypeGen`) — uses Reflection metadata (`System.Reflection`) as an MSBuild task post-compilation. Works on the compiled assembly DLL.
 
-Both scanners use the same resolution logic from `Conduit.Analysis`: find types implementing `ICommand`, `ICommand<T>`, `IQuery<T>`, `IEvent`; apply `[DispatchableNamespace]`/`[Dispatchable]`/`[NotDispatchable]` precedence; group by namespace.
+Both scanners find types implementing `ICommand`, `ICommand<T>`, `IQuery<T>`, `IEvent` and produce `DispatchableTypeInfo` records.
 
 ## Incremental Build Support
 
 `Conduit.TypeGen` MSBuild target specifies `Inputs` (the compiled assembly DLL) and `Outputs` (the generated `.ts` files). MSBuild skips the task when outputs are newer than inputs. This means TypeGen only re-runs when the assembly actually changes, not on every build.
 
-`Conduit.SourceGen` uses Roslyn's incremental generator API (`IncrementalGeneratorInitializationContext`) which caches automatically based on syntax/symbol changes.
+`Conduit.SourceGen` uses Roslyn's incremental generator API (`IncrementalGeneratorInitializationContext`). Handler/listener discovery uses `SyntaxProvider` (truly incremental — only re-runs for changed source files). Dispatchable type discovery uses `CompilationProvider` with a `GlobalNamespace` walk, which re-runs on any source change. This is a known trade-off: cross-assembly type discovery requires the full compilation, which prevents fully incremental caching for that pass.
 
 ## Fallback Behavior
 

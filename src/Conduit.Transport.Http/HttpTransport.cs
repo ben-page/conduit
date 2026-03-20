@@ -24,16 +24,14 @@ public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch")
         ArgumentNullException.ThrowIfNull(envelope);
 
         using var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
+
+        // Read the body first to extract structured error info from DispatchResult,
+        // then fall back to EnsureSuccessStatusCode for non-Conduit errors (503, network, etc.)
+        var result = await response.Content.ReadFromJsonAsync<DispatchResult<JsonElement?>>(cancellationToken);
+        var data = ConduitRuntime.UnwrapReply(result);
+
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<DispatchResult<JsonElement?>>(cancellationToken);
-
-        if (result?.Error is not null)
-        {
-            throw new InvalidOperationException(
-                $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
-        }
-
-        return result?.Data;
+        return data;
     }
 }

@@ -6,7 +6,7 @@ namespace Conduit.Configuration;
 /// </summary>
 public sealed class ConduitOptions
 {
-    private readonly Lazy<string?> topologyPrefix;
+    private Lazy<string?>? topologyPrefix;
 
     /// <summary>
     /// Named endpoints that messages can be routed to.
@@ -38,16 +38,19 @@ public sealed class ConduitOptions
     public TopologyMode TopologyMode { get; set; } = TopologyMode.Production;
     public string? DeveloperPrefix { get; set; }
 
-    public ConduitOptions()
-    {
-        this.topologyPrefix = new Lazy<string?>(() => this.TopologyMode switch
-        {
-            TopologyMode.Developer => this.DeveloperPrefix ?? Environment.UserName,
-            TopologyMode.Test => $"test-{Guid.NewGuid():N}"[..13],
-            TopologyMode.Production => null,
-            _ => null,
-        });
-    }
+    /// <summary>
+    /// Computed topology prefix. Resolved once on first access using the current
+    /// TopologyMode and DeveloperPrefix values. Test mode generates a stable
+    /// random prefix per options instance.
+    /// </summary>
+    internal string? TopologyPrefix =>
+        (this.topologyPrefix ??= new Lazy<string?>(this.ComputeTopologyPrefix)).Value;
 
-    internal string? TopologyPrefix => this.topologyPrefix.Value;
+    private string? ComputeTopologyPrefix() => this.TopologyMode switch
+    {
+        TopologyMode.Developer => this.DeveloperPrefix ?? Environment.UserName,
+        TopologyMode.Test => $"test-{Guid.NewGuid():N}"[..13],
+        TopologyMode.Production => null,
+        _ => null,
+    };
 }

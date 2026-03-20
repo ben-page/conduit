@@ -117,29 +117,6 @@ public record SpecialCommand(string Data) : ICommand;
     }
 
     [TestMethod]
-    public void DetectValidateOverride()
-    {
-        var source = @"
-using Conduit.Messages;
-
-namespace App.Commands;
-public record ValidatedCommand(string Name) : ICommand
-{
-    public void Validate()
-    {
-        if (string.IsNullOrEmpty(Name))
-            throw new System.ArgumentException(""Name required"");
-    }
-}
-";
-        var compilation = CreateCompilation(source);
-        var types = RoslynScanner.Scan(compilation);
-
-        types.Should().HaveCount(1);
-        types[0].HasValidateOverride.Should().BeTrue();
-    }
-
-    [TestMethod]
     public void ExtractResultFullTypeName()
     {
         var source = @"

@@ -105,9 +105,6 @@ public class RestEmitterShould : GeneratorTestBase
                 FullTypeName = "App.Events.ItemCreatedEvent",
                 Namespace = "App.Events",
                 Kind = DispatchableKind.Event,
-                HasValidateOverride = false,
-                HasAuthorizeAttribute = false,
-                HasAllowAnonymousAttribute = false,
                 IsLocalOnly = false,
             },
         };
@@ -180,9 +177,6 @@ public record GetItemQuery(System.Guid Id) : IQuery<string>;
             Kind = DispatchableKind.Query,
             ResultTypeName = resultFullTypeName.Split('.').Last(),
             ResultFullTypeName = resultFullTypeName,
-            HasValidateOverride = false,
-            HasAuthorizeAttribute = false,
-            HasAllowAnonymousAttribute = false,
         };
     }
 
@@ -196,9 +190,6 @@ public record GetItemQuery(System.Guid Id) : IQuery<string>;
             Kind = DispatchableKind.Command,
             ResultTypeName = resultFullTypeName.Split('.').Last(),
             ResultFullTypeName = resultFullTypeName,
-            HasValidateOverride = false,
-            HasAuthorizeAttribute = false,
-            HasAllowAnonymousAttribute = false,
         };
     }
 
@@ -210,9 +201,6 @@ public record GetItemQuery(System.Guid Id) : IQuery<string>;
             FullTypeName = fullTypeName,
             Namespace = string.Join(".", fullTypeName.Split('.').Reverse().Skip(1).Reverse()),
             Kind = DispatchableKind.VoidCommand,
-            HasValidateOverride = false,
-            HasAuthorizeAttribute = false,
-            HasAllowAnonymousAttribute = false,
         };
     }
 

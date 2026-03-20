@@ -7,113 +7,85 @@ namespace Conduit.Tests.Unit;
 public class ConduitTypeRegistryShould
 {
     [TestMethod]
-    public void StoreEventListenerTypes()
+    public void StoreEventTypes()
     {
         // Arrange
         var registry = new ConduitTypeRegistry(
-            eventListeners: [typeof(string), typeof(int)],
-            commandHandlers: [],
-            queryHandlers: []);
+            eventTypes: [typeof(string), typeof(int)],
+            commandTypes: [],
+            queryTypes: []);
 
         // Act & Assert
-        registry.EventListeners.Should().HaveCount(2);
-        registry.EventListeners.Should().Contain(typeof(string));
-        registry.EventListeners.Should().Contain(typeof(int));
+        registry.EventTypes.Should().HaveCount(2);
+        registry.EventTypes.Should().Contain(typeof(string));
+        registry.EventTypes.Should().Contain(typeof(int));
     }
 
     [TestMethod]
-    public void StoreCommandHandlerTypes()
+    public void StoreCommandTypes()
     {
         // Arrange
         var registry = new ConduitTypeRegistry(
-            eventListeners: [],
-            commandHandlers: [typeof(string)],
-            queryHandlers: []);
+            eventTypes: [],
+            commandTypes: [typeof(string)],
+            queryTypes: []);
 
         // Act & Assert
-        registry.CommandHandlers.Should().HaveCount(1);
-        registry.CommandHandlers.Should().Contain(typeof(string));
+        registry.CommandTypes.Should().HaveCount(1);
+        registry.CommandTypes.Should().Contain(typeof(string));
     }
 
     [TestMethod]
-    public void StoreQueryHandlerTypes()
+    public void StoreQueryTypes()
     {
         // Arrange
         var registry = new ConduitTypeRegistry(
-            eventListeners: [],
-            commandHandlers: [],
-            queryHandlers: [typeof(int)]);
+            eventTypes: [],
+            commandTypes: [],
+            queryTypes: [typeof(int)]);
 
         // Act & Assert
-        registry.QueryHandlers.Should().HaveCount(1);
-        registry.QueryHandlers.Should().Contain(typeof(int));
+        registry.QueryTypes.Should().HaveCount(1);
+        registry.QueryTypes.Should().Contain(typeof(int));
     }
 
     [TestMethod]
-    public void ReturnEventListenerFullTypeNames()
+    public void PreComputeEventTypeNames()
     {
         // Arrange
         var registry = new ConduitTypeRegistry(
-            eventListeners: [typeof(string), typeof(int)],
-            commandHandlers: [],
-            queryHandlers: []);
+            eventTypes: [typeof(string), typeof(int)],
+            commandTypes: [],
+            queryTypes: []);
 
-        // Act
-        var names = registry.GetEventListenerNames();
-
-        // Assert
-        names.Should().Contain("System.String");
-        names.Should().Contain("System.Int32");
+        // Act & Assert
+        registry.EventTypeNames.Should().Contain("System.String");
+        registry.EventTypeNames.Should().Contain("System.Int32");
     }
 
     [TestMethod]
-    public void ReturnCommandHandlerFullTypeNames()
+    public void PreComputeCommandTypeNames()
     {
         // Arrange
         var registry = new ConduitTypeRegistry(
-            eventListeners: [],
-            commandHandlers: [typeof(string)],
-            queryHandlers: []);
+            eventTypes: [],
+            commandTypes: [typeof(string)],
+            queryTypes: []);
 
-        // Act
-        var names = registry.GetCommandHandlerNames();
-
-        // Assert
-        names.Should().Contain("System.String");
+        // Act & Assert
+        registry.CommandTypeNames.Should().Contain("System.String");
     }
 
     [TestMethod]
-    public void ReturnQueryHandlerFullTypeNames()
+    public void PreComputeQueryTypeNames()
     {
         // Arrange
         var registry = new ConduitTypeRegistry(
-            eventListeners: [],
-            commandHandlers: [],
-            queryHandlers: [typeof(int)]);
+            eventTypes: [],
+            commandTypes: [],
+            queryTypes: [typeof(int)]);
 
-        // Act
-        var names = registry.GetQueryHandlerNames();
-
-        // Assert
-        names.Should().Contain("System.Int32");
-    }
-
-    [TestMethod]
-    public void ReturnAllHandledTypeNames()
-    {
-        // Arrange
-        var registry = new ConduitTypeRegistry(
-            eventListeners: [typeof(string)],
-            commandHandlers: [typeof(int)],
-            queryHandlers: [typeof(double)]);
-
-        // Act
-        var names = registry.GetAllHandledTypeNames();
-
-        // Assert
-        names.Should().HaveCount(3);
-        names.Should().Contain("System.String");
-        names.Should().Contain("System.Int32");
-        names.Should().Contain("System.Double");
+        // Act & Assert
+        registry.QueryTypeNames.Should().Contain("System.Int32");
     }
 }

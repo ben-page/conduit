@@ -108,8 +108,8 @@ public static class RegistrationEmitter
         sb.Append($"        services.AddSingleton(new {EmitConstants.ConduitTypeRegistry}(");
         sb.AppendLine();
 
-        // Event listeners
-        sb.Append("            eventListeners: [");
+        // Event types
+        sb.Append("            eventTypes: [");
         for (var i = 0; i < eventTypeNames.Count; i++)
         {
             if (i > 0)
@@ -122,8 +122,8 @@ public static class RegistrationEmitter
 
         sb.AppendLine("],");
 
-        // Command handlers
-        sb.Append("            commandHandlers: [");
+        // Command types
+        sb.Append("            commandTypes: [");
         for (var i = 0; i < commandTypeNames.Count; i++)
         {
             if (i > 0)
@@ -136,8 +136,8 @@ public static class RegistrationEmitter
 
         sb.AppendLine("],");
 
-        // Query handlers
-        sb.Append("            queryHandlers: [");
+        // Query types
+        sb.Append("            queryTypes: [");
         for (var i = 0; i < queryTypeNames.Count; i++)
         {
             if (i > 0)

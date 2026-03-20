@@ -15,8 +15,6 @@ public static class ReflectionScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery`1";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string ClientVisibleAttributeFullName = "Conduit.Attributes.ClientVisibleAttribute";
-    private const string AuthorizeAttributeFullName = "Microsoft.AspNetCore.Authorization.AuthorizeAttribute";
-    private const string AllowAnonymousAttributeFullName = "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute";
 
     /// <summary>
     /// Scans the assembly for all dispatchable types implementing
@@ -51,9 +49,6 @@ public static class ReflectionScanner
                 Kind = kind.Value,
                 ResultTypeName = GetResultTypeName(type, kind.Value),
                 ResultFullTypeName = GetResultFullTypeName(type, kind.Value),
-                HasValidateOverride = HasValidateOverride(type),
-                HasAuthorizeAttribute = HasAttributeByFullName(type, AuthorizeAttributeFullName),
-                HasAllowAnonymousAttribute = HasAttributeByFullName(type, AllowAnonymousAttributeFullName),
             });
         }
 
@@ -109,9 +104,6 @@ public static class ReflectionScanner
                     FullTypeName = fullName,
                     Namespace = type.Namespace ?? "",
                     Kind = DispatchableKind.Model,
-                    HasValidateOverride = false,
-                    HasAuthorizeAttribute = false,
-                    HasAllowAnonymousAttribute = false,
                 });
             }
         }
@@ -214,18 +206,6 @@ public static class ReflectionScanner
         var baseName = (genericDef.FullName ?? genericDef.Name).Split('`')[0];
         var args = string.Join(", ", type.GetGenericArguments().Select(FormatFullTypeName));
         return $"{baseName}<{args}>";
-    }
-
-    private static bool HasValidateOverride(Type type)
-    {
-        var method = type.GetMethod("Validate", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-        if (method == null)
-        {
-            return false;
-        }
-
-        // Check if it's declared on this type (not just inherited from interface default)
-        return method.DeclaringType == type;
     }
 
     /// <summary>

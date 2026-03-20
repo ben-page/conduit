@@ -10,8 +10,7 @@ public static class DispatchEmitter
 {
     public static string Emit(
         IReadOnlyList<DispatchableTypeInfo> types,
-        IReadOnlyList<HandlerInfo> handlers,
-        IReadOnlyList<BehaviorInfo>? behaviors = null)
+        IReadOnlyList<HandlerInfo> handlers)
     {
         if (types is null)
         {
@@ -47,13 +46,13 @@ public static class DispatchEmitter
             switch (type.Kind)
             {
                 case DispatchableKind.Command:
-                    EmitCommandWithResult(sb, type, handler, behaviors);
+                    EmitCommandWithResult(sb, type, handler);
                     break;
                 case DispatchableKind.VoidCommand:
-                    EmitVoidCommand(sb, type, handler, behaviors);
+                    EmitVoidCommand(sb, type, handler);
                     break;
                 case DispatchableKind.Query:
-                    EmitQuery(sb, type, handler, behaviors);
+                    EmitQuery(sb, type, handler);
                     break;
                 case DispatchableKind.Event:
                 case DispatchableKind.Model:
@@ -69,8 +68,7 @@ public static class DispatchEmitter
     private static void EmitCommandWithResult(
         StringBuilder sb,
         DispatchableTypeInfo type,
-        HandlerInfo handler,
-        IReadOnlyList<BehaviorInfo>? behaviors)
+        HandlerInfo handler)
     {
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Execute(");
         sb.AppendLine($"        {type.FullTypeName} command,");
@@ -79,7 +77,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand}<{type.ResultFullTypeName}>)command).Validate();");
-        EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
+        EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -87,8 +85,7 @@ public static class DispatchEmitter
     private static void EmitVoidCommand(
         StringBuilder sb,
         DispatchableTypeInfo type,
-        HandlerInfo handler,
-        IReadOnlyList<BehaviorInfo>? behaviors)
+        HandlerInfo handler)
     {
         sb.AppendLine($"    public static async Task Execute(");
         sb.AppendLine($"        {type.FullTypeName} command,");
@@ -97,7 +94,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
-        EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: true);
+        EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: true);
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -116,8 +113,7 @@ public static class DispatchEmitter
     private static void EmitQuery(
         StringBuilder sb,
         DispatchableTypeInfo type,
-        HandlerInfo handler,
-        IReadOnlyList<BehaviorInfo>? behaviors)
+        HandlerInfo handler)
     {
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Fetch(");
         sb.AppendLine($"        {type.FullTypeName} query,");
@@ -126,7 +122,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.IQuery}<{type.ResultFullTypeName}>)query).Validate();");
-        EmitHandlerAndBehaviorBody(sb, type, handler, behaviors, isVoid: false);
+        EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: false);
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -135,7 +131,6 @@ public static class DispatchEmitter
         StringBuilder sb,
         DispatchableTypeInfo type,
         HandlerInfo handler,
-        IReadOnlyList<BehaviorInfo>? _,
         bool isVoid)
     {
         var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";

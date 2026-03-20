@@ -34,21 +34,19 @@ builder.Services.AddConduit(conduit =>
 ```csharp
 endpoint.UseRabbitMQ(connectionString, options =>
 {
-    options.AutoCreateTopology = true;       // default: true
     options.DefaultPrefetchCount = 10;       // default: 10
 });
 ```
 
 | Property | Default | Description |
 |---|---|---|
-| `AutoCreateTopology` | `true` | Declare exchanges, queues, and bindings on startup |
 | `DefaultPrefetchCount` | `10` | Prefetch count for the default consumer channel |
 
 Exchange and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
 
 ## Topology
 
-When `AutoCreateTopology` is true, the transport declares:
+The transport declares the following on startup (idempotent — safe to run on every startup):
 
 ```
 Exchange: {systemName} (type: topic)

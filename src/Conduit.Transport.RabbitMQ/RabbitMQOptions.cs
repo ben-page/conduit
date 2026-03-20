@@ -12,12 +12,6 @@ public sealed class RabbitMQOptions
     public required string ConnectionString { get; init; }
 
     /// <summary>
-    /// When true (default), the transport declares exchanges, queues, and bindings on startup.
-    /// Set to false in environments where topology is managed externally.
-    /// </summary>
-    public bool AutoCreateTopology { get; set; } = true;
-
-    /// <summary>
     /// Default prefetch count for consumer channels. Controls concurrency per consumer.
     /// </summary>
     public ushort DefaultPrefetchCount { get; set; } = 10;
@@ -51,5 +45,9 @@ public sealed class ReceiverPoolOptions
     /// <summary>
     /// Adds a message type (by FullTypeName) to this pool.
     /// </summary>
-    public void Handle(string messageTypeFullName) => this.MessageTypes.Add(messageTypeFullName);
+    public void Handle(string messageTypeFullName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageTypeFullName);
+        this.MessageTypes.Add(messageTypeFullName);
+    }
 }

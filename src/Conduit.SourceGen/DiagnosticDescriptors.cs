@@ -13,9 +13,4 @@ public static class DiagnosticDescriptors
         "CONDUIT002", "Multiple handlers found",
         "Multiple handlers found for {0}, only one handler per command/query is allowed",
         "Conduit", DiagnosticSeverity.Error, true);
-
-    public static readonly DiagnosticDescriptor MissingAuthAttribute = new(
-        "CONDUIT004", "Missing authorization attribute",
-        "{0} is dispatchable but has neither [Authorize] nor [AllowAnonymous]",
-        "Conduit", DiagnosticSeverity.Warning, true);
 }

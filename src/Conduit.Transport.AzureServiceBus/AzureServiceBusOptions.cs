@@ -18,13 +18,6 @@ public sealed class AzureServiceBusOptions
     public string? AdminConnectionString { get; set; }
 
     /// <summary>
-    /// Whether to create topology (topics, queues, subscriptions) on startup.
-    /// Default: <see langword="true"/>. Set to <see langword="false"/> for environments
-    /// where infrastructure is managed externally.
-    /// </summary>
-    public bool AutoCreateTopology { get; set; } = true;
-
-    /// <summary>
     /// Maximum concurrent calls for the default receiver processor.
     /// </summary>
     public int DefaultConcurrency { get; set; } = 10;

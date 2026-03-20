@@ -16,7 +16,7 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     private readonly IHubContext<ConduitHub>? hubContext;
     private readonly HubConnection? hubConnection;
     private readonly SemaphoreSlim connectLock = new(1, 1);
-    private bool connected;
+    private volatile bool connected;
 
     /// <summary>
     /// Creates a server-mode transport that pushes events to connected SignalR clients.
@@ -53,13 +53,7 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         var result = await this.hubConnection.InvokeAsync<DispatchResult<JsonElement?>>(
             "Dispatch", envelope.Type, envelope.Payload, cancellationToken);
 
-        if (result?.Error is not null)
-        {
-            throw new InvalidOperationException(
-                $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
-        }
-
-        return result?.Data;
+        return ConduitRuntime.UnwrapReply(result);
     }
 
     /// <inheritdoc />

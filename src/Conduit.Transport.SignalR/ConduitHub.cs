@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR;
 
@@ -9,16 +8,13 @@ namespace Conduit.Transport.SignalR;
 /// SignalR hub that accepts dispatch requests from connected clients
 /// and delegates to <see cref="IWireMediator"/> for processing.
 /// </summary>
-public class ConduitHub : Hub
+public class ConduitHub(IWireMediator mediator) : Hub
 {
     /// <summary>
     /// Dispatches a command or query received from a SignalR client.
     /// </summary>
     public async Task<DispatchResult<object>> Dispatch(string type, JsonElement payload)
     {
-        var mediator = this.Context.GetHttpContext()!.RequestServices
-            .GetRequiredService<IWireMediator>();
-
         return await mediator.HandleWireRequestAsync(
             new DispatchEnvelope(type, payload),
             this.Context.ConnectionAborted);
@@ -29,9 +25,6 @@ public class ConduitHub : Hub
     /// </summary>
     public async Task Publish(string type, JsonElement payload)
     {
-        var mediator = this.Context.GetHttpContext()!.RequestServices
-            .GetRequiredService<IWireMediator>();
-
         await mediator.HandleWireEventAsync(
             new DispatchEnvelope(type, payload),
             this.Context.ConnectionAborted);
