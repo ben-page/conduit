@@ -21,11 +21,11 @@ internal sealed class RabbitMQTopologyManager
     }
 
     /// <summary>
-    /// Declares all topology: topic exchange, per-app queue with bindings
-    /// for subscribed event types and handled command/query types, and pool queues
-    /// with their own bindings.
+    /// Declares all topology: topic exchange, per-app queue with event bindings (multicast),
+    /// shared queues with command/query bindings (unicast), and pool queues with their own bindings.
+    /// Returns the topology result with queue names and their associated prefetch counts.
     /// </summary>
-    public async Task EnsureTopologyAsync(
+    public async Task<TopologyResult> EnsureTopologyAsync(
         IChannel channel,
         IReadOnlyList<string> subscribedEventTypes,
         IReadOnlyList<string> handledCommandQueryTypes,
@@ -44,7 +44,7 @@ internal sealed class RabbitMQTopologyManager
             noWait: false,
             cancellationToken: cancellationToken);
 
-        // Per-app queue
+        // Per-app queue for events (multicast — each app gets its own copy)
         var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 255);
         await channel.QueueDeclareAsync(
             queue: appQueueName,
@@ -82,7 +82,9 @@ internal sealed class RabbitMQTopologyManager
                 cancellationToken: cancellationToken);
         }
 
-        // Bind app queue to topic exchange for each handled command/query type (excluding pool-assigned)
+        // Shared queues for commands/queries (unicast — competing consumers across apps)
+        var sharedCommandQueryQueues = new List<string>();
+
         foreach (var commandQueryType in handledCommandQueryTypes)
         {
             if (poolAssignedTypes.Contains(commandQueryType))
@@ -90,22 +92,11 @@ internal sealed class RabbitMQTopologyManager
                 continue;
             }
 
-            await channel.QueueBindAsync(
-                queue: appQueueName,
-                exchange: exchangeName,
-                routingKey: commandQueryType,
-                arguments: null,
-                noWait: false,
-                cancellationToken: cancellationToken);
-        }
+            var sharedQueueName = TopologyNaming.CreateSharedResourceName(
+                this.conduitOptions, commandQueryType, 255);
 
-        // Pool queues
-        foreach (var pool in this.options.Pools)
-        {
-            var poolQueueName = TopologyNaming.CreateAppResourceName(
-                this.conduitOptions, pool.Name, 255);
             await channel.QueueDeclareAsync(
-                queue: poolQueueName,
+                queue: sharedQueueName,
                 durable: !isEphemeral,
                 exclusive: false,
                 autoDelete: isEphemeral,
@@ -113,16 +104,119 @@ internal sealed class RabbitMQTopologyManager
                 noWait: false,
                 cancellationToken: cancellationToken);
 
+            await channel.QueueBindAsync(
+                queue: sharedQueueName,
+                exchange: exchangeName,
+                routingKey: commandQueryType,
+                arguments: null,
+                noWait: false,
+                cancellationToken: cancellationToken);
+
+            sharedCommandQueryQueues.Add(sharedQueueName);
+        }
+
+        // Pool queues — events use per-app pool queues (multicast),
+        // commands/queries use shared pool queues (unicast)
+        var commandQuerySet = new HashSet<string>(handledCommandQueryTypes, StringComparer.Ordinal);
+        var poolEventQueues = new List<(string QueueName, ushort PrefetchCount)>();
+        var poolCommandQueryQueues = new List<(string QueueName, ushort PrefetchCount)>();
+
+        foreach (var pool in this.options.Pools)
+        {
+            var hasPoolEvents = false;
+            var poolEventQueueName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, pool.Name, 255);
+
             foreach (var messageType in pool.MessageTypes)
             {
-                await channel.QueueBindAsync(
-                    queue: poolQueueName,
-                    exchange: exchangeName,
-                    routingKey: messageType,
-                    arguments: null,
-                    noWait: false,
-                    cancellationToken: cancellationToken);
+                if (commandQuerySet.Contains(messageType))
+                {
+                    // Command/query in pool → shared pool queue (unicast — competing consumers)
+                    var sharedPoolQueueName = TopologyNaming.CreateSharedResourceName(
+                        this.conduitOptions, $"{pool.Name}.{messageType}", 255);
+
+                    await channel.QueueDeclareAsync(
+                        queue: sharedPoolQueueName,
+                        durable: !isEphemeral,
+                        exclusive: false,
+                        autoDelete: isEphemeral,
+                        arguments: null,
+                        noWait: false,
+                        cancellationToken: cancellationToken);
+
+                    await channel.QueueBindAsync(
+                        queue: sharedPoolQueueName,
+                        exchange: exchangeName,
+                        routingKey: messageType,
+                        arguments: null,
+                        noWait: false,
+                        cancellationToken: cancellationToken);
+
+                    poolCommandQueryQueues.Add((sharedPoolQueueName, pool.PrefetchCount));
+                }
+                else
+                {
+                    // Event in pool → per-app pool queue (multicast)
+                    if (!hasPoolEvents)
+                    {
+                        await channel.QueueDeclareAsync(
+                            queue: poolEventQueueName,
+                            durable: !isEphemeral,
+                            exclusive: false,
+                            autoDelete: isEphemeral,
+                            arguments: null,
+                            noWait: false,
+                            cancellationToken: cancellationToken);
+                        hasPoolEvents = true;
+                    }
+
+                    await channel.QueueBindAsync(
+                        queue: poolEventQueueName,
+                        exchange: exchangeName,
+                        routingKey: messageType,
+                        arguments: null,
+                        noWait: false,
+                        cancellationToken: cancellationToken);
+                }
+            }
+
+            if (hasPoolEvents)
+            {
+                poolEventQueues.Add((poolEventQueueName, pool.PrefetchCount));
             }
         }
+
+        return new TopologyResult(sharedCommandQueryQueues, poolEventQueues, poolCommandQueryQueues);
+    }
+}
+
+/// <summary>
+/// Result of topology setup containing all queue names that need consumers.
+/// </summary>
+internal sealed class TopologyResult
+{
+    /// <summary>
+    /// Shared command/query queue names (unicast, default prefetch count).
+    /// </summary>
+    public IReadOnlyList<string> SharedCommandQueryQueues { get; }
+
+    /// <summary>
+    /// Pool event queue names with their pool-specific prefetch counts (multicast, per-app).
+    /// </summary>
+    public IReadOnlyList<(string QueueName, ushort PrefetchCount)> PoolEventQueues { get; }
+
+    /// <summary>
+    /// Pool command/query queue names with their pool-specific prefetch counts (unicast, shared).
+    /// </summary>
+    public IReadOnlyList<(string QueueName, ushort PrefetchCount)> PoolCommandQueryQueues { get; }
+
+    public TopologyResult(
+        IReadOnlyList<string> sharedCommandQueryQueues,
+        IReadOnlyList<(string QueueName, ushort PrefetchCount)> poolEventQueues,
+        IReadOnlyList<(string QueueName, ushort PrefetchCount)> poolCommandQueryQueues)
+    {
+        this.SharedCommandQueryQueues = sharedCommandQueryQueues;
+        this.PoolEventQueues = poolEventQueues;
+        this.PoolCommandQueryQueues = poolCommandQueryQueues;
     }
 }
