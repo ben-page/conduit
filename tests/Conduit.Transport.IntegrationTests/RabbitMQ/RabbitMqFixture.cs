@@ -12,10 +12,17 @@ namespace Conduit.Transport.IntegrationTests.RabbitMQ;
 /// RabbitMQ-specific test fixture that manages a Testcontainers RabbitMQ instance
 /// and configures hosts with the RabbitMQ transport.
 /// </summary>
+/// <remarks>
+/// Uses TopologyMode.Developer with a shared prefix so that all hosts within a test
+/// share the same exchange/topic name. The Testcontainers instance provides broker-level
+/// isolation, so a random-per-host prefix (TopologyMode.Test) would prevent hosts from
+/// communicating.
+/// </remarks>
 public class RabbitMqFixture : TransportTestFixture
 {
     private RabbitMqContainer? container;
     private string? connectionString;
+    private readonly string topologyPrefix = $"test-{Guid.NewGuid():N}"[..13];
 
     /// <summary>
     /// Starts the RabbitMQ container and captures the connection string.
@@ -58,10 +65,12 @@ public class RabbitMqFixture : TransportTestFixture
         HostApplicationBuilder builder,
         string applicationName)
     {
+        var prefix = this.topologyPrefix;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
-            conduit.TopologyMode = TopologyMode.Test;
+            conduit.TopologyMode = TopologyMode.Developer;
+            conduit.DeveloperPrefix = prefix;
             conduit.AddEndpoint("self", endpoint =>
                 endpoint.UseRabbitMQ(this.connectionString!));
         });
@@ -74,10 +83,12 @@ public class RabbitMqFixture : TransportTestFixture
         string routeNamespace,
         string targetEndpointName)
     {
+        var prefix = this.topologyPrefix;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
-            conduit.TopologyMode = TopologyMode.Test;
+            conduit.TopologyMode = TopologyMode.Developer;
+            conduit.DeveloperPrefix = prefix;
             conduit.AddEndpoint(targetEndpointName, endpoint =>
                 endpoint.UseRabbitMQ(this.connectionString!));
             conduit.Route(routeNamespace).To(targetEndpointName);
