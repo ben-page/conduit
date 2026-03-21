@@ -97,8 +97,8 @@ public class TopologyManagerShould
         var subscriptionName = TopologyNaming.CreateSharedResourceName(
             conduitOptions, "Orders.Commands.CreateOrder", 50);
 
-        // Assert — reversed segments, no app name
-        subscriptionName.Should().Be("CreateOrder-Commands-Orders");
+        // Assert — system name + reversed segments, no app name
+        subscriptionName.Should().Be("conduit-CreateOrder-Commands-Orders");
     }
 
     [TestMethod]
@@ -111,8 +111,8 @@ public class TopologyManagerShould
         var subscriptionName = TopologyNaming.CreateAppResourceName(
             conduitOptions, "Shipping.Events.OrderShipped", 50);
 
-        // Assert — includes app name with reversed segments
-        subscriptionName.Should().Be("orders-OrderShipped-Events-Shipping");
+        // Assert — system name + app name + reversed segments
+        subscriptionName.Should().Be("conduit-orders-OrderShipped-Events-Shipping");
     }
 
     [TestMethod]
