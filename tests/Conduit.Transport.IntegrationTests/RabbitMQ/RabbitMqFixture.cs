@@ -92,6 +92,19 @@ public class RabbitMqFixture : TransportTestFixture
         string routeNamespace,
         string targetEndpointName)
     {
+        this.ConfigureSenderTransport(builder, applicationName, routeNamespace, targetEndpointName, null);
+    }
+
+    /// <summary>
+    /// Configures a sender host with optional RabbitMQ options override (e.g., short ResponseTimeout).
+    /// </summary>
+    public void ConfigureSenderTransport(
+        HostApplicationBuilder builder,
+        string applicationName,
+        string routeNamespace,
+        string targetEndpointName,
+        Action<RabbitMQOptions>? configureOptions)
+    {
         var prefix = this.TopologyPrefix;
         builder.Services.AddConduit(conduit =>
         {
@@ -99,7 +112,7 @@ public class RabbitMqFixture : TransportTestFixture
             conduit.TopologyMode = TopologyMode.Developer;
             conduit.DeveloperPrefix = prefix;
             conduit.AddEndpoint(targetEndpointName, endpoint =>
-                endpoint.UseRabbitMQ(this.connectionString!));
+                endpoint.UseRabbitMQ(this.connectionString!, configureOptions));
             conduit.Route(routeNamespace).To(targetEndpointName);
         });
     }

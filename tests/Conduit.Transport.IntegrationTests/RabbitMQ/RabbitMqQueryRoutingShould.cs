@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.TestUtils;
 using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -130,15 +131,21 @@ public class RabbitMqQueryRoutingShould
     }
 
     [TestMethod]
-    [Timeout(60_000)]
+    [Timeout(15_000)]
     public async Task TimeoutQueryWhenNoHandler()
     {
-        // Arrange
+        // Arrange — use a short ResponseTimeout so the test doesn't block for 60s
         EnsureAvailable();
 
         var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var senderHost = await TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<SpyLog>();
+            Fixture.ConfigureSenderTransport(
+                builder, senderName, ContractsNamespace, "broker",
+                opts => opts.ResponseTimeout = TimeSpan.FromSeconds(5));
+        });
+        Fixture.TrackHost(senderHost);
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -147,7 +154,7 @@ public class RabbitMqQueryRoutingShould
         // Act
         var action = () => mediator.FetchAsync(new TestQuery("nobody-home"));
 
-        // Assert — the 30s hardcoded timeout in RabbitMQ transport causes TaskCanceledException
+        // Assert
         await action.Should().ThrowAsync<Exception>();
     }
 }
