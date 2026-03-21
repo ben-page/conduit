@@ -26,6 +26,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     private IChannel? publishChannel;
     private IChannel? replyChannel;
     private string? replyQueueName;
+    private TopologyResult? topologyResult;
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<string> consumerTags = [];
@@ -86,7 +87,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         CancellationToken cancellationToken)
     {
         var topologyManager = new RabbitMQTopologyManager(this.options, this.ConduitOptions);
-        await topologyManager.EnsureTopologyAsync(
+        this.topologyResult = await topologyManager.EnsureTopologyAsync(
             this.publishChannel!, eventTypeNames, commandQueryTypeNames, cancellationToken);
 
         // Set up reply queue (exclusive auto-delete)
@@ -120,16 +121,26 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         var registry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
         LogStartingConsumers(this.Logger, registry.EventTypeNames.Count, null);
 
-        // Start default app queue consumer
+        // Start default app queue consumer (events — multicast)
         var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 255);
         await this.StartConsumerAsync(appQueueName, this.options.DefaultPrefetchCount, cancellationToken);
 
-        // Start pool consumers
-        foreach (var pool in this.options.Pools)
+        // Start shared command/query queue consumers (unicast — competing consumers, default prefetch)
+        foreach (var sharedQueueName in this.topologyResult!.SharedCommandQueryQueues)
         {
-            var poolQueueName = TopologyNaming.CreateAppResourceName(
-                this.ConduitOptions, pool.Name, 255);
-            await this.StartConsumerAsync(poolQueueName, pool.PrefetchCount, cancellationToken);
+            await this.StartConsumerAsync(sharedQueueName, this.options.DefaultPrefetchCount, cancellationToken);
+        }
+
+        // Start pool event queue consumers (multicast, pool-specific prefetch)
+        foreach (var (queueName, prefetchCount) in this.topologyResult.PoolEventQueues)
+        {
+            await this.StartConsumerAsync(queueName, prefetchCount, cancellationToken);
+        }
+
+        // Start pool command/query queue consumers (unicast — competing consumers, pool-specific prefetch)
+        foreach (var (queueName, prefetchCount) in this.topologyResult.PoolCommandQueryQueues)
+        {
+            await this.StartConsumerAsync(queueName, prefetchCount, cancellationToken);
         }
     }
 
