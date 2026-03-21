@@ -22,7 +22,16 @@ public class RabbitMqFixture : TransportTestFixture
 {
     private RabbitMqContainer? container;
     private string? connectionString;
-    private readonly string topologyPrefix = $"test-{Guid.NewGuid():N}"[..13];
+    /// <summary>
+    /// The AMQP connection string for the running container.
+    /// Only valid when <see cref="TransportTestFixture.IsAvailable"/> is true.
+    /// </summary>
+    public string ConnectionString => this.connectionString!;
+
+    /// <summary>
+    /// The shared topology prefix used by all hosts in this fixture.
+    /// </summary>
+    public string TopologyPrefix { get; } = $"test-{Guid.NewGuid():N}"[..13];
 
     /// <summary>
     /// Starts the RabbitMQ container and captures the connection string.
@@ -65,7 +74,7 @@ public class RabbitMqFixture : TransportTestFixture
         HostApplicationBuilder builder,
         string applicationName)
     {
-        var prefix = this.topologyPrefix;
+        var prefix = this.TopologyPrefix;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
@@ -83,7 +92,7 @@ public class RabbitMqFixture : TransportTestFixture
         string routeNamespace,
         string targetEndpointName)
     {
-        var prefix = this.topologyPrefix;
+        var prefix = this.TopologyPrefix;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;

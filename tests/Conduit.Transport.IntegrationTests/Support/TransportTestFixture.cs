@@ -82,6 +82,13 @@ public abstract class TransportTestFixture
         string targetEndpointName);
 
     /// <summary>
+    /// Tracks a manually-created host so it is disposed during <see cref="DisposeHostsAsync"/>.
+    /// Use when tests create hosts directly via <see cref="TestHost.StartAsync"/> instead of
+    /// through the fixture's factory methods.
+    /// </summary>
+    public void TrackHost(TestHost host) => this.hosts.Add(host);
+
+    /// <summary>
     /// Disposes all hosts created during the test. Call from [TestCleanup].
     /// </summary>
     public async Task DisposeHostsAsync()
