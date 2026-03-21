@@ -18,6 +18,11 @@ public sealed class AzureServiceBusOptions
     public string? AdminConnectionString { get; set; }
 
     /// <summary>
+    /// Timeout for request/response operations. Default 60 seconds.
+    /// </summary>
+    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
     /// Maximum concurrent calls for the default receiver processor.
     /// </summary>
     public int DefaultConcurrency { get; set; } = 10;

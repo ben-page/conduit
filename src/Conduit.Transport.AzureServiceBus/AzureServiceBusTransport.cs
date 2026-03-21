@@ -286,7 +286,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
             cancellationToken: cancellationToken);
 
         var replyMessage = await sessionReceiver.ReceiveMessageAsync(
-            TimeSpan.FromSeconds(30), cancellationToken);
+            this.options.ResponseTimeout, cancellationToken);
 
         if (replyMessage is null)
         {

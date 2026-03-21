@@ -325,7 +325,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
             // Wait for reply with timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            timeoutCts.CancelAfter(this.options.ResponseTimeout);
 
             using var registration = timeoutCts.Token.Register(() =>
                 tcs.TrySetCanceled(timeoutCts.Token));

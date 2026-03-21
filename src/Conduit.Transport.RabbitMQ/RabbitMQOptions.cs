@@ -12,6 +12,11 @@ public sealed class RabbitMQOptions
     public required string ConnectionString { get; init; }
 
     /// <summary>
+    /// Timeout for request/response operations. Default 60 seconds.
+    /// </summary>
+    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
     /// Default prefetch count for consumer channels. Controls concurrency per consumer.
     /// </summary>
     public ushort DefaultPrefetchCount { get; set; } = 10;
