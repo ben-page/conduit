@@ -13,10 +13,8 @@ namespace Conduit.Transport.IntegrationTests.RabbitMQ;
 /// Tests run sequentially because all hosts share the same RabbitMQ exchange (via a shared
 /// topology prefix). Parallel execution would cause cross-test message delivery.
 ///
-/// Note: sender hosts also have queue bindings for all command types (source generator discovers
-/// all handlers in the test assembly). This means the sender receives its own routed messages
-/// back and re-forwards them, creating amplification. Spy assertions use "at least 1" rather
-/// than "exactly 1" to tolerate this.
+/// Assertions enforce strict unicast semantics: exactly one handler invocation and zero
+/// bystander invocations. If these fail, the topology has a multicast bug.
 /// </remarks>
 [TestClass]
 [DoNotParallelize]
@@ -60,11 +58,14 @@ public class RabbitMqCommandRoutingShould
 
         var handlerName = TransportTestFixture.UniqueAppName("handler");
         var senderName = TransportTestFixture.UniqueAppName("sender");
+        var bystanderName = TransportTestFixture.UniqueAppName("bystander");
 
         var handlerHost = await Fixture.CreateHostAsync(handlerName);
+        var bystanderHost = await Fixture.CreateHostAsync(bystanderName);
         var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
+        var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
         await Task.Delay(1000);
@@ -72,11 +73,15 @@ public class RabbitMqCommandRoutingShould
         // Act
         var result = await mediator.ExecuteAsync(new TestCommand("hello"));
 
-        // Assert — command was routed to the handler endpoint and response came back
+        // Assert — command was routed to exactly one handler, bystander gets nothing
         result.Value.Should().Be("handled:hello");
         await handlerSpy.WaitForCountAsync(1);
-        handlerSpy.Invocations.OfType<TestCommand>().Should().Contain(
-            command => command.Input == "hello");
+
+        // Allow brief settling time to catch any delayed spurious deliveries
+        await Task.Delay(500);
+
+        handlerSpy.Invocations.OfType<TestCommand>().Should().HaveCount(1);
+        bystanderSpy.Invocations.OfType<TestCommand>().Should().HaveCount(0);
     }
 
     [TestMethod]
@@ -110,11 +115,14 @@ public class RabbitMqCommandRoutingShould
 
         var handlerName = TransportTestFixture.UniqueAppName("handler");
         var senderName = TransportTestFixture.UniqueAppName("sender");
+        var bystanderName = TransportTestFixture.UniqueAppName("bystander");
 
         var handlerHost = await Fixture.CreateHostAsync(handlerName);
+        var bystanderHost = await Fixture.CreateHostAsync(bystanderName);
         var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
+        var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
         await Task.Delay(1000);
@@ -122,10 +130,12 @@ public class RabbitMqCommandRoutingShould
         // Act
         await mediator.ExecuteAsync(new TestVoidCommand("fire"));
 
-        // Assert — handler received and processed the void command
+        // Assert — handler received exactly one invocation, bystander gets nothing
         await handlerSpy.WaitForCountAsync(1);
-        handlerSpy.Invocations.OfType<TestVoidCommand>().Should().Contain(
-            command => command.Input == "fire");
+        await Task.Delay(500);
+
+        handlerSpy.Invocations.OfType<TestVoidCommand>().Should().HaveCount(1);
+        bystanderSpy.Invocations.OfType<TestVoidCommand>().Should().HaveCount(0);
     }
 
     [TestMethod]

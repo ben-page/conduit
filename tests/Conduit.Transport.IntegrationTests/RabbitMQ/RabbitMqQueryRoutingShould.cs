@@ -11,7 +11,8 @@ namespace Conduit.Transport.IntegrationTests.RabbitMQ;
 /// </summary>
 /// <remarks>
 /// Mirrors <see cref="RabbitMqCommandRoutingShould"/> but exercises the query path
-/// (FetchAsync) instead of commands. Same topology and amplification caveats apply.
+/// (FetchAsync) instead of commands. Assertions enforce strict unicast semantics:
+/// exactly one handler invocation and zero bystander invocations.
 /// </remarks>
 [TestClass]
 [DoNotParallelize]
@@ -55,11 +56,14 @@ public class RabbitMqQueryRoutingShould
 
         var handlerName = TransportTestFixture.UniqueAppName("handler");
         var senderName = TransportTestFixture.UniqueAppName("sender");
+        var bystanderName = TransportTestFixture.UniqueAppName("bystander");
 
         var handlerHost = await Fixture.CreateHostAsync(handlerName);
+        var bystanderHost = await Fixture.CreateHostAsync(bystanderName);
         var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
+        var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
         await Task.Delay(1000);
@@ -67,11 +71,15 @@ public class RabbitMqQueryRoutingShould
         // Act
         var result = await mediator.FetchAsync(new TestQuery("hello"));
 
-        // Assert — query was routed to the handler endpoint and response came back
+        // Assert — query was routed to exactly one handler, bystander gets nothing
         result.Value.Should().Be("result:hello");
         await handlerSpy.WaitForCountAsync(1);
-        handlerSpy.Invocations.OfType<TestQuery>().Should().Contain(
-            query => query.Input == "hello");
+
+        // Allow brief settling time to catch any delayed spurious deliveries
+        await Task.Delay(500);
+
+        handlerSpy.Invocations.OfType<TestQuery>().Should().HaveCount(1);
+        bystanderSpy.Invocations.OfType<TestQuery>().Should().HaveCount(0);
     }
 
     [TestMethod]

@@ -76,10 +76,12 @@ public class RabbitMqCompetingInstanceShould
             await mediator.ExecuteAsync(new TestCommand($"msg-{i}"));
         }
 
-        // Assert — total across all instances equals messageCount (each handled exactly once)
+        // Assert — total across all instances equals exactly messageCount (each handled once)
+        await Task.Delay(500);
+
         var totalSpy = spy1.Count + spy2.Count + spy3.Count;
-        totalSpy.Should().BeGreaterThanOrEqualTo(messageCount,
-            $"Expected at least {messageCount} total invocations across 3 competing instances, got {totalSpy}");
+        totalSpy.Should().Be(messageCount,
+            $"Expected exactly {messageCount} total invocations across 3 competing instances, got {totalSpy}");
     }
 
     [TestMethod]
@@ -114,10 +116,12 @@ public class RabbitMqCompetingInstanceShould
             result.Value.Should().StartWith("result:");
         }
 
-        // Assert — total across all instances equals messageCount
+        // Assert — total across all instances equals exactly messageCount
+        await Task.Delay(500);
+
         var totalSpy = spy1.Count + spy2.Count + spy3.Count;
-        totalSpy.Should().BeGreaterThanOrEqualTo(messageCount,
-            $"Expected at least {messageCount} total invocations across 3 competing instances, got {totalSpy}");
+        totalSpy.Should().Be(messageCount,
+            $"Expected exactly {messageCount} total invocations across 3 competing instances, got {totalSpy}");
     }
 
     [TestMethod]
