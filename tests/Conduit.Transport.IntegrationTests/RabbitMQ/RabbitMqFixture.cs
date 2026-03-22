@@ -13,10 +13,9 @@ namespace Conduit.Transport.IntegrationTests.RabbitMQ;
 /// and configures hosts with the RabbitMQ transport.
 /// </summary>
 /// <remarks>
-/// Uses TopologyMode.Developer with a shared prefix so that all hosts within a test
-/// share the same exchange/topic name. The Testcontainers instance provides broker-level
-/// isolation, so a random-per-host prefix (TopologyMode.Test) would prevent hosts from
-/// communicating.
+/// Uses TopologyMode.Test with a shared TestPrefix so that all hosts within a test
+/// share the same exchange/topic name. The TestPrefix is generated once per fixture
+/// instance and passed to all hosts.
 /// </remarks>
 public class RabbitMqFixture : TransportTestFixture
 {
@@ -78,8 +77,8 @@ public class RabbitMqFixture : TransportTestFixture
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
-            conduit.TopologyMode = TopologyMode.Developer;
-            conduit.DeveloperPrefix = prefix;
+            conduit.TopologyMode = TopologyMode.Test;
+            conduit.TestPrefix = prefix;
             conduit.AddEndpoint("self", endpoint =>
                 endpoint.UseRabbitMQ(this.connectionString!));
         });
@@ -109,8 +108,8 @@ public class RabbitMqFixture : TransportTestFixture
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
-            conduit.TopologyMode = TopologyMode.Developer;
-            conduit.DeveloperPrefix = prefix;
+            conduit.TopologyMode = TopologyMode.Test;
+            conduit.TestPrefix = prefix;
             conduit.AddEndpoint(targetEndpointName, endpoint =>
                 endpoint.UseRabbitMQ(this.connectionString!, configureOptions));
             conduit.Route(routeNamespace).To(targetEndpointName);

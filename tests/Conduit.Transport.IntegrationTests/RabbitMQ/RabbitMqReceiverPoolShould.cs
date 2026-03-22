@@ -68,8 +68,8 @@ public class RabbitMqReceiverPoolShould
             builder.Services.AddConduit(conduit =>
             {
                 conduit.ApplicationName = applicationName;
-                conduit.TopologyMode = TopologyMode.Developer;
-                conduit.DeveloperPrefix = prefix;
+                conduit.TopologyMode = TopologyMode.Test;
+                conduit.TestPrefix = prefix;
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseRabbitMQ(connectionString, options =>
                     {
