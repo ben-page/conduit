@@ -1,0 +1,550 @@
+using System.Collections.Concurrent;
+using System.Text;
+using Amqp;
+using Amqp.Framing;
+using Conduit.Configuration;
+using Conduit.Runtime;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+namespace Conduit.Transport.ActiveMq;
+
+/// <summary>
+/// ActiveMQ Artemis transport extending <see cref="BrokerTransportBase{TMessage}"/>.
+/// Inbound dispatch, lifecycle, and outbound serialization are handled by the base class.
+/// This class implements the Artemis-specific primitives: AMQP 1.0 connection/session
+/// management, two-address publishing (anycast for commands/queries, multicast for events),
+/// exclusive reply queue correlation, and receiver link management.
+/// </summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Design", "CA1062:Validate arguments of public methods",
+    Justification = "Protected override methods are called by the base class which validates parameters.")]
+public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessage>
+{
+    private readonly ActiveMqOptions options;
+
+    private Connection? connection;
+    private Session? session;
+    private SenderLink? commandSender;
+    private SenderLink? eventSender;
+    private ReceiverLink? replyReceiver;
+    private string? replyQueueAddress;
+    private TopologyResult? topologyResult;
+
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
+    private readonly List<ReceiverLink> consumerLinks = [];
+
+    // Transport-specific logging delegates
+    private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
+            "Publishing event '{Type}' to Artemis multicast address");
+
+    private static readonly Action<ILogger, string, Exception?> LogSendingRequest =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(101, "SendingRequest"),
+            "Sending request '{Type}' to Artemis anycast address");
+
+    private static readonly Action<ILogger, int, Exception?> LogStartingConsumers =
+        LoggerMessage.Define<int>(LogLevel.Information, new EventId(105, "StartingConsumers"),
+            "Starting Artemis consumers for {Count} subscribed type(s)");
+
+    private static readonly Action<ILogger, Exception?> LogTransportStopping =
+        LoggerMessage.Define(LogLevel.Information, new EventId(106, "TransportStopping"),
+            "Stopping ActiveMQ Artemis transport");
+
+    /// <summary>
+    /// Creates a new ActiveMQ Artemis transport instance.
+    /// </summary>
+    public ActiveMqTransport(
+        ActiveMqOptions options,
+        ConduitOptions conduitOptions,
+        IServiceProvider serviceProvider,
+        ILogger<ActiveMqTransport> logger)
+        : base(conduitOptions, serviceProvider, logger)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        this.options = options;
+    }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override async Task ConnectAsync(CancellationToken cancellationToken)
+    {
+        var address = new Address(this.options.ConnectionString);
+
+        if (this.options.Username is not null)
+        {
+            address = new Address(
+                address.Host,
+                address.Port,
+                this.options.Username,
+                this.options.Password,
+                address.Path,
+                address.Scheme);
+        }
+
+        var factory = new ConnectionFactory();
+        this.connection = await factory.CreateAsync(address);
+        this.session = new Session(this.connection);
+    }
+
+    /// <inheritdoc />
+    protected override async Task EnsureTopologyAsync(
+        IReadOnlyList<string> eventTypeNames,
+        IReadOnlyList<string> commandQueryTypeNames,
+        CancellationToken cancellationToken)
+    {
+        var topologyManager = new ActiveMqTopologyManager(this.options, this.ConduitOptions, this.Logger);
+        this.topologyResult = await topologyManager.EnsureTopologyAsync(
+            this.session!, eventTypeNames, commandQueryTypeNames, cancellationToken);
+
+        // Create sender links for the two addresses
+        this.commandSender = new SenderLink(
+            this.session!,
+            "command-sender",
+            this.topologyResult.AnycastAddress);
+
+        this.eventSender = new SenderLink(
+            this.session!,
+            "event-sender",
+            this.topologyResult.MulticastAddress);
+
+        // Create exclusive temporary reply queue using AMQP dynamic node.
+        // The broker assigns the actual address — we capture it from the attach performative.
+        var replySource = new Source
+        {
+            Dynamic = true,
+        };
+
+        var attachedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        this.replyReceiver = new ReceiverLink(
+            this.session!,
+            "reply-receiver",
+            replySource,
+            (link, attach) =>
+            {
+                if (attach.Source is Source source && source.Address is not null)
+                {
+                    attachedTcs.TrySetResult(source.Address);
+                }
+                else
+                {
+                    attachedTcs.TrySetException(
+                        new InvalidOperationException("Broker did not assign a dynamic reply queue address."));
+                }
+            });
+
+        this.replyQueueAddress = await attachedTcs.Task;
+
+        // Set up reply message handler
+        this.replyReceiver.Start(10, this.OnReplyReceived);
+    }
+
+    /// <inheritdoc />
+    protected override Task StartConsumersAsync(CancellationToken cancellationToken)
+    {
+        var registry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
+        LogStartingConsumers(this.Logger, registry.EventTypeNames.Count + registry.CommandTypeNames.Count + registry.QueryTypeNames.Count, null);
+
+        // Start default app event queue consumer (events — multicast)
+        if (this.topologyResult!.HasAppEventQueue)
+        {
+            this.StartConsumer(
+                this.topologyResult.AppEventQueueName,
+                this.topologyResult.MulticastAddress,
+                this.options.DefaultPrefetchCount);
+        }
+
+        // Start shared command/query queue consumers (unicast — competing consumers, default prefetch)
+        foreach (var sharedQueueName in this.topologyResult.SharedCommandQueryQueues)
+        {
+            this.StartConsumer(
+                sharedQueueName,
+                this.topologyResult.AnycastAddress,
+                this.options.DefaultPrefetchCount);
+        }
+
+        // Start pool event queue consumers (multicast, pool-specific prefetch)
+        foreach (var (queueName, prefetchCount) in this.topologyResult.PoolEventQueues)
+        {
+            this.StartConsumer(
+                queueName,
+                this.topologyResult.MulticastAddress,
+                prefetchCount);
+        }
+
+        // Start pool command/query queue consumers (unicast — competing consumers, pool-specific prefetch)
+        foreach (var (queueName, prefetchCount) in this.topologyResult.PoolCommandQueryQueues)
+        {
+            this.StartConsumer(
+                queueName,
+                this.topologyResult.AnycastAddress,
+                prefetchCount);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    {
+        LogTransportStopping(this.Logger, null);
+
+        // Close all consumer receiver links
+        foreach (var receiverLink in this.consumerLinks)
+        {
+            try
+            {
+                if (!receiverLink.IsClosed)
+                {
+                    await receiverLink.CloseAsync();
+                }
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup during shutdown
+            }
+        }
+
+        // Cancel pending outbound reply waiters
+        foreach (var pending in this.pendingReplies.Values)
+        {
+            pending.TrySetCanceled(cancellationToken);
+        }
+
+        this.pendingReplies.Clear();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask DisposeAsync()
+    {
+        // Close reply receiver
+        if (this.replyReceiver is not null && !this.replyReceiver.IsClosed)
+        {
+            try
+            {
+                await this.replyReceiver.CloseAsync();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
+        }
+
+        // Close sender links
+        if (this.commandSender is not null && !this.commandSender.IsClosed)
+        {
+            try
+            {
+                await this.commandSender.CloseAsync();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
+        }
+
+        if (this.eventSender is not null && !this.eventSender.IsClosed)
+        {
+            try
+            {
+                await this.eventSender.CloseAsync();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
+        }
+
+        // Close session and connection
+        if (this.session is not null && !this.session.IsClosed)
+        {
+            try
+            {
+                await this.session.CloseAsync();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
+        }
+
+        if (this.connection is not null && !this.connection.IsClosed)
+        {
+            try
+            {
+                await this.connection.CloseAsync();
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best-effort cleanup
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Inbound dispatch primitives
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override string? GetMessageType(ActiveMqInboundMessage message) =>
+        message.Message.Properties?.Subject;
+
+    /// <inheritdoc />
+    protected override BinaryData GetMessageBody(ActiveMqInboundMessage message)
+    {
+        var body = message.Message.Body;
+        if (body is byte[] bytes)
+        {
+            return new BinaryData(bytes);
+        }
+
+        if (body is string text)
+        {
+            return new BinaryData(Encoding.UTF8.GetBytes(text));
+        }
+
+        // Handle Amqp.Data sections
+        if (message.Message.BodySection is Data dataSection)
+        {
+            return new BinaryData(dataSection.Binary);
+        }
+
+        return new BinaryData(Encoding.UTF8.GetBytes(body?.ToString() ?? "{}"));
+    }
+
+    /// <inheritdoc />
+    protected override bool IsRequest(ActiveMqInboundMessage message) =>
+        message.Message.ApplicationProperties?["ReplyTo"] is not null;
+
+    /// <inheritdoc />
+    protected override (string MessageId, string? CausationId, string ConversationId) ExtractContext(
+        ActiveMqInboundMessage message)
+    {
+        var messageId = message.Message.Properties?.MessageId?.ToString()
+            ?? Guid.NewGuid().ToString("N");
+        var causationId = message.Message.ApplicationProperties?["CausationId"]?.ToString();
+        var conversationId = message.Message.Properties?.CorrelationId?.ToString() ?? messageId;
+
+        return (messageId, causationId, conversationId);
+    }
+
+    /// <inheritdoc />
+    protected override async Task SendReplyAsync(ActiveMqInboundMessage message, BinaryData replyBody)
+    {
+        var replyAddress = message.Message.ApplicationProperties?["ReplyTo"]?.ToString();
+        var correlationId = message.Message.ApplicationProperties?["ReplyCorrelationId"]?.ToString();
+
+        if (string.IsNullOrEmpty(replyAddress) || string.IsNullOrEmpty(correlationId))
+        {
+            return;
+        }
+
+        var replySender = new SenderLink(this.session!, $"reply-{Guid.NewGuid():N}", replyAddress);
+        try
+        {
+            using var replyMessage = new Message(replyBody.ToArray())
+            {
+                Properties = new Properties
+                {
+                    CorrelationId = correlationId,
+                },
+            };
+
+            await replySender.SendAsync(replyMessage);
+        }
+        finally
+        {
+            if (!replySender.IsClosed)
+            {
+                await replySender.CloseAsync();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    protected override Task AcknowledgeAsync(ActiveMqInboundMessage message)
+    {
+        message.ReceiverLink.Accept(message.Message);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    protected override Task AbandonAsync(ActiveMqInboundMessage message)
+    {
+        message.ReceiverLink.Release(message.Message);
+        return Task.CompletedTask;
+    }
+
+    // -----------------------------------------------------------------------
+    // Outbound primitives
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override bool IsStarted =>
+        this.commandSender is not null && this.eventSender is not null && this.replyQueueAddress is not null;
+
+    /// <inheritdoc />
+    protected override async Task<BinaryData> PublishRequestAsync(
+        DispatchEnvelope envelope,
+        BinaryData body,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = Guid.NewGuid().ToString("N");
+
+        LogSendingRequest(this.Logger, envelope.Type, null);
+
+        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        this.pendingReplies[correlationId] = tcs;
+
+        try
+        {
+            using var message = new Message(body.ToArray())
+            {
+                Properties = new Properties
+                {
+                    Subject = envelope.Type,
+                    MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
+                    CorrelationId = MessageContext.Current?.ConversationId,
+                },
+                ApplicationProperties = BuildOutboundApplicationProperties(),
+            };
+
+            message.ApplicationProperties["ReplyTo"] = this.replyQueueAddress;
+            message.ApplicationProperties["ReplyCorrelationId"] = correlationId;
+
+            await this.commandSender!.SendAsync(message);
+
+            // Wait for reply with timeout
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(this.options.ResponseTimeout);
+
+            using var registration = timeoutCts.Token.Register(() =>
+                tcs.TrySetCanceled(timeoutCts.Token));
+
+            var replyBytes = await tcs.Task;
+            return new BinaryData(replyBytes);
+        }
+        finally
+        {
+            this.pendingReplies.TryRemove(correlationId, out _);
+        }
+    }
+
+    /// <inheritdoc />
+    protected override async Task PublishEventAsync(
+        DispatchEnvelope envelope,
+        BinaryData body,
+        CancellationToken cancellationToken)
+    {
+        LogPublishingEvent(this.Logger, envelope.Type, null);
+
+        using var message = new Message(body.ToArray())
+        {
+            Properties = new Properties
+            {
+                Subject = envelope.Type,
+                MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
+                CorrelationId = MessageContext.Current?.ConversationId,
+            },
+            ApplicationProperties = BuildOutboundApplicationProperties(),
+        };
+
+        await this.eventSender!.SendAsync(message);
+    }
+
+    // -----------------------------------------------------------------------
+    // Private helpers
+    // -----------------------------------------------------------------------
+
+    private void StartConsumer(string queueName, string addressName, int prefetchCount)
+    {
+        // Create receiver link targeting the specific queue on the address
+        // Using FQQN (Fully Qualified Queue Name) format: address::queue
+        var source = new Source
+        {
+            Address = $"{addressName}::{queueName}",
+        };
+
+        var receiverLink = new ReceiverLink(
+            this.session!,
+            $"consumer-{queueName}-{Guid.NewGuid():N}"[..50],
+            source,
+            null);
+
+        receiverLink.SetCredit(prefetchCount);
+        receiverLink.Start(prefetchCount, this.OnMessageReceived);
+        this.consumerLinks.Add(receiverLink);
+    }
+
+    private void OnMessageReceived(IReceiverLink receiverLink, Message message)
+    {
+        var inboundMessage = new ActiveMqInboundMessage
+        {
+            ReceiverLink = (ReceiverLink)receiverLink,
+            Message = message,
+        };
+
+        // Fire and forget — ProcessInboundMessageAsync handles ack/nack
+        _ = this.ProcessInboundMessageAsync(inboundMessage);
+    }
+
+    private void OnReplyReceived(IReceiverLink receiverLink, Message message)
+    {
+        var correlationId = message.Properties?.CorrelationId?.ToString();
+        if (!string.IsNullOrEmpty(correlationId) &&
+            this.pendingReplies.TryRemove(correlationId, out var tcs))
+        {
+            byte[] replyBytes;
+            if (message.Body is byte[] bytes)
+            {
+                replyBytes = bytes;
+            }
+            else if (message.BodySection is Data dataSection)
+            {
+                replyBytes = dataSection.Binary;
+            }
+            else if (message.Body is string text)
+            {
+                replyBytes = Encoding.UTF8.GetBytes(text);
+            }
+            else
+            {
+                replyBytes = Encoding.UTF8.GetBytes(message.Body?.ToString() ?? "{}");
+            }
+
+            tcs.TrySetResult(replyBytes);
+        }
+
+        ((ReceiverLink)receiverLink).Accept(message);
+    }
+
+    private static ApplicationProperties BuildOutboundApplicationProperties()
+    {
+        var properties = new ApplicationProperties();
+        var context = MessageContext.Current;
+        if (context is not null)
+        {
+            if (context.CausationId is not null)
+            {
+                properties["CausationId"] = context.CausationId;
+            }
+        }
+
+        return properties;
+    }
+}

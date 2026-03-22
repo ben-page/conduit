@@ -1,0 +1,51 @@
+namespace Conduit.Transport.ActiveMq;
+
+/// <summary>
+/// Configuration for the ActiveMQ Artemis transport. Passed to <c>UseActiveMq()</c>
+/// on the endpoint builder.
+/// </summary>
+public sealed class ActiveMqOptions
+{
+    /// <summary>
+    /// AMQP 1.0 connection string (e.g. "amqp://localhost:5672").
+    /// </summary>
+    public required string ConnectionString { get; init; }
+
+    /// <summary>
+    /// Timeout for request/response operations. Default 60 seconds.
+    /// </summary>
+    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Default prefetch count (AMQP link credit) for receiver links. Controls concurrency per consumer.
+    /// </summary>
+    public int DefaultPrefetchCount { get; set; } = 10;
+
+    /// <summary>
+    /// Named receiver pools with separate receiver links and prefetch settings.
+    /// </summary>
+    public List<ActiveMqReceiverPoolOptions> Pools { get; } = [];
+
+    /// <summary>
+    /// Optional username for AMQP SASL PLAIN authentication.
+    /// </summary>
+    public string? Username { get; set; }
+
+    /// <summary>
+    /// Optional password for AMQP SASL PLAIN authentication.
+    /// </summary>
+    public string? Password { get; set; }
+
+    /// <summary>
+    /// Adds a named receiver pool with the specified configuration.
+    /// </summary>
+    public void AddPool(string name, Action<ActiveMqReceiverPoolOptions> configure)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var pool = new ActiveMqReceiverPoolOptions { Name = name };
+        configure(pool);
+        this.Pools.Add(pool);
+    }
+}
