@@ -13,5 +13,6 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.5" />
     <PackageVersion Include="PolySharp" Version="1.15.0" />
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.1" />
+    <PackageVersion Include="Confluent.Kafka" Version="2.8.0" />
   </ItemGroup>
 </Project>
