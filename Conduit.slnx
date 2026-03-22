@@ -15,6 +15,7 @@
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
     <Project Path="src/Conduit.Transport.Http/Conduit.Transport.Http.csproj" />
     <Project Path="src/Conduit.Transport.AzureServiceBus/Conduit.Transport.AzureServiceBus.csproj" />
+    <Project Path="src/Conduit.Transport.Kafka/Conduit.Transport.Kafka.csproj" />
     <Project Path="src/Conduit.Transport.RabbitMQ/Conduit.Transport.RabbitMQ.csproj" />
     <Project Path="src/Conduit.Transport.SignalR/Conduit.Transport.SignalR.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
