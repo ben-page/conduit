@@ -56,6 +56,12 @@ public class ConduitBuilder
         set => this.Options.DeveloperPrefix = value;
     }
 
+    public string? TestPrefix
+    {
+        get => this.Options.TestPrefix;
+        set => this.Options.TestPrefix = value;
+    }
+
     /// <summary>
     /// Adds a named remote endpoint that messages can be routed to.
     /// Configure the endpoint's transport using extension methods on <see cref="EndpointBuilder"/>.

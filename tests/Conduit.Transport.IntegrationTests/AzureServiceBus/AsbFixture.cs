@@ -13,10 +13,9 @@ namespace Conduit.Transport.IntegrationTests.AzureServiceBus;
 /// and configures hosts with the Azure Service Bus transport.
 /// </summary>
 /// <remarks>
-/// Uses TopologyMode.Developer with a shared prefix so that all hosts within a test
-/// share the same topic/subscription namespace. The Testcontainers instance provides
-/// broker-level isolation, so a random-per-host prefix (TopologyMode.Test) would prevent
-/// hosts from communicating.
+/// Uses TopologyMode.Test with a shared TestPrefix so that all hosts within a test
+/// share the same topic/subscription namespace. The TestPrefix is generated once per
+/// fixture instance and passed to all hosts.
 /// </remarks>
 public class AsbFixture : TransportTestFixture
 {
@@ -101,8 +100,8 @@ public class AsbFixture : TransportTestFixture
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
-            conduit.TopologyMode = TopologyMode.Developer;
-            conduit.DeveloperPrefix = prefix;
+            conduit.TopologyMode = TopologyMode.Test;
+            conduit.TestPrefix = prefix;
             conduit.AddEndpoint("self", endpoint =>
                 endpoint.UseAzureServiceBus(connStr, options =>
                     options.AdminConnectionString = adminConnStr));
@@ -122,8 +121,8 @@ public class AsbFixture : TransportTestFixture
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
-            conduit.TopologyMode = TopologyMode.Developer;
-            conduit.DeveloperPrefix = prefix;
+            conduit.TopologyMode = TopologyMode.Test;
+            conduit.TestPrefix = prefix;
             conduit.AddEndpoint(targetEndpointName, endpoint =>
                 endpoint.UseAzureServiceBus(connStr, options =>
                     options.AdminConnectionString = adminConnStr));
