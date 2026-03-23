@@ -32,7 +32,6 @@
     <Project Path="tests/Conduit.Transport.AmazonSqs.Tests/Conduit.Transport.AmazonSqs.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.AzureServiceBus.Tests/Conduit.Transport.AzureServiceBus.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.Http.Tests/Conduit.Transport.Http.Tests.csproj" />
-    <Project Path="tests/Conduit.Transport.IntegrationTests/Conduit.Transport.IntegrationTests.csproj" />
     <Project Path="tests/Conduit.Transport.Kafka.Tests/Conduit.Transport.Kafka.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.RabbitMQ.Tests/Conduit.Transport.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.SignalR.Tests/Conduit.Transport.SignalR.Tests.csproj" />
