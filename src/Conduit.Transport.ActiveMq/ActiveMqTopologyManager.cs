@@ -217,6 +217,7 @@ internal sealed class ActiveMqTopologyManager
             {
                 var autoDeleteDelayMs = this.conduitOptions.TopologyMode switch
                 {
+                    TopologyMode.Production => 0L,
                     TopologyMode.Developer => (long)TimeSpan.FromHours(4).TotalMilliseconds,
                     TopologyMode.Test => (long)TimeSpan.FromMinutes(5).TotalMilliseconds,
                     _ => 0L,
@@ -315,11 +316,15 @@ internal sealed class ActiveMqTopologyManager
 
     private static Message CreateManagementRequest(string operation)
     {
-        var message = new Message();
-        message.Properties = new Properties();
-        message.ApplicationProperties = new ApplicationProperties();
-        message.ApplicationProperties["_AMQ_ResourceName"] = "broker";
-        message.ApplicationProperties["_AMQ_OperationName"] = operation;
+        var message = new Message
+        {
+            Properties = new Properties(),
+            ApplicationProperties = new ApplicationProperties
+            {
+                ["_AMQ_ResourceName"] = "broker",
+                ["_AMQ_OperationName"] = operation,
+            },
+        };
         return message;
     }
 }
