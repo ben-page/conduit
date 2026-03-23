@@ -96,7 +96,7 @@ internal sealed class AzureServiceBusTopologyManager
         return defaultQueueName;
     }
 
-    private TimeSpan? ComputeEphemeralTtl()
+    internal TimeSpan? ComputeEphemeralTtl()
     {
         return this.conduitOptions.TopologyMode switch
         {
