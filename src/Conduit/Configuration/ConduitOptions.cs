@@ -46,6 +46,15 @@ public sealed class ConduitOptions
     public string? TestPrefix { get; set; }
 
     /// <summary>
+    /// When true, the transport only publishes messages — it does not create
+    /// inbound topology (subscriptions, bindings) or start consumers.
+    /// Reply queues for request/response are still created.
+    /// Use for API hosts that route commands to worker services,
+    /// or test sender hosts that should not interfere with handler topology.
+    /// </summary>
+    public bool ProducerOnly { get; set; }
+
+    /// <summary>
     /// Computed topology prefix. Resolved once on first access using the current
     /// TopologyMode and DeveloperPrefix/TestPrefix values. Test mode generates a stable
     /// random prefix per options instance if TestPrefix is not set.

@@ -26,6 +26,24 @@ internal sealed class AzureServiceBusTopologyManager
     }
 
     /// <summary>
+    /// Creates only the outbound topology needed for publishing messages and
+    /// receiving replies: the shared topic and the reply queue.
+    /// Called when <see cref="ConduitOptions.ProducerOnly"/> is true.
+    /// </summary>
+    public async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        var ephemeralTtl = this.ComputeEphemeralTtl();
+
+        // Shared event topic
+        var topicName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 260);
+        await this.TryCreateTopicAsync(topicName, ephemeralTtl, cancellationToken);
+
+        // Reply queue with sessions enabled for request/response correlation
+        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
+        await this.TryCreateQueueAsync(replyQueueName, requiresSession: true, ephemeralTtl, cancellationToken);
+    }
+
+    /// <summary>
     /// Creates all required topology for the transport: topic, app queue, reply queue,
     /// event subscriptions (multicast, per-app) and command/query subscriptions (unicast, shared),
     /// and pool queues.
@@ -184,25 +202,17 @@ internal sealed class AzureServiceBusTopologyManager
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
             // Subscription already exists — another pod or app created it first.
-            // Verify ForwardTo matches. If a different app created it pointing to
-            // a different queue, update it to point to our queue. This handles the
-            // race where two apps handle the same command type and start concurrently.
-            try
-            {
-                var existing = await this.adminClient.GetSubscriptionAsync(
-                    topicName, subscriptionName, cancellationToken);
+            // Verify the existing subscription forwards to the expected queue.
+            // A mismatch indicates a naming collision — this is a configuration error.
+            var existing = await this.adminClient.GetSubscriptionAsync(
+                topicName, subscriptionName, cancellationToken);
 
-                if (!string.Equals(existing.Value.ForwardTo, forwardTo, StringComparison.OrdinalIgnoreCase))
-                {
-                    existing.Value.ForwardTo = forwardTo;
-                    await this.adminClient.UpdateSubscriptionAsync(
-                        existing.Value, cancellationToken);
-                }
-            }
-            catch (ServiceBusException)
+            if (!string.Equals(existing.Value.ForwardTo, forwardTo, StringComparison.OrdinalIgnoreCase))
             {
-                // Best-effort — if we can't verify/update, log and continue.
-                // The subscription exists, just might forward to the wrong queue.
+                throw new InvalidOperationException(
+                    $"Subscription '{subscriptionName}' on topic '{topicName}' already exists but " +
+                    $"forwards to '{existing.Value.ForwardTo}' instead of expected '{forwardTo}'. " +
+                    $"This indicates a naming collision between applications.");
             }
         }
     }

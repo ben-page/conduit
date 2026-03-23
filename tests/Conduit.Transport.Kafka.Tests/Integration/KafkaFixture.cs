@@ -126,6 +126,7 @@ public class KafkaFixture : TransportTestFixture
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
+            conduit.ProducerOnly = true;
             conduit.TopologyMode = TopologyMode.Test;
             conduit.TestPrefix = prefix;
             conduit.AddEndpoint(targetEndpointName, endpoint =>

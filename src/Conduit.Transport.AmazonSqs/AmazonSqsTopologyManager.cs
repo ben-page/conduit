@@ -53,6 +53,25 @@ internal sealed class AmazonSqsTopologyManager
     internal Dictionary<string, string> PoolQueueAddresses { get; } = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Creates only the outbound topology needed for publishing messages and
+    /// receiving replies: the SNS topic and the reply SQS queue.
+    /// Called when <see cref="ConduitOptions.ProducerOnly"/> is true.
+    /// </summary>
+    public async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        // 1. Create SNS topic (idempotent)
+        var topicName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 256);
+        var topicResponse = await this.snsClient.CreateTopicAsync(
+            new CreateTopicRequest { Name = topicName }, cancellationToken);
+        this.TopicArn = topicResponse.TopicArn;
+
+        // 2. Create reply SQS queue
+        var replyQueueName = TopologyNaming.CreateAppResourceName(
+            this.conduitOptions, "replies", 80);
+        this.ReplyQueueAddress = await this.CreateQueueAsync(replyQueueName, cancellationToken);
+    }
+
+    /// <summary>
     /// Creates all required topology: SNS topic, SQS queues, SNS subscriptions with
     /// filter policies, and pool queues.
     /// </summary>
