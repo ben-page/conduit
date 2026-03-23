@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Conduit.Transport.ActiveMQ.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AMQPNetLite.Core" />
   </ItemGroup>
 
