@@ -90,7 +90,8 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Test directories: `Unit/` for single-class tests, `Integration/` for multi-component tests, `Support/` for test types (one class per file)
 - Test class naming: `[Subject]Should` (e.g. `MediatorShould`, `RoutingShould`)
 - AAA pattern with `// Arrange`, `// Act`, `// Assert` comments
-- Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`)
+- Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `TransportTestFixture`, `MessageContextSnapshot`)
+- Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
 ## Project-Specific Notes
 
