@@ -21,7 +21,7 @@ public class ActiveMQReceiverPoolShould
     private const string ContractsNamespace = "Conduit.Transport.ActiveMQ.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
-        "Conduit.Transport.IntegrationTests.Support.Contracts.SlowCommand";
+        "Conduit.Transport.ActiveMQ.Tests.Support.Contracts.SlowCommand";
 
     [ClassInitialize]
     public static async Task ClassInitialize(TestContext context)
