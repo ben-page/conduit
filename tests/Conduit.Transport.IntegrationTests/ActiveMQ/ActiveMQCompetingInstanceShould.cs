@@ -3,7 +3,7 @@ using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests competing consumer behavior over ActiveMQ Artemis: multiple instances with the same
@@ -13,9 +13,9 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// </summary>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqCompetingInstanceShould
+public class ActiveMQCompetingInstanceShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     private const string ContractsNamespace = "Conduit.Transport.IntegrationTests.Support.Contracts";
 

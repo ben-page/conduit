@@ -7,7 +7,7 @@ using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Conduit.Transport.ActiveMq;
+namespace Conduit.Transport.ActiveMQ;
 
 /// <summary>
 /// ActiveMQ Artemis transport extending <see cref="BrokerTransportBase{TMessage}"/>.
@@ -19,9 +19,9 @@ namespace Conduit.Transport.ActiveMq;
 [System.Diagnostics.CodeAnalysis.SuppressMessage(
     "Design", "CA1062:Validate arguments of public methods",
     Justification = "Protected override methods are called by the base class which validates parameters.")]
-public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessage>
+public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessage>
 {
-    private readonly ActiveMqOptions options;
+    private readonly ActiveMQOptions options;
 
     private Connection? connection;
     private Session? session;
@@ -54,11 +54,11 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
     /// <summary>
     /// Creates a new ActiveMQ Artemis transport instance.
     /// </summary>
-    public ActiveMqTransport(
-        ActiveMqOptions options,
+    public ActiveMQTransport(
+        ActiveMQOptions options,
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
-        ILogger<ActiveMqTransport> logger)
+        ILogger<ActiveMQTransport> logger)
         : base(conduitOptions, serviceProvider, logger)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -96,7 +96,7 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
         IReadOnlyList<string> commandQueryTypeNames,
         CancellationToken cancellationToken)
     {
-        var topologyManager = new ActiveMqTopologyManager(this.options, this.ConduitOptions, this.Logger);
+        var topologyManager = new ActiveMQTopologyManager(this.options, this.ConduitOptions, this.Logger);
         this.topologyResult = await topologyManager.EnsureTopologyAsync(
             this.session!, eventTypeNames, commandQueryTypeNames, cancellationToken);
 
@@ -301,11 +301,11 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
     // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    protected override string? GetMessageType(ActiveMqInboundMessage message) =>
+    protected override string? GetMessageType(ActiveMQInboundMessage message) =>
         message.Message.Properties?.Subject;
 
     /// <inheritdoc />
-    protected override BinaryData GetMessageBody(ActiveMqInboundMessage message)
+    protected override BinaryData GetMessageBody(ActiveMQInboundMessage message)
     {
         var body = message.Message.Body;
         if (body is byte[] bytes)
@@ -328,12 +328,12 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
     }
 
     /// <inheritdoc />
-    protected override bool IsRequest(ActiveMqInboundMessage message) =>
+    protected override bool IsRequest(ActiveMQInboundMessage message) =>
         message.Message.ApplicationProperties?["ReplyTo"] is not null;
 
     /// <inheritdoc />
     protected override (string MessageId, string? CausationId, string ConversationId) ExtractContext(
-        ActiveMqInboundMessage message)
+        ActiveMQInboundMessage message)
     {
         var messageId = message.Message.Properties?.MessageId?.ToString()
             ?? Guid.NewGuid().ToString("N");
@@ -344,7 +344,7 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
     }
 
     /// <inheritdoc />
-    protected override async Task SendReplyAsync(ActiveMqInboundMessage message, BinaryData replyBody)
+    protected override async Task SendReplyAsync(ActiveMQInboundMessage message, BinaryData replyBody)
     {
         var replyAddress = message.Message.ApplicationProperties?["ReplyTo"]?.ToString();
         var correlationId = message.Message.ApplicationProperties?["ReplyCorrelationId"]?.ToString();
@@ -377,14 +377,14 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
     }
 
     /// <inheritdoc />
-    protected override Task AcknowledgeAsync(ActiveMqInboundMessage message)
+    protected override Task AcknowledgeAsync(ActiveMQInboundMessage message)
     {
         message.ReceiverLink.Accept(message.Message);
         return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    protected override Task AbandonAsync(ActiveMqInboundMessage message)
+    protected override Task AbandonAsync(ActiveMQInboundMessage message)
     {
         message.ReceiverLink.Release(message.Message);
         return Task.CompletedTask;
@@ -493,7 +493,7 @@ public sealed class ActiveMqTransport : BrokerTransportBase<ActiveMqInboundMessa
 
     private void OnMessageReceived(IReceiverLink receiverLink, Message message)
     {
-        var inboundMessage = new ActiveMqInboundMessage
+        var inboundMessage = new ActiveMQInboundMessage
         {
             ReceiverLink = (ReceiverLink)receiverLink,
             Message = message,

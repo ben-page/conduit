@@ -4,7 +4,7 @@ using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests command routing over ActiveMQ Artemis: correct endpoint delivery, response round-trips,
@@ -19,9 +19,9 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// </remarks>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqCommandRoutingShould
+public class ActiveMQCommandRoutingShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     private const string ContractsNamespace = "Conduit.Transport.IntegrationTests.Support.Contracts";
 

@@ -3,7 +3,7 @@ using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests MessageContext propagation over ActiveMQ Artemis: verifies that MessageId, CausationId,
@@ -12,9 +12,9 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// </summary>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqMessageContextShould
+public class ActiveMQMessageContextShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     private const string ContractsNamespace = "Conduit.Transport.IntegrationTests.Support.Contracts";
 

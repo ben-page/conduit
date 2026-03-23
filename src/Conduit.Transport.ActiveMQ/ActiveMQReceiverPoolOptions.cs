@@ -1,9 +1,9 @@
-namespace Conduit.Transport.ActiveMq;
+namespace Conduit.Transport.ActiveMQ;
 
 /// <summary>
 /// Configuration for a named receiver pool with its own receiver link and prefetch count.
 /// </summary>
-public sealed class ActiveMqReceiverPoolOptions
+public sealed class ActiveMQReceiverPoolOptions
 {
     /// <summary>
     /// Unique name for this pool. Used in queue naming.
