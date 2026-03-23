@@ -58,13 +58,13 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         LoggerMessage.Define(LogLevel.Information, new EventId(106, "TransportStopping"),
             "Stopping Kafka transport");
 
-    private static readonly Action<ILogger, string, int, Exception?> LogRetrying =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, new EventId(107, "RetryingMessage"),
-            "Retrying message '{Type}' — attempt {Attempt}");
-
     private static readonly Action<ILogger, string, Exception?> LogDeadLettering =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(108, "DeadLettering"),
-            "Dead-lettering message '{Type}' after max retries exceeded");
+            "Dead-lettering message '{Type}'");
+
+    private static readonly Action<ILogger, Exception?> LogDeadLetterError =
+        LoggerMessage.Define(LogLevel.Error, new EventId(109, "DeadLetterError"),
+            "Failed to publish message to dead-letter topic");
 
     /// <summary>
     /// Creates a new Kafka transport instance.
@@ -282,27 +282,12 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     /// <inheritdoc />
     protected override async Task AbandonAsync(KafkaInboundMessage message)
     {
-        // Kafka-specific: in-process retry with exponential backoff, then dead-letter.
-        // Unlike RabbitMQ/ASB, we cannot nack — offsets are sequential.
+        // No transport-level retry — application retry is the user's concern via IPipelineBehavior.
+        // Commit the offset (Kafka offsets are sequential — not committing blocks all subsequent messages)
+        // and publish to the dead-letter topic with error metadata.
         var messageType = this.GetMessageType(message) ?? "unknown";
-        var currentRetry = message.RetryCount;
-
-        if (currentRetry < this.options.MaxRetryCount)
-        {
-            var delay = this.options.RetryBackoff * Math.Pow(2, currentRetry);
-            LogRetrying(this.Logger, messageType, currentRetry + 1, null);
-            await Task.Delay(delay);
-
-            // Re-process with incremented retry count
-            message.RetryCount = currentRetry + 1;
-            await this.ProcessInboundMessageAsync(message);
-        }
-        else
-        {
-            // Max retries exceeded — publish to dead-letter topic
-            LogDeadLettering(this.Logger, messageType, null);
-            await this.PublishToDeadLetterAsync(message);
-        }
+        LogDeadLettering(this.Logger, messageType, null);
+        await this.PublishToDeadLetterAsync(message);
     }
 
     // -----------------------------------------------------------------------
@@ -438,7 +423,6 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
                 var inboundMessage = new KafkaInboundMessage
                 {
                     ConsumeResult = result,
-                    RetryCount = 0,
                 };
                 await this.ProcessInboundMessageAsync(inboundMessage);
 
@@ -539,20 +523,30 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         try
         {
+            var consumeResult = message.ConsumeResult;
+
+            var headers = new Headers();
+            var originalType = this.GetMessageType(message);
+            if (originalType is not null)
+            {
+                headers.Add("conduit-original-type", Encoding.UTF8.GetBytes(originalType));
+            }
+
             var deadLetterMessage = new Message<string, byte[]>
             {
-                Key = message.ConsumeResult.Message.Key,
-                Value = message.ConsumeResult.Message.Value,
-                Headers = message.ConsumeResult.Message.Headers,
+                Key = consumeResult.Message.Key,
+                Value = consumeResult.Message.Value,
+                Headers = headers,
             };
 
             await this.producer.ProduceAsync(this.deadLetterTopicName, deadLetterMessage);
         }
 #pragma warning disable CA1031
-        catch (Exception)
+        catch (Exception ex)
 #pragma warning restore CA1031
         {
-            // Best-effort dead-lettering — if this fails, the message is lost
+            // Log but don't throw — the message is already lost from the main topic
+            LogDeadLetterError(this.Logger, ex);
         }
     }
 
