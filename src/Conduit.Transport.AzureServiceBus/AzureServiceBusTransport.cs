@@ -97,6 +97,17 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     }
 
     /// <inheritdoc />
+    protected override async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        var adminConnectionString = this.options.AdminConnectionString ?? this.options.ConnectionString;
+        var adminClient = new ServiceBusAdministrationClient(adminConnectionString);
+        var topologyManager = new AzureServiceBusTopologyManager(
+            adminClient, this.options, this.ConduitOptions);
+
+        await topologyManager.EnsureOutboundTopologyAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
     protected override async Task StartConsumersAsync(CancellationToken cancellationToken)
     {
         var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 260);

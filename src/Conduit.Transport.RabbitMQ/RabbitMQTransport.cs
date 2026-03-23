@@ -90,6 +90,20 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         this.topologyResult = await topologyManager.EnsureTopologyAsync(
             this.publishChannel!, eventTypeNames, commandQueryTypeNames, cancellationToken);
 
+        await this.EnsureReplyQueueAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        var topologyManager = new RabbitMQTopologyManager(this.options, this.ConduitOptions);
+        await topologyManager.EnsureExchangeAsync(this.publishChannel!, cancellationToken);
+
+        await this.EnsureReplyQueueAsync(cancellationToken);
+    }
+
+    private async Task EnsureReplyQueueAsync(CancellationToken cancellationToken)
+    {
         // Set up reply queue (exclusive auto-delete)
         this.replyChannel = await this.connection!.CreateChannelAsync(
             cancellationToken: cancellationToken);

@@ -104,6 +104,18 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         this.eventTypeNames = new HashSet<string>(eventTypeNames, StringComparer.Ordinal);
         this.commandQueryTypeNames = new HashSet<string>(commandQueryTypeNames, StringComparer.Ordinal);
 
+        await this.EnsureTopicNamesAndTopologyAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        await this.EnsureTopicNamesAndTopologyAsync(cancellationToken);
+        this.StartReplyConsumer();
+    }
+
+    private async Task EnsureTopicNamesAndTopologyAsync(CancellationToken cancellationToken)
+    {
         this.sharedTopicName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 249);
         this.replyTopicName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, "replies", 249);
         this.deadLetterTopicName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, "dead-letter", 249);
@@ -134,19 +146,27 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         this.eventConsumerTask = Task.Run(
             () => this.ConsumeLoopAsync(this.eventConsumer, isCommandQueryConsumer: false, token), token);
 
+        this.StartReplyConsumer();
+
+        // Start cleanup task for ephemeral topology modes
+        if (this.ConduitOptions.TopologyMode != TopologyMode.Production)
+        {
+            this.cleanupTask = Task.Run(() => this.CleanupLoopAsync(this.consumerCts.Token), this.consumerCts.Token);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void StartReplyConsumer()
+    {
+        this.consumerCts ??= new CancellationTokenSource();
+        var token = this.consumerCts.Token;
+
         // Reply consumer — unique group per instance, manual partition assignment
         var replyGroupName = $"{TopologyNaming.CreateAppResourceName(this.ConduitOptions, "replies", 249)}-{this.instanceId}";
         this.replyConsumer = this.CreateConsumer(replyGroupName);
         this.replyConsumer.Assign([new TopicPartition(this.replyTopicName, new Partition(0))]);
         this.replyConsumerTask = Task.Run(() => this.ReplyConsumeLoopAsync(this.replyConsumer, token), token);
-
-        // Start cleanup task for ephemeral topology modes
-        if (this.ConduitOptions.TopologyMode != TopologyMode.Production)
-        {
-            this.cleanupTask = Task.Run(() => this.CleanupLoopAsync(token), token);
-        }
-
-        return Task.CompletedTask;
     }
 
     /// <inheritdoc />

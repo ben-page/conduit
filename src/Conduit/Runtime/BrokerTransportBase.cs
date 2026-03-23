@@ -77,15 +77,23 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <inheritdoc />
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var typeRegistry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
-
-        var eventTypeNames = typeRegistry.EventTypeNames;
-        var commandQueryTypeNames = typeRegistry.CommandTypeNames
-            .Concat(typeRegistry.QueryTypeNames).ToList();
-
         await this.ConnectAsync(cancellationToken);
-        await this.EnsureTopologyAsync(eventTypeNames, commandQueryTypeNames, cancellationToken);
-        await this.StartConsumersAsync(cancellationToken);
+
+        if (this.ConduitOptions.ProducerOnly)
+        {
+            await this.EnsureOutboundTopologyAsync(cancellationToken);
+        }
+        else
+        {
+            var typeRegistry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
+
+            var eventTypeNames = typeRegistry.EventTypeNames;
+            var commandQueryTypeNames = typeRegistry.CommandTypeNames
+                .Concat(typeRegistry.QueryTypeNames).ToList();
+
+            await this.EnsureTopologyAsync(eventTypeNames, commandQueryTypeNames, cancellationToken);
+            await this.StartConsumersAsync(cancellationToken);
+        }
     }
 
     /// <inheritdoc />
@@ -283,6 +291,14 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         IReadOnlyList<string> eventTypeNames,
         IReadOnlyList<string> commandQueryTypeNames,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates only the outbound topology needed for publishing messages and
+    /// receiving replies (exchange/topic declaration + reply queue).
+    /// Called instead of <see cref="EnsureTopologyAsync"/> when
+    /// <see cref="ConduitOptions.ProducerOnly"/> is true.
+    /// </summary>
+    protected abstract Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken);
 
     /// <summary>Starts message receivers/processors.</summary>
     protected abstract Task StartConsumersAsync(CancellationToken cancellationToken);

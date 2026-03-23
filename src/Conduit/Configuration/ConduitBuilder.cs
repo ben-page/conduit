@@ -63,6 +63,19 @@ public class ConduitBuilder
     }
 
     /// <summary>
+    /// When true, the transport only publishes messages — it does not create
+    /// inbound topology (subscriptions, bindings) or start consumers.
+    /// Reply queues for request/response are still created.
+    /// Use for API hosts that route commands to worker services,
+    /// or test sender hosts that should not interfere with handler topology.
+    /// </summary>
+    public bool ProducerOnly
+    {
+        get => this.Options.ProducerOnly;
+        set => this.Options.ProducerOnly = value;
+    }
+
+    /// <summary>
     /// Adds a named remote endpoint that messages can be routed to.
     /// Configure the endpoint's transport using extension methods on <see cref="EndpointBuilder"/>.
     /// </summary>

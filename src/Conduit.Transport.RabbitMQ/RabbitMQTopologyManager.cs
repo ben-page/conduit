@@ -21,6 +21,25 @@ internal sealed class RabbitMQTopologyManager
     }
 
     /// <summary>
+    /// Declares only the topic exchange. Used by ProducerOnly mode to enable publishing
+    /// without creating inbound queues or bindings.
+    /// </summary>
+    public async Task EnsureExchangeAsync(IChannel channel, CancellationToken cancellationToken)
+    {
+        var isEphemeral = this.conduitOptions.TopologyMode != TopologyMode.Production;
+
+        var exchangeName = TopologyNaming.CreateSharedResourceName(this.conduitOptions, 255);
+        await channel.ExchangeDeclareAsync(
+            exchange: exchangeName,
+            type: ExchangeType.Topic,
+            durable: !isEphemeral,
+            autoDelete: isEphemeral,
+            arguments: null,
+            noWait: false,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
     /// Declares all topology: topic exchange, per-app queue with event bindings (multicast),
     /// shared queues with command/query bindings (unicast), and pool queues with their own bindings.
     /// Returns the topology result with queue names and their associated prefetch counts.

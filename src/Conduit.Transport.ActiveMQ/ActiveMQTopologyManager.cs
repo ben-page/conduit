@@ -43,6 +43,24 @@ internal sealed class ActiveMQTopologyManager
     }
 
     /// <summary>
+    /// Creates only the addresses needed for publishing messages. Does not create
+    /// inbound queues or filters. Called when <see cref="ConduitOptions.ProducerOnly"/> is true.
+    /// </summary>
+    public async Task<(string AnycastAddress, string MulticastAddress)> EnsureAddressesAsync(
+        Session session, CancellationToken cancellationToken)
+    {
+        var anycastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "commands", 256);
+        var multicastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "events", 256);
+
+        await this.CreateAddressAsync(session, anycastAddress, "ANYCAST");
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await this.CreateAddressAsync(session, multicastAddress, "MULTICAST");
+
+        return (anycastAddress, multicastAddress);
+    }
+
+    /// <summary>
     /// Ensures all required topology exists: anycast address for commands/queries,
     /// multicast address for events, per-type queues with filters, and pool queues.
     /// Returns the topology result with queue names and their associated prefetch counts.

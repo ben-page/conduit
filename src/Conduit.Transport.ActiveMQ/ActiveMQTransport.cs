@@ -100,16 +100,32 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         this.topologyResult = await topologyManager.EnsureTopologyAsync(
             this.session!, eventTypeNames, commandQueryTypeNames, cancellationToken);
 
+        await this.EnsureSendersAndReplyQueueAsync(
+            this.topologyResult.AnycastAddress, this.topologyResult.MulticastAddress);
+    }
+
+    /// <inheritdoc />
+    protected override async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        var topologyManager = new ActiveMQTopologyManager(this.options, this.ConduitOptions, this.Logger);
+        var (anycastAddress, multicastAddress) = await topologyManager.EnsureAddressesAsync(
+            this.session!, cancellationToken);
+
+        await this.EnsureSendersAndReplyQueueAsync(anycastAddress, multicastAddress);
+    }
+
+    private async Task EnsureSendersAndReplyQueueAsync(string anycastAddress, string multicastAddress)
+    {
         // Create sender links for the two addresses
         this.commandSender = new SenderLink(
             this.session!,
             "command-sender",
-            this.topologyResult.AnycastAddress);
+            anycastAddress);
 
         this.eventSender = new SenderLink(
             this.session!,
             "event-sender",
-            this.topologyResult.MulticastAddress);
+            multicastAddress);
 
         // Create exclusive temporary reply queue using AMQP dynamic node.
         // The broker assigns the actual address — we capture it from the attach performative.

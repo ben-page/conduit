@@ -135,6 +135,22 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     }
 
     /// <inheritdoc />
+    protected override async Task EnsureOutboundTopologyAsync(CancellationToken cancellationToken)
+    {
+        var topologyManager = new AmazonSqsTopologyManager(
+            this.snsClient!, this.sqsClient!, this.options, this.ConduitOptions);
+
+        await topologyManager.EnsureOutboundTopologyAsync(cancellationToken);
+
+        this.topicArn = topologyManager.TopicArn;
+        this.replyQueueAddress = topologyManager.ReplyQueueAddress;
+
+        // Start reply queue consumer for request/response
+        this.pollingCts = new CancellationTokenSource();
+        this.pollingTasks.Add(this.PollReplyQueueAsync(this.pollingCts.Token));
+    }
+
+    /// <inheritdoc />
     protected override Task StartConsumersAsync(CancellationToken cancellationToken)
     {
         this.pollingCts = new CancellationTokenSource();
