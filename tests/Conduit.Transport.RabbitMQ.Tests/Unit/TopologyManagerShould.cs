@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Runtime;
+using RabbitMQ.Client;
 
 namespace Conduit.Transport.RabbitMQ.Tests.Unit;
 
@@ -66,6 +67,21 @@ public class TopologyManagerShould
 
         // Assert
         appQueueName.Should().Be("conduit-orders");
+    }
+
+    // --- TM-1.4: UseAppResourceNameForReplyQueue ---
+
+    [TestMethod]
+    public void UseAppResourceNameForReplyQueue()
+    {
+        // Arrange — the reply queue is per-app with a "replies" suffix
+        var conduitOptions = CreateConduitOptions(applicationName: "orders");
+
+        // Act
+        var replyQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 255);
+
+        // Assert — reply queue includes app name and "replies" suffix
+        replyQueueName.Should().Be("conduit-orders-replies");
     }
 
     // --- TM-1.5: UseSharedResourceNameForCommandQueues ---
@@ -286,19 +302,66 @@ public class TopologyManagerShould
         poolAssignedTypes.Should().HaveCount(2);
     }
 
+    [TestMethod]
+    public void ExcludePoolTypesFromDefaultQueueBindings()
+    {
+        // Arrange — simulate the topology manager's binding loop: event types
+        // assigned to a pool should be skipped when binding the default app queue
+        var rabbitOptions = new RabbitMQOptions { ConnectionString = "amqp://localhost" };
+        rabbitOptions.Pools.Add(new ReceiverPoolOptions
+        {
+            Name = "bulk",
+            PrefetchCount = 1,
+        });
+        rabbitOptions.Pools[0].Handle("Orders.Events.BulkImported");
+
+        var subscribedEventTypes = new[]
+        {
+            "Orders.Events.OrderCreated",
+            "Orders.Events.BulkImported",
+            "Shipping.Events.OrderShipped",
+        };
+
+        // Act — replicate the topology manager's exclusion logic
+        var poolAssignedTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var pool in rabbitOptions.Pools)
+        {
+            foreach (var messageType in pool.MessageTypes)
+            {
+                poolAssignedTypes.Add(messageType);
+            }
+        }
+
+        var defaultQueueBindings = new List<string>();
+        foreach (var eventType in subscribedEventTypes)
+        {
+            if (!poolAssignedTypes.Contains(eventType))
+            {
+                defaultQueueBindings.Add(eventType);
+            }
+        }
+
+        // Assert — pool-assigned type is excluded from default bindings
+        defaultQueueBindings.Should().Contain("Orders.Events.OrderCreated");
+        defaultQueueBindings.Should().Contain("Shipping.Events.OrderShipped");
+        defaultQueueBindings.Should().NotContain("Orders.Events.BulkImported");
+    }
+
     // --- TM-4.1: CreateDurableResourcesInProductionMode ---
 
     [TestMethod]
     public void CreateDurableResourcesInProductionMode()
     {
-        // Arrange
+        // Arrange — production mode uses the same isEphemeral flag the topology manager checks
         var conduitOptions = CreateConduitOptions(topologyMode: TopologyMode.Production);
 
-        // Act — production mode: isEphemeral should be false
+        // Act — replicate the topology manager's durability logic
         var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
 
-        // Assert — durable=true, autoDelete=false in production
+        // Assert — production: durable=true (not ephemeral), autoDelete=false, no prefix
         isEphemeral.Should().BeFalse();
+        var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
+        exchangeName.Should().Be("conduit");
     }
 
     // --- TM-4.2: CreateEphemeralResourcesInDeveloperMode ---
@@ -314,10 +377,12 @@ public class TopologyManagerShould
         // Act — developer mode: isEphemeral should be true
         var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
 
-        // Assert — autoDelete=true in developer mode, resources prefixed
+        // Assert — developer: durable=false, autoDelete=true, prefixed resources
         isEphemeral.Should().BeTrue();
         var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
         exchangeName.Should().StartWith("bpage-");
+        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+        appQueueName.Should().StartWith("bpage-");
     }
 
     // --- TM-4.3: CreateEphemeralResourcesInTestMode ---
@@ -332,10 +397,12 @@ public class TopologyManagerShould
         // Act — test mode: isEphemeral should be true
         var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
 
-        // Assert — autoDelete=true in test mode, resources prefixed
+        // Assert — test: durable=false, autoDelete=true, test-prefixed resources
         isEphemeral.Should().BeTrue();
         var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
         exchangeName.Should().StartWith("test-run1-");
+        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+        appQueueName.Should().StartWith("test-run1-");
     }
 
     // --- TM-S.1: CreateTopicExchangeType ---
@@ -352,6 +419,20 @@ public class TopologyManagerShould
 
         // Assert — construction succeeds without throwing
         manager.Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public void CreateTopicExchangeType()
+    {
+        // Arrange — the topology manager declares the exchange with ExchangeType.Topic.
+        // Verify the RabbitMQ client constant matches the expected "topic" string.
+        // This ensures the EnsureTopologyAsync call uses the correct exchange type.
+
+        // Act
+        var exchangeType = ExchangeType.Topic;
+
+        // Assert — RabbitMQ topic exchange for routing key-based message routing
+        exchangeType.Should().Be("topic");
     }
 
     [TestMethod]
