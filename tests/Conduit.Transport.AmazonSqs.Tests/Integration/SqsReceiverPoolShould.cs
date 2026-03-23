@@ -21,7 +21,7 @@ public class SqsReceiverPoolShould
     private const string ContractsNamespace = "Conduit.Transport.AmazonSqs.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
-        "Conduit.Transport.IntegrationTests.Support.Contracts.SlowCommand";
+        "Conduit.Transport.AmazonSqs.Tests.Support.Contracts.SlowCommand";
 
     [ClassInitialize]
     public static async Task ClassInitialize(TestContext context)
