@@ -2,12 +2,12 @@ using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.TestUtils;
-using Conduit.Transport.ActiveMq;
+using Conduit.Transport.ActiveMQ;
 using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests topology mode behavior over ActiveMQ Artemis: Production creates durable resources,
@@ -16,9 +16,9 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// </summary>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqTopologyModeShould
+public class ActiveMQTopologyModeShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     [ClassInitialize]
     public static async Task ClassInitialize(TestContext context)
@@ -65,7 +65,7 @@ public class ActiveMqTopologyModeShould
                 conduit.TopologyMode = topologyMode;
                 conduit.DeveloperPrefix = developerPrefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMq(connectionString));
+                    endpoint.UseActiveMQ(connectionString));
             });
         });
 

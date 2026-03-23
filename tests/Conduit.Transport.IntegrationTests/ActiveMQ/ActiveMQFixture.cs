@@ -1,13 +1,13 @@
 using Conduit.Configuration;
 using Conduit.Generated;
-using Conduit.Transport.ActiveMq;
+using Conduit.Transport.ActiveMQ;
 using Conduit.Transport.IntegrationTests.Support;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// ActiveMQ Artemis-specific test fixture that manages a Testcontainers Artemis instance
@@ -18,7 +18,7 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// share the same address/queue namespace. The TestPrefix is generated once per fixture
 /// instance and passed to all hosts.
 /// </remarks>
-public class ActiveMqFixture : TransportTestFixture
+public class ActiveMQFixture : TransportTestFixture
 {
     private IContainer? container;
     private string? connectionString;
@@ -92,7 +92,7 @@ public class ActiveMqFixture : TransportTestFixture
             conduit.TopologyMode = TopologyMode.Test;
             conduit.TestPrefix = prefix;
             conduit.AddEndpoint("self", endpoint =>
-                endpoint.UseActiveMq(connString));
+                endpoint.UseActiveMQ(connString));
         });
     }
 
@@ -114,7 +114,7 @@ public class ActiveMqFixture : TransportTestFixture
         string applicationName,
         string routeNamespace,
         string targetEndpointName,
-        Action<ActiveMqOptions>? configureOptions)
+        Action<ActiveMQOptions>? configureOptions)
     {
         var prefix = this.TopologyPrefix;
         var connString = this.connectionString!;
@@ -124,7 +124,7 @@ public class ActiveMqFixture : TransportTestFixture
             conduit.TopologyMode = TopologyMode.Test;
             conduit.TestPrefix = prefix;
             conduit.AddEndpoint(targetEndpointName, endpoint =>
-                endpoint.UseActiveMq(connString, configureOptions));
+                endpoint.UseActiveMQ(connString, configureOptions));
             conduit.Route(routeNamespace).To(targetEndpointName);
         });
     }

@@ -3,7 +3,7 @@ using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace Conduit.Transport.ActiveMq;
+namespace Conduit.Transport.ActiveMQ;
 
 /// <summary>
 /// Extension methods for configuring ActiveMQ Artemis transport on endpoints.
@@ -19,34 +19,34 @@ public static class EndpointBuilderExtensions
     /// <param name="connectionString">AMQP 1.0 connection string (e.g. "amqp://localhost:5672").</param>
     /// <param name="configure">Optional callback to configure ActiveMQ-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseActiveMq(
+    public static EndpointBuilder UseActiveMQ(
         this EndpointBuilder builder,
         string connectionString,
-        Action<ActiveMqOptions>? configure = null)
+        Action<ActiveMQOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var options = new ActiveMqOptions { ConnectionString = connectionString };
+        var options = new ActiveMQOptions { ConnectionString = connectionString };
         configure?.Invoke(options);
 
         // Register options and transport as singletons
         builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton<ActiveMqTransport>();
+        builder.Services.AddSingleton<ActiveMQTransport>();
 
         // Register as IConduitTransport for event broadcast
         builder.Services.AddSingleton<IConduitTransport>(
-            serviceProvider => serviceProvider.GetRequiredService<ActiveMqTransport>());
+            serviceProvider => serviceProvider.GetRequiredService<ActiveMQTransport>());
 
         // Register as IHostedService for background receiver lifecycle
         builder.Services.AddSingleton<IHostedService>(
-            serviceProvider => serviceProvider.GetRequiredService<ActiveMqTransport>());
+            serviceProvider => serviceProvider.GetRequiredService<ActiveMQTransport>());
 
         // Register keyed transport for endpoint routing
-        builder.Services.AddKeyedSingleton<ActiveMqTransport>(
+        builder.Services.AddKeyedSingleton<ActiveMQTransport>(
             builder.EndpointName,
-            (serviceProvider, _) => serviceProvider.GetRequiredService<ActiveMqTransport>());
+            (serviceProvider, _) => serviceProvider.GetRequiredService<ActiveMQTransport>());
 
-        return builder.UseTransport<ActiveMqTransport>();
+        return builder.UseTransport<ActiveMQTransport>();
     }
 }

@@ -1,10 +1,10 @@
-namespace Conduit.Transport.ActiveMq;
+namespace Conduit.Transport.ActiveMQ;
 
 /// <summary>
-/// Configuration for the ActiveMQ Artemis transport. Passed to <c>UseActiveMq()</c>
+/// Configuration for the ActiveMQ Artemis transport. Passed to <c>UseActiveMQ()</c>
 /// on the endpoint builder.
 /// </summary>
-public sealed class ActiveMqOptions
+public sealed class ActiveMQOptions
 {
     /// <summary>
     /// AMQP 1.0 connection string (e.g. "amqp://localhost:5672").
@@ -24,7 +24,7 @@ public sealed class ActiveMqOptions
     /// <summary>
     /// Named receiver pools with separate receiver links and prefetch settings.
     /// </summary>
-    public List<ActiveMqReceiverPoolOptions> Pools { get; } = [];
+    public List<ActiveMQReceiverPoolOptions> Pools { get; } = [];
 
     /// <summary>
     /// Optional username for AMQP SASL PLAIN authentication.
@@ -39,12 +39,12 @@ public sealed class ActiveMqOptions
     /// <summary>
     /// Adds a named receiver pool with the specified configuration.
     /// </summary>
-    public void AddPool(string name, Action<ActiveMqReceiverPoolOptions> configure)
+    public void AddPool(string name, Action<ActiveMQReceiverPoolOptions> configure)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(configure);
 
-        var pool = new ActiveMqReceiverPoolOptions { Name = name };
+        var pool = new ActiveMQReceiverPoolOptions { Name = name };
         configure(pool);
         this.Pools.Add(pool);
     }

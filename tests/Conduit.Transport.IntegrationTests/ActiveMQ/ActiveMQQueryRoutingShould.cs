@@ -4,22 +4,22 @@ using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests query routing over ActiveMQ Artemis: correct endpoint delivery, response data,
 /// error propagation, and timeout behavior.
 /// </summary>
 /// <remarks>
-/// Mirrors <see cref="ActiveMqCommandRoutingShould"/> but exercises the query path
+/// Mirrors <see cref="ActiveMQCommandRoutingShould"/> but exercises the query path
 /// (FetchAsync) instead of commands. Assertions enforce strict unicast semantics:
 /// exactly one handler invocation and zero bystander invocations.
 /// </remarks>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqQueryRoutingShould
+public class ActiveMQQueryRoutingShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     private const string ContractsNamespace = "Conduit.Transport.IntegrationTests.Support.Contracts";
 

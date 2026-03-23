@@ -3,7 +3,7 @@ using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests event routing over ActiveMQ Artemis: multicast delivery to all subscribing apps,
@@ -15,9 +15,9 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// </remarks>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqEventRoutingShould
+public class ActiveMQEventRoutingShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     [ClassInitialize]
     public static async Task ClassInitialize(TestContext context)

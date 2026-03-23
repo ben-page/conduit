@@ -4,7 +4,7 @@ using Conduit.Configuration;
 using Conduit.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Conduit.Transport.ActiveMq;
+namespace Conduit.Transport.ActiveMQ;
 
 /// <summary>
 /// Creates Artemis addresses and queues via the management address (<c>activemq.management</c>).
@@ -17,7 +17,7 @@ namespace Conduit.Transport.ActiveMq;
 /// - Multicast address for events: each subscribing app gets its own queue per event type,
 ///   so every app gets a copy (multicast).
 /// </remarks>
-internal sealed class ActiveMqTopologyManager
+internal sealed class ActiveMQTopologyManager
 {
     private static readonly Action<ILogger, string, Exception?> LogCreatingAddress =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(200, "CreatingAddress"),
@@ -31,11 +31,11 @@ internal sealed class ActiveMqTopologyManager
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(202, "ResourceAlreadyExists"),
             "Artemis resource '{Name}' already exists");
 
-    private readonly ActiveMqOptions options;
+    private readonly ActiveMQOptions options;
     private readonly ConduitOptions conduitOptions;
     private readonly ILogger logger;
 
-    public ActiveMqTopologyManager(ActiveMqOptions options, ConduitOptions conduitOptions, ILogger logger)
+    public ActiveMQTopologyManager(ActiveMQOptions options, ConduitOptions conduitOptions, ILogger logger)
     {
         this.options = options;
         this.conduitOptions = conduitOptions;

@@ -2,12 +2,12 @@ using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.TestUtils;
-using Conduit.Transport.ActiveMq;
+using Conduit.Transport.ActiveMQ;
 using Conduit.Transport.IntegrationTests.Support;
 using Conduit.Transport.IntegrationTests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Conduit.Transport.IntegrationTests.ActiveMq;
+namespace Conduit.Transport.IntegrationTests.ActiveMQ;
 
 /// <summary>
 /// Tests ActiveMQ Artemis receiver pool configuration: pool-assigned types route to dedicated
@@ -15,9 +15,9 @@ namespace Conduit.Transport.IntegrationTests.ActiveMq;
 /// </summary>
 [TestClass]
 [DoNotParallelize]
-public class ActiveMqReceiverPoolShould
+public class ActiveMQReceiverPoolShould
 {
-    private static readonly ActiveMqFixture Fixture = new();
+    private static readonly ActiveMQFixture Fixture = new();
 
     private const string ContractsNamespace = "Conduit.Transport.IntegrationTests.Support.Contracts";
 
@@ -71,9 +71,9 @@ public class ActiveMqReceiverPoolShould
                 conduit.TopologyMode = TopologyMode.Test;
                 conduit.TestPrefix = prefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMq(connectionString, options =>
+                    endpoint.UseActiveMQ(connectionString, options =>
                     {
-                        options.Pools.Add(new ActiveMqReceiverPoolOptions
+                        options.Pools.Add(new ActiveMQReceiverPoolOptions
                         {
                             Name = poolName,
                             PrefetchCount = poolPrefetchCount,
