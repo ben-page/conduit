@@ -366,6 +366,28 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
+### ProducerOnly Mode
+
+`conduit.ProducerOnly = true` configures a host to only publish messages without creating inbound topology or starting consumers.
+
+**What it enables:** `ConnectAsync`, `EnsureOutboundTopologyAsync` (reply queue/topic only), outbound transport (`SendRequestAsync`, `SendEventAsync`)
+
+**What it disables:** `EnsureTopologyAsync` (inbound subscriptions, bindings, consumer queues), `StartConsumersAsync` (message receivers)
+
+**Use cases:**
+- API hosts that route commands to worker services but don't handle them locally
+- Microservices that only publish events (no inbound handlers)
+- Test sender hosts that must not create shared subscriptions (prevents topology conflicts)
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.ProducerOnly = true;
+    conduit.AddEndpoint("workers", ep => ep.UseRabbitMQ(connectionString));
+    conduit.Route("MyApp.Commands").To("workers");
+});
+```
+
 ### Topic-Based Message Routing (Broker Transports)
 
 All broker transports use a unified topic-based routing model. All message types — commands, queries, and events — publish to a single shared topic/exchange/address. Subscriptions and queue bindings route messages from the topic to the appropriate app queue. Reply messages are the only exception; they bypass the topic and go point-to-point.
@@ -916,6 +938,44 @@ The publisher doesn't know or care who's listening or which transports are confi
 
 **Transport test matrices** documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
+### Handler Override
+
+Since `AddConduit()` registers handlers in `IServiceCollection`, you can override any handler after registration. DI last-registration-wins:
+
+```csharp
+builder.Services.AddConduit();
+
+// Override a command handler with a mock
+builder.Services.AddTransient<ICommandHandler<CreateOrder, OrderResult>, MockCreateOrderHandler>();
+
+// Replace an event listener entirely
+builder.Services.RemoveAll<IEventListener<OrderCreated>>();
+builder.Services.AddTransient<IEventListener<OrderCreated>, TestOrderCreatedListener>();
+```
+
+No test harness or framework API is needed — standard .NET DI manipulation between `AddConduit()` and `Build()`.
+
+### Multi-Host Integration Tests
+
+Use `ProducerOnly = true` on sender hosts to prevent topology conflicts:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.ApplicationName = "sender";
+    conduit.ProducerOnly = true;  // no inbound topology, no consumers
+    conduit.AddEndpoint("handler", ep => ep.UseRabbitMQ(connectionString));
+    conduit.Route("MyApp.Commands").To("handler");
+});
+```
+
+Use `TopologyMode.Test` with a shared `TestPrefix` so all hosts in a test share the same broker resources:
+
+```csharp
+conduit.TopologyMode = TopologyMode.Test;
+conduit.TestPrefix = sharedPrefix;  // same value across all hosts in the test
+```
+
 ### Test Coverage by Project
 
 **Conduit.Tests:**
@@ -953,14 +1013,14 @@ The publisher doesn't know or care who's listening or which transports are confi
 All 5 broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveMQ) share a common lifecycle and message processing pattern. `BrokerTransportBase<TMessage>` in `Conduit.Runtime` uses the template method pattern to own the shared orchestration while transports implement ~15 abstract methods for transport-specific primitives.
 
 **Template methods (not overridable):**
-- `StartAsync` — resolves `ConduitTypeRegistry`, then calls `ConnectAsync` → `EnsureTopologyAsync` → `StartConsumersAsync`
+- `StartAsync` — branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + resolves `ConduitTypeRegistry` + `EnsureTopologyAsync` + `StartConsumersAsync`
 - `StopAsync` — calls `StopConsumersAsync`
 - `SendRequestAsync` — serializes to `BinaryData`, calls `PublishRequestAsync`, deserializes reply, calls `ConduitRuntime.UnwrapReply`
 - `SendEventAsync` — serializes to `BinaryData`, calls `PublishEventAsync`
 - `ProcessInboundMessageAsync` — full inbound dispatch: save/restore `MessageContext`, create DI scope, resolve `IWireMediator`, deserialize, branch request/event, handle errors, ack/abandon
 
 **Abstract methods (transport-specific):**
-- Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `StartConsumersAsync`, `StopConsumersAsync`, `DisposeAsync`
+- Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `EnsureOutboundTopologyAsync`, `StartConsumersAsync`, `StopConsumersAsync`, `DisposeAsync`
 - Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync`
 - Outbound: `IsStarted`, `PublishRequestAsync`, `PublishEventAsync`
 
