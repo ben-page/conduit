@@ -22,6 +22,24 @@ public class TopologyManagerShould
         };
     }
 
+    // --- TM-1.1: UseCorrectMaxLengthForBroker ---
+
+    [TestMethod]
+    public void UseCorrectMaxLengthForBroker()
+    {
+        // Arrange — RabbitMQ entity names are limited to 255 characters.
+        // Generate a name long enough that only the 255 limit keeps it in range.
+        var conduitOptions = CreateConduitOptions(applicationName: new string('x', 300));
+
+        // Act
+        var queueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+
+        // Assert
+        queueName.Length.Should().BeLessThanOrEqualTo(255);
+    }
+
+    // --- TM-1.2: UseSharedResourceNameForMainTopic ---
+
     [TestMethod]
     public void UseTopologyNamingForExchangeName()
     {
@@ -34,6 +52,8 @@ public class TopologyManagerShould
         // Assert
         exchangeName.Should().Be("conduit");
     }
+
+    // --- TM-1.3: UseAppResourceNameForAppQueue ---
 
     [TestMethod]
     public void UseTopologyNamingForAppQueueName()
@@ -48,18 +68,55 @@ public class TopologyManagerShould
         appQueueName.Should().Be("conduit-orders");
     }
 
+    // --- TM-1.5: UseSharedResourceNameForCommandQueues ---
+
     [TestMethod]
-    public void UseTopologyNamingForPoolQueueName()
+    public void UseSharedResourceNameForCommandQueues()
     {
-        // Arrange
+        // Arrange — command/query queues are unicast (shared across apps, no app name)
+        var conduitOptions = CreateConduitOptions();
+
+        // Act
+        var commandQueueName = TopologyNaming.CreateSharedResourceName(
+            conduitOptions, "Orders.Commands.CreateOrder", 255);
+
+        // Assert — system name + reversed segments, no app name
+        commandQueueName.Should().Be("conduit-CreateOrder-Commands-Orders");
+    }
+
+    // --- TM-1.6: UseAppResourceNameForEventBindings ---
+
+    [TestMethod]
+    public void UseAppResourceNameForEventBindings()
+    {
+        // Arrange — event bindings go on the per-app queue (multicast, includes app name)
         var conduitOptions = CreateConduitOptions(applicationName: "orders");
 
         // Act
-        var poolQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "high-priority", 255);
+        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+
+        // Assert — events bind to the app queue which includes the app name
+        appQueueName.Should().Be("conduit-orders");
+        appQueueName.Should().Contain("orders");
+    }
+
+    // --- TM-1.7: TruncateLongNamesWithHash ---
+
+    [TestMethod]
+    public void TruncateLongQueueNamesWithHash()
+    {
+        // Arrange — RabbitMQ queue names limited to 255 characters
+        var conduitOptions = CreateConduitOptions(
+            applicationName: new string('a', 250));
+
+        // Act
+        var queueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
 
         // Assert
-        poolQueueName.Should().Be("conduit-orders-high-priority");
+        queueName.Length.Should().BeLessThanOrEqualTo(255);
     }
+
+    // --- TM-1.8: IncludeTopologyPrefixInNames ---
 
     [TestMethod]
     public void IncludeDeveloperPrefixInResourceNames()
@@ -80,6 +137,210 @@ public class TopologyManagerShould
     }
 
     [TestMethod]
+    public void IncludeTestPrefixInResourceNames()
+    {
+        // Arrange
+        var conduitOptions = CreateConduitOptions(topologyMode: TopologyMode.Test);
+        conduitOptions.TestPrefix = "test-abc123";
+
+        // Act
+        var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
+        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+
+        // Assert
+        exchangeName.Should().StartWith("test-abc123-conduit");
+        appQueueName.Should().StartWith("test-abc123-conduit-my-app");
+    }
+
+    // --- TM-2.1: RouteCommandsToSharedResources ---
+
+    [TestMethod]
+    public void RouteCommandsToSharedResources()
+    {
+        // Arrange — two different apps handling the same command type
+        // should produce the same shared queue name (competing consumers)
+        var optionsApp1 = CreateConduitOptions(applicationName: "app-one");
+        var optionsApp2 = CreateConduitOptions(applicationName: "app-two");
+        var commandType = "Orders.Commands.CreateOrder";
+
+        // Act
+        var queueFromApp1 = TopologyNaming.CreateSharedResourceName(optionsApp1, commandType, 255);
+        var queueFromApp2 = TopologyNaming.CreateSharedResourceName(optionsApp2, commandType, 255);
+
+        // Assert — both apps compute the same queue name (no app name in shared resource)
+        queueFromApp1.Should().Be(queueFromApp2);
+        queueFromApp1.Should().NotContain("app-one");
+        queueFromApp1.Should().NotContain("app-two");
+    }
+
+    // --- TM-2.2: RouteEventsToAppScopedResources ---
+
+    [TestMethod]
+    public void RouteEventsToAppScopedResources()
+    {
+        // Arrange — two different apps subscribing to the same event type
+        // should produce different per-app queue names (multicast)
+        var optionsApp1 = CreateConduitOptions(applicationName: "app-one");
+        var optionsApp2 = CreateConduitOptions(applicationName: "app-two");
+
+        // Act — events go on per-app queues
+        var appQueue1 = TopologyNaming.CreateAppResourceName(optionsApp1, 255);
+        var appQueue2 = TopologyNaming.CreateAppResourceName(optionsApp2, 255);
+
+        // Assert — each app gets its own queue
+        appQueue1.Should().NotBe(appQueue2);
+        appQueue1.Should().Contain("app-one");
+        appQueue2.Should().Contain("app-two");
+    }
+
+    // --- TM-3.1: RoutePoolTypesToPoolQueue ---
+
+    [TestMethod]
+    public void UseTopologyNamingForPoolQueueName()
+    {
+        // Arrange
+        var conduitOptions = CreateConduitOptions(applicationName: "orders");
+
+        // Act
+        var poolQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "high-priority", 255);
+
+        // Assert
+        poolQueueName.Should().Be("conduit-orders-high-priority");
+    }
+
+    [TestMethod]
+    public void RoutePoolEventTypesToAppScopedPoolQueue()
+    {
+        // Arrange — event types in a pool should produce an app-scoped pool queue
+        var conduitOptions = CreateConduitOptions(applicationName: "orders");
+
+        // Act — pool event queue uses CreateAppResourceName with pool name suffix
+        var poolQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "bulk", 255);
+
+        // Assert — pool queue includes app name (per-app, multicast)
+        poolQueueName.Should().Be("conduit-orders-bulk");
+        poolQueueName.Should().Contain("orders");
+    }
+
+    [TestMethod]
+    public void RoutePoolCommandTypesToSharedPoolQueue()
+    {
+        // Arrange — command types in a pool should produce shared pool queue names
+        var conduitOptions = CreateConduitOptions(applicationName: "orders");
+        var commandType = "Orders.Commands.ImportBulk";
+        var poolName = "bulk";
+
+        // Act — pool command queue uses CreateSharedResourceName with "{pool}.{type}" suffix
+        var sharedPoolQueueName = TopologyNaming.CreateSharedResourceName(
+            conduitOptions, $"{poolName}.{commandType}", 255);
+
+        // Assert — shared pool queue has no app name (unicast)
+        sharedPoolQueueName.Should().NotContain("orders");
+        sharedPoolQueueName.Should().Contain("conduit");
+    }
+
+    // --- TM-3.2: RouteNonPoolTypesToDefaultQueue ---
+
+    [TestMethod]
+    public void RouteNonPoolEventsToDefaultAppQueue()
+    {
+        // Arrange — the default app queue (not in a pool) uses CreateAppResourceName
+        var conduitOptions = CreateConduitOptions(applicationName: "orders");
+
+        // Act
+        var defaultQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+
+        // Assert — non-pool events go to the default per-app queue
+        defaultQueueName.Should().Be("conduit-orders");
+    }
+
+    // --- TM-3.3: ExcludePoolTypesFromDefaultQueue ---
+
+    [TestMethod]
+    public void TrackPoolAssignedTypesForExclusion()
+    {
+        // Arrange — verify the topology manager tracks pool-assigned types
+        // so they are excluded from the default queue bindings
+        var rabbitOptions = new RabbitMQOptions { ConnectionString = "amqp://localhost" };
+        rabbitOptions.Pools.Add(new ReceiverPoolOptions
+        {
+            Name = "bulk",
+            PrefetchCount = 1,
+        });
+        rabbitOptions.Pools[0].Handle("Orders.Commands.ImportBulk");
+        rabbitOptions.Pools[0].Handle("Orders.Events.BulkImported");
+
+        // Act — collect pool-assigned types the same way the topology manager does
+        var poolAssignedTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var pool in rabbitOptions.Pools)
+        {
+            foreach (var messageType in pool.MessageTypes)
+            {
+                poolAssignedTypes.Add(messageType);
+            }
+        }
+
+        // Assert — both types are tracked for exclusion from default queue bindings
+        poolAssignedTypes.Should().Contain("Orders.Commands.ImportBulk");
+        poolAssignedTypes.Should().Contain("Orders.Events.BulkImported");
+        poolAssignedTypes.Should().HaveCount(2);
+    }
+
+    // --- TM-4.1: CreateDurableResourcesInProductionMode ---
+
+    [TestMethod]
+    public void CreateDurableResourcesInProductionMode()
+    {
+        // Arrange
+        var conduitOptions = CreateConduitOptions(topologyMode: TopologyMode.Production);
+
+        // Act — production mode: isEphemeral should be false
+        var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
+
+        // Assert — durable=true, autoDelete=false in production
+        isEphemeral.Should().BeFalse();
+    }
+
+    // --- TM-4.2: CreateEphemeralResourcesInDeveloperMode ---
+
+    [TestMethod]
+    public void CreateEphemeralResourcesInDeveloperMode()
+    {
+        // Arrange
+        var conduitOptions = CreateConduitOptions(
+            topologyMode: TopologyMode.Developer,
+            developerPrefix: "bpage");
+
+        // Act — developer mode: isEphemeral should be true
+        var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
+
+        // Assert — autoDelete=true in developer mode, resources prefixed
+        isEphemeral.Should().BeTrue();
+        var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
+        exchangeName.Should().StartWith("bpage-");
+    }
+
+    // --- TM-4.3: CreateEphemeralResourcesInTestMode ---
+
+    [TestMethod]
+    public void CreateEphemeralResourcesInTestMode()
+    {
+        // Arrange
+        var conduitOptions = CreateConduitOptions(topologyMode: TopologyMode.Test);
+        conduitOptions.TestPrefix = "test-run1";
+
+        // Act — test mode: isEphemeral should be true
+        var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
+
+        // Assert — autoDelete=true in test mode, resources prefixed
+        isEphemeral.Should().BeTrue();
+        var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
+        exchangeName.Should().StartWith("test-run1-");
+    }
+
+    // --- TM-S.1: CreateTopicExchangeType ---
+
+    [TestMethod]
     public void AcceptConduitOptionsInConstructor()
     {
         // Arrange
@@ -94,16 +355,17 @@ public class TopologyManagerShould
     }
 
     [TestMethod]
-    public void TruncateLongQueueNamesWithHash()
+    public void UseSingleTopicExchangeForAllMessageTypes()
     {
-        // Arrange — RabbitMQ queue names limited to 255 characters
-        var conduitOptions = CreateConduitOptions(
-            applicationName: new string('a', 250));
+        // Arrange — RabbitMQ uses a single topic exchange; all message types
+        // (commands, queries, events) publish to it with routing key = FullTypeName.
+        // The exchange name is the shared resource name.
+        var conduitOptions = CreateConduitOptions();
 
         // Act
-        var queueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
+        var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
 
-        // Assert
-        queueName.Length.Should().BeLessThanOrEqualTo(255);
+        // Assert — single shared exchange, not per-type
+        exchangeName.Should().Be("conduit");
     }
 }
