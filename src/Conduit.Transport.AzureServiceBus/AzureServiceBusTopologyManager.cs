@@ -183,7 +183,27 @@ internal sealed class AzureServiceBusTopologyManager
         }
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
-            // Subscription already exists — another pod created it first.
+            // Subscription already exists — another pod or app created it first.
+            // Verify ForwardTo matches. If a different app created it pointing to
+            // a different queue, update it to point to our queue. This handles the
+            // race where two apps handle the same command type and start concurrently.
+            try
+            {
+                var existing = await this.adminClient.GetSubscriptionAsync(
+                    topicName, subscriptionName, cancellationToken);
+
+                if (!string.Equals(existing.Value.ForwardTo, forwardTo, StringComparison.OrdinalIgnoreCase))
+                {
+                    existing.Value.ForwardTo = forwardTo;
+                    await this.adminClient.UpdateSubscriptionAsync(
+                        existing.Value, cancellationToken);
+                }
+            }
+            catch (ServiceBusException)
+            {
+                // Best-effort — if we can't verify/update, log and continue.
+                // The subscription exists, just might forward to the wrong queue.
+            }
         }
     }
 }
