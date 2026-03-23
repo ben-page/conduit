@@ -27,20 +27,31 @@ The library replaces MediatR (now commercial) with a custom implementation that 
 ```
 Conduit/
 ├── src/
-│   ├── Conduit/                        # Core interfaces and types
-│   ├── Conduit.Analysis/               # Shared type model (DispatchableTypeInfo, etc.)
-│   ├── Conduit.SourceGen/              # Roslyn source generator + RoslynScanner
-│   ├── Conduit.Transport.Http/   # HTTP dispatch endpoint + HTTP transport
-│   ├── Conduit.Transport.SignalR/      # SignalR hub + SignalR transport
-│   └── Conduit.TypeGen/                # MSBuild task for TypeScript emission + ReflectionScanner
+│   ├── Conduit/                             # Core interfaces and types
+│   ├── Conduit.Analysis/                    # Shared type model (DispatchableTypeInfo, etc.)
+│   ├── Conduit.SourceGen/                   # Roslyn source generator + RoslynScanner
+│   ├── Conduit.Transport.Http/              # HTTP dispatch endpoint + HTTP transport
+│   ├── Conduit.Transport.SignalR/           # SignalR hub + SignalR transport
+│   ├── Conduit.Transport.AzureServiceBus/   # Azure Service Bus transport
+│   ├── Conduit.Transport.RabbitMQ/          # RabbitMQ transport
+│   ├── Conduit.Transport.Kafka/             # Kafka transport
+│   ├── Conduit.Transport.AmazonSqs/         # Amazon SQS (+SNS) transport
+│   ├── Conduit.Transport.ActiveMQ/          # ActiveMQ Artemis transport
+│   └── Conduit.TypeGen/                     # MSBuild task for TypeScript emission + ReflectionScanner
 ├── tests/
 │   ├── Conduit.Tests/
-│   ├── Conduit.Analysis.Tests/
 │   ├── Conduit.SourceGen.Tests/
+│   ├── Conduit.TestUtils/                   # Shared test infrastructure
 │   ├── Conduit.Transport.Http.Tests/
+│   ├── Conduit.Transport.SignalR.Tests/
+│   ├── Conduit.Transport.AzureServiceBus.Tests/
+│   ├── Conduit.Transport.RabbitMQ.Tests/
+│   ├── Conduit.Transport.Kafka.Tests/
+│   ├── Conduit.Transport.AmazonSqs.Tests/
+│   ├── Conduit.Transport.ActiveMQ.Tests/
 │   └── Conduit.TypeGen.Tests/
 ├── samples/
-│   └── Conduit.Sample/
+│   └── ...
 └── Conduit.slnx
 ```
 
@@ -49,8 +60,13 @@ Conduit/
 ```
 Conduit.SourceGen ──→ Conduit.Analysis ──→ (Roslyn APIs)
 Conduit.TypeGen   ──→ Conduit.Analysis ──→ (Roslyn APIs)
-Conduit.Transport.Http ──→ Conduit ──→ MS.Extensions.DI.Abstractions
-Conduit.Transport.SignalR    ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+Conduit.Transport.Http              ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+Conduit.Transport.SignalR           ──→ Conduit ──→ MS.Extensions.DI.Abstractions
+Conduit.Transport.AzureServiceBus   ──→ Conduit + Azure.Messaging.ServiceBus
+Conduit.Transport.RabbitMQ          ──→ Conduit + RabbitMQ.Client
+Conduit.Transport.Kafka             ──→ Conduit + Confluent.Kafka
+Conduit.Transport.AmazonSqs         ──→ Conduit + AWSSDK.SimpleNotificationService + AWSSDK.SQS
+Conduit.Transport.ActiveMQ          ──→ Conduit + AMQPNetLite.Core
 
 Scanners live in their consumers:
   RoslynScanner      → Conduit.SourceGen (compile-time scanning)
@@ -279,9 +295,11 @@ public sealed class ConduitOptions
     public Dictionary<string, ConduitEndpoint> Endpoints { get; } = new();
     public List<ConduitRoute> Routes { get; } = [];
     public List<Type> PipelineTypes { get; } = [];
+    public string? ApplicationName { get; set; }
     public string SystemName { get; set; } = "conduit";
     public TopologyMode TopologyMode { get; set; } = TopologyMode.Production;
     public string? DeveloperPrefix { get; set; }
+    public string? TestPrefix { get; set; }
 }
 ```
 
@@ -331,6 +349,8 @@ Both families accept an optional `suffix` parameter for sub-resources (e.g. `"re
 
 Developer mode gives each developer isolated broker resources (e.g. `bpage-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests that self-clean.
 
+`ConduitOptions.TestPrefix` allows multiple hosts to share the same Test topology prefix (for multi-host integration tests). When null (default), a random prefix is generated per options instance.
+
 Configuration:
 
 ```csharp
@@ -339,12 +359,16 @@ builder.Services.AddConduit(conduit =>
     conduit.TopologyMode = TopologyMode.Developer;
     conduit.DeveloperPrefix = "myprefix";  // optional, defaults to Environment.UserName
     conduit.SystemName = "myapp";          // optional, defaults to "conduit"
+
+    // For integration tests: share topology prefix across hosts
+    conduit.TopologyMode = TopologyMode.Test;
+    conduit.TestPrefix = "shared-test-prefix";  // optional, defaults to random
 });
 ```
 
 ### Topic-Based Message Routing (Broker Transports)
 
-All broker transports (Azure Service Bus, RabbitMQ) use a unified topic-based routing model. All message types — commands, queries, and events — publish to a single shared topic/exchange. Subscriptions and queue bindings route messages from the topic to the appropriate app queue. Reply messages are the only exception; they bypass the topic and go point-to-point.
+All broker transports use a unified topic-based routing model. All message types — commands, queries, and events — publish to a single shared topic/exchange/address. Subscriptions and queue bindings route messages from the topic to the appropriate app queue. Reply messages are the only exception; they bypass the topic and go point-to-point.
 
 **Azure Service Bus topology:**
 ```
@@ -370,7 +394,36 @@ Queue: {systemName}-{appName}-{poolName}
 Reply Queue: exclusive auto-delete (per connection)
 ```
 
-Unicast correctness for commands/queries in RabbitMQ relies on only one app binding a given type's routing key. If two apps bind the same command type, RabbitMQ will round-robin — which is incorrect. ASB enforces unicast via shared subscription names.
+**Kafka topology:**
+```
+Topic: {systemName} (shared, all messages)
+Consumer Group: {systemName} (shared — unicast for commands/queries)
+Consumer Group: {systemName}-{appName} (per-app — multicast for events)
+Topic: {systemName}-{appName}-replies (per-app reply topic)
+Topic: {systemName}-{appName}-dead-letter
+Client-side type filtering per consumer group
+```
+
+**Amazon SQS (+SNS) topology:**
+```
+SNS Topic: {systemName}
+├── Subscription → SQS Queue (shared name, filter: Type = '{FullTypeName}', unicast)
+├── Subscription → SQS Queue (per-app name, filter: Type = '{FullTypeName}', multicast)
+SQS Queue: {systemName}-{appName} (app queue)
+SQS Queue: {systemName}-{appName}-replies (reply queue, direct send)
+SQS Queue: {systemName}-{appName}-{poolName} (optional)
+```
+
+**ActiveMQ Artemis topology:**
+```
+Anycast Address: {systemName} (commands/queries)
+├── Queue: {ReversedTypeName} (shared name — unicast)
+Multicast Address: {systemName}-events
+├── Queue: {appName}-{ReversedTypeName} (per-app — multicast)
+Reply Queue: per-instance exclusive temporary queue
+```
+
+Unicast correctness for commands/queries in RabbitMQ and Kafka relies on only one app binding/subscribing a given type. ASB enforces unicast via shared subscription names. SQS uses shared subscription names for filter policies. ActiveMQ uses shared queue names on the anycast address.
 
 ### Error Model
 
@@ -852,18 +905,22 @@ The publisher doesn't know or care who's listening or which transports are confi
 
 ## Testing
 
-**Framework:** MSTest + AwesomeAssertions. NSubstitute as needed.
+**Framework:** MSTest v4 + AwesomeAssertions. No mocking libraries — tests use real types, stubs, or in-memory state.
+
+**Shared test infrastructure** in `tests/Conduit.TestUtils/`:
+- `TestHost` — lightweight `IHost` wrapper that starts hosted services
+- `EventSpy<T>` — event listener spy for capturing published events
+- `SpyLog` — thread-safe invocation recorder with `WaitForCountAsync`
+- `TransportTestFixture` — abstract base with `CreateHostAsync`, `CreateSenderHostAsync`, `DisposeHostsAsync`, `UniqueAppName`
+- `MessageContextSnapshot` — captures `MessageId`, `CausationId`, `ConversationId`
+
+**Transport test matrices** documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
 ### Test Coverage by Project
 
 **Conduit.Tests:**
 - `ConduitException` subclasses produce correct codes and status codes
 - `Validate()` throws on invalid commands, no-ops on valid
-
-**Conduit.Analysis.Tests:**
-- Scanner identifies dispatchable types from compiled assemblies
-- `[DispatchableNamespace]`, `[Dispatchable]`, `[NotDispatchable]` precedence rules
-- Namespace grouping logic
 
 **Conduit.SourceGen.Tests:**
 - Generated dispatch routes to correct handler
@@ -874,10 +931,16 @@ The publisher doesn't know or care who's listening or which transports are confi
 - Missing `[Authorize]`/`[AllowAnonymous]` on dispatchable type produces diagnostic
 
 **Conduit.Transport.Http.Tests:**
-- Integration tests with full HTTP + SignalR pipeline
+- Integration tests with full HTTP pipeline
 - HTTP POST dispatch returns correct envelope for success, `ConduitException`, unexpected exception
+
+**Conduit.Transport.SignalR.Tests:**
 - SignalR dispatch returns correct envelope
 - `SignalRTransport` delivers events to connected clients
+
+**Conduit.Transport.{AzureServiceBus,RabbitMQ,Kafka,AmazonSqs,ActiveMQ}.Tests:**
+- Multi-host integration tests per transport test matrix (command/query/event routing, competing instances, MessageContext propagation, receiver pools, topology modes)
+- Unit tests for topology managers (resource naming, unicast/multicast routing, pool routing, topology modes)
 
 **Conduit.TypeGen.Tests:**
 - C# type → TypeScript mapping for all supported types
@@ -887,10 +950,10 @@ The publisher doesn't know or care who's listening or which transports are confi
 
 ## Broker Transport Base Class (`BrokerTransportBase<TMessage>`)
 
-Broker transports (Azure Service Bus, RabbitMQ) share a common lifecycle and message processing pattern. `BrokerTransportBase<TMessage>` in `Conduit.Runtime` uses the template method pattern to own the shared orchestration while transports implement ~15 abstract methods for transport-specific primitives.
+All 5 broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveMQ) share a common lifecycle and message processing pattern. `BrokerTransportBase<TMessage>` in `Conduit.Runtime` uses the template method pattern to own the shared orchestration while transports implement ~15 abstract methods for transport-specific primitives.
 
 **Template methods (not overridable):**
-- `StartAsync` — resolves `ConduitOptions` + `ConduitTypeRegistry`, then calls `ConnectAsync` → `EnsureTopologyAsync` → `StartConsumersAsync`
+- `StartAsync` — resolves `ConduitTypeRegistry`, then calls `ConnectAsync` → `EnsureTopologyAsync` → `StartConsumersAsync`
 - `StopAsync` — calls `StopConsumersAsync`
 - `SendRequestAsync` — serializes to `BinaryData`, calls `PublishRequestAsync`, deserializes reply, calls `ConduitRuntime.UnwrapReply`
 - `SendEventAsync` — serializes to `BinaryData`, calls `PublishEventAsync`
@@ -902,10 +965,68 @@ Broker transports (Azure Service Bus, RabbitMQ) share a common lifecycle and mes
 - Outbound: `IsStarted`, `PublishRequestAsync`, `PublishEventAsync`
 
 **Design decisions:**
-- `BinaryData` used for all payload passing between base and transport — zero-copy for ASB (native type), single allocation for RMQ
+- `BinaryData` used for all payload passing between base and transport — zero-copy for ASB (native type), single allocation for others
 - Reply serialization owned by base class — `SendReplyAsync` receives pre-serialized `BinaryData`, not `DispatchResult<object>`
 - Error reply on request failure is standardized — all broker transports send an `InternalError` reply on handler failure, preventing caller timeouts
 - HTTP and SignalR transports do not extend this base — they lack inbound dispatch, topology, and hosted service lifecycle
+- **Configurable ResponseTimeout**: Each transport options class has a `ResponseTimeout` property (default 60s). Replaces any hardcoded timeout values.
+- **No application retry**: Transports are one-shot dispatch + dead letter on failure. The `AbandonAsync` abstract method is called on event listener failure; transports decide how to dead-letter (RMQ/ASB use broker native redelivery, Kafka publishes to a dead-letter topic). Application retry is the user's concern via `IPipelineBehavior<,>` + Polly.
+
+## Kafka Transport (`Conduit.Transport.Kafka`)
+
+`KafkaTransport` extends `BrokerTransportBase<KafkaInboundMessage>`. Uses `Confluent.Kafka`.
+
+**Registration:** `UseKafka(bootstrapServers, configure?)` — registers singleton transport, `IHostedService` forwarding, non-keyed `IConduitTransport` (event broadcast), keyed `IConduitTransport` (endpoint routing).
+
+**Topology:**
+- Single shared topic for all messages (commands, queries, events)
+- Two consumer groups per app: shared group for commands/queries (unicast via competing consumers), per-app group for events (multicast)
+- Client-side type filtering: each consumer only processes message types it handles, commits offsets for irrelevant messages
+- Per-app reply topic with per-instance consumer group and manual partition assignment
+- Per-app dead-letter topic for failed messages
+
+**Wire format:** Kafka headers (UTF-8 byte arrays): `conduit-type`, `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id`, `conduit-reply-topic`, `conduit-correlation-id`. Message key = FullTypeName.
+
+**Dead letter:** `AbandonAsync` commits the offset (Kafka offsets are sequential — not committing blocks all subsequent messages) and publishes to a dead-letter topic with original type metadata.
+
+**Topology modes:** Kafka has no native auto-delete. Production = default retention. Developer = 4h retention via `retention.ms`. Test = 5min retention. Background cleanup task available for ephemeral topics.
+
+## Amazon SQS (+SNS) Transport (`Conduit.Transport.AmazonSqs`)
+
+`AmazonSqsTransport` extends `BrokerTransportBase<AmazonSqsInboundMessage>`. Uses AWS SDK (`AmazonSNSClient` + `AmazonSQSClient`).
+
+**Registration:** `UseAmazonSqs(configure)` — no connection string (uses `Region` or `ServiceUri` for LocalStack). Registers singleton transport, `IHostedService` forwarding, non-keyed `IConduitTransport` (event broadcast), keyed `IConduitTransport` (endpoint routing).
+
+**Topology:**
+- Single SNS topic for all messages
+- SQS queues per app, SNS subscriptions with filter policies route by type (`{"Type": ["FullTypeName"]}`)
+- Commands/queries: shared subscription names (unicast). Events: per-app subscription names (multicast).
+- Reply via direct SQS send (bypasses SNS)
+- SQS queue name limit is 80 characters — `TopologyNaming` hash truncation activates frequently
+
+**Wire format:** SQS/SNS message attributes: `Type`, `MessageId`, `CausationId`, `ConversationId`, `ReplyQueueUrl`, `CorrelationId`.
+
+**Constraints:** Raw message delivery required on subscriptions (filter policies need it). Startup validates `RawMessageDelivery=true` and `VisibilityTimeoutSeconds >= ResponseTimeout`.
+
+**Topology modes:** Production = standard. Developer/Test = tagged resources with background cleanup.
+
+## ActiveMQ Artemis Transport (`Conduit.Transport.ActiveMQ`)
+
+`ActiveMQTransport` extends `BrokerTransportBase<ActiveMQInboundMessage>`. Uses `AmqpNetLite` (AMQP 1.0).
+
+**Registration:** `UseActiveMQ(connectionString, configure?)` — registers singleton transport, `IHostedService` forwarding, non-keyed `IConduitTransport` (event broadcast), keyed `IConduitTransport` (endpoint routing). Optional `Username`/`Password` for SASL PLAIN auth.
+
+**Topology:**
+- Two addresses: anycast for commands/queries, multicast for events
+- Command/query queues: shared names on anycast address (unicast). Event queues: per-app names on multicast address (multicast).
+- Reply queue: per-instance exclusive temporary queue (destroyed on shutdown)
+- Topology managed via Artemis management address (`activemq.management`)
+
+**Wire format:** AMQP 1.0 message properties: `Subject`=FullTypeName, `MessageId`, `CorrelationId`=ConversationId. Application properties: `CausationId`, `ReplyTo`, `ReplyCorrelationId`.
+
+**Topology modes:** Production = durable. Developer = `auto-delete-delay` 4h. Test = `auto-delete-delay` 5min (native Artemis support via queue attributes).
+
+**Concurrency:** AMQP link credit (prefetch count) per receiver link.
 
 ## Shared Analysis Library (`Conduit.Analysis`)
 
@@ -1006,21 +1127,11 @@ public class AuthorizationBehavior<TRequest, TResult>(
 | `AuthorizationBehavior` implementation | Consumer |
 | Policy definitions | Consumer (`builder.Services.AddAuthorization(...)`) |
 
-## Future: Rebus Integration
+## Future Considerations
 
-Not built now, but the design accommodates it:
+The `BrokerTransportBase<TMessage>` pattern makes adding new broker transports straightforward — implement ~15 abstract methods for broker-specific primitives. The transport test matrix (`docs/transport-test-matrices.md`) defines the full test suite required for any new transport.
 
-- `Conduit.Rebus` package implementing `IConduitTransport`
-- Commands can be dispatched to other services via Rebus (outbox pattern)
-- Events published in-process are also published to message broker
-- `IEvent` marker interface is the natural boundary for distributed events
-
-The `IConduitTransport` abstraction means adding Rebus is one new class + endpoint registration:
-
-```csharp
-builder.Services.AddConduit(conduit =>
-{
-    conduit.AddEndpoint("message-bus", ep => ep.UseRebus(rebusConfig));
-    conduit.Route("Orders.Events").To("message-bus");
-});
-```
+Potential future transports (not planned):
+- `Conduit.Transport.Rebus` — Rebus adapter wrapping its bus abstraction as `IConduitTransport`
+- `Conduit.Transport.NATS` — NATS JetStream transport
+- `Conduit.Transport.Redis` — Redis Streams transport
