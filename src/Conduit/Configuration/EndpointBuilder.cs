@@ -26,12 +26,15 @@ public sealed class EndpointBuilder
     /// </summary>
     public IServiceCollection Services { get; }
 
+    private ConduitOptions Options { get; }
+
     /// <summary>
     /// Creates a new builder for the given endpoint.
     /// </summary>
-    internal EndpointBuilder(ConduitEndpoint endpoint, IServiceCollection services)
+    internal EndpointBuilder(ConduitEndpoint endpoint, ConduitOptions options, IServiceCollection services)
     {
         this.Endpoint = endpoint;
+        this.Options = options;
         this.Services = services;
     }
 
@@ -55,6 +58,30 @@ public sealed class EndpointBuilder
     public EndpointBuilder UseTransport(IConduitTransport transport)
     {
         this.Services.AddKeyedSingleton<IConduitTransport>(this.Endpoint.Name, transport);
+        return this;
+    }
+
+    /// <summary>
+    /// Routes all message types in the namespace of <typeparamref name="T"/> to this endpoint.
+    /// </summary>
+    /// <typeparam name="T">A type whose namespace defines the route pattern.</typeparam>
+    /// <returns>This builder for chaining.</returns>
+    public EndpointBuilder RouteNamespace<T>()
+    {
+        var pattern = typeof(T).Namespace ?? typeof(T).FullName ?? typeof(T).Name;
+        this.Options.Routes.Add(new ConduitRoute { Pattern = pattern, EndpointName = this.EndpointName });
+        return this;
+    }
+
+    /// <summary>
+    /// Routes the specific message type <typeparamref name="T"/> to this endpoint.
+    /// </summary>
+    /// <typeparam name="T">The message type to route.</typeparam>
+    /// <returns>This builder for chaining.</returns>
+    public EndpointBuilder RouteType<T>()
+    {
+        var pattern = typeof(T).FullName ?? typeof(T).Name;
+        this.Options.Routes.Add(new ConduitRoute { Pattern = pattern, EndpointName = this.EndpointName });
         return this;
     }
 }
