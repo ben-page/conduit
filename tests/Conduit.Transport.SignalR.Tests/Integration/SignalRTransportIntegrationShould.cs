@@ -33,8 +33,10 @@ public class SignalRTransportShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseSignalR(new Uri($"{remoteAddress}/hub")));
-                    conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("remote");
+                    {
+                        endpoint.UseSignalR(new Uri($"{remoteAddress}/hub"));
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
                 });
                 builder.Services.AddConduitSignalR();
             },

@@ -37,9 +37,11 @@ public class HttpTransportShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
+                    {
                         endpoint.UseHttp(
-                            new HttpClient { BaseAddress = new Uri(remoteAddress) }));
-                    conduit.Route("Conduit.Transport.Http.Tests.Support").To("remote");
+                            new HttpClient { BaseAddress = new Uri(remoteAddress) });
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
                 });
                 builder.Services.AddConduitSignalR();
             },
