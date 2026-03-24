@@ -1,5 +1,4 @@
 using Conduit.Configuration;
-using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -25,13 +24,23 @@ public abstract class TransportTestFixture
     /// The host starts all hosted services (including transport receivers) before returning.
     /// </summary>
     /// <param name="applicationName">Unique application name for queue/topic naming.</param>
+    /// <param name="configureHandling">Optional callback to filter which types this host handles.
+    /// When null, the host handles all auto-discovered types (full handler host).
+    /// Use to simulate a separate application that only handles a subset of types.</param>
     /// <returns>A started TestHost with the transport configured.</returns>
-    public async Task<TestHost> CreateHostAsync(string applicationName)
+    public async Task<TestHost> CreateHostAsync(
+        string applicationName,
+        Action<ConduitRegistrationOverrides>? configureHandling = null)
     {
         var host = await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             this.ConfigureTransport(builder, applicationName);
+
+            if (configureHandling is not null)
+            {
+                builder.Services.ConfigureConduitRegistrations(configureHandling);
+            }
         });
 
         this.hosts.Add(host);

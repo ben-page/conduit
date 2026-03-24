@@ -62,7 +62,11 @@ public class AsbCommandRoutingShould
         var bystanderName = TransportTestFixture.UniqueAppName("bystander");
 
         var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var bystanderHost = await Fixture.CreateHostAsync(bystanderName);
+        var bystanderHost = await Fixture.CreateHostAsync(bystanderName, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
         var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
@@ -119,7 +123,11 @@ public class AsbCommandRoutingShould
         var bystanderName = TransportTestFixture.UniqueAppName("bystander");
 
         var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var bystanderHost = await Fixture.CreateHostAsync(bystanderName);
+        var bystanderHost = await Fixture.CreateHostAsync(bystanderName, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
         var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
