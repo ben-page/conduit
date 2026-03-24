@@ -12,6 +12,16 @@ public sealed class ActiveMQOptions
     public required string ConnectionString { get; init; }
 
     /// <summary>
+    /// Optional username for AMQP SASL PLAIN authentication.
+    /// </summary>
+    public string? Username { get; set; }
+
+    /// <summary>
+    /// Optional password for AMQP SASL PLAIN authentication.
+    /// </summary>
+    public string? Password { get; set; }
+
+    /// <summary>
     /// Timeout for request/response operations. Default 60 seconds.
     /// </summary>
     public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
@@ -25,16 +35,6 @@ public sealed class ActiveMQOptions
     /// Named receiver pools with separate receiver links and prefetch settings.
     /// </summary>
     public List<ActiveMQReceiverPoolOptions> Pools { get; } = [];
-
-    /// <summary>
-    /// Optional username for AMQP SASL PLAIN authentication.
-    /// </summary>
-    public string? Username { get; set; }
-
-    /// <summary>
-    /// Optional password for AMQP SASL PLAIN authentication.
-    /// </summary>
-    public string? Password { get; set; }
 
     /// <summary>
     /// Adds a named receiver pool with the specified configuration.
