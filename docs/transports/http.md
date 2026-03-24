@@ -148,9 +148,10 @@ For C#-to-C# service dispatch, configure an endpoint with HTTP:
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
-        endpoint.UseHttp(httpClient));
-
-    conduit.Route("Inventory.Commands").To("inventory");
+    {
+        endpoint.UseHttp(httpClient);
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
 });
 ```
 

@@ -34,13 +34,14 @@ By default, all messages dispatch locally. To send commands and queries to a rem
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
-        endpoint.UseSignalR(new Uri("https://inventory-service/hub")));
-
-    conduit.Route("Inventory.Commands").To("inventory");
+    {
+        endpoint.UseSignalR(new Uri("https://inventory-service/hub"));
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
 });
 ```
 
-`AddEndpoint` defines a named destination and configures its transport. `Route` tells the generated mediator to send any command or query whose namespace starts with `"Inventory.Commands"` to that endpoint.
+`AddEndpoint` defines a named destination and configures its transport. `RouteNamespace<T>()` tells the generated mediator to send any command or query whose namespace matches `T`'s namespace to that endpoint.
 
 The calling code uses `IMediator` identically to local dispatch:
 

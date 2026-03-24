@@ -103,8 +103,10 @@ For a C# service that sends commands to a remote SignalR hub, configure an endpo
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
-        endpoint.UseSignalR(new Uri("https://inventory-service/hub")));
-    conduit.Route("Inventory.Commands").To("inventory");
+    {
+        endpoint.UseSignalR(new Uri("https://inventory-service/hub"));
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
 });
 ```
 

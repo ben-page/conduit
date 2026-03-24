@@ -2,7 +2,7 @@
 
 - [ConduitBuilder methods](#conduitbuilder-methods)
 - [ConduitBuilder properties](#conduitbuilder-properties)
-- [Endpoint transports](#endpoint-transports)
+- [EndpointBuilder methods](#endpointbuilder-methods)
 - [Attributes](#attributes)
 - [MSBuild properties (TypeGen)](#msbuild-properties-typegen)
 - [Diagnostics](#diagnostics)
@@ -20,9 +20,7 @@ builder.Services.AddConduit(conduit =>
 
 | Method | Purpose | Example |
 |---|---|---|
-| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport | `conduit.AddEndpoint("orders", e => e.UseHttp(httpClient))` |
-| `Route(pattern)` | Route commands/queries by namespace prefix to an endpoint | `conduit.Route("Orders.Commands").To("orders")` |
-| `Route<T>()` | Route using a type's namespace as the pattern | `conduit.Route<CreateOrder>().To("orders")` |
+| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport and routes | `conduit.AddEndpoint("orders", e => { e.UseHttp(httpClient); e.RouteNamespace<CreateOrder>(); })` |
 | `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
 
@@ -34,18 +32,19 @@ Properties set directly on the builder instance:
 builder.Services.AddConduit(conduit =>
 {
     conduit.SystemName = "myapp";
-    conduit.TopologyMode = TopologyMode.Developer;
-    conduit.DeveloperPrefix = "myprefix";
     conduit.ApplicationName = "orders-service";
+    conduit.TopologyMode = TopologyMode.Developer;
+    conduit.TopologyPrefix = "myprefix";  // optional, defaults to Environment.UserName
 });
 ```
 
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `SystemName` | `string` | `"conduit"` | Base name for all broker resources (topic/exchange, queues). Replaces per-transport `TopicName`/`ExchangeName`. |
-| `TopologyMode` | `TopologyMode` | `Production` | Controls resource naming and durability. `Production` = durable, no prefix. `Developer` = prefixed, 4h auto-delete. `Test` = random prefix, 5min auto-delete. |
-| `DeveloperPrefix` | `string?` | `null` | Explicit prefix for Developer mode. Defaults to `Environment.UserName` when not set. Ignored in other modes. |
 | `ApplicationName` | `string?` | `null` | Application name used in queue naming. Defaults to `IHostEnvironment.ApplicationName` at transport startup if not set. |
+| `TopologyMode` | `TopologyMode` | `Production` | Controls resource naming and durability. `Production` = durable, no prefix. `Developer` = prefixed, 4h auto-delete. `Test` = random prefix, 5min auto-delete. |
+| `TopologyPrefix` | `string?` | auto-resolved | Prefix for broker resource names. Auto-resolves on first access: Developer = `Environment.UserName`, Test = random 13-char prefix, Production = null. Set explicitly to share topology across hosts. |
+| `ProducerOnly` | `bool` | `false` | When true, only publishes messages -- skips inbound topology and consumers. Reply queues for request/response still created. |
 
 Example `appsettings.Development.json` for developer mode:
 
@@ -57,16 +56,18 @@ Example `appsettings.Development.json` for developer mode:
 }
 ```
 
-## Endpoint transports
+## EndpointBuilder methods
 
 Available inside the `AddEndpoint` callback:
 
-| Method | Transport | Notes |
+| Method | Purpose | Example |
 |---|---|---|
-| `UseSignalR(uri)` | SignalR client mode | Connects to a remote `ConduitHub` |
-| `UseHttp(httpClient)` | HTTP | POSTs to `/api/dispatch` on the remote service |
-| `UseAzureServiceBus(conn)` | Azure Service Bus | Durable broker-based messaging |
-| `UseRabbitMQ(conn)` | RabbitMQ | Durable broker-based messaging over AMQP |
+| `RouteNamespace<T>()` | Route all types in `T`'s namespace to this endpoint | `ep.RouteNamespace<CreateOrder>()` |
+| `RouteType<T>()` | Route a single type to this endpoint | `ep.RouteType<CreateOrder>()` |
+| `UseSignalR(uri)` | Connect via SignalR client mode | `ep.UseSignalR(new Uri("https://..."))` |
+| `UseHttp(httpClient)` | Connect via HTTP POST to `/api/dispatch` | `ep.UseHttp(httpClient)` |
+| `UseAzureServiceBus(conn)` | Connect via Azure Service Bus | `ep.UseAzureServiceBus(connectionString)` |
+| `UseRabbitMQ(conn)` | Connect via RabbitMQ | `ep.UseRabbitMQ(connectionString)` |
 
 ## Attributes
 

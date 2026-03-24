@@ -21,9 +21,10 @@ The RabbitMQ transport provides durable, broker-based messaging over AMQP. All m
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("orders", endpoint =>
-        endpoint.UseRabbitMQ("amqp://guest:guest@localhost:5672/"));
-
-    conduit.Route("Orders.Commands").To("orders");
+    {
+        endpoint.UseRabbitMQ("amqp://guest:guest@localhost:5672/");
+        endpoint.RouteNamespace<Orders.Commands.CreateOrder>();
+    });
 });
 ```
 
@@ -72,8 +73,8 @@ RabbitMQ does not have a built-in unicast subscription concept like Azure Servic
 | Mode | Prefix | Durability | Auto-delete |
 |---|---|---|---|
 | `Production` | None | Durable | Never |
-| `Developer` | `{DeveloperPrefix}` (default: username) | Non-durable | Auto-delete |
-| `Test` | `test-{random}` | Non-durable | Auto-delete |
+| `Developer` | `{TopologyPrefix}` (default: username) | Non-durable | Auto-delete |
+| `Test` | `{TopologyPrefix}` (default: `test-{random}`) | Non-durable | Auto-delete |
 
 Developer mode gives each developer isolated broker resources (e.g. exchange `bpage-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests.
 
@@ -81,7 +82,7 @@ Developer mode gives each developer isolated broker resources (e.g. exchange `bp
 builder.Services.AddConduit(conduit =>
 {
     conduit.TopologyMode = TopologyMode.Developer;
-    conduit.DeveloperPrefix = "myprefix";  // optional, defaults to Environment.UserName
+    conduit.TopologyPrefix = "myprefix";  // optional, defaults to Environment.UserName
 
     conduit.AddEndpoint("orders", endpoint =>
         endpoint.UseRabbitMQ(connectionString));
