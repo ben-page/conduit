@@ -73,7 +73,7 @@ public abstract class TransportTestFixture
     /// <summary>
     /// Configures a sender host with the broker transport and routing.
     /// Implementations should call builder.Services.AddConduit() with the transport,
-    /// set conduit.ApplicationName, and add conduit.Route(routeNamespace).To(targetEndpointName).
+    /// set conduit.ApplicationName, and add a route from routeNamespace to targetEndpointName.
     /// </summary>
     protected abstract void ConfigureSenderTransport(
         HostApplicationBuilder builder,
