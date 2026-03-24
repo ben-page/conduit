@@ -87,9 +87,9 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             var typeRegistry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
 
-            var eventTypeNames = typeRegistry.EventTypeNames;
-            var commandQueryTypeNames = typeRegistry.CommandTypeNames
-                .Concat(typeRegistry.QueryTypeNames).ToList();
+            var eventTypeNames = typeRegistry.ActiveEventTypeNames;
+            var commandQueryTypeNames = typeRegistry.ActiveCommandTypeNames
+                .Concat(typeRegistry.ActiveQueryTypeNames).ToList();
 
             await this.EnsureTopologyAsync(eventTypeNames, commandQueryTypeNames, cancellationToken);
             await this.StartConsumersAsync(cancellationToken);
