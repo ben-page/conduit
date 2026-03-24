@@ -12,22 +12,15 @@ public class TopologyManagerShould
         string applicationName = "testapp",
         TopologyMode topologyMode = TopologyMode.Production,
         string systemName = "conduit",
-        string? developerPrefix = null,
-        string? testPrefix = null)
+        string? topologyPrefix = null)
     {
-        var options = new ConduitOptions
+        return new ConduitOptions
         {
             ApplicationName = applicationName,
             TopologyMode = topologyMode,
             SystemName = systemName,
-            DeveloperPrefix = developerPrefix,
+            TopologyPrefix = topologyPrefix,
         };
-        if (testPrefix is not null)
-        {
-            options.TestPrefix = testPrefix;
-        }
-
-        return options;
     }
 
     // --- TM-1.2: UseSharedResourceNameForSnsTopic ---
@@ -157,7 +150,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "bpage");
+            topologyPrefix: "bpage");
 
         // Act
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);
@@ -177,7 +170,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Test,
-            testPrefix: "test-abc123");
+            topologyPrefix: "test-abc123");
 
         // Act
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);

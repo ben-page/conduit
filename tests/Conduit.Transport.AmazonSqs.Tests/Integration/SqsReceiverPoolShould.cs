@@ -68,7 +68,7 @@ public class SqsReceiverPoolShould
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TestPrefix = prefix;
+                conduit.TopologyPrefix = prefix;
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
                     {

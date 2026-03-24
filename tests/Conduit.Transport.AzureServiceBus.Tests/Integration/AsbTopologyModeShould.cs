@@ -51,7 +51,7 @@ public class AsbTopologyModeShould
     private static async Task<TestHost> CreateHostWithTopologyModeAsync(
         string applicationName,
         TopologyMode topologyMode,
-        string? developerPrefix = null)
+        string? topologyPrefix = null)
     {
         var connectionString = Fixture.ConnectionString;
         var adminConnectionString = Fixture.AdminConnectionString;
@@ -63,7 +63,7 @@ public class AsbTopologyModeShould
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = topologyMode;
-                conduit.DeveloperPrefix = developerPrefix;
+                conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAzureServiceBus(connectionString, options =>
                         options.AdminConnectionString = adminConnectionString));
