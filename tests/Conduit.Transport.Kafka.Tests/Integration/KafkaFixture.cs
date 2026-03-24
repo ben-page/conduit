@@ -2,10 +2,9 @@ using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.TestUtils;
 using Conduit.Transport.Kafka;
-using DotNet.Testcontainers.Builders;
-using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Testcontainers.Kafka;
 
 namespace Conduit.Transport.Kafka.Tests.Integration;
 
@@ -20,7 +19,7 @@ namespace Conduit.Transport.Kafka.Tests.Integration;
 /// </remarks>
 public class KafkaFixture : TransportTestFixture
 {
-    private IContainer? container;
+    private KafkaContainer? container;
     private string? bootstrapServers;
 
     /// <summary>
@@ -42,24 +41,12 @@ public class KafkaFixture : TransportTestFixture
     {
         try
         {
-            this.container = new ContainerBuilder("confluentinc/cp-kafka:7.7.1")
-                .WithPortBinding(9092, true)
-                .WithEnvironment("KAFKA_NODE_ID", "1")
-                .WithEnvironment("KAFKA_PROCESS_ROLES", "broker,controller")
-                .WithEnvironment("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@localhost:9093")
-                .WithEnvironment("KAFKA_LISTENERS", "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092")
-                .WithEnvironment("KAFKA_ADVERTISED_LISTENERS", "PLAINTEXT://localhost:29092,EXTERNAL://0.0.0.0:9092")
-                .WithEnvironment("KAFKA_LISTENER_SECURITY_PROTOCOL_MAP", "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT")
-                .WithEnvironment("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER")
-                .WithEnvironment("KAFKA_INTER_BROKER_LISTENER_NAME", "PLAINTEXT")
-                .WithEnvironment("CLUSTER_ID", "MkU3OEVBNTcwNTJENDM2Qk")
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("started"))
+            // Use Testcontainers.Kafka for proper advertised listener handling
+            this.container = new KafkaBuilder("confluentinc/cp-kafka:7.7.1")
                 .Build();
 
             await this.container.StartAsync();
-
-            var mappedPort = this.container.GetMappedPublicPort(9092);
-            this.bootstrapServers = $"{this.container.Hostname}:{mappedPort}";
+            this.bootstrapServers = this.container.GetBootstrapAddress();
             this.IsAvailable = true;
         }
         catch (Exception exception)

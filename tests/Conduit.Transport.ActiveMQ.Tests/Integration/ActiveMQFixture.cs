@@ -44,9 +44,8 @@ public class ActiveMQFixture : TransportTestFixture
         {
             this.container = new ContainerBuilder("apache/activemq-artemis:2.37.0-alpine")
                 .WithPortBinding(61616, true)
-                .WithEnvironment("AMQ_USER", "admin")
-                .WithEnvironment("AMQ_PASSWORD", "admin")
-                .WithEnvironment("AMQ_EXTRA_ARGS", "--no-web")
+                .WithEnvironment("ARTEMIS_USER", "admin")
+                .WithEnvironment("ARTEMIS_PASSWORD", "admin")
                 .WithWaitStrategy(Wait.ForUnixContainer()
                     .UntilMessageIsLogged("AMQ241004"))
                 .Build();

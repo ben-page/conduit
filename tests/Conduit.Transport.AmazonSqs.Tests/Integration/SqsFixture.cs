@@ -42,7 +42,7 @@ public class SqsFixture : TransportTestFixture
     {
         try
         {
-            this.container = new ContainerBuilder("localstack/localstack:latest")
+            this.container = new ContainerBuilder("localstack/localstack:4.3")
                 .WithPortBinding(4566, true)
                 .WithEnvironment("SERVICES", "sns,sqs")
                 .WithWaitStrategy(Wait.ForUnixContainer()
