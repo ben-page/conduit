@@ -295,11 +295,11 @@ public sealed class ConduitOptions
     public Dictionary<string, ConduitEndpoint> Endpoints { get; } = new();
     public List<ConduitRoute> Routes { get; } = [];
     public List<Type> PipelineTypes { get; } = [];
-    public string? ApplicationName { get; set; }
     public string SystemName { get; set; } = "conduit";
+    public string? ApplicationName { get; set; }
     public TopologyMode TopologyMode { get; set; } = TopologyMode.Production;
-    public string? DeveloperPrefix { get; set; }
-    public string? TestPrefix { get; set; }
+    public string? TopologyPrefix { get; set; }  // auto-resolves: Developer→UserName, Test→random, Production→null
+    public bool ProducerOnly { get; set; }
 }
 ```
 
@@ -311,9 +311,10 @@ Configuration uses a fluent builder API (runtime only — no attribute-based rou
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
-        endpoint.UseSignalR(new Uri(config["InventoryServiceUrl"])));
-
-    conduit.Route("Inventory.Commands").To("inventory");
+    {
+        endpoint.UseSignalR(new Uri(config["InventoryServiceUrl"]));
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
 });
 ```
 
@@ -344,12 +345,12 @@ Both families accept an optional `suffix` parameter for sub-resources (e.g. `"re
 | Mode | Prefix | Durability | Auto-delete |
 |---|---|---|---|
 | `Production` | None | Durable | Never |
-| `Developer` | `{DeveloperPrefix}` (default: `Environment.UserName`) | Non-durable | 4 hours |
-| `Test` | `test-{random}` | Non-durable | 5 minutes |
+| `Developer` | `{TopologyPrefix}` (default: `Environment.UserName`) | Non-durable | 4 hours |
+| `Test` | `{TopologyPrefix}` (default: `test-{random}`) | Non-durable | 5 minutes |
 
 Developer mode gives each developer isolated broker resources (e.g. `bpage-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests that self-clean.
 
-`ConduitOptions.TestPrefix` allows multiple hosts to share the same Test topology prefix (for multi-host integration tests). When null (default), a random prefix is generated per options instance.
+`ConduitOptions.TopologyPrefix` auto-resolves on first access: Developer defaults to `Environment.UserName`, Test generates a random 13-character prefix, Production resolves to null. Explicitly setting `TopologyPrefix` overrides the auto-resolution — use this when multiple hosts must share the same topology (e.g., multi-host integration tests).
 
 Configuration:
 
@@ -357,12 +358,12 @@ Configuration:
 builder.Services.AddConduit(conduit =>
 {
     conduit.TopologyMode = TopologyMode.Developer;
-    conduit.DeveloperPrefix = "myprefix";  // optional, defaults to Environment.UserName
-    conduit.SystemName = "myapp";          // optional, defaults to "conduit"
+    conduit.TopologyPrefix = "myprefix";  // optional, defaults to Environment.UserName
+    conduit.SystemName = "myapp";         // optional, defaults to "conduit"
 
     // For integration tests: share topology prefix across hosts
     conduit.TopologyMode = TopologyMode.Test;
-    conduit.TestPrefix = "shared-test-prefix";  // optional, defaults to random
+    conduit.TopologyPrefix = "shared-test-prefix";  // optional, defaults to random
 });
 ```
 
@@ -383,8 +384,11 @@ builder.Services.AddConduit(conduit =>
 builder.Services.AddConduit(conduit =>
 {
     conduit.ProducerOnly = true;
-    conduit.AddEndpoint("workers", ep => ep.UseRabbitMQ(connectionString));
-    conduit.Route("MyApp.Commands").To("workers");
+    conduit.AddEndpoint("workers", ep =>
+    {
+        ep.UseRabbitMQ(connectionString);
+        ep.RouteNamespace<MyApp.Commands.CreateOrder>();
+    });
 });
 ```
 
@@ -711,8 +715,10 @@ public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch")
 builder.Services.AddConduit(conduit =>       // generated — registers handlers, mediator, core infra
 {
     conduit.AddEndpoint("inventory", ep =>
-        ep.UseSignalR(new Uri(config["InventoryUrl"])));
-    conduit.Route("Inventory.Commands").To("inventory");
+    {
+        ep.UseSignalR(new Uri(config["InventoryUrl"]));
+        ep.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
     conduit.AddPipeline(typeof(LoggingBehavior<,>));
 });
 builder.Services.AddConduitSignalR();        // registers SignalR hub + server-mode transport
@@ -964,16 +970,19 @@ builder.Services.AddConduit(conduit =>
 {
     conduit.ApplicationName = "sender";
     conduit.ProducerOnly = true;  // no inbound topology, no consumers
-    conduit.AddEndpoint("handler", ep => ep.UseRabbitMQ(connectionString));
-    conduit.Route("MyApp.Commands").To("handler");
+    conduit.AddEndpoint("handler", ep =>
+    {
+        ep.UseRabbitMQ(connectionString);
+        ep.RouteNamespace<MyApp.Commands.CreateOrder>();
+    });
 });
 ```
 
-Use `TopologyMode.Test` with a shared `TestPrefix` so all hosts in a test share the same broker resources:
+Use `TopologyMode.Test` with a shared `TopologyPrefix` so all hosts in a test share the same broker resources:
 
 ```csharp
 conduit.TopologyMode = TopologyMode.Test;
-conduit.TestPrefix = sharedPrefix;  // same value across all hosts in the test
+conduit.TopologyPrefix = sharedPrefix;  // same value across all hosts in the test
 ```
 
 ### Test Coverage by Project
