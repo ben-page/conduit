@@ -29,6 +29,16 @@ public class ConduitBuilder
     }
 
     /// <summary>
+    /// Logical system name used as the base for all broker resource names
+    /// (topics, exchanges, queues). Default: "conduit".
+    /// </summary>
+    public string SystemName
+    {
+        get => this.Options.SystemName;
+        set => this.Options.SystemName = value;
+    }
+
+    /// <summary>
     /// Application name used by transports for queue/topic naming.
     /// Defaults to IHostEnvironment.ApplicationName at transport startup if not set.
     /// </summary>
@@ -38,18 +48,23 @@ public class ConduitBuilder
         set => this.Options.ApplicationName = value;
     }
 
-    public string SystemName
-    {
-        get => this.Options.SystemName;
-        set => this.Options.SystemName = value;
-    }
-
+    /// <summary>
+    /// Controls resource naming and durability for broker transports.
+    /// Production creates durable resources. Developer and Test create
+    /// ephemeral auto-delete resources with prefixed names.
+    /// </summary>
     public TopologyMode TopologyMode
     {
         get => this.Options.TopologyMode;
         set => this.Options.TopologyMode = value;
     }
 
+    /// <summary>
+    /// Prefix for broker resource names in Developer and Test topology modes.
+    /// If not set, auto-resolves on first access: Developer defaults to
+    /// <see cref="Environment.UserName"/>, Test generates a random prefix.
+    /// Production mode always resolves to null.
+    /// </summary>
     public string? TopologyPrefix
     {
         get => this.Options.TopologyPrefix;
@@ -80,7 +95,7 @@ public class ConduitBuilder
     {
         ArgumentNullException.ThrowIfNull(configure);
         var endpoint = new ConduitEndpoint { Name = name };
-        var endpointBuilder = new EndpointBuilder(endpoint, this.Services);
+        var endpointBuilder = new EndpointBuilder(endpoint, this.Options, this.Services);
         configure(endpointBuilder);
         this.Options.Endpoints[name] = endpoint;
         return this;
