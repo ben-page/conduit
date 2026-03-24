@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Amqp;
 using Amqp.Framing;
 using Conduit.Configuration;
@@ -194,9 +195,8 @@ internal sealed class ActiveMQTopologyManager
 
         try
         {
-            using var request = CreateManagementRequest("createAddress");
-            request.ApplicationProperties["name"] = addressName;
-            request.ApplicationProperties["routingType"] = routingType;
+            var body = JsonSerializer.Serialize(new object[] { addressName, routingType });
+            using var request = CreateManagementRequest("createAddress", body);
 
             await SendManagementRequestAsync(session, request);
         }
@@ -220,33 +220,35 @@ internal sealed class ActiveMQTopologyManager
 
         try
         {
-            using var request = CreateManagementRequest("createQueue");
-            request.ApplicationProperties["address"] = addressName;
-            request.ApplicationProperties["name"] = queueName;
-            request.ApplicationProperties["routingType"] = routingType;
-            request.ApplicationProperties["durable"] = this.conduitOptions.TopologyMode == TopologyMode.Production;
-
-            if (filterExpression is not null)
+            var isDurable = this.conduitOptions.TopologyMode == TopologyMode.Production;
+            var autoDelete = this.conduitOptions.TopologyMode != TopologyMode.Production;
+            var autoDeleteDelayMs = this.conduitOptions.TopologyMode switch
             {
-                request.ApplicationProperties["filter"] = filterExpression;
-            }
+                TopologyMode.Production => -1L,
+                TopologyMode.Developer => (long)TimeSpan.FromHours(4).TotalMilliseconds,
+                TopologyMode.Test => (long)TimeSpan.FromMinutes(5).TotalMilliseconds,
+                _ => -1L,
+            };
 
-            if (this.conduitOptions.TopologyMode != TopologyMode.Production)
+            // Artemis createQueue accepts a single JSON config string wrapped in a JSON array.
+            // The config string itself is a serialized JSON object with queue properties.
+            // Wire format: body = '["{ \"name\": ..., \"address\": ... }"]'
+            var queueConfig = JsonSerializer.Serialize(new
             {
-                var autoDeleteDelayMs = this.conduitOptions.TopologyMode switch
-                {
-                    TopologyMode.Production => 0L,
-                    TopologyMode.Developer => (long)TimeSpan.FromHours(4).TotalMilliseconds,
-                    TopologyMode.Test => (long)TimeSpan.FromMinutes(5).TotalMilliseconds,
-                    _ => 0L,
-                };
+                name = queueName,
+                address = addressName,
+                routingType,
+                durable = isDurable,
+                filterString = filterExpression ?? "",
+                autoDelete,
+                autoDeleteDelay = autoDeleteDelayMs,
+                maxConsumers = -1,
+                purgeOnNoConsumers = false,
+                autoCreateAddress = false,
+            });
 
-                if (autoDeleteDelayMs > 0)
-                {
-                    request.ApplicationProperties["autoDelete"] = true;
-                    request.ApplicationProperties["autoDeleteDelay"] = autoDeleteDelayMs;
-                }
-            }
+            var body = JsonSerializer.Serialize(new[] { queueConfig });
+            using var request = CreateManagementRequest("createQueue", body);
 
             await SendManagementRequestAsync(session, request);
         }
@@ -259,22 +261,48 @@ internal sealed class ActiveMQTopologyManager
         }
     }
 
+    /// <summary>
+    /// Sends a management request to the Artemis <c>activemq.management</c> address.
+    /// </summary>
+    /// <remarks>
+    /// Artemis management over AMQP 1.0 requires:
+    /// 1. A dynamic receiver link for replies (broker assigns the reply queue address).
+    /// 2. Operation parameters in the message body as a JSON array string
+    ///    (NOT in application properties). The body is wrapped in an AmqpValue section
+    ///    automatically by <c>new Message(string)</c>.
+    /// 3. <c>_AMQ_ResourceName</c> and <c>_AMQ_OperationName</c> as application properties.
+    ///
+    /// Without a body, Artemis throws a buffer underflow when reading parameters
+    /// from the CoreMessage body buffer (writerIndex=0).
+    /// </remarks>
     private static async Task SendManagementRequestAsync(Session session, Message request)
     {
         var managementAddress = "activemq.management";
-        var replyAddress = $"management-reply-{Guid.NewGuid():N}";
 
-        // Set reply-to for the management response
-        request.Properties.ReplyTo = replyAddress;
-        request.Properties.MessageId = $"mgmt-{Guid.NewGuid():N}";
-
-        // Create a temporary receiver for the reply
-        var replySource = new Source { Address = replyAddress };
+        // Artemis requires a dynamic receiver link — the broker assigns a temporary
+        // reply queue. A fabricated address won't work because no queue exists at it.
+        var replyAddressTcs = new TaskCompletionSource<string>();
         var receiverLink = new ReceiverLink(
             session,
             $"mgmt-recv-{Guid.NewGuid():N}",
-            replySource,
-            null);
+            new Source { Dynamic = true },
+            (link, attach) =>
+            {
+                if (attach.Source is Source source && source.Address is not null)
+                {
+                    replyAddressTcs.TrySetResult(source.Address);
+                }
+                else
+                {
+                    replyAddressTcs.TrySetException(
+                        new InvalidOperationException("Broker did not assign a dynamic management reply queue."));
+                }
+            });
+
+        var replyAddress = await replyAddressTcs.Task;
+
+        request.Properties.ReplyTo = replyAddress;
+        request.Properties.MessageId = $"mgmt-{Guid.NewGuid():N}";
 
         var senderLink = new SenderLink(session, $"mgmt-send-{Guid.NewGuid():N}", managementAddress);
 
@@ -332,9 +360,15 @@ internal sealed class ActiveMQTopologyManager
         }
     }
 
-    private static Message CreateManagementRequest(string operation)
+    /// <summary>
+    /// Creates a management request message. The <paramref name="jsonBody"/> contains
+    /// the operation parameters as a JSON array (e.g., <c>["addressName","ANYCAST"]</c>
+    /// for createAddress, or a nested JSON config string for createQueue).
+    /// </summary>
+    private static Message CreateManagementRequest(string operation, string jsonBody)
     {
-        var message = new Message
+        // new Message(string) wraps the body in an AmqpValue section automatically
+        return new Message(jsonBody)
         {
             Properties = new Properties(),
             ApplicationProperties = new ApplicationProperties
@@ -343,7 +377,6 @@ internal sealed class ActiveMQTopologyManager
                 ["_AMQ_OperationName"] = operation,
             },
         };
-        return message;
     }
 }
 
