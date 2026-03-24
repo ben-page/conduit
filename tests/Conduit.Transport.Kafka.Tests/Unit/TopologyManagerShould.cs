@@ -12,22 +12,15 @@ public class TopologyManagerShould
         string applicationName = "testapp",
         TopologyMode topologyMode = TopologyMode.Production,
         string systemName = "conduit",
-        string? developerPrefix = null,
-        string? testPrefix = null)
+        string? topologyPrefix = null)
     {
-        var options = new ConduitOptions
+        return new ConduitOptions
         {
             ApplicationName = applicationName,
             TopologyMode = topologyMode,
             SystemName = systemName,
-            DeveloperPrefix = developerPrefix,
+            TopologyPrefix = topologyPrefix,
         };
-        if (testPrefix is not null)
-        {
-            options.TestPrefix = testPrefix;
-        }
-
-        return options;
     }
 
     private static KafkaTopologyManager CreateManager(
@@ -140,7 +133,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "bpage");
+            topologyPrefix: "bpage");
 
         // Act
         var sharedTopicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 249);
@@ -158,7 +151,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Test,
-            testPrefix: "test-abc123");
+            topologyPrefix: "test-abc123");
 
         // Act
         var sharedTopicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 249);
@@ -176,7 +169,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "dev");
+            topologyPrefix: "dev");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act
@@ -227,7 +220,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "dev");
+            topologyPrefix: "dev");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act
@@ -260,7 +253,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Test,
-            testPrefix: "test-abc123");
+            topologyPrefix: "test-abc123");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act

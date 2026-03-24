@@ -51,7 +51,7 @@ public class SqsTopologyModeShould
     private static async Task<TestHost> CreateHostWithTopologyModeAsync(
         string applicationName,
         TopologyMode topologyMode,
-        string? developerPrefix = null)
+        string? topologyPrefix = null)
     {
         var address = Fixture.ServiceAddress;
 
@@ -62,7 +62,7 @@ public class SqsTopologyModeShould
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = topologyMode;
-                conduit.DeveloperPrefix = developerPrefix;
+                conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
                         options.ServiceUri = new Uri(address)));

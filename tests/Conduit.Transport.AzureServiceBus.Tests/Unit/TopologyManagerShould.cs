@@ -12,14 +12,14 @@ public class TopologyManagerShould
         string applicationName = "my-app",
         TopologyMode topologyMode = TopologyMode.Production,
         string systemName = "conduit",
-        string? developerPrefix = null)
+        string? topologyPrefix = null)
     {
         return new ConduitOptions
         {
             ApplicationName = applicationName,
             TopologyMode = topologyMode,
             SystemName = systemName,
-            DeveloperPrefix = developerPrefix,
+            TopologyPrefix = topologyPrefix,
         };
     }
 
@@ -168,7 +168,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "bpage");
+            topologyPrefix: "bpage");
 
         // Act
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 260);
@@ -188,7 +188,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Test);
-        conduitOptions.TestPrefix = "test-abc123";
+        conduitOptions.TopologyPrefix = "test-abc123";
 
         // Act
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 260);
@@ -344,7 +344,7 @@ public class TopologyManagerShould
         // Arrange
         var conduitOptions = CreateConduitOptions(
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "bpage");
+            topologyPrefix: "bpage");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act — ComputeEphemeralTtl returns 4 hours for developer mode
@@ -361,7 +361,7 @@ public class TopologyManagerShould
     {
         // Arrange
         var conduitOptions = CreateConduitOptions(topologyMode: TopologyMode.Test);
-        conduitOptions.TestPrefix = "test-run1";
+        conduitOptions.TopologyPrefix = "test-run1";
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act — ComputeEphemeralTtl returns 5 minutes for test mode
@@ -462,7 +462,7 @@ public class TopologyManagerShould
         // Arrange — developer mode sets AutoDeleteOnIdle on topics and queues
         var conduitOptions = CreateConduitOptions(
             topologyMode: TopologyMode.Developer,
-            developerPrefix: "bpage");
+            topologyPrefix: "bpage");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act

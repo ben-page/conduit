@@ -31,6 +31,11 @@ public class SqsFixture : TransportTestFixture
 
     private string? sharedPrefix;
 
+    /// <summary>
+    /// The shared topology prefix for test isolation.
+    /// </summary>
+    public string TopologyPrefix => this.GetSharedPrefix();
+
     private string GetSharedPrefix()
     {
         if (this.sharedPrefix is null)
