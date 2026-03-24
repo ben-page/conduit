@@ -24,8 +24,11 @@ public partial class Program
         builder.Services.AddConduit(conduit =>
         {
             conduit.AddEndpoint("inventory", endpoint =>
-                endpoint.UseSignalR(new Uri(inventoryHubUrl)));
-            conduit.Route("Conduit.Sample.Inventory").To("inventory");
+            {
+                endpoint.UseSignalR(new Uri(inventoryHubUrl));
+                endpoint.RouteNamespace<Conduit.Sample.Inventory.Commands.ReserveInventoryCommand>();
+                endpoint.RouteNamespace<Conduit.Sample.Inventory.Queries.CheckStockQuery>();
+            });
         });
 
         var app = builder.Build();
