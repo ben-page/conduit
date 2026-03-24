@@ -13,9 +13,9 @@ namespace Conduit.Transport.AzureServiceBus.Tests.Integration;
 /// and configures hosts with the Azure Service Bus transport.
 /// </summary>
 /// <remarks>
-/// Uses TopologyMode.Test with a shared TestPrefix so that all hosts within a test
-/// share the same topic/subscription namespace. The TestPrefix is generated once per
-/// fixture instance and passed to all hosts.
+/// Uses TopologyMode.Test with a shared TopologyPrefix so that all hosts within a test
+/// share the same topic/subscription namespace. The TopologyPrefix is generated once per
+/// fixture instance via ConduitOptions auto-resolve and cached for reuse across hosts.
 /// </remarks>
 public class AsbFixture : TransportTestFixture
 {
@@ -35,10 +35,18 @@ public class AsbFixture : TransportTestFixture
     /// </summary>
     public string AdminConnectionString => this.adminConnectionString!;
 
-    /// <summary>
-    /// The shared topology prefix used by all hosts in this fixture.
-    /// </summary>
-    public string TopologyPrefix { get; } = $"test-{Guid.NewGuid():N}"[..13];
+    private string? sharedPrefix;
+
+    private string GetSharedPrefix()
+    {
+        if (this.sharedPrefix is null)
+        {
+            var seed = new ConduitOptions { TopologyMode = TopologyMode.Test };
+            this.sharedPrefix = seed.TopologyPrefix!;
+        }
+
+        return this.sharedPrefix;
+    }
 
     /// <summary>
     /// Starts the ASB emulator container and captures connection strings.
@@ -94,14 +102,13 @@ public class AsbFixture : TransportTestFixture
         HostApplicationBuilder builder,
         string applicationName)
     {
-        var prefix = this.TopologyPrefix;
         var connStr = this.connectionString!;
         var adminConnStr = this.adminConnectionString;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
             conduit.TopologyMode = TopologyMode.Test;
-            conduit.TestPrefix = prefix;
+            conduit.TopologyPrefix = this.GetSharedPrefix();
             conduit.AddEndpoint("self", endpoint =>
                 endpoint.UseAzureServiceBus(connStr, options =>
                     options.AdminConnectionString = adminConnStr));
@@ -115,7 +122,6 @@ public class AsbFixture : TransportTestFixture
         string routeNamespace,
         string targetEndpointName)
     {
-        var prefix = this.TopologyPrefix;
         var connStr = this.connectionString!;
         var adminConnStr = this.adminConnectionString;
         builder.Services.AddConduit(conduit =>
@@ -123,11 +129,15 @@ public class AsbFixture : TransportTestFixture
             conduit.ApplicationName = applicationName;
             conduit.ProducerOnly = true;
             conduit.TopologyMode = TopologyMode.Test;
-            conduit.TestPrefix = prefix;
+            conduit.TopologyPrefix = this.GetSharedPrefix();
             conduit.AddEndpoint(targetEndpointName, endpoint =>
                 endpoint.UseAzureServiceBus(connStr, options =>
                     options.AdminConnectionString = adminConnStr));
-            conduit.Route(routeNamespace).To(targetEndpointName);
+            conduit.Options.Routes.Add(new ConduitRoute
+            {
+                Pattern = routeNamespace,
+                EndpointName = targetEndpointName,
+            });
         });
     }
 }

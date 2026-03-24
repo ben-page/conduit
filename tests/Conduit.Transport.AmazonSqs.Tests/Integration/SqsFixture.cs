@@ -14,9 +14,9 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 /// and configures hosts with the SQS (+SNS) transport.
 /// </summary>
 /// <remarks>
-/// Uses TopologyMode.Test with a shared TestPrefix so that all hosts within a test
-/// share the same SNS topic namespace. The TestPrefix is generated once per fixture
-/// instance and passed to all hosts.
+/// Uses TopologyMode.Test with a shared TopologyPrefix so that all hosts within a test
+/// share the same SNS topic namespace. The TopologyPrefix is generated once per fixture
+/// instance via ConduitOptions auto-resolve and cached for reuse across hosts.
 /// </remarks>
 public class SqsFixture : TransportTestFixture
 {
@@ -29,10 +29,18 @@ public class SqsFixture : TransportTestFixture
     /// </summary>
     public string ServiceAddress => this.serviceAddress!;
 
-    /// <summary>
-    /// The shared topology prefix used by all hosts in this fixture.
-    /// </summary>
-    public string TopologyPrefix { get; } = $"test-{Guid.NewGuid():N}"[..13];
+    private string? sharedPrefix;
+
+    private string GetSharedPrefix()
+    {
+        if (this.sharedPrefix is null)
+        {
+            var seed = new ConduitOptions { TopologyMode = TopologyMode.Test };
+            this.sharedPrefix = seed.TopologyPrefix!;
+        }
+
+        return this.sharedPrefix;
+    }
 
     /// <summary>
     /// Starts the LocalStack container and captures the service address.
@@ -82,13 +90,12 @@ public class SqsFixture : TransportTestFixture
         HostApplicationBuilder builder,
         string applicationName)
     {
-        var prefix = this.TopologyPrefix;
         var address = this.serviceAddress!;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
             conduit.TopologyMode = TopologyMode.Test;
-            conduit.TestPrefix = prefix;
+            conduit.TopologyPrefix = this.GetSharedPrefix();
             conduit.AddEndpoint("self", endpoint =>
                 endpoint.UseAmazonSqs(options =>
                     options.ServiceUri = new Uri(address)));
@@ -115,21 +122,24 @@ public class SqsFixture : TransportTestFixture
         string targetEndpointName,
         Action<AmazonSqsOptions>? configureOptions)
     {
-        var prefix = this.TopologyPrefix;
         var address = this.serviceAddress!;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
             conduit.ProducerOnly = true;
             conduit.TopologyMode = TopologyMode.Test;
-            conduit.TestPrefix = prefix;
+            conduit.TopologyPrefix = this.GetSharedPrefix();
             conduit.AddEndpoint(targetEndpointName, endpoint =>
                 endpoint.UseAmazonSqs(options =>
                 {
                     options.ServiceUri = new Uri(address);
                     configureOptions?.Invoke(options);
                 }));
-            conduit.Route(routeNamespace).To(targetEndpointName);
+            conduit.Options.Routes.Add(new ConduitRoute
+            {
+                Pattern = routeNamespace,
+                EndpointName = targetEndpointName,
+            });
         });
     }
 }

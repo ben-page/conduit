@@ -14,9 +14,9 @@ namespace Conduit.Transport.ActiveMQ.Tests.Integration;
 /// and configures hosts with the ActiveMQ transport.
 /// </summary>
 /// <remarks>
-/// Uses TopologyMode.Test with a shared TestPrefix so that all hosts within a test
-/// share the same address/queue namespace. The TestPrefix is generated once per fixture
-/// instance and passed to all hosts.
+/// Uses TopologyMode.Test with a shared TopologyPrefix so that all hosts within a test
+/// share the same address/queue namespace. The TopologyPrefix is generated once per fixture
+/// instance via ConduitOptions auto-resolve and cached for reuse across hosts.
 /// </remarks>
 public class ActiveMQFixture : TransportTestFixture
 {
@@ -29,10 +29,18 @@ public class ActiveMQFixture : TransportTestFixture
     /// </summary>
     public string ConnectionString => this.connectionString!;
 
-    /// <summary>
-    /// The shared topology prefix used by all hosts in this fixture.
-    /// </summary>
-    public string TopologyPrefix { get; } = $"test-{Guid.NewGuid():N}"[..13];
+    private string? sharedPrefix;
+
+    private string GetSharedPrefix()
+    {
+        if (this.sharedPrefix is null)
+        {
+            var seed = new ConduitOptions { TopologyMode = TopologyMode.Test };
+            this.sharedPrefix = seed.TopologyPrefix!;
+        }
+
+        return this.sharedPrefix;
+    }
 
     /// <summary>
     /// Starts the ActiveMQ Artemis container and captures the connection string.
@@ -83,13 +91,12 @@ public class ActiveMQFixture : TransportTestFixture
         HostApplicationBuilder builder,
         string applicationName)
     {
-        var prefix = this.TopologyPrefix;
         var connString = this.connectionString!;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
             conduit.TopologyMode = TopologyMode.Test;
-            conduit.TestPrefix = prefix;
+            conduit.TopologyPrefix = this.GetSharedPrefix();
             conduit.AddEndpoint("self", endpoint =>
                 endpoint.UseActiveMQ(connString));
         });
@@ -115,17 +122,20 @@ public class ActiveMQFixture : TransportTestFixture
         string targetEndpointName,
         Action<ActiveMQOptions>? configureOptions)
     {
-        var prefix = this.TopologyPrefix;
         var connString = this.connectionString!;
         builder.Services.AddConduit(conduit =>
         {
             conduit.ApplicationName = applicationName;
             conduit.ProducerOnly = true;
             conduit.TopologyMode = TopologyMode.Test;
-            conduit.TestPrefix = prefix;
+            conduit.TopologyPrefix = this.GetSharedPrefix();
             conduit.AddEndpoint(targetEndpointName, endpoint =>
                 endpoint.UseActiveMQ(connString, configureOptions));
-            conduit.Route(routeNamespace).To(targetEndpointName);
+            conduit.Options.Routes.Add(new ConduitRoute
+            {
+                Pattern = routeNamespace,
+                EndpointName = targetEndpointName,
+            });
         });
     }
 }
