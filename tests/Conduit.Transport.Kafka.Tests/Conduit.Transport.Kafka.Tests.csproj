@@ -15,7 +15,7 @@
   <ItemGroup>
     <PackageReference Include="MSTest" />
     <PackageReference Include="AwesomeAssertions" />
-    <PackageReference Include="Testcontainers" />
+    <PackageReference Include="Testcontainers.Kafka" />
   </ItemGroup>
 
   <ItemGroup>

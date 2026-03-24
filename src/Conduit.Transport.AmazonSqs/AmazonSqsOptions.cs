@@ -1,4 +1,5 @@
 using Amazon;
+using Amazon.Runtime;
 
 namespace Conduit.Transport.AmazonSqs;
 
@@ -19,6 +20,13 @@ public sealed class AmazonSqsOptions
     /// Example: <c>new Uri("http://localhost:4566")</c>
     /// </summary>
     public Uri? ServiceUri { get; set; }
+
+    /// <summary>
+    /// Explicit AWS credentials. When null and <see cref="ServiceUri"/> is set,
+    /// dummy credentials are used automatically (LocalStack doesn't validate them).
+    /// When null and ServiceUri is not set, the default AWS credential chain is used.
+    /// </summary>
+    public AWSCredentials? Credentials { get; set; }
 
     /// <summary>
     /// Timeout for request/response operations. Default 60 seconds.

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
+using Amazon.Runtime;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using Amazon.SQS;
@@ -86,19 +87,23 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     {
         if (this.options.ServiceUri is not null)
         {
-            // LocalStack or custom endpoint
+            // LocalStack or custom endpoint — use explicit credentials
+            // (LocalStack doesn't validate them but the SDK requires a credential source)
             var serviceUrl = this.options.ServiceUri.ToString();
+            var credentials = this.options.Credentials
+                ?? new BasicAWSCredentials("test", "test");
+
             var snsConfig = new AmazonSimpleNotificationServiceConfig
             {
                 ServiceURL = serviceUrl,
             };
-            this.snsClient = new AmazonSimpleNotificationServiceClient(snsConfig);
+            this.snsClient = new AmazonSimpleNotificationServiceClient(credentials, snsConfig);
 
             var sqsConfig = new AmazonSQSConfig
             {
                 ServiceURL = serviceUrl,
             };
-            this.sqsClient = new AmazonSQSClient(sqsConfig);
+            this.sqsClient = new AmazonSQSClient(credentials, sqsConfig);
         }
         else if (this.options.Region is not null)
         {
