@@ -102,28 +102,6 @@ public class ConduitBuilder
     }
 
     /// <summary>
-    /// Starts a route definition for messages in the given namespace.
-    /// The namespace of <typeparamref name="T"/> is used as the route pattern.
-    /// </summary>
-    /// <typeparam name="T">A type whose namespace defines the route pattern.</typeparam>
-    /// <returns>A builder to specify the target endpoint.</returns>
-    public RouteBuilder Route<T>()
-    {
-        var pattern = typeof(T).Namespace ?? typeof(T).FullName ?? typeof(T).Name;
-        return new RouteBuilder(this.Options, pattern);
-    }
-
-    /// <summary>
-    /// Starts a route definition for messages matching the given namespace pattern.
-    /// </summary>
-    /// <param name="pattern">The namespace prefix to match (e.g. "Orders.Commands").</param>
-    /// <returns>A builder to specify the target endpoint.</returns>
-    public RouteBuilder Route(string pattern)
-    {
-        return new RouteBuilder(this.Options, pattern);
-    }
-
-    /// <summary>
     /// Registers an open generic pipeline behavior. The type must implement
     /// <c>IPipelineBehavior&lt;TRequest, TResult&gt;</c>.
     /// Pipelines execute in registration order (first registered = outermost).

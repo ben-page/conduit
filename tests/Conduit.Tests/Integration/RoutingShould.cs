@@ -22,8 +22,10 @@ public class RoutingShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseTransport(spyTransport));
-                    conduit.Route("Remote.Commands").To("remote");
+                    {
+                        endpoint.UseTransport(spyTransport);
+                        endpoint.RouteNamespace<Conduit.Configuration.ConduitOptions>();
+                    });
                 });
             });
         var mediator = host.GetRequiredService<IMediator>();
@@ -51,8 +53,10 @@ public class RoutingShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseTransport(spyTransport));
-                    conduit.Route("Conduit.Tests.Support").To("remote");
+                    {
+                        endpoint.UseTransport(spyTransport);
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
                 });
             });
         var mediator = host.GetRequiredService<IMediator>();
@@ -78,8 +82,10 @@ public class RoutingShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseTransport(spyTransport));
-                    conduit.Route("Conduit.Tests.Support").To("remote");
+                    {
+                        endpoint.UseTransport(spyTransport);
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
                 });
             });
         var mediator = host.GetRequiredService<IMediator>();
@@ -105,8 +111,10 @@ public class RoutingShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseTransport(endpointTransport));
-                    conduit.Route("Conduit.Tests.Support").To("remote");
+                    {
+                        endpoint.UseTransport(endpointTransport);
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
                 });
             });
         var mediator = host.GetRequiredService<IMediator>();
@@ -133,8 +141,10 @@ public class RoutingShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("remote", endpoint =>
-                        endpoint.UseTransport(spyTransport));
-                    conduit.Route<CreateItemCommand>().To("remote");
+                    {
+                        endpoint.UseTransport(spyTransport);
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
                 });
             });
         var mediator = host.GetRequiredService<IMediator>();
