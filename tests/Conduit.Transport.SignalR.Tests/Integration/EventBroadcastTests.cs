@@ -26,8 +26,10 @@ public class EventBroadcastShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("recorder", endpoint =>
-                        endpoint.UseTransport(recordingTransport));
-                    conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("recorder");
+                    {
+                        endpoint.UseTransport(recordingTransport);
+                        endpoint.RouteNamespace<ItemCreatedEvent>();
+                    });
                 });
             });
 
@@ -58,8 +60,10 @@ public class EventBroadcastShould
                 builder.Services.AddConduit(conduit =>
                 {
                     conduit.AddEndpoint("recorder", endpoint =>
-                        endpoint.UseTransport(recordingTransport));
-                    conduit.Route("Conduit.Transport.SignalR.Tests.Support").To("recorder");
+                    {
+                        endpoint.UseTransport(recordingTransport);
+                        endpoint.RouteNamespace<ItemCreatedEvent>();
+                    });
                 });
             });
         var wireMediator = host.GetRequiredService<IWireMediator>();
