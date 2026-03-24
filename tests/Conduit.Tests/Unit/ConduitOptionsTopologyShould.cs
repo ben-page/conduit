@@ -33,13 +33,13 @@ public class ConduitOptionsTopologyShould
     }
 
     [TestMethod]
-    public void ReturnExplicitPrefixForDeveloperModeWhenSet()
+    public void ReturnExplicitPrefixForDeveloperMode()
     {
         // Arrange
         var options = new ConduitOptions
         {
             TopologyMode = TopologyMode.Developer,
-            DeveloperPrefix = "custom",
+            TopologyPrefix = "custom",
         };
 
         // Act
@@ -65,6 +65,23 @@ public class ConduitOptionsTopologyShould
     }
 
     [TestMethod]
+    public void ReturnExplicitPrefixForTestMode()
+    {
+        // Arrange
+        var options = new ConduitOptions
+        {
+            TopologyMode = TopologyMode.Test,
+            TopologyPrefix = "shared-prefix",
+        };
+
+        // Act
+        var prefix = options.TopologyPrefix;
+
+        // Assert
+        prefix.Should().Be("shared-prefix");
+    }
+
+    [TestMethod]
     public void ReturnSamePrefixOnRepeatedAccess()
     {
         // Arrange
@@ -76,6 +93,21 @@ public class ConduitOptionsTopologyShould
 
         // Assert
         first.Should().Be(second);
+    }
+
+    [TestMethod]
+    public void GenerateDifferentPrefixesPerInstance()
+    {
+        // Arrange
+        var options1 = new ConduitOptions { TopologyMode = TopologyMode.Test };
+        var options2 = new ConduitOptions { TopologyMode = TopologyMode.Test };
+
+        // Act
+        var prefix1 = options1.TopologyPrefix;
+        var prefix2 = options2.TopologyPrefix;
+
+        // Assert
+        prefix1.Should().NotBe(prefix2);
     }
 
     [TestMethod]

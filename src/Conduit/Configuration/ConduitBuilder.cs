@@ -50,16 +50,10 @@ public class ConduitBuilder
         set => this.Options.TopologyMode = value;
     }
 
-    public string? DeveloperPrefix
+    public string? TopologyPrefix
     {
-        get => this.Options.DeveloperPrefix;
-        set => this.Options.DeveloperPrefix = value;
-    }
-
-    public string? TestPrefix
-    {
-        get => this.Options.TestPrefix;
-        set => this.Options.TestPrefix = value;
+        get => this.Options.TopologyPrefix;
+        set => this.Options.TopologyPrefix = value;
     }
 
     /// <summary>
