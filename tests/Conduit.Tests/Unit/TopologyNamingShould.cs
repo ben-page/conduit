@@ -29,7 +29,7 @@ public class TopologyNamingShould
         {
             SystemName = "conduit",
             TopologyMode = TopologyMode.Developer,
-            DeveloperPrefix = "bpage",
+            TopologyPrefix = "bpage",
         };
 
         // Act
@@ -92,7 +92,7 @@ public class TopologyNamingShould
             SystemName = "conduit",
             ApplicationName = "orders",
             TopologyMode = TopologyMode.Developer,
-            DeveloperPrefix = "bpage",
+            TopologyPrefix = "bpage",
         };
 
         // Act
@@ -149,7 +149,7 @@ public class TopologyNamingShould
         {
             SystemName = "conduit",
             TopologyMode = TopologyMode.Developer,
-            DeveloperPrefix = "bpage",
+            TopologyPrefix = "bpage",
         };
 
         // Act
@@ -181,7 +181,7 @@ public class TopologyNamingShould
             SystemName = "conduit",
             ApplicationName = "orders",
             TopologyMode = TopologyMode.Developer,
-            DeveloperPrefix = "bpage",
+            TopologyPrefix = "bpage",
         };
 
         // Act
@@ -272,7 +272,7 @@ public class TopologyNamingShould
             SystemName = "conduit",
             ApplicationName = "very-long-application-name",
             TopologyMode = TopologyMode.Developer,
-            DeveloperPrefix = "longprefix",
+            TopologyPrefix = "longprefix",
         };
 
         // Act
