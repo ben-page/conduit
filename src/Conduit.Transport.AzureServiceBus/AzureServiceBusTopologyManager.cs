@@ -67,6 +67,16 @@ internal sealed class AzureServiceBusTopologyManager
         var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
         await this.TryCreateQueueAsync(replyQueueName, requiresSession: true, ephemeralTtl, cancellationToken);
 
+        // Pool queues — must be created before subscriptions because
+        // subscription ForwardTo targets are validated by ASB at creation time
+        foreach (var pool in this.options.Pools)
+        {
+            var poolQueueName = TopologyNaming.CreateAppResourceName(
+                this.conduitOptions, pool.Name, 260);
+            await this.TryCreateQueueAsync(
+                poolQueueName, requiresSession: false, ephemeralTtl, cancellationToken);
+        }
+
         // Event subscriptions: multicast (per-app, includes app name)
         foreach (var eventType in subscribedEventTypes)
         {
@@ -85,15 +95,6 @@ internal sealed class AzureServiceBusTopologyManager
                 this.conduitOptions, commandQueryType, 50);
             await this.TryCreateSubscriptionAsync(
                 topicName, subscriptionName, commandQueryType, targetQueue, ephemeralTtl, cancellationToken);
-        }
-
-        // Pool queues with separate processors
-        foreach (var pool in this.options.Pools)
-        {
-            var poolQueueName = TopologyNaming.CreateAppResourceName(
-                this.conduitOptions, pool.Name, 260);
-            await this.TryCreateQueueAsync(
-                poolQueueName, requiresSession: false, ephemeralTtl, cancellationToken);
         }
     }
 
