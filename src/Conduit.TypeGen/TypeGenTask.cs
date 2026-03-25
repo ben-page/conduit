@@ -52,10 +52,12 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
                 GetAssemblyPaths(assemblyDir, runtimeDir));
 
             using var metadataContext = new MetadataLoadContext(resolver);
-            var assembly = metadataContext.LoadFromAssemblyPath(
+            var primaryAssembly = metadataContext.LoadFromAssemblyPath(
                 Path.GetFullPath(this.AssemblyPath));
 
-            var types = ReflectionScanner.ScanClientVisible(assembly);
+            var assemblies = DiscoverApplicationAssemblies(primaryAssembly, metadataContext);
+
+            var types = ReflectionScanner.ScanClientVisible(assemblies);
             var transports = this.ParseTransports();
             var includeSignalR = transports.Contains("SignalR");
 
@@ -68,7 +70,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
             File.WriteAllText(
                 Path.Combine(outputDir, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(types, assembly, includeSignalR, metadataContext));
+                MergeFileEmitter.Emit(types, assemblies, includeSignalR));
 
             this.Log.LogMessage(MessageImportance.Normal,
                 $"Conduit TypeGen: generated 2 files ({types.Count} types)");
@@ -83,6 +85,62 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
             this.Log.LogMessage(MessageImportance.High, ex.ToString());
             return false;
         }
+    }
+
+    /// <summary>
+    /// Walks the referenced assembly graph from the primary assembly, loading all
+    /// non-framework assemblies. Mirrors the source generator's cross-assembly discovery.
+    /// </summary>
+    private static List<Assembly> DiscoverApplicationAssemblies(
+        Assembly primaryAssembly, MetadataLoadContext metadataContext)
+    {
+        var result = new List<Assembly> { primaryAssembly };
+        var visited = new HashSet<string> { primaryAssembly.GetName().Name ?? "" };
+        var queue = new Queue<Assembly>();
+        queue.Enqueue(primaryAssembly);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+
+            foreach (var referencedName in current.GetReferencedAssemblies())
+            {
+                var name = referencedName.Name ?? "";
+                if (!visited.Add(name))
+                {
+                    continue;
+                }
+
+                if (IsFrameworkAssembly(name))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var referencedAssembly = metadataContext.LoadFromAssemblyName(referencedName);
+                    result.Add(referencedAssembly);
+                    queue.Enqueue(referencedAssembly);
+                }
+#pragma warning disable CA1031
+                catch
+#pragma warning restore CA1031
+                {
+                    // Assembly not loadable — skip (e.g., native dependencies)
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsFrameworkAssembly(string assemblyName)
+    {
+        return assemblyName.StartsWith("System", StringComparison.Ordinal)
+            || assemblyName.StartsWith("Microsoft", StringComparison.Ordinal)
+            || assemblyName.StartsWith("netstandard", StringComparison.Ordinal)
+            || assemblyName.StartsWith("mscorlib", StringComparison.Ordinal)
+            || assemblyName.StartsWith("WindowsBase", StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> GetAssemblyPaths(string assemblyDir, string runtimeDir)

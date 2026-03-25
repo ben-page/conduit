@@ -17,19 +17,7 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 [DoNotParallelize]
 public class SqsTopologyModeShould
 {
-    private static readonly SqsFixture Fixture = new();
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
+    private static SqsFixture Fixture => AssemblySetup.Fixture;
 
     [TestCleanup]
     public async Task TestCleanup()

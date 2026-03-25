@@ -49,16 +49,29 @@ public class ActiveMQFixture : TransportTestFixture
 
     /// <summary>
     /// Starts the ActiveMQ Artemis container and captures the connection string.
+    /// Cleans up orphaned containers from previous runs and supports reuse
+    /// via the CONDUIT_REUSE_CONTAINERS environment variable.
     /// Sets IsAvailable = false if the container cannot be started (e.g. Docker not running).
     /// </summary>
     public async Task InitializeAsync()
     {
         try
         {
+            await CleanupOrphanedContainersAsync("conduit-test=activemq");
+
+            var existing = await TryReuseContainerAsync("conduit-test=activemq", 61616);
+            if (existing is not null)
+            {
+                this.connectionString = $"amqp://admin:admin@{existing.Value.Hostname}:{existing.Value.Port}";
+                this.IsAvailable = true;
+                return;
+            }
+
             this.container = new ContainerBuilder("apache/activemq-artemis:2.37.0-alpine")
                 .WithPortBinding(61616, true)
                 .WithEnvironment("ARTEMIS_USER", "admin")
                 .WithEnvironment("ARTEMIS_PASSWORD", "admin")
+                .WithLabel("conduit-test", "activemq")
                 .WithWaitStrategy(Wait.ForUnixContainer()
                     .UntilMessageIsLogged("AMQ241004"))
                 .Build();
@@ -79,13 +92,13 @@ public class ActiveMQFixture : TransportTestFixture
     }
 
     /// <summary>
-    /// Disposes all hosts and the Artemis container.
+    /// Disposes all hosts and the Artemis container (unless reuse is enabled).
     /// </summary>
     public async Task CleanupAsync()
     {
         await this.DisposeHostsAsync();
 
-        if (this.container is not null)
+        if (this.container is not null && !ReuseContainers)
         {
             await this.container.DisposeAsync();
         }

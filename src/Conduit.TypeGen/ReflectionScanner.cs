@@ -66,45 +66,60 @@ public static class ReflectionScanner
     public static IReadOnlyList<DispatchableTypeInfo> ScanClientVisible(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
+        return ScanClientVisible([assembly]);
+    }
 
-        var allTypes = Scan(assembly);
-        var assemblyTypes = assembly.GetExportedTypes();
-        var clientVisibleFullNames = new HashSet<string>();
-
-        foreach (var type in assemblyTypes)
-        {
-            if (HasAttributeByFullName(type, ClientVisibleAttributeFullName))
-            {
-                var fullName = type.FullName ?? type.Name;
-                clientVisibleFullNames.Add(fullName);
-            }
-        }
+    /// <summary>
+    /// Scans multiple assemblies for types marked with <c>[ClientVisible]</c>.
+    /// Mirrors the source generator's cross-assembly discovery by walking all provided assemblies.
+    /// </summary>
+    /// <param name="assemblies">The assemblies to scan.</param>
+    /// <returns>The discovered client-visible dispatchable types, deduplicated by full type name.</returns>
+    public static IReadOnlyList<DispatchableTypeInfo> ScanClientVisible(IReadOnlyList<Assembly> assemblies)
+    {
+        ArgumentNullException.ThrowIfNull(assemblies);
 
         var results = new List<DispatchableTypeInfo>();
+        var seen = new HashSet<string>();
 
-        // Include dispatchable types that are [ClientVisible]
-        foreach (var typeInfo in allTypes)
+        foreach (var assembly in assemblies)
         {
-            if (clientVisibleFullNames.Contains(typeInfo.FullTypeName))
-            {
-                results.Add(typeInfo);
-                clientVisibleFullNames.Remove(typeInfo.FullTypeName);
-            }
-        }
+            var allTypes = Scan(assembly);
+            var assemblyTypes = assembly.GetExportedTypes();
+            var clientVisibleFullNames = new HashSet<string>();
 
-        // Include non-dispatchable types that are [ClientVisible] (DTOs, models)
-        foreach (var type in assemblyTypes)
-        {
-            var fullName = type.FullName ?? type.Name;
-            if (clientVisibleFullNames.Contains(fullName) && !type.IsAbstract && !type.IsInterface)
+            foreach (var type in assemblyTypes)
             {
-                results.Add(new DispatchableTypeInfo
+                if (HasAttributeByFullName(type, ClientVisibleAttributeFullName))
                 {
-                    TypeName = type.Name,
-                    FullTypeName = fullName,
-                    Namespace = type.Namespace ?? "",
-                    Kind = DispatchableKind.Model,
-                });
+                    var fullName = type.FullName ?? type.Name;
+                    clientVisibleFullNames.Add(fullName);
+                }
+            }
+
+            // Include dispatchable types that are [ClientVisible]
+            foreach (var typeInfo in allTypes)
+            {
+                if (clientVisibleFullNames.Remove(typeInfo.FullTypeName) && seen.Add(typeInfo.FullTypeName))
+                {
+                    results.Add(typeInfo);
+                }
+            }
+
+            // Include non-dispatchable types that are [ClientVisible] (DTOs, models)
+            foreach (var type in assemblyTypes)
+            {
+                var fullName = type.FullName ?? type.Name;
+                if (clientVisibleFullNames.Contains(fullName) && !type.IsAbstract && !type.IsInterface && seen.Add(fullName))
+                {
+                    results.Add(new DispatchableTypeInfo
+                    {
+                        TypeName = type.Name,
+                        FullTypeName = fullName,
+                        Namespace = type.Namespace ?? "",
+                        Kind = DispatchableKind.Model,
+                    });
+                }
             }
         }
 

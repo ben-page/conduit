@@ -17,19 +17,7 @@ namespace Conduit.Transport.AzureServiceBus.Tests.Integration;
 [DoNotParallelize]
 public class AsbEventRoutingShould
 {
-    private static readonly AsbFixture Fixture = new();
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
+    private static AsbFixture Fixture => AssemblySetup.Fixture;
 
     [TestCleanup]
     public async Task TestCleanup()

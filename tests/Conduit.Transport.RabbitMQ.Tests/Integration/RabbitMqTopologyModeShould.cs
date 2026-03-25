@@ -17,19 +17,7 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 [DoNotParallelize]
 public class RabbitMqTopologyModeShould
 {
-    private static readonly RabbitMqFixture Fixture = new();
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
+    private static RabbitMqFixture Fixture => AssemblySetup.Fixture;
 
     [TestCleanup]
     public async Task TestCleanup()

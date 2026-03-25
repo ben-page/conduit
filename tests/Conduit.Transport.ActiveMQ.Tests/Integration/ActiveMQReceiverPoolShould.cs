@@ -16,24 +16,12 @@ namespace Conduit.Transport.ActiveMQ.Tests.Integration;
 [DoNotParallelize]
 public class ActiveMQReceiverPoolShould
 {
-    private static readonly ActiveMQFixture Fixture = new();
+    private static ActiveMQFixture Fixture => AssemblySetup.Fixture;
 
     private const string ContractsNamespace = "Conduit.Transport.ActiveMQ.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
         "Conduit.Transport.ActiveMQ.Tests.Support.Contracts.SlowCommand";
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
 
     [TestCleanup]
     public async Task TestCleanup()
