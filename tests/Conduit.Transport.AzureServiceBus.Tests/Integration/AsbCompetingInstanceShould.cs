@@ -104,13 +104,33 @@ public class AsbCompetingInstanceShould : AsbTestBase
         var publisherName = UniqueAppName("pub");
 
         // 2 instances of AppB (same name) + 2 instances of AppC (same name)
-        await using var hostB1 = await CreateHostAsync(appNameB);
+        await using var hostB1 = await CreateHostAsync(appNameB, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
         var prefix = hostB1.TopologyPrefix!;
-        await using var hostB2 = await CreateHostAsync(appNameB, prefix);
-        await using var hostC1 = await CreateHostAsync(appNameC, prefix);
-        await using var hostC2 = await CreateHostAsync(appNameC, prefix);
+        await using var hostB2 = await CreateHostAsync(appNameB, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        await using var hostC1 = await CreateHostAsync(appNameC, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        await using var hostC2 = await CreateHostAsync(appNameC, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
-        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var spyB1 = hostB1.GetRequiredService<SpyLog>();
         var spyB2 = hostB2.GetRequiredService<SpyLog>();

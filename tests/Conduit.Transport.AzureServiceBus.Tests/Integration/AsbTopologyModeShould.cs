@@ -31,7 +31,12 @@ public class AsbTopologyModeShould : AsbTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = topologyMode;
-                conduit.TopologyPrefix = topologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAzureServiceBus(ConnectionString!, options =>
                         options.AdminConnectionString = AdminConnectionString));
@@ -42,11 +47,13 @@ public class AsbTopologyModeShould : AsbTestBase
     [TestMethod]
     public async Task CreateDurableResourcesInProductionMode()
     {
-        // Arrange
+        // Arrange — use a unique prefix for isolation even in Production mode.
+        // Durability correctness is verified by unit tests (TM-4.1).
         var appName = UniqueAppName("prod");
+        var prefix = $"prod-{Guid.NewGuid():N}"[..12];
 
         // Act — host starts successfully, meaning topology was created without error
-        await using var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production);
+        await using var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production, prefix);
 
         // Assert — the host is running (topology creation succeeded)
         var mediator = host.GetRequiredService<IMediator>();

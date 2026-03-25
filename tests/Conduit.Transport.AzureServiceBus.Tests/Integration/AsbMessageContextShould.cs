@@ -74,8 +74,16 @@ public class AsbMessageContextShould : AsbTestBase
         var handlerName = UniqueAppName("handler");
         var publisherName = UniqueAppName("pub");
 
-        await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var publisherHost = await CreateHostAsync(publisherName, handlerHost.TopologyPrefix!);
+        await using var handlerHost = await CreateHostAsync(handlerName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        await using var publisherHost = await CreateHostAsync(publisherName, handlerHost.TopologyPrefix!, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
