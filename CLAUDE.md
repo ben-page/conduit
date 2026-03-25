@@ -101,7 +101,9 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Test directories: `Unit/` for single-class tests, `Integration/` for multi-component tests, `Support/` for test types (one class per file)
 - Test class naming: `[Subject]Should` (e.g. `MediatorShould`, `RoutingShould`)
 - AAA pattern with `// Arrange`, `// Act`, `// Assert` comments
-- Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `TransportTestFixture`, `MessageContextSnapshot`)
+- Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `ContainerHelper`, `MessageContextSnapshot`)
+- Broker transport tests use per-transport abstract base classes (`RabbitMqTestBase`, `AsbTestBase`, etc.) that own container lifecycle (static), factory methods, and `[TestInitialize]` availability guard. `AssemblySetup` delegates to base class static init/cleanup methods.
+- All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent.
 - Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
 ## Project-Specific Notes

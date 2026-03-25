@@ -936,11 +936,17 @@ The publisher doesn't know or care who's listening or which transports are confi
 **Framework:** MSTest v4 + AwesomeAssertions. No mocking libraries — tests use real types, stubs, or in-memory state.
 
 **Shared test infrastructure** in `tests/Conduit.TestUtils/`:
-- `TestHost` — lightweight `IHost` wrapper that starts hosted services
+- `TestHost` — lightweight `IHost` wrapper that starts hosted services. `DisposeAsync` is idempotent.
 - `EventSpy<T>` — event listener spy for capturing published events
 - `SpyLog` — thread-safe invocation recorder with `WaitForCountAsync`
-- `TransportTestFixture` — abstract base with `CreateHostAsync`, `CreateSenderHostAsync`, `DisposeHostsAsync`, `UniqueAppName`
+- `ContainerHelper` — static utilities for container cleanup, reuse, and port discovery
 - `MessageContextSnapshot` — captures `MessageId`, `CausationId`, `ConversationId`
+
+**Per-transport base classes** (`RabbitMqTestBase`, `AsbTestBase`, `KafkaTestBase`, `SqsTestBase`, `ActiveMQTestBase`):
+- Own container lifecycle as static state, initialized via `[AssemblyInitialize]` delegate from `AssemblySetup`
+- Provide `CreateHostAsync` and `CreateSenderHostAsync` factory methods
+- `[TestInitialize]` guards with `Assert.Inconclusive` when broker unavailable
+- All hosts must use `await using` — sole disposal mechanism (no host tracking)
 
 **Transport test matrices** documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
