@@ -24,10 +24,22 @@ public class AsbEventRoutingShould : AsbTestBase
         var appNameB = UniqueAppName("app-b");
         var publisherName = UniqueAppName("pub");
 
-        await using var hostA = await CreateHostAsync(appNameA);
+        await using var hostA = await CreateHostAsync(appNameA, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
         var prefix = hostA.TopologyPrefix!;
-        await using var hostB = await CreateHostAsync(appNameB, prefix);
-        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
+        await using var hostB = await CreateHostAsync(appNameB, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var spyA = hostA.GetRequiredService<SpyLog>();
         var spyB = hostB.GetRequiredService<SpyLog>();
@@ -52,9 +64,17 @@ public class AsbEventRoutingShould : AsbTestBase
         var handlerName = UniqueAppName("handler");
         var publisherName = UniqueAppName("pub");
 
-        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var handlerHost = await CreateHostAsync(handlerName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
         var prefix = handlerHost.TopologyPrefix!;
-        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var publisherSpy = publisherHost.GetRequiredService<SpyLog>();
