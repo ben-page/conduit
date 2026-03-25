@@ -208,7 +208,12 @@ internal sealed class AzureServiceBusTopologyManager
             var existing = await this.adminClient.GetSubscriptionAsync(
                 topicName, subscriptionName, cancellationToken);
 
-            if (!string.Equals(existing.Value.ForwardTo, forwardTo, StringComparison.OrdinalIgnoreCase))
+            // ASB normalizes ForwardTo to a full URI (e.g., "http://host/queue-name").
+            // Compare by entity name only — extract the last path segment.
+            var existingTarget = GetEntityName(existing.Value.ForwardTo);
+            var expectedTarget = GetEntityName(forwardTo);
+
+            if (!string.Equals(existingTarget, expectedTarget, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
                     $"Subscription '{subscriptionName}' on topic '{topicName}' already exists but " +
@@ -216,5 +221,19 @@ internal sealed class AzureServiceBusTopologyManager
                     $"This indicates a naming collision between applications.");
             }
         }
+    }
+
+    /// <summary>
+    /// Extracts the entity name from a ForwardTo value, which may be a short name
+    /// or a full URI (ASB normalizes to full URI on the server side).
+    /// </summary>
+    private static string GetEntityName(string forwardTo)
+    {
+        if (Uri.TryCreate(forwardTo, UriKind.Absolute, out var uri))
+        {
+            return uri.AbsolutePath.TrimStart('/');
+        }
+
+        return forwardTo;
     }
 }
