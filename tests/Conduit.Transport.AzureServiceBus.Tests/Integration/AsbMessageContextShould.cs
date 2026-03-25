@@ -23,7 +23,7 @@ public class AsbMessageContextShould : AsbTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -49,7 +49,7 @@ public class AsbMessageContextShould : AsbTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -75,7 +75,7 @@ public class AsbMessageContextShould : AsbTestBase
         var publisherName = UniqueAppName("pub");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        await using var publisherHost = await CreateHostAsync(publisherName, handlerHost.TopologyPrefix!);
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
@@ -100,7 +100,7 @@ public class AsbMessageContextShould : AsbTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
