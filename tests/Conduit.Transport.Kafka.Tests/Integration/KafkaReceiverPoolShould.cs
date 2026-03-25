@@ -13,29 +13,12 @@ namespace Conduit.Transport.Kafka.Tests.Integration;
 /// consumers with independent parallelism settings, while unassigned types go to the default consumer.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class KafkaReceiverPoolShould
+public class KafkaReceiverPoolShould : KafkaTestBase
 {
-    private static KafkaFixture Fixture => AssemblySetup.Fixture;
-
     private const string ContractsNamespace = "Conduit.Transport.Kafka.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
         "Conduit.Transport.Kafka.Tests.Support.Contracts.SlowCommand";
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("Kafka container not available. Ensure Docker/Podman is running.");
-        }
-    }
 
     /// <summary>
     /// Creates a handler host with a named receiver pool that routes SlowCommand
@@ -46,19 +29,16 @@ public class KafkaReceiverPoolShould
         string poolName,
         int poolMaxDegreeOfParallelism)
     {
-        var bootstrapServers = Fixture.BootstrapServers;
-        var prefix = Fixture.TopologyPrefix;
-
-        var host = await TestHost.StartAsync(builder =>
+        return await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             builder.Services.AddConduit(conduit =>
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = prefix;
+                conduit.TopologyPrefix = TopologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseKafka(bootstrapServers, options =>
+                    endpoint.UseKafka(BootstrapServers!, options =>
                     {
                         options.Pools.Add(new KafkaReceiverPoolOptions
                         {
@@ -69,22 +49,17 @@ public class KafkaReceiverPoolShould
                     }));
             });
         });
-
-        Fixture.TrackHost(host);
-        return host;
     }
 
     [TestMethod]
     public async Task RouteMessageToCorrectPool()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -105,13 +80,11 @@ public class KafkaReceiverPoolShould
     public async Task RouteUnassignedTypesToDefaultPool()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -133,14 +106,12 @@ public class KafkaReceiverPoolShould
     public async Task IsolatePoolConcurrency()
     {
         // Arrange
-        EnsureAvailable();
-
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
         // Slow pool with MaxDegreeOfParallelism=1, default pool uses DefaultMaxDegreeOfParallelism
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
