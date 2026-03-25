@@ -38,7 +38,9 @@ public sealed class ConduitOptions
     {
         get => (this.resolvedTopologyPrefix ??= new Lazy<string?>(this.ResolveTopologyPrefix)).Value;
 
-        set => this.resolvedTopologyPrefix = new Lazy<string?>(value);
+        set => this.resolvedTopologyPrefix = value is not null
+            ? new Lazy<string?>(value)
+            : null; // Reset to auto-resolve
     }
 
     /// <summary>
