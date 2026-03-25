@@ -3,17 +3,9 @@ namespace Conduit.Transport.ActiveMQ.Tests.Integration;
 [TestClass]
 public static class AssemblySetup
 {
-    public static ActiveMQFixture Fixture { get; } = new();
-
     [AssemblyInitialize]
-    public static async Task Initialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
+    public static Task Initialize(TestContext context) => ActiveMQTestBase.InitializeContainer();
 
     [AssemblyCleanup]
-    public static async Task Cleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
+    public static Task Cleanup() => ActiveMQTestBase.CleanupContainer();
 }
