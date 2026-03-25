@@ -11,6 +11,7 @@ public sealed class TestHost : IAsyncDisposable
 {
     private readonly IHost host;
     private readonly IServiceScope scope;
+    private bool disposed;
 
     /// <summary>
     /// The scoped service provider for this test host.
@@ -53,6 +54,12 @@ public sealed class TestHost : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        if (this.disposed)
+        {
+            return;
+        }
+
+        this.disposed = true;
         this.scope.Dispose();
         await this.host.StopAsync();
         this.host.Dispose();
