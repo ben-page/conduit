@@ -376,14 +376,14 @@ public class TopologyManagerShould
     [TestMethod]
     public void CreateSqlFilterWithCorrectFormat()
     {
-        // Arrange — ASB subscriptions use SQL filters: Subject = '{FullTypeName}'
+        // Arrange — ASB subscriptions use SQL filters: sys.Label = '{FullTypeName}'
         var messageType = "Orders.Commands.CreateOrder";
 
         // Act — replicate the filter string the topology manager builds
-        var filterExpression = $"Subject = '{messageType}'";
+        var filterExpression = $"sys.Label = '{messageType}'";
 
         // Assert
-        filterExpression.Should().Be("Subject = 'Orders.Commands.CreateOrder'");
+        filterExpression.Should().Be("sys.Label = 'Orders.Commands.CreateOrder'");
     }
 
     [TestMethod]
@@ -396,14 +396,14 @@ public class TopologyManagerShould
         var queryType = "Catalog.Queries.GetProduct";
 
         // Act — build SqlRuleFilter the same way TryCreateSubscriptionAsync does
-        var commandFilter = new SqlRuleFilter($"Subject = '{commandType}'");
-        var eventFilter = new SqlRuleFilter($"Subject = '{eventType}'");
-        var queryFilter = new SqlRuleFilter($"Subject = '{queryType}'");
+        var commandFilter = new SqlRuleFilter($"sys.Label = '{commandType}'");
+        var eventFilter = new SqlRuleFilter($"sys.Label = '{eventType}'");
+        var queryFilter = new SqlRuleFilter($"sys.Label = '{queryType}'");
 
         // Assert — each filter uses the FullTypeName as the Subject discriminator
-        commandFilter.SqlExpression.Should().Be("Subject = 'Orders.Commands.CreateOrder'");
-        eventFilter.SqlExpression.Should().Be("Subject = 'Shipping.Events.OrderShipped'");
-        queryFilter.SqlExpression.Should().Be("Subject = 'Catalog.Queries.GetProduct'");
+        commandFilter.SqlExpression.Should().Be("sys.Label = 'Orders.Commands.CreateOrder'");
+        eventFilter.SqlExpression.Should().Be("sys.Label = 'Shipping.Events.OrderShipped'");
+        queryFilter.SqlExpression.Should().Be("sys.Label = 'Catalog.Queries.GetProduct'");
     }
 
     // --- TM-S.3: CreateSessionEnabledReplyQueue ---

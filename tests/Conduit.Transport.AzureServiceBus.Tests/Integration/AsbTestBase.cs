@@ -2,6 +2,7 @@ using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.TestUtils;
 using Conduit.Transport.AzureServiceBus;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Testcontainers.ServiceBus;
@@ -25,11 +26,14 @@ public abstract class AsbTestBase
 
     public static async Task InitializeContainer()
     {
-        var envConnectionString = Environment.GetEnvironmentVariable("CONDUIT_ASB_CONNECTION_STRING");
-        if (!string.IsNullOrWhiteSpace(envConnectionString))
+        // Priority: 1) user secrets, 2) env var, 3) emulator container
+        var connectionString = LoadConnectionStringFromSecrets()
+            ?? Environment.GetEnvironmentVariable("CONDUIT_ASB_CONNECTION_STRING");
+
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            ConnectionString = envConnectionString;
-            AdminConnectionString = envConnectionString;
+            ConnectionString = connectionString;
+            AdminConnectionString = connectionString;
             isAvailable = true;
             return;
         }
@@ -38,18 +42,20 @@ public abstract class AsbTestBase
         {
             await ContainerHelper.CleanupOrphanedContainersAsync("conduit-test=asb");
 
-            var existing = await ContainerHelper.TryReuseContainerMultiPortAsync("conduit-test=asb", 5672, 8080);
+            var existing = await ContainerHelper.TryReuseContainerMultiPortAsync("conduit-test=asb", 5672, 5300);
             if (existing is not null)
             {
                 var amqpPort = existing.Value.Ports[5672];
-                var httpPort = existing.Value.Ports[8080];
+                var httpPort = existing.Value.Ports[5300];
+                // AMQP connection string uses amqp:// scheme
                 ConnectionString =
-                    $"Endpoint=sb://{existing.Value.Hostname}:{amqpPort};" +
+                    $"Endpoint=amqp://{existing.Value.Hostname}:{amqpPort}/;" +
                     "SharedAccessKeyName=RootManageSharedAccessKey;" +
                     "SharedAccessKey=SAS_KEY_VALUE;" +
                     "UseDevelopmentEmulator=true";
+                // Admin connection string uses sb:// scheme on the HTTP port
                 AdminConnectionString =
-                    $"Endpoint=http://{existing.Value.Hostname}:{httpPort};" +
+                    $"Endpoint=sb://{existing.Value.Hostname}:{httpPort}/;" +
                     "SharedAccessKeyName=RootManageSharedAccessKey;" +
                     "SharedAccessKey=SAS_KEY_VALUE;" +
                     "UseDevelopmentEmulator=true";
@@ -154,5 +160,21 @@ public abstract class AsbTestBase
     {
         sharedPrefix ??= new ConduitOptions { TopologyMode = TopologyMode.Test }.TopologyPrefix!;
         return sharedPrefix;
+    }
+
+    private static string? LoadConnectionStringFromSecrets()
+    {
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddUserSecrets<AsbTestBase>()
+                .Build();
+
+            return config["Conduit:AzureServiceBus:ConnectionString"];
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
