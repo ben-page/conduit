@@ -11,38 +11,19 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 /// Also tests that ConversationId is preserved through nested dispatch.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class SqsMessageContextShould
+public class SqsMessageContextShould : SqsTestBase
 {
-    private static SqsFixture Fixture => AssemblySetup.Fixture;
-
     private const string ContractsNamespace = "Conduit.Transport.AmazonSqs.Tests.Support.Contracts";
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("LocalStack container not available. Ensure Docker/Podman is running.");
-        }
-    }
 
     [TestMethod]
     public async Task PropagateMessageContextForCommand()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -64,13 +45,11 @@ public class SqsMessageContextShould
     public async Task PropagateMessageContextForQuery()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -92,13 +71,11 @@ public class SqsMessageContextShould
     public async Task PropagateMessageContextForEvent()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var publisherName = UniqueAppName("pub");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var publisherName = TransportTestFixture.UniqueAppName("pub");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var publisherHost = await Fixture.CreateHostAsync(publisherName);
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var publisherHost = await CreateHostAsync(publisherName);
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
@@ -119,13 +96,11 @@ public class SqsMessageContextShould
     public async Task PreserveConversationIdInNestedDispatch()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();

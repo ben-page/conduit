@@ -15,38 +15,19 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 /// receive a copy.
 /// </remarks>
 [TestClass]
-[DoNotParallelize]
-public class SqsEventRoutingShould
+public class SqsEventRoutingShould : SqsTestBase
 {
-    private static SqsFixture Fixture => AssemblySetup.Fixture;
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("LocalStack container not available. Ensure Docker/Podman is running.");
-        }
-    }
-
     [TestMethod]
     public async Task DeliverEventToAllSubscribingApps()
     {
         // Arrange
-        EnsureAvailable();
+        var appNameA = UniqueAppName("app-a");
+        var appNameB = UniqueAppName("app-b");
+        var publisherName = UniqueAppName("pub");
 
-        var appNameA = TransportTestFixture.UniqueAppName("app-a");
-        var appNameB = TransportTestFixture.UniqueAppName("app-b");
-        var publisherName = TransportTestFixture.UniqueAppName("pub");
-
-        var hostA = await Fixture.CreateHostAsync(appNameA);
-        var hostB = await Fixture.CreateHostAsync(appNameB);
-        var publisherHost = await Fixture.CreateHostAsync(publisherName);
+        await using var hostA = await CreateHostAsync(appNameA);
+        await using var hostB = await CreateHostAsync(appNameB);
+        await using var publisherHost = await CreateHostAsync(publisherName);
 
         var spyA = hostA.GetRequiredService<SpyLog>();
         var spyB = hostB.GetRequiredService<SpyLog>();
@@ -68,13 +49,11 @@ public class SqsEventRoutingShould
     public async Task NotBroadcastLocalOnlyEvent()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var publisherName = UniqueAppName("pub");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var publisherName = TransportTestFixture.UniqueAppName("pub");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var publisherHost = await Fixture.CreateHostAsync(publisherName);
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var publisherHost = await CreateHostAsync(publisherName);
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var publisherSpy = publisherHost.GetRequiredService<SpyLog>();
@@ -99,11 +78,9 @@ public class SqsEventRoutingShould
     public async Task DeliverEventToListenerDespiteOtherListenerFailure()
     {
         // Arrange
-        EnsureAvailable();
+        var appName = UniqueAppName("app");
 
-        var appName = TransportTestFixture.UniqueAppName("app");
-
-        var host = await Fixture.CreateHostAsync(appName);
+        await using var host = await CreateHostAsync(appName);
 
         var spy = host.GetRequiredService<SpyLog>();
         var mediator = host.GetRequiredService<IMediator>();

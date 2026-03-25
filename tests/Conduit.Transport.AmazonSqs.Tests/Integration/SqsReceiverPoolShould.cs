@@ -13,29 +13,12 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 /// queues with independent concurrency settings, while unassigned types go to the default queue.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class SqsReceiverPoolShould
+public class SqsReceiverPoolShould : SqsTestBase
 {
-    private static SqsFixture Fixture => AssemblySetup.Fixture;
-
     private const string ContractsNamespace = "Conduit.Transport.AmazonSqs.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
         "Conduit.Transport.AmazonSqs.Tests.Support.Contracts.SlowCommand";
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("LocalStack container not available. Ensure Docker/Podman is running.");
-        }
-    }
 
     /// <summary>
     /// Creates a handler host with a named receiver pool that routes SlowCommand
@@ -46,10 +29,10 @@ public class SqsReceiverPoolShould
         string poolName,
         int poolMaxConcurrency)
     {
-        var address = Fixture.ServiceAddress;
-        var prefix = Fixture.TopologyPrefix;
+        var address = ServiceAddress;
+        var prefix = TopologyPrefix;
 
-        var host = await TestHost.StartAsync(builder =>
+        return await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             builder.Services.AddConduit(conduit =>
@@ -60,7 +43,7 @@ public class SqsReceiverPoolShould
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
                     {
-                        options.ServiceUri = new Uri(address);
+                        options.ServiceUri = new Uri(address!);
                         options.Pools.Add(new AmazonSqsReceiverPoolOptions
                         {
                             Name = poolName,
@@ -70,22 +53,17 @@ public class SqsReceiverPoolShould
                     }));
             });
         });
-
-        Fixture.TrackHost(host);
-        return host;
     }
 
     [TestMethod]
     public async Task RouteMessageToCorrectPool()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -106,13 +84,11 @@ public class SqsReceiverPoolShould
     public async Task RouteUnassignedTypesToDefaultPool()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -134,14 +110,12 @@ public class SqsReceiverPoolShould
     public async Task IsolatePoolConcurrency()
     {
         // Arrange
-        EnsureAvailable();
-
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
         // Slow pool with maxConcurrency=1, default pool uses DefaultMaxConcurrency
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
