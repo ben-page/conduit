@@ -192,9 +192,10 @@ internal sealed class AzureServiceBusTopologyManager
                 subscriptionOptions.AutoDeleteOnIdle = autoDeleteOnIdle.Value;
             }
 
+            // ASB SQL filter uses sys.Label (not Subject) to match ServiceBusMessage.Subject
             var ruleOptions = new CreateRuleOptions(
                 "TypeFilter",
-                new SqlRuleFilter($"Subject = '{messageType}'"));
+                new SqlRuleFilter($"sys.Label = '{messageType}'"));
 
             await this.adminClient.CreateSubscriptionAsync(
                 subscriptionOptions, ruleOptions, cancellationToken);
