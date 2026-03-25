@@ -12,26 +12,9 @@ namespace Conduit.Transport.ActiveMQ.Tests.Integration;
 /// so every app gets a copy but competing instances within the same app still deduplicate.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class ActiveMQCompetingInstanceShould
+public class ActiveMQCompetingInstanceShould : ActiveMQTestBase
 {
-    private static ActiveMQFixture Fixture => AssemblySetup.Fixture;
-
     private const string ContractsNamespace = "Conduit.Transport.ActiveMQ.Tests.Support.Contracts";
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("ActiveMQ Artemis container not available. Ensure Docker/Podman is running.");
-        }
-    }
 
     [TestMethod]
     [DataRow(1)]
@@ -39,17 +22,15 @@ public class ActiveMQCompetingInstanceShould
     public async Task DeliverCommandToExactlyOneInstance(int messageCount)
     {
         // Arrange
-        EnsureAvailable();
-
-        var sharedHandlerName = TransportTestFixture.UniqueAppName("shared");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
+        var sharedHandlerName = UniqueAppName("shared");
+        var senderName = UniqueAppName("sender");
 
         // 3 handler instances with the SAME ApplicationName -> competing consumers
-        var handler1 = await Fixture.CreateHostAsync(sharedHandlerName);
-        var handler2 = await Fixture.CreateHostAsync(sharedHandlerName);
-        var handler3 = await Fixture.CreateHostAsync(sharedHandlerName);
+        await using var handler1 = await CreateHostAsync(sharedHandlerName);
+        await using var handler2 = await CreateHostAsync(sharedHandlerName);
+        await using var handler3 = await CreateHostAsync(sharedHandlerName);
 
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var spy1 = handler1.GetRequiredService<SpyLog>();
         var spy2 = handler2.GetRequiredService<SpyLog>();
@@ -78,17 +59,15 @@ public class ActiveMQCompetingInstanceShould
     public async Task DeliverQueryToExactlyOneInstance(int messageCount)
     {
         // Arrange
-        EnsureAvailable();
-
-        var sharedHandlerName = TransportTestFixture.UniqueAppName("shared");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
+        var sharedHandlerName = UniqueAppName("shared");
+        var senderName = UniqueAppName("sender");
 
         // 3 handler instances with the SAME ApplicationName -> competing consumers
-        var handler1 = await Fixture.CreateHostAsync(sharedHandlerName);
-        var handler2 = await Fixture.CreateHostAsync(sharedHandlerName);
-        var handler3 = await Fixture.CreateHostAsync(sharedHandlerName);
+        await using var handler1 = await CreateHostAsync(sharedHandlerName);
+        await using var handler2 = await CreateHostAsync(sharedHandlerName);
+        await using var handler3 = await CreateHostAsync(sharedHandlerName);
 
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var spy1 = handler1.GetRequiredService<SpyLog>();
         var spy2 = handler2.GetRequiredService<SpyLog>();
@@ -118,19 +97,17 @@ public class ActiveMQCompetingInstanceShould
     public async Task DeliverEventToExactlyOneInstancePerApp(int messageCount)
     {
         // Arrange
-        EnsureAvailable();
-
-        var appNameB = TransportTestFixture.UniqueAppName("app-b");
-        var appNameC = TransportTestFixture.UniqueAppName("app-c");
-        var publisherName = TransportTestFixture.UniqueAppName("pub");
+        var appNameB = UniqueAppName("app-b");
+        var appNameC = UniqueAppName("app-c");
+        var publisherName = UniqueAppName("pub");
 
         // 2 instances of AppB (same name) + 2 instances of AppC (same name)
-        var hostB1 = await Fixture.CreateHostAsync(appNameB);
-        var hostB2 = await Fixture.CreateHostAsync(appNameB);
-        var hostC1 = await Fixture.CreateHostAsync(appNameC);
-        var hostC2 = await Fixture.CreateHostAsync(appNameC);
+        await using var hostB1 = await CreateHostAsync(appNameB);
+        await using var hostB2 = await CreateHostAsync(appNameB);
+        await using var hostC1 = await CreateHostAsync(appNameC);
+        await using var hostC2 = await CreateHostAsync(appNameC);
 
-        var publisherHost = await Fixture.CreateHostAsync(publisherName);
+        await using var publisherHost = await CreateHostAsync(publisherName);
 
         var spyB1 = hostB1.GetRequiredService<SpyLog>();
         var spyB2 = hostB2.GetRequiredService<SpyLog>();
