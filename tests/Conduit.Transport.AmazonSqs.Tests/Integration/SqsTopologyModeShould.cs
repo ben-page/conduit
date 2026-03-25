@@ -14,25 +14,8 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 /// random prefixes.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class SqsTopologyModeShould
+public class SqsTopologyModeShould : SqsTestBase
 {
-    private static SqsFixture Fixture => AssemblySetup.Fixture;
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("LocalStack container not available. Ensure Docker/Podman is running.");
-        }
-    }
-
     /// <summary>
     /// Creates a host with the specified topology mode and optional developer prefix.
     /// </summary>
@@ -41,9 +24,9 @@ public class SqsTopologyModeShould
         TopologyMode topologyMode,
         string? topologyPrefix = null)
     {
-        var address = Fixture.ServiceAddress;
+        var address = ServiceAddress;
 
-        var host = await TestHost.StartAsync(builder =>
+        return await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             builder.Services.AddConduit(conduit =>
@@ -53,24 +36,19 @@ public class SqsTopologyModeShould
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
-                        options.ServiceUri = new Uri(address)));
+                        options.ServiceUri = new Uri(address!)));
             });
         });
-
-        Fixture.TrackHost(host);
-        return host;
     }
 
     [TestMethod]
     public async Task CreateDurableResourcesInProductionMode()
     {
         // Arrange
-        EnsureAvailable();
-
-        var appName = TransportTestFixture.UniqueAppName("prod");
+        var appName = UniqueAppName("prod");
 
         // Act -- host starts successfully, meaning topology was created without error
-        var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production);
+        await using var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production);
 
         // Assert -- the host is running (topology creation succeeded)
         var mediator = host.GetRequiredService<IMediator>();
@@ -81,13 +59,11 @@ public class SqsTopologyModeShould
     public async Task CreateEphemeralResourcesInDeveloperMode()
     {
         // Arrange
-        EnsureAvailable();
-
-        var appName = TransportTestFixture.UniqueAppName("dev");
+        var appName = UniqueAppName("dev");
         var prefix = $"dev-{Guid.NewGuid():N}"[..10];
 
         // Act -- host starts successfully with Developer mode resources
-        var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Developer, prefix);
+        await using var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Developer, prefix);
 
         // Assert -- the host is running (topology creation succeeded)
         var mediator = host.GetRequiredService<IMediator>();
@@ -98,15 +74,13 @@ public class SqsTopologyModeShould
     public async Task IsolateTestModeRuns()
     {
         // Arrange
-        EnsureAvailable();
-
-        var appName1 = TransportTestFixture.UniqueAppName("iso-a");
-        var appName2 = TransportTestFixture.UniqueAppName("iso-b");
+        var appName1 = UniqueAppName("iso-a");
+        var appName2 = UniqueAppName("iso-b");
 
         // Two hosts with TopologyMode.Test -- each gets a random prefix,
         // so they create different SNS topics/SQS queues and cannot communicate
-        var host1 = await CreateHostWithTopologyModeAsync(appName1, TopologyMode.Test);
-        var host2 = await CreateHostWithTopologyModeAsync(appName2, TopologyMode.Test);
+        await using var host1 = await CreateHostWithTopologyModeAsync(appName1, TopologyMode.Test);
+        await using var host2 = await CreateHostWithTopologyModeAsync(appName2, TopologyMode.Test);
 
         var spy1 = host1.GetRequiredService<SpyLog>();
         var spy2 = host2.GetRequiredService<SpyLog>();
