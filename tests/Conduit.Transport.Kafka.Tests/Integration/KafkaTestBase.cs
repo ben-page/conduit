@@ -10,20 +10,34 @@ namespace Conduit.Transport.Kafka.Tests.Integration;
 
 /// <summary>
 /// Base class for Kafka integration tests. Manages the Kafka container lifecycle (static)
-/// and provides factory methods for creating test hosts.
+/// and provides factory methods for creating test hosts with per-test topology isolation.
 /// </summary>
 [TestClass]
 public abstract class KafkaTestBase
 {
     private static KafkaContainer? container;
-    private static string? sharedPrefix;
     private static bool isAvailable;
 
     protected static string? BootstrapServers { get; private set; }
-    protected static string TopologyPrefix => GetSharedPrefix();
 
     public static async Task InitializeContainer()
     {
+        var config = TestConfiguration.Load<KafkaTestBase>();
+
+        var bootstrapServers = config.Get("Kafka", "BootstrapServers");
+        if (!string.IsNullOrWhiteSpace(bootstrapServers))
+        {
+            BootstrapServers = bootstrapServers;
+            isAvailable = true;
+            return;
+        }
+
+        if (!config.UseTestContainer("Kafka"))
+        {
+            isAvailable = false;
+            return;
+        }
+
         try
         {
             await ContainerHelper.CleanupOrphanedContainersAsync("conduit-test=kafka");
@@ -69,8 +83,14 @@ public abstract class KafkaTestBase
         }
     }
 
+    /// <summary>
+    /// Creates a handler/listener host. When <paramref name="topologyPrefix"/> is null,
+    /// a new unique prefix is auto-generated (use <see cref="TestHost.TopologyPrefix"/>
+    /// to pass it to subsequent hosts in the same test).
+    /// </summary>
     protected static async Task<TestHost> CreateHostAsync(
         string applicationName,
+        string? topologyPrefix = null,
         Action<ConduitRegistrationOverrides>? configureHandling = null)
     {
         return await TestHost.StartAsync(builder =>
@@ -80,7 +100,12 @@ public abstract class KafkaTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = TopologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseKafka(BootstrapServers!));
             });
@@ -92,8 +117,13 @@ public abstract class KafkaTestBase
         });
     }
 
+    /// <summary>
+    /// Creates a sender host with routing. Uses the provided <paramref name="topologyPrefix"/>
+    /// to share topology with the handler host in the same test.
+    /// </summary>
     protected static async Task<TestHost> CreateSenderHostAsync(
         string applicationName,
+        string topologyPrefix,
         string routeNamespace,
         string targetEndpointName,
         Action<KafkaOptions>? configureOptions = null)
@@ -106,7 +136,7 @@ public abstract class KafkaTestBase
                 conduit.ApplicationName = applicationName;
                 conduit.ProducerOnly = true;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = TopologyPrefix;
+                conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
                     endpoint.UseKafka(BootstrapServers!, configureOptions));
                 conduit.Options.Routes.Add(new ConduitRoute
@@ -120,10 +150,4 @@ public abstract class KafkaTestBase
 
     protected static string UniqueAppName(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}"[..15];
-
-    private static string GetSharedPrefix()
-    {
-        sharedPrefix ??= new ConduitOptions { TopologyMode = TopologyMode.Test }.TopologyPrefix!;
-        return sharedPrefix;
-    }
 }

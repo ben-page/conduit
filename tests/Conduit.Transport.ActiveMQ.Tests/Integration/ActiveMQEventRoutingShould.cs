@@ -25,8 +25,9 @@ public class ActiveMQEventRoutingShould : ActiveMQTestBase
         var publisherName = UniqueAppName("pub");
 
         await using var hostA = await CreateHostAsync(appNameA);
-        await using var hostB = await CreateHostAsync(appNameB);
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        var prefix = hostA.TopologyPrefix!;
+        await using var hostB = await CreateHostAsync(appNameB, prefix);
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
 
         var spyA = hostA.GetRequiredService<SpyLog>();
         var spyB = hostB.GetRequiredService<SpyLog>();
@@ -52,7 +53,8 @@ public class ActiveMQEventRoutingShould : ActiveMQTestBase
         var publisherName = UniqueAppName("pub");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var publisherSpy = publisherHost.GetRequiredService<SpyLog>();
