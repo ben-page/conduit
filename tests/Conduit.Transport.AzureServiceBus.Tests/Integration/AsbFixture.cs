@@ -55,6 +55,8 @@ public class AsbFixture : TransportTestFixture
 
     /// <summary>
     /// Starts the ASB emulator container and captures connection strings.
+    /// Cleans up orphaned containers from previous runs and supports reuse
+    /// via the CONDUIT_REUSE_CONTAINERS environment variable.
     /// Falls back to CONDUIT_ASB_CONNECTION_STRING environment variable if set.
     /// Sets IsAvailable = false if the container cannot be started (e.g. Docker not running).
     /// </summary>
@@ -71,8 +73,30 @@ public class AsbFixture : TransportTestFixture
 
         try
         {
+            await CleanupOrphanedContainersAsync("conduit-test=asb");
+
+            var existing = await TryReuseContainerMultiPortAsync("conduit-test=asb", 5672, 8080);
+            if (existing is not null)
+            {
+                var amqpPort = existing.Value.Ports[5672];
+                var httpPort = existing.Value.Ports[8080];
+                this.connectionString =
+                    $"Endpoint=sb://{existing.Value.Hostname}:{amqpPort};" +
+                    "SharedAccessKeyName=RootManageSharedAccessKey;" +
+                    "SharedAccessKey=SAS_KEY_VALUE;" +
+                    "UseDevelopmentEmulator=true";
+                this.adminConnectionString =
+                    $"Endpoint=http://{existing.Value.Hostname}:{httpPort};" +
+                    "SharedAccessKeyName=RootManageSharedAccessKey;" +
+                    "SharedAccessKey=SAS_KEY_VALUE;" +
+                    "UseDevelopmentEmulator=true";
+                this.IsAvailable = true;
+                return;
+            }
+
             this.container = new ServiceBusBuilder("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
                 .WithAcceptLicenseAgreement(true)
+                .WithLabel("conduit-test", "asb")
                 .Build();
             await this.container.StartAsync();
             this.connectionString = this.container.GetConnectionString();
@@ -90,13 +114,13 @@ public class AsbFixture : TransportTestFixture
     }
 
     /// <summary>
-    /// Disposes all hosts and the ASB emulator container.
+    /// Disposes all hosts and the ASB emulator container (unless reuse is enabled).
     /// </summary>
     public async Task CleanupAsync()
     {
         await this.DisposeHostsAsync();
 
-        if (this.container is not null)
+        if (this.container is not null && !ReuseContainers)
         {
             await this.container.DisposeAsync();
         }

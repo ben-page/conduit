@@ -16,24 +16,12 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 [DoNotParallelize]
 public class RabbitMqReceiverPoolShould
 {
-    private static readonly RabbitMqFixture Fixture = new();
+    private static RabbitMqFixture Fixture => AssemblySetup.Fixture;
 
     private const string ContractsNamespace = "Conduit.Transport.RabbitMQ.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
         "Conduit.Transport.RabbitMQ.Tests.Support.Contracts.SlowCommand";
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
 
     [TestCleanup]
     public async Task TestCleanup()

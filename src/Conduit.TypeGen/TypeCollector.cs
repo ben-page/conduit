@@ -22,15 +22,15 @@ public static class TypeCollector
     /// </summary>
     /// <param name="rootTypeFullNames">The root type full names (already have interfaces).</param>
     /// <param name="additionalSeedTypes">Additional types to seed the walk (e.g., query result types).</param>
-    /// <param name="assembly">The assembly to resolve types from.</param>
+    /// <param name="assemblies">The assemblies to resolve types from.</param>
     /// <returns>Additional types that need interface generation, in dependency order.</returns>
     public static IReadOnlyList<Type> CollectReferencedTypes(
         IReadOnlyList<string> rootTypeFullNames,
         IReadOnlyList<Type>? additionalSeedTypes,
-        Assembly assembly)
+        IReadOnlyList<Assembly> assemblies)
     {
         ArgumentNullException.ThrowIfNull(rootTypeFullNames);
-        ArgumentNullException.ThrowIfNull(assembly);
+        ArgumentNullException.ThrowIfNull(assemblies);
 
         var visited = new HashSet<string>(rootTypeFullNames);
         var result = new List<Type>();
@@ -39,7 +39,7 @@ public static class TypeCollector
         // Seed queue with resolved root types
         foreach (var fullName in rootTypeFullNames)
         {
-            var type = assembly.GetType(fullName);
+            var type = ResolveType(assemblies, fullName);
             if (type != null)
             {
                 EnqueuePropertyTypes(type, visited, queue);
@@ -170,5 +170,22 @@ public static class TypeCollector
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Resolves a type by full name across multiple assemblies.
+    /// </summary>
+    internal static Type? ResolveType(IReadOnlyList<Assembly> assemblies, string fullName)
+    {
+        foreach (var assembly in assemblies)
+        {
+            var type = assembly.GetType(fullName);
+            if (type != null)
+            {
+                return type;
+            }
+        }
+
+        return null;
     }
 }

@@ -18,8 +18,8 @@ public static class TypeMapEmitter
     /// </summary>
     /// <param name="sb">The string builder to append to.</param>
     /// <param name="types">The dispatchable types to map.</param>
-    /// <param name="assembly">Optional assembly for type resolution (may be from MetadataLoadContext).</param>
-    public static void EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types, Assembly? assembly = null)
+    /// <param name="assemblies">Optional assemblies for type resolution (may be from MetadataLoadContext).</param>
+    public static void EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types, IReadOnlyList<Assembly>? assemblies = null)
     {
         ArgumentNullException.ThrowIfNull(sb);
         ArgumentNullException.ThrowIfNull(types);
@@ -35,7 +35,7 @@ public static class TypeMapEmitter
             {
                 var resultType = cmd.Kind == DispatchableKind.VoidCommand
                     ? "void"
-                    : ResolveResultType(cmd, assembly);
+                    : ResolveResultType(cmd, assemblies);
                 sb.Append(CultureInfo.InvariantCulture,
                     $"  '{cmd.FullTypeName}': {{ request: {cmd.TypeName}; response: {resultType} }};").AppendLine();
             }
@@ -49,7 +49,7 @@ public static class TypeMapEmitter
             sb.AppendLine("export interface QueryMap {");
             foreach (var query in queries)
             {
-                var resultType = ResolveResultType(query, assembly);
+                var resultType = ResolveResultType(query, assemblies);
                 sb.Append(CultureInfo.InvariantCulture,
                     $"  '{query.FullTypeName}': {{ request: {query.TypeName}; response: {resultType} }};").AppendLine();
             }
@@ -72,12 +72,14 @@ public static class TypeMapEmitter
         }
     }
 
-    private static string ResolveResultType(DispatchableTypeInfo typeInfo, Assembly? assembly)
+    private static string ResolveResultType(DispatchableTypeInfo typeInfo, IReadOnlyList<Assembly>? assemblies)
     {
         if (typeInfo.ResultFullTypeName is not null)
         {
-            // Try resolving via the assembly (works with MetadataLoadContext)
-            var resolvedType = assembly?.GetType(typeInfo.ResultFullTypeName);
+            // Try resolving via assemblies (works with MetadataLoadContext)
+            var resolvedType = assemblies != null
+                ? TypeCollector.ResolveType(assemblies, typeInfo.ResultFullTypeName)
+                : null;
             if (resolvedType is not null)
             {
                 return TypeMapper.MapType(resolvedType);

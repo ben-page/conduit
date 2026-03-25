@@ -48,14 +48,27 @@ public class KafkaFixture : TransportTestFixture
 
     /// <summary>
     /// Starts the Kafka container (KRaft mode, no ZooKeeper) and captures the bootstrap servers.
+    /// Cleans up orphaned containers from previous runs and supports reuse
+    /// via the CONDUIT_REUSE_CONTAINERS environment variable.
     /// Sets IsAvailable = false if the container cannot be started (e.g. Docker not running).
     /// </summary>
     public async Task InitializeAsync()
     {
         try
         {
+            await CleanupOrphanedContainersAsync("conduit-test=kafka");
+
+            var existing = await TryReuseContainerAsync("conduit-test=kafka", 9093);
+            if (existing is not null)
+            {
+                this.bootstrapServers = $"{existing.Value.Hostname}:{existing.Value.Port}";
+                this.IsAvailable = true;
+                return;
+            }
+
             // Use Testcontainers.Kafka for proper advertised listener handling
             this.container = new KafkaBuilder("confluentinc/cp-kafka:7.7.1")
+                .WithLabel("conduit-test", "kafka")
                 .Build();
 
             await this.container.StartAsync();
@@ -72,13 +85,13 @@ public class KafkaFixture : TransportTestFixture
     }
 
     /// <summary>
-    /// Disposes all hosts and the Kafka container.
+    /// Disposes all hosts and the Kafka container (unless reuse is enabled).
     /// </summary>
     public async Task CleanupAsync()
     {
         await this.DisposeHostsAsync();
 
-        if (this.container is not null)
+        if (this.container is not null && !ReuseContainers)
         {
             await this.container.DisposeAsync();
         }

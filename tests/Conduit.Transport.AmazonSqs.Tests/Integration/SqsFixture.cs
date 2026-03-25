@@ -49,15 +49,28 @@ public class SqsFixture : TransportTestFixture
 
     /// <summary>
     /// Starts the LocalStack container and captures the service address.
+    /// Cleans up orphaned containers from previous runs and supports reuse
+    /// via the CONDUIT_REUSE_CONTAINERS environment variable.
     /// Sets IsAvailable = false if the container cannot be started (e.g. Docker not running).
     /// </summary>
     public async Task InitializeAsync()
     {
         try
         {
+            await CleanupOrphanedContainersAsync("conduit-test=sqs");
+
+            var existing = await TryReuseContainerAsync("conduit-test=sqs", 4566);
+            if (existing is not null)
+            {
+                this.serviceAddress = $"http://{existing.Value.Hostname}:{existing.Value.Port}";
+                this.IsAvailable = true;
+                return;
+            }
+
             this.container = new ContainerBuilder("localstack/localstack:4.3")
                 .WithPortBinding(4566, true)
                 .WithEnvironment("SERVICES", "sns,sqs")
+                .WithLabel("conduit-test", "sqs")
                 .WithWaitStrategy(Wait.ForUnixContainer()
                     .UntilHttpRequestIsSucceeded(request =>
                         request.ForPath("/_localstack/health").ForPort(4566)))
@@ -78,13 +91,13 @@ public class SqsFixture : TransportTestFixture
     }
 
     /// <summary>
-    /// Disposes all hosts and the LocalStack container.
+    /// Disposes all hosts and the LocalStack container (unless reuse is enabled).
     /// </summary>
     public async Task CleanupAsync()
     {
         await this.DisposeHostsAsync();
 
-        if (this.container is not null)
+        if (this.container is not null && !ReuseContainers)
         {
             await this.container.DisposeAsync();
         }

@@ -15,21 +15,9 @@ namespace Conduit.Transport.Kafka.Tests.Integration;
 [DoNotParallelize]
 public class KafkaCompetingInstanceShould
 {
-    private static readonly KafkaFixture Fixture = new();
+    private static KafkaFixture Fixture => AssemblySetup.Fixture;
 
     private const string ContractsNamespace = "Conduit.Transport.Kafka.Tests.Support.Contracts";
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
 
     [TestCleanup]
     public async Task TestCleanup()

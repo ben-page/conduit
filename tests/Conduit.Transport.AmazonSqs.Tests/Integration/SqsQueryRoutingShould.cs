@@ -18,21 +18,9 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 [DoNotParallelize]
 public class SqsQueryRoutingShould
 {
-    private static readonly SqsFixture Fixture = new();
+    private static SqsFixture Fixture => AssemblySetup.Fixture;
 
     private const string ContractsNamespace = "Conduit.Transport.AmazonSqs.Tests.Support.Contracts";
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
 
     [TestCleanup]
     public async Task TestCleanup()

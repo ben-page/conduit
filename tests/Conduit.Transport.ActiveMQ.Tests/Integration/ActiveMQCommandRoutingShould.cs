@@ -20,21 +20,9 @@ namespace Conduit.Transport.ActiveMQ.Tests.Integration;
 [DoNotParallelize]
 public class ActiveMQCommandRoutingShould
 {
-    private static readonly ActiveMQFixture Fixture = new();
+    private static ActiveMQFixture Fixture => AssemblySetup.Fixture;
 
     private const string ContractsNamespace = "Conduit.Transport.ActiveMQ.Tests.Support.Contracts";
-
-    [ClassInitialize]
-    public static async Task ClassInitialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
-
-    [ClassCleanup]
-    public static async Task ClassCleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
 
     [TestCleanup]
     public async Task TestCleanup()

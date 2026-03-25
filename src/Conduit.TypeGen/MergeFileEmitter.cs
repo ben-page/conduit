@@ -17,11 +17,10 @@ public static class MergeFileEmitter
     /// Generates the merge file content for the given types.
     /// </summary>
     /// <param name="types">The dispatchable types.</param>
-    /// <param name="assembly">The assembly to resolve types from (may be from MetadataLoadContext).</param>
+    /// <param name="assemblies">The assemblies to resolve types from (may be from MetadataLoadContext).</param>
     /// <param name="includeSignalR">Whether to re-export the SignalR transport.</param>
-    /// <param name="metadataContext">Optional MetadataLoadContext for resolving types from referenced assemblies.</param>
     /// <returns>The generated TypeScript source.</returns>
-    public static string Emit(IReadOnlyList<DispatchableTypeInfo> types, Assembly? assembly = null, bool includeSignalR = true, MetadataLoadContext? metadataContext = null)
+    public static string Emit(IReadOnlyList<DispatchableTypeInfo> types, IReadOnlyList<Assembly>? assemblies = null, bool includeSignalR = true)
     {
         ArgumentNullException.ThrowIfNull(types);
 
@@ -34,23 +33,25 @@ public static class MergeFileEmitter
         // Emit type interfaces for [ClientVisible] types
         foreach (var typeInfo in types)
         {
-            var resolvedType = assembly?.GetType(typeInfo.FullTypeName);
+            var resolvedType = assemblies != null
+                ? TypeCollector.ResolveType(assemblies, typeInfo.FullTypeName)
+                : null;
             EmitInterface(sb, typeInfo.TypeName, resolvedType);
             sb.AppendLine();
         }
 
         // Discover and emit transitively-referenced types (Domain DTOs, etc.)
         // Seeds from both [ClientVisible] type properties AND query/command result types
-        if (assembly != null)
+        if (assemblies != null)
         {
             var rootNames = types.Select(t => t.FullTypeName).ToList();
             var resultTypes = types
                 .Where(t => t.ResultFullTypeName is not null)
-                .Select(t => ResolveResultRootType(t.ResultFullTypeName!, assembly, metadataContext))
+                .Select(t => ResolveResultRootType(t.ResultFullTypeName!, assemblies))
                 .OfType<Type>()
                 .ToList();
 
-            var referencedTypes = TypeCollector.CollectReferencedTypes(rootNames, resultTypes, assembly);
+            var referencedTypes = TypeCollector.CollectReferencedTypes(rootNames, resultTypes, assemblies);
             foreach (var refType in referencedTypes)
             {
                 EmitInterface(sb, refType.Name, refType);
@@ -59,7 +60,7 @@ public static class MergeFileEmitter
         }
 
         // Emit type maps
-        TypeMapEmitter.EmitMaps(sb, types, assembly);
+        TypeMapEmitter.EmitMaps(sb, types, assemblies);
 
         // Emit type aliases
         var hasCommands = types.Any(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand);
@@ -90,41 +91,10 @@ public static class MergeFileEmitter
     /// Resolves a result type name to its root complex type, recursively unwrapping
     /// collections and dictionaries (e.g. <c>List&lt;Dict&lt;string, MyDto&gt;&gt;</c> → <c>MyDto</c>).
     /// </summary>
-    private static Type? ResolveResultRootType(string resultFullTypeName, Assembly assembly, MetadataLoadContext? metadataContext)
+    private static Type? ResolveResultRootType(string resultFullTypeName, IReadOnlyList<Assembly> assemblies)
     {
         var typeName = UnwrapToInnerType(resultFullTypeName);
-
-        // Search the primary assembly first
-        var type = assembly.GetType(typeName);
-        if (type != null)
-        {
-            return type;
-        }
-
-        // Search referenced assemblies via MetadataLoadContext
-        if (metadataContext != null)
-        {
-            foreach (var refAssemblyName in assembly.GetReferencedAssemblies())
-            {
-                try
-                {
-                    var refAssembly = metadataContext.LoadFromAssemblyName(refAssemblyName);
-                    type = refAssembly.GetType(typeName);
-                    if (type != null)
-                    {
-                        return type;
-                    }
-                }
-#pragma warning disable CA1031
-                catch
-#pragma warning restore CA1031
-                {
-                    // Assembly not loadable — skip
-                }
-            }
-        }
-
-        return null;
+        return TypeCollector.ResolveType(assemblies, typeName);
     }
 
     /// <summary>

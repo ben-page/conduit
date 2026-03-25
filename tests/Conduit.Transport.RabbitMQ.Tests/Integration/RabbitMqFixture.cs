@@ -47,13 +47,26 @@ public class RabbitMqFixture : TransportTestFixture
 
     /// <summary>
     /// Starts the RabbitMQ container and captures the connection string.
+    /// Cleans up orphaned containers from previous runs and supports reuse
+    /// via the CONDUIT_REUSE_CONTAINERS environment variable.
     /// Sets IsAvailable = false if the container cannot be started (e.g. Docker not running).
     /// </summary>
     public async Task InitializeAsync()
     {
         try
         {
+            await CleanupOrphanedContainersAsync("conduit-test=rabbitmq");
+
+            var existing = await TryReuseContainerAsync("conduit-test=rabbitmq", 5672);
+            if (existing is not null)
+            {
+                this.connectionString = $"amqp://guest:guest@{existing.Value.Hostname}:{existing.Value.Port}";
+                this.IsAvailable = true;
+                return;
+            }
+
             this.container = new RabbitMqBuilder("rabbitmq:4-management-alpine")
+                .WithLabel("conduit-test", "rabbitmq")
                 .Build();
             await this.container.StartAsync();
             this.connectionString = this.container.GetConnectionString();
@@ -69,13 +82,13 @@ public class RabbitMqFixture : TransportTestFixture
     }
 
     /// <summary>
-    /// Disposes all hosts and the RabbitMQ container.
+    /// Disposes all hosts and the RabbitMQ container (unless reuse is enabled).
     /// </summary>
     public async Task CleanupAsync()
     {
         await this.DisposeHostsAsync();
 
-        if (this.container is not null)
+        if (this.container is not null && !ReuseContainers)
         {
             await this.container.DisposeAsync();
         }
