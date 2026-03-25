@@ -17,44 +17,25 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 /// bystander invocations. If these fail, the topology has a multicast bug.
 /// </remarks>
 [TestClass]
-[DoNotParallelize]
-public class RabbitMqCommandRoutingShould
+public class RabbitMqCommandRoutingShould : RabbitMqTestBase
 {
-    private static RabbitMqFixture Fixture => AssemblySetup.Fixture;
-
     private const string ContractsNamespace = "Conduit.Transport.RabbitMQ.Tests.Support.Contracts";
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("RabbitMQ container not available. Ensure Docker/Podman is running.");
-        }
-    }
 
     [TestMethod]
     public async Task RouteCommandToCorrectEndpoint()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
+        var bystanderName = UniqueAppName("bystander");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-        var bystanderName = TransportTestFixture.UniqueAppName("bystander");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var bystanderHost = await Fixture.CreateHostAsync(bystanderName, handling =>
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var bystanderHost = await CreateHostAsync(bystanderName, handling =>
         {
             handling.ClearCommandHandlers();
             handling.ClearQueryHandlers();
         });
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
@@ -80,13 +61,11 @@ public class RabbitMqCommandRoutingShould
     public async Task ReturnCommandResponseToCaller()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        await Fixture.CreateHostAsync(handlerName);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var _ = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -103,19 +82,17 @@ public class RabbitMqCommandRoutingShould
     public async Task RouteVoidCommandAndComplete()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
+        var bystanderName = UniqueAppName("bystander");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-        var bystanderName = TransportTestFixture.UniqueAppName("bystander");
-
-        var handlerHost = await Fixture.CreateHostAsync(handlerName);
-        var bystanderHost = await Fixture.CreateHostAsync(bystanderName, handling =>
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var bystanderHost = await CreateHostAsync(bystanderName, handling =>
         {
             handling.ClearCommandHandlers();
             handling.ClearQueryHandlers();
         });
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
@@ -138,13 +115,11 @@ public class RabbitMqCommandRoutingShould
     public async Task PropagateConduitExceptionAsFailResult()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        await Fixture.CreateHostAsync(handlerName);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var _ = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -162,13 +137,11 @@ public class RabbitMqCommandRoutingShould
     public async Task ReturnInternalErrorForUnexpectedException()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("handler");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        await Fixture.CreateHostAsync(handlerName);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var _ = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -187,17 +160,10 @@ public class RabbitMqCommandRoutingShould
     public async Task TimeoutWhenNoHandlerAvailable()
     {
         // Arrange — use a short ResponseTimeout so the test doesn't block for 60s
-        EnsureAvailable();
-
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-        var senderHost = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<SpyLog>();
-            Fixture.ConfigureSenderTransport(
-                builder, senderName, ContractsNamespace, "broker",
-                opts => opts.ResponseTimeout = TimeSpan.FromSeconds(5));
-        });
-        Fixture.TrackHost(senderHost);
+        var senderName = UniqueAppName("sender");
+        await using var senderHost = await CreateSenderHostAsync(
+            senderName, ContractsNamespace, "broker",
+            opts => opts.ResponseTimeout = TimeSpan.FromSeconds(5));
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
