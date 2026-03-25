@@ -13,29 +13,12 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 /// queues with independent prefetch settings, while unassigned types go to the default queue.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class RabbitMqReceiverPoolShould
+public class RabbitMqReceiverPoolShould : RabbitMqTestBase
 {
-    private static RabbitMqFixture Fixture => AssemblySetup.Fixture;
-
     private const string ContractsNamespace = "Conduit.Transport.RabbitMQ.Tests.Support.Contracts";
 
     private const string SlowCommandTypeName =
         "Conduit.Transport.RabbitMQ.Tests.Support.Contracts.SlowCommand";
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("RabbitMQ container not available. Ensure Docker/Podman is running.");
-        }
-    }
 
     /// <summary>
     /// Creates a handler host with a named receiver pool that routes SlowCommand
@@ -46,19 +29,16 @@ public class RabbitMqReceiverPoolShould
         string poolName,
         ushort poolPrefetchCount)
     {
-        var connectionString = Fixture.ConnectionString;
-        var prefix = Fixture.TopologyPrefix;
-
-        var host = await TestHost.StartAsync(builder =>
+        return await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             builder.Services.AddConduit(conduit =>
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = prefix;
+                conduit.TopologyPrefix = TopologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(connectionString, options =>
+                    endpoint.UseRabbitMQ(ConnectionString!, options =>
                     {
                         options.Pools.Add(new ReceiverPoolOptions
                         {
@@ -69,22 +49,17 @@ public class RabbitMqReceiverPoolShould
                     }));
             });
         });
-
-        Fixture.TrackHost(host);
-        return host;
     }
 
     [TestMethod]
     public async Task RouteMessageToCorrectPool()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -105,13 +80,11 @@ public class RabbitMqReceiverPoolShould
     public async Task RouteUnassignedTypesToDefaultPool()
     {
         // Arrange
-        EnsureAvailable();
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
-
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -133,14 +106,12 @@ public class RabbitMqReceiverPoolShould
     public async Task IsolatePoolConcurrency()
     {
         // Arrange
-        EnsureAvailable();
-
-        var handlerName = TransportTestFixture.UniqueAppName("pool");
-        var senderName = TransportTestFixture.UniqueAppName("sender");
+        var handlerName = UniqueAppName("pool");
+        var senderName = UniqueAppName("sender");
 
         // Slow pool with prefetch=1, default pool uses DefaultPrefetchCount
-        var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        var senderHost = await Fixture.CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
+        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();

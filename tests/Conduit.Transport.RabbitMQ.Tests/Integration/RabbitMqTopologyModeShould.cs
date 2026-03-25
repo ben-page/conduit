@@ -14,25 +14,8 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 /// with independent random prefixes.
 /// </summary>
 [TestClass]
-[DoNotParallelize]
-public class RabbitMqTopologyModeShould
+public class RabbitMqTopologyModeShould : RabbitMqTestBase
 {
-    private static RabbitMqFixture Fixture => AssemblySetup.Fixture;
-
-    [TestCleanup]
-    public async Task TestCleanup()
-    {
-        await Fixture.DisposeHostsAsync();
-    }
-
-    private static void EnsureAvailable()
-    {
-        if (!Fixture.IsAvailable)
-        {
-            Assert.Inconclusive("RabbitMQ container not available. Ensure Docker/Podman is running.");
-        }
-    }
-
     /// <summary>
     /// Creates a host with the specified topology mode and optional developer prefix.
     /// </summary>
@@ -41,9 +24,7 @@ public class RabbitMqTopologyModeShould
         TopologyMode topologyMode,
         string? topologyPrefix = null)
     {
-        var connectionString = Fixture.ConnectionString;
-
-        var host = await TestHost.StartAsync(builder =>
+        return await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             builder.Services.AddConduit(conduit =>
@@ -52,12 +33,9 @@ public class RabbitMqTopologyModeShould
                 conduit.TopologyMode = topologyMode;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(connectionString));
+                    endpoint.UseRabbitMQ(ConnectionString!));
             });
         });
-
-        Fixture.TrackHost(host);
-        return host;
     }
 
     [TestMethod]
@@ -66,13 +44,11 @@ public class RabbitMqTopologyModeShould
         // Arrange — use Test mode for isolation, but verify the host can start
         // with Production topology settings. Durability correctness is verified
         // by unit tests (TM-4.1); this test proves the host starts without error.
-        EnsureAvailable();
-
-        var appName = TransportTestFixture.UniqueAppName("prod");
+        var appName = UniqueAppName("prod");
         var prefix = $"prod-{Guid.NewGuid():N}"[..12];
 
         // Act
-        var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production, prefix);
+        await using var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production, prefix);
 
         // Assert — the host is running (topology creation succeeded)
         var mediator = host.GetRequiredService<IMediator>();
@@ -83,13 +59,11 @@ public class RabbitMqTopologyModeShould
     public async Task CreateEphemeralResourcesInDeveloperMode()
     {
         // Arrange
-        EnsureAvailable();
-
-        var appName = TransportTestFixture.UniqueAppName("dev");
+        var appName = UniqueAppName("dev");
         var prefix = $"dev-{Guid.NewGuid():N}"[..10];
 
         // Act — host starts successfully with Developer mode ephemeral resources
-        var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Developer, prefix);
+        await using var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Developer, prefix);
 
         // Assert — the host is running (topology creation succeeded)
         var mediator = host.GetRequiredService<IMediator>();
@@ -100,15 +74,13 @@ public class RabbitMqTopologyModeShould
     public async Task IsolateTestModeRuns()
     {
         // Arrange
-        EnsureAvailable();
-
-        var appName1 = TransportTestFixture.UniqueAppName("iso-a");
-        var appName2 = TransportTestFixture.UniqueAppName("iso-b");
+        var appName1 = UniqueAppName("iso-a");
+        var appName2 = UniqueAppName("iso-b");
 
         // Two hosts with TopologyMode.Test — each gets a random prefix,
         // so they create different exchanges/queues and cannot communicate
-        var host1 = await CreateHostWithTopologyModeAsync(appName1, TopologyMode.Test);
-        var host2 = await CreateHostWithTopologyModeAsync(appName2, TopologyMode.Test);
+        await using var host1 = await CreateHostWithTopologyModeAsync(appName1, TopologyMode.Test);
+        await using var host2 = await CreateHostWithTopologyModeAsync(appName2, TopologyMode.Test);
 
         var spy1 = host1.GetRequiredService<SpyLog>();
         var spy2 = host2.GetRequiredService<SpyLog>();

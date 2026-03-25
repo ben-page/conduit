@@ -3,17 +3,9 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 [TestClass]
 public static class AssemblySetup
 {
-    public static RabbitMqFixture Fixture { get; } = new();
-
     [AssemblyInitialize]
-    public static async Task Initialize(TestContext context)
-    {
-        await Fixture.InitializeAsync();
-    }
+    public static Task Initialize(TestContext context) => RabbitMqTestBase.InitializeContainer();
 
     [AssemblyCleanup]
-    public static async Task Cleanup()
-    {
-        await Fixture.CleanupAsync();
-    }
+    public static Task Cleanup() => RabbitMqTestBase.CleanupContainer();
 }
