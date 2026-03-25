@@ -63,13 +63,16 @@ public class RabbitMqTopologyModeShould
     [TestMethod]
     public async Task CreateDurableResourcesInProductionMode()
     {
-        // Arrange
+        // Arrange — use Test mode for isolation, but verify the host can start
+        // with Production topology settings. Durability correctness is verified
+        // by unit tests (TM-4.1); this test proves the host starts without error.
         EnsureAvailable();
 
         var appName = TransportTestFixture.UniqueAppName("prod");
+        var prefix = $"prod-{Guid.NewGuid():N}"[..12];
 
-        // Act — host starts successfully, meaning topology was created without error
-        var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production);
+        // Act
+        var host = await CreateHostWithTopologyModeAsync(appName, TopologyMode.Production, prefix);
 
         // Assert — the host is running (topology creation succeeded)
         var mediator = host.GetRequiredService<IMediator>();
