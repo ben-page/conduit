@@ -27,10 +27,10 @@ public class SqsReceiverPoolShould : SqsTestBase
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
-        int poolMaxConcurrency)
+        int poolMaxConcurrency,
+        string? topologyPrefix = null)
     {
         var address = ServiceAddress;
-        var prefix = TopologyPrefix;
 
         return await TestHost.StartAsync(builder =>
         {
@@ -39,7 +39,12 @@ public class SqsReceiverPoolShould : SqsTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = prefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
                     {
@@ -63,7 +68,8 @@ public class SqsReceiverPoolShould : SqsTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -88,7 +94,8 @@ public class SqsReceiverPoolShould : SqsTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -115,7 +122,8 @@ public class SqsReceiverPoolShould : SqsTestBase
 
         // Slow pool with maxConcurrency=1, default pool uses DefaultMaxConcurrency
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();

@@ -2,7 +2,6 @@ using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.TestUtils;
 using Conduit.Transport.AzureServiceBus;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Testcontainers.ServiceBus;
@@ -24,15 +23,22 @@ public abstract class AsbTestBase
 
     public static async Task InitializeContainer()
     {
-        // Priority: 1) user secrets, 2) env var, 3) emulator container
-        var connectionString = LoadConnectionStringFromSecrets()
-            ?? Environment.GetEnvironmentVariable("CONDUIT_ASB_CONNECTION_STRING");
+        var config = TestConfiguration.Load<AsbTestBase>();
 
+        // If a connection string is configured, use it directly — no container needed
+        var connectionString = config.GetConnectionString("AzureServiceBus");
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
             ConnectionString = connectionString;
             AdminConnectionString = connectionString;
             isAvailable = true;
+            return;
+        }
+
+        // No connection string — start a test container if enabled
+        if (!config.UseTestContainer("AzureServiceBus"))
+        {
+            isAvailable = false;
             return;
         }
 
@@ -45,13 +51,11 @@ public abstract class AsbTestBase
             {
                 var amqpPort = existing.Value.Ports[5672];
                 var httpPort = existing.Value.Ports[5300];
-                // AMQP connection string uses amqp:// scheme
                 ConnectionString =
                     $"Endpoint=amqp://{existing.Value.Hostname}:{amqpPort}/;" +
                     "SharedAccessKeyName=RootManageSharedAccessKey;" +
                     "SharedAccessKey=SAS_KEY_VALUE;" +
                     "UseDevelopmentEmulator=true";
-                // Admin connection string uses sb:// scheme on the HTTP port
                 AdminConnectionString =
                     $"Endpoint=sb://{existing.Value.Hostname}:{httpPort}/;" +
                     "SharedAccessKeyName=RootManageSharedAccessKey;" +
@@ -169,20 +173,4 @@ public abstract class AsbTestBase
 
     protected static string UniqueAppName(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}"[..15];
-
-    private static string? LoadConnectionStringFromSecrets()
-    {
-        try
-        {
-            var config = new ConfigurationBuilder()
-                .AddUserSecrets<AsbTestBase>()
-                .Build();
-
-            return config["Conduit:AzureServiceBus:ConnectionString"];
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }

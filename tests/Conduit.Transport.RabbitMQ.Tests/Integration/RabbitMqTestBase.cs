@@ -22,6 +22,22 @@ public abstract class RabbitMqTestBase
 
     public static async Task InitializeContainer()
     {
+        var config = TestConfiguration.Load<RabbitMqTestBase>();
+
+        var connectionString = config.GetConnectionString("RabbitMQ");
+        if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            ConnectionString = connectionString;
+            isAvailable = true;
+            return;
+        }
+
+        if (!config.UseTestContainer("RabbitMQ"))
+        {
+            isAvailable = false;
+            return;
+        }
+
         try
         {
             await ContainerHelper.CleanupOrphanedContainersAsync("conduit-test=rabbitmq");

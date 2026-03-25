@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.TestUtils;
 using Conduit.Transport.Kafka.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,8 +11,7 @@ namespace Conduit.Transport.Kafka.Tests.Integration;
 /// error propagation, and timeout behavior. Covers spec matrix 1.1-1.6.
 /// </summary>
 /// <remarks>
-/// Tests run sequentially because all hosts share the same Kafka topic (via a shared
-/// topology prefix). Parallel execution would cause cross-test message delivery.
+/// Each test creates its own topology prefix via the first host, ensuring parallel-safe isolation.
 ///
 /// Assertions enforce strict unicast semantics: exactly one handler invocation and zero
 /// bystander invocations. If these fail, the topology has a multicast bug.
@@ -30,12 +30,13 @@ public class KafkaCommandRoutingShould : KafkaTestBase
         var bystanderName = UniqueAppName("bystander");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var bystanderHost = await CreateHostAsync(bystanderName, handling =>
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var bystanderHost = await CreateHostAsync(bystanderName, prefix, handling =>
         {
             handling.ClearCommandHandlers();
             handling.ClearQueryHandlers();
         });
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
@@ -64,8 +65,9 @@ public class KafkaCommandRoutingShould : KafkaTestBase
         var handlerName = UniqueAppName("handler");
         var senderName = UniqueAppName("sender");
 
-        await using var _ = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -87,12 +89,13 @@ public class KafkaCommandRoutingShould : KafkaTestBase
         var bystanderName = UniqueAppName("bystander");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var bystanderHost = await CreateHostAsync(bystanderName, handling =>
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var bystanderHost = await CreateHostAsync(bystanderName, prefix, handling =>
         {
             handling.ClearCommandHandlers();
             handling.ClearQueryHandlers();
         });
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
@@ -118,8 +121,9 @@ public class KafkaCommandRoutingShould : KafkaTestBase
         var handlerName = UniqueAppName("handler");
         var senderName = UniqueAppName("sender");
 
-        await using var _ = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -140,8 +144,9 @@ public class KafkaCommandRoutingShould : KafkaTestBase
         var handlerName = UniqueAppName("handler");
         var senderName = UniqueAppName("sender");
 
-        await using var _ = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -161,9 +166,10 @@ public class KafkaCommandRoutingShould : KafkaTestBase
     {
         // Arrange — use a short ResponseTimeout so the test doesn't block for 60s
         var senderName = UniqueAppName("sender");
+        var prefix = new ConduitOptions { TopologyMode = TopologyMode.Test }.TopologyPrefix!;
 
         await using var senderHost = await CreateSenderHostAsync(
-            senderName, ContractsNamespace, "broker",
+            senderName, prefix, ContractsNamespace, "broker",
             opts => opts.ResponseTimeout = TimeSpan.FromSeconds(5));
 
         var mediator = senderHost.GetRequiredService<IMediator>();
