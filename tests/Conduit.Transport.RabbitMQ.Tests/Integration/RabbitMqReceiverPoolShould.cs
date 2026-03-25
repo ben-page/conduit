@@ -27,7 +27,8 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
-        ushort poolPrefetchCount)
+        ushort poolPrefetchCount,
+        string? topologyPrefix = null)
     {
         return await TestHost.StartAsync(builder =>
         {
@@ -36,7 +37,12 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = TopologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseRabbitMQ(ConnectionString!, options =>
                     {
@@ -59,7 +65,8 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -84,7 +91,8 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -111,7 +119,8 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
 
         // Slow pool with prefetch=1, default pool uses DefaultPrefetchCount
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();

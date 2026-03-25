@@ -23,7 +23,8 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -49,7 +50,8 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -74,8 +76,17 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var handlerName = UniqueAppName("handler");
         var publisherName = UniqueAppName("pub");
 
-        await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        await using var handlerHost = await CreateHostAsync(handlerName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
@@ -100,7 +111,8 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();

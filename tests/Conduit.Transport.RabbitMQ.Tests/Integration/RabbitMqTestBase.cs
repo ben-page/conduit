@@ -10,17 +10,15 @@ namespace Conduit.Transport.RabbitMQ.Tests.Integration;
 
 /// <summary>
 /// Base class for RabbitMQ integration tests. Manages the RabbitMQ container lifecycle (static)
-/// and provides factory methods for creating test hosts.
+/// and provides factory methods for creating test hosts with per-test topology isolation.
 /// </summary>
 [TestClass]
 public abstract class RabbitMqTestBase
 {
     private static RabbitMqContainer? container;
-    private static string? sharedPrefix;
     private static bool isAvailable;
 
     protected static string? ConnectionString { get; private set; }
-    protected static string TopologyPrefix => GetSharedPrefix();
 
     public static async Task InitializeContainer()
     {
@@ -69,8 +67,14 @@ public abstract class RabbitMqTestBase
         }
     }
 
+    /// <summary>
+    /// Creates a handler/listener host. When <paramref name="topologyPrefix"/> is null,
+    /// a new unique prefix is auto-generated (use <see cref="TestHost.TopologyPrefix"/>
+    /// to pass it to subsequent hosts in the same test).
+    /// </summary>
     protected static async Task<TestHost> CreateHostAsync(
         string applicationName,
+        string? topologyPrefix = null,
         Action<ConduitRegistrationOverrides>? configureHandling = null)
     {
         return await TestHost.StartAsync(builder =>
@@ -80,7 +84,12 @@ public abstract class RabbitMqTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = TopologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseRabbitMQ(ConnectionString!));
             });
@@ -92,8 +101,13 @@ public abstract class RabbitMqTestBase
         });
     }
 
+    /// <summary>
+    /// Creates a sender host with routing. Uses the provided <paramref name="topologyPrefix"/>
+    /// to share topology with the handler host in the same test.
+    /// </summary>
     protected static async Task<TestHost> CreateSenderHostAsync(
         string applicationName,
+        string topologyPrefix,
         string routeNamespace,
         string targetEndpointName,
         Action<RabbitMQOptions>? configureOptions = null)
@@ -106,7 +120,7 @@ public abstract class RabbitMqTestBase
                 conduit.ApplicationName = applicationName;
                 conduit.ProducerOnly = true;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = TopologyPrefix;
+                conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
                     endpoint.UseRabbitMQ(ConnectionString!, configureOptions));
                 conduit.Options.Routes.Add(new ConduitRoute
@@ -120,10 +134,4 @@ public abstract class RabbitMqTestBase
 
     protected static string UniqueAppName(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}"[..15];
-
-    private static string GetSharedPrefix()
-    {
-        sharedPrefix ??= new ConduitOptions { TopologyMode = TopologyMode.Test }.TopologyPrefix!;
-        return sharedPrefix;
-    }
 }
