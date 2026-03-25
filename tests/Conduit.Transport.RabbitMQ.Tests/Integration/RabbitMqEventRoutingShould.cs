@@ -24,9 +24,22 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
         var appNameB = UniqueAppName("app-b");
         var publisherName = UniqueAppName("pub");
 
-        await using var hostA = await CreateHostAsync(appNameA);
-        await using var hostB = await CreateHostAsync(appNameB);
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        await using var hostA = await CreateHostAsync(appNameA, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        var prefix = hostA.TopologyPrefix!;
+        await using var hostB = await CreateHostAsync(appNameB, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var spyA = hostA.GetRequiredService<SpyLog>();
         var spyB = hostB.GetRequiredService<SpyLog>();
@@ -51,8 +64,17 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
         var handlerName = UniqueAppName("handler");
         var publisherName = UniqueAppName("pub");
 
-        await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        await using var handlerHost = await CreateHostAsync(handlerName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var publisherSpy = publisherHost.GetRequiredService<SpyLog>();
@@ -79,7 +101,11 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
         // Arrange
         var appName = UniqueAppName("app");
 
-        await using var host = await CreateHostAsync(appName);
+        await using var host = await CreateHostAsync(appName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var spy = host.GetRequiredService<SpyLog>();
         var mediator = host.GetRequiredService<IMediator>();
