@@ -31,7 +31,12 @@ public class RabbitMqTopologyModeShould : RabbitMqTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = topologyMode;
-                conduit.TopologyPrefix = topologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseRabbitMQ(ConnectionString!));
             });
