@@ -27,7 +27,8 @@ public class AsbReceiverPoolShould : AsbTestBase
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
-        int poolConcurrency)
+        int poolConcurrency,
+        string? topologyPrefix = null)
     {
         return await TestHost.StartAsync(builder =>
         {
@@ -36,7 +37,12 @@ public class AsbReceiverPoolShould : AsbTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = TopologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAzureServiceBus(ConnectionString!, options =>
                     {
@@ -60,7 +66,8 @@ public class AsbReceiverPoolShould : AsbTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -85,7 +92,8 @@ public class AsbReceiverPoolShould : AsbTestBase
         var senderName = UniqueAppName("sender");
 
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
@@ -112,7 +120,8 @@ public class AsbReceiverPoolShould : AsbTestBase
 
         // Slow pool with concurrency=1, default pool uses DefaultConcurrency
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();

@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.TestUtils;
 using Conduit.Transport.AzureServiceBus.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,12 +29,13 @@ public class AsbQueryRoutingShould : AsbTestBase
         var bystanderName = UniqueAppName("bystander");
 
         await using var handlerHost = await CreateHostAsync(handlerName);
-        await using var bystanderHost = await CreateHostAsync(bystanderName, handling =>
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var bystanderHost = await CreateHostAsync(bystanderName, prefix, handling =>
         {
             handling.ClearCommandHandlers();
             handling.ClearQueryHandlers();
         });
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
@@ -62,8 +64,8 @@ public class AsbQueryRoutingShould : AsbTestBase
         var handlerName = UniqueAppName("handler");
         var senderName = UniqueAppName("sender");
 
-        await using var _ = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -83,8 +85,8 @@ public class AsbQueryRoutingShould : AsbTestBase
         var handlerName = UniqueAppName("handler");
         var senderName = UniqueAppName("sender");
 
-        await using var _ = await CreateHostAsync(handlerName);
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
@@ -104,9 +106,10 @@ public class AsbQueryRoutingShould : AsbTestBase
     {
         // Arrange
         var senderName = UniqueAppName("sender");
+        var prefix = new ConduitOptions { TopologyMode = TopologyMode.Test }.TopologyPrefix!;
 
         await using var senderHost = await CreateSenderHostAsync(
-            senderName, ContractsNamespace, "broker",
+            senderName, prefix, ContractsNamespace, "broker",
             options => options.ResponseTimeout = TimeSpan.FromSeconds(5));
 
         var mediator = senderHost.GetRequiredService<IMediator>();

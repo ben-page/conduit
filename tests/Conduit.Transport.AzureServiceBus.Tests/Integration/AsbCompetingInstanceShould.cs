@@ -27,10 +27,11 @@ public class AsbCompetingInstanceShould : AsbTestBase
 
         // 3 handler instances with the SAME ApplicationName -> competing consumers
         await using var handler1 = await CreateHostAsync(sharedHandlerName);
-        await using var handler2 = await CreateHostAsync(sharedHandlerName);
-        await using var handler3 = await CreateHostAsync(sharedHandlerName);
+        var prefix = handler1.TopologyPrefix!;
+        await using var handler2 = await CreateHostAsync(sharedHandlerName, prefix);
+        await using var handler3 = await CreateHostAsync(sharedHandlerName, prefix);
 
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var spy1 = handler1.GetRequiredService<SpyLog>();
         var spy2 = handler2.GetRequiredService<SpyLog>();
@@ -64,10 +65,11 @@ public class AsbCompetingInstanceShould : AsbTestBase
 
         // 3 handler instances with the SAME ApplicationName -> competing consumers
         await using var handler1 = await CreateHostAsync(sharedHandlerName);
-        await using var handler2 = await CreateHostAsync(sharedHandlerName);
-        await using var handler3 = await CreateHostAsync(sharedHandlerName);
+        var prefix = handler1.TopologyPrefix!;
+        await using var handler2 = await CreateHostAsync(sharedHandlerName, prefix);
+        await using var handler3 = await CreateHostAsync(sharedHandlerName, prefix);
 
-        await using var senderHost = await CreateSenderHostAsync(senderName, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var spy1 = handler1.GetRequiredService<SpyLog>();
         var spy2 = handler2.GetRequiredService<SpyLog>();
@@ -103,11 +105,12 @@ public class AsbCompetingInstanceShould : AsbTestBase
 
         // 2 instances of AppB (same name) + 2 instances of AppC (same name)
         await using var hostB1 = await CreateHostAsync(appNameB);
-        await using var hostB2 = await CreateHostAsync(appNameB);
-        await using var hostC1 = await CreateHostAsync(appNameC);
-        await using var hostC2 = await CreateHostAsync(appNameC);
+        var prefix = hostB1.TopologyPrefix!;
+        await using var hostB2 = await CreateHostAsync(appNameB, prefix);
+        await using var hostC1 = await CreateHostAsync(appNameC, prefix);
+        await using var hostC2 = await CreateHostAsync(appNameC, prefix);
 
-        await using var publisherHost = await CreateHostAsync(publisherName);
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
 
         var spyB1 = hostB1.GetRequiredService<SpyLog>();
         var spyB2 = hostB2.GetRequiredService<SpyLog>();

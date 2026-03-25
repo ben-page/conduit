@@ -1,3 +1,4 @@
+using Conduit.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -18,10 +19,17 @@ public sealed class TestHost : IAsyncDisposable
     /// </summary>
     public IServiceProvider Services => this.scope.ServiceProvider;
 
-    private TestHost(IHost host)
+    /// <summary>
+    /// The topology prefix this host was configured with.
+    /// Used to share the same prefix across hosts within a single test.
+    /// </summary>
+    public string? TopologyPrefix { get; private set; }
+
+    private TestHost(IHost host, string? topologyPrefix)
     {
         this.host = host;
         this.scope = host.Services.CreateScope();
+        this.TopologyPrefix = topologyPrefix;
     }
 
     /// <summary>
@@ -36,7 +44,11 @@ public sealed class TestHost : IAsyncDisposable
         try
         {
             await host.StartAsync();
-            return new TestHost(host);
+
+            // Capture the resolved topology prefix so other hosts in the same test can share it
+            var topologyPrefix = host.Services.GetService<ConduitOptions>()?.TopologyPrefix;
+
+            return new TestHost(host, topologyPrefix);
         }
         catch
         {
