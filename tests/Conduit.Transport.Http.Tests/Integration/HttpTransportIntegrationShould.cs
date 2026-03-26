@@ -24,7 +24,7 @@ public class HttpTransportShould
             app =>
             {
                 app.MapConduitEndpoint();
-                app.MapHub<ConduitHub>("/hub");
+                app.MapHub<ConduitHub>("/conduit");
             });
     }
 
@@ -45,7 +45,7 @@ public class HttpTransportShould
                 });
                 builder.Services.AddConduitSignalR();
             },
-            app => app.MapHub<ConduitHub>("/hub"));
+            app => app.MapHub<ConduitHub>("/conduit"));
     }
 
     [TestMethod]

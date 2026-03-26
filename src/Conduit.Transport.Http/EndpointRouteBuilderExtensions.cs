@@ -16,13 +16,14 @@ public static class EndpointRouteBuilderExtensions
     /// and dispatch them through the <see cref="IWireMediator"/>.
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
-    /// <param name="path">The URL path for the dispatch endpoint. Defaults to "/api/dispatch".</param>
+    /// <param name="basePath">The base URL path for Conduit endpoints. Defaults to "/api/conduit".
+    /// Dispatch maps to "{basePath}/dispatch", publish maps to "{basePath}/publish".</param>
     /// <returns>The endpoint route builder for chaining.</returns>
     public static IEndpointRouteBuilder MapConduitEndpoint(
         this IEndpointRouteBuilder endpoints,
-        string path = "/api/dispatch")
+        string basePath = "/api/conduit")
     {
-        endpoints.MapPost(path, async (
+        endpoints.MapPost(basePath + "/dispatch", async (
             DispatchEnvelope envelope,
             IWireMediator mediator,
             CancellationToken cancellationToken) =>
@@ -37,7 +38,7 @@ public static class EndpointRouteBuilderExtensions
             return Results.Ok(result);
         });
 
-        endpoints.MapPost(path + "/publish", async (
+        endpoints.MapPost(basePath + "/publish", async (
             DispatchEnvelope envelope,
             IWireMediator mediator,
             CancellationToken cancellationToken) =>

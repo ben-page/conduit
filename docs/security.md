@@ -98,7 +98,7 @@ Conduit does not replace ASP.NET Core auth. The dispatch endpoints are standard 
 
 ```csharp
 app.MapConduitEndpoint().RequireAuthorization();
-app.MapHub<ConduitHub>("/hub").RequireAuthorization();
+app.MapHub<ConduitHub>("/conduit").RequireAuthorization();
 ```
 
 Or use `[Authorize]` on a hub subclass:
@@ -109,7 +109,7 @@ public class SecureConduitHub : ConduitHub;
 ```
 
 ```csharp
-app.MapHub<SecureConduitHub>("/hub");
+app.MapHub<SecureConduitHub>("/conduit");
 ```
 
 Use ASP.NET Core auth to verify identity. Use `TypeFilterInterceptor` to restrict which message types authenticated clients can dispatch.

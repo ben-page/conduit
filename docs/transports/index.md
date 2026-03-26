@@ -35,7 +35,7 @@ builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
     {
-        endpoint.UseSignalR(new Uri("https://inventory-service/hub"));
+        endpoint.UseSignalR(new Uri("https://inventory-service/conduit"));
         endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
     });
 });

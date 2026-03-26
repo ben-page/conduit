@@ -117,19 +117,19 @@ See [Error Handling](../error-handling.md) for built-in error codes and custom e
 For internal consumers that speak the Conduit wire protocol:
 
 ```csharp
-app.MapConduitEndpoint(); // defaults to /api/dispatch
+app.MapConduitEndpoint(); // defaults to /api/conduit
 ```
 
 This registers two POST endpoints:
 
-- **POST /api/dispatch** accepts a `DispatchEnvelope`, dispatches through `IWireMediator`, and returns a `DispatchResult` envelope.
-- **POST /api/dispatch/publish** accepts a `DispatchEnvelope` for event publication.
+- **POST /api/conduit/dispatch** accepts a `DispatchEnvelope`, dispatches through `IWireMediator`, and returns a `DispatchResult` envelope.
+- **POST /api/conduit/publish** accepts a `DispatchEnvelope` for event publication.
 
 You can customize the base path:
 
 ```csharp
 app.MapConduitEndpoint("/internal/conduit");
-// Creates /internal/conduit and /internal/conduit/publish
+// Creates /internal/conduit/dispatch and /internal/conduit/publish
 ```
 
 The envelope endpoint maps error code strings to HTTP status codes using a hardcoded switch (`NotFound` to 404, `Unauthorized` to 401, `Conflict` to 409, `InternalError` to 500, everything else to 400). Custom `ErrorCode` values with non-standard status codes fall through to 400. For accurate HTTP status codes on custom errors, use RESTful endpoints.
@@ -155,7 +155,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs `DispatchEnvelope` payloads to `/api/dispatch` (configurable via the `path` parameter).
+`UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs `DispatchEnvelope` payloads to `/api/conduit/dispatch` (configurable via the `basePath` parameter).
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
 

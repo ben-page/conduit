@@ -8,7 +8,7 @@ namespace Conduit.Transport.Http;
 /// Sends commands and queries to a remote Conduit endpoint via HTTP POST.
 /// Used for C#-to-C# service communication.
 /// </summary>
-public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
+public class HttpTransport(HttpClient httpClient, string basePath = "/api/conduit") : IConduitTransport
 {
     /// <inheritdoc />
     public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
@@ -23,7 +23,7 @@ public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch")
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
-        using var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
+        using var response = await httpClient.PostAsJsonAsync(basePath + "/dispatch", envelope, cancellationToken);
 
         // Read the body first to extract structured error info from DispatchResult,
         // then fall back to EnsureSuccessStatusCode for non-Conduit errors (503, network, etc.)

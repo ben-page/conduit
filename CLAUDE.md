@@ -138,7 +138,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 
 ### Conduit.Transport.Http
 - `HttpTransport` — outbound C#→C# request/response via HTTP POST. `UseHttp(httpClient)` registers as keyed singleton by endpoint name and calls `UseTransport<HttpTransport>()`
-- `MapConduitEndpoint()` — inbound HTTP envelope dispatch endpoint, maps POST `/api/dispatch` and `/api/dispatch/publish`
+- `MapConduitEndpoint()` — inbound HTTP envelope dispatch endpoint, maps POST `/api/conduit/dispatch` and `/api/conduit/publish` (base path configurable)
 - `ConduitRestHandlers` — typed handler helpers for RESTful endpoint mapping (query→route binding, command→body binding)
 - RESTful extension methods (`MapConduitGet<T>`, `MapConduitPost<T>`, etc.) are source-generated into `ConduitRestEndpoints` — conditionally emitted only when `Conduit.Transport.Http` is referenced
 - Maps `DispatchResult` error codes to HTTP status codes via `ErrorCode.ToHttpStatusCode()` (envelope endpoint); `ConduitException` → Problem Details (RESTful endpoints)

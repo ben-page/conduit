@@ -20,7 +20,7 @@ public class SignalRTransportShould
                 builder.Services.AddConduit();
                 builder.Services.AddConduitSignalR();
             },
-            app => app.MapHub<ConduitHub>("/hub"));
+            app => app.MapHub<ConduitHub>("/conduit"));
     }
 
     private static TestWebHost CreateCallerHost(string remoteAddress)
@@ -34,13 +34,13 @@ public class SignalRTransportShould
                 {
                     conduit.AddEndpoint("remote", endpoint =>
                     {
-                        endpoint.UseSignalR(new Uri($"{remoteAddress}/hub"));
+                        endpoint.UseSignalR(new Uri($"{remoteAddress}/conduit"));
                         endpoint.RouteNamespace<CreateItemCommand>();
                     });
                 });
                 builder.Services.AddConduitSignalR();
             },
-            app => app.MapHub<ConduitHub>("/hub"));
+            app => app.MapHub<ConduitHub>("/conduit"));
     }
 
     [TestMethod]

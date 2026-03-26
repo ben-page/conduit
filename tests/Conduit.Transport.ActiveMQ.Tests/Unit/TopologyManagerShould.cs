@@ -314,14 +314,15 @@ public class TopologyManagerShould
     [TestMethod]
     public void UseAmqpFilterOnQueues()
     {
-        // Arrange — the topology manager creates queues with AMQPSubject filter expressions
+        // Arrange — the topology manager creates queues with JMSType filter expressions.
+        // AMQP Subject maps to JMSType in Artemis core filter syntax.
         var messageType = "Orders.Commands.CreateOrder";
 
         // Act — reproduce the filter expression used by ActiveMQTopologyManager
-        var filterExpression = $"AMQPSubject='{messageType}'";
+        var filterExpression = $"JMSType='{messageType}'";
 
         // Assert
-        filterExpression.Should().Be("AMQPSubject='Orders.Commands.CreateOrder'");
+        filterExpression.Should().Be("JMSType='Orders.Commands.CreateOrder'");
     }
 
     // --- TM-S.12: SetAutoDeleteDelayForEphemeralQueues ---

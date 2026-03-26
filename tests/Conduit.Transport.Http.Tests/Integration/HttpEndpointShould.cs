@@ -25,7 +25,7 @@ public class HttpEndpointShould
 
         var app = builder.Build();
         app.MapConduitEndpoint();
-        app.MapHub<ConduitHub>("/hub");
+        app.MapHub<ConduitHub>("/conduit");
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
 
@@ -38,7 +38,7 @@ public class HttpEndpointShould
     {
         var payload = JsonSerializer.SerializeToElement(new { Name = name });
         var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.CreateItemCommand", payload);
-        var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+        var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         return json.GetProperty("data").GetString()!;
@@ -54,7 +54,7 @@ public class HttpEndpointShould
             var payload = JsonSerializer.SerializeToElement(new { Name = "Test Item" });
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.CreateItemCommand", payload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             response.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -77,7 +77,7 @@ public class HttpEndpointShould
             var deletePayload = JsonSerializer.SerializeToElement(new { Id = id });
             var deleteEnvelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.DeleteItemCommand", deletePayload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", deleteEnvelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", deleteEnvelope);
 
             response.StatusCode.Should().Be(HttpStatusCode.OK);
         }
@@ -95,7 +95,7 @@ public class HttpEndpointShould
             var queryPayload = JsonSerializer.SerializeToElement(new { Id = id });
             var queryEnvelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.GetItemQuery", queryPayload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", queryEnvelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", queryEnvelope);
 
             response.StatusCode.Should().Be(HttpStatusCode.OK);
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -114,7 +114,7 @@ public class HttpEndpointShould
             var queryPayload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
             var queryEnvelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.GetItemQuery", queryPayload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", queryEnvelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", queryEnvelope);
 
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -134,7 +134,7 @@ public class HttpEndpointShould
             var payload = JsonSerializer.SerializeToElement(new { });
             var envelope = new DispatchEnvelope("NonExistent.NonExistentCommand", payload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             ((int)response.StatusCode).Should().BeGreaterThanOrEqualTo(400);
         }
@@ -152,7 +152,7 @@ public class HttpEndpointShould
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ItemCreatedEvent", payload);
 
             // Act
-            var response = await client.PostAsJsonAsync("/api/dispatch/publish", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/publish", envelope);
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -171,7 +171,7 @@ public class HttpEndpointShould
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ThrowConflictCommand", payload);
 
             // Act
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.Conflict);
@@ -192,7 +192,7 @@ public class HttpEndpointShould
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ThrowUnauthorizedCommand", payload);
 
             // Act
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -213,7 +213,7 @@ public class HttpEndpointShould
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ThrowGenericCommand", payload);
 
             // Act
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             // Assert
             ((int)response.StatusCode).Should().Be(500);

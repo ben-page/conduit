@@ -71,7 +71,7 @@ public class BaseFileEmitterShould
         var result = BaseFileEmitter.Emit();
 
         // Assert
-        result.Should().Contain("import { HubConnection } from '@microsoft/signalr';");
+        result.Should().Contain("import { HubConnectionBuilder, HubConnection } from '@microsoft/signalr';");
         result.Should().Contain("export class SignalRTransport implements ConduitTransport");
     }
 
@@ -82,11 +82,11 @@ public class BaseFileEmitterShould
         var transports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Http", "SignalR" };
 
         // Act
-        var result = BaseFileEmitter.Emit(transports);
+        var result = BaseFileEmitter.Emit(transports, "/api/conduit", "/conduit");
 
         // Assert
         result.Should().Contain("export class SignalRTransport");
-        result.Should().Contain("import { HubConnection }");
+        result.Should().Contain("import { HubConnectionBuilder, HubConnection }");
     }
 
     [TestMethod]
@@ -96,7 +96,7 @@ public class BaseFileEmitterShould
         var transports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Http" };
 
         // Act
-        var result = BaseFileEmitter.Emit(transports);
+        var result = BaseFileEmitter.Emit(transports, "/api/conduit", "/conduit");
 
         // Assert
         result.Should().NotContain("export class SignalRTransport");
@@ -111,7 +111,7 @@ public class BaseFileEmitterShould
         var transports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Http" };
 
         // Act
-        var result = BaseFileEmitter.Emit(transports);
+        var result = BaseFileEmitter.Emit(transports, "/api/conduit", "/conduit");
 
         // Assert
         result.Should().Contain("export class HttpTransport implements ConduitTransport");

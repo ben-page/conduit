@@ -15,18 +15,18 @@ public static class EndpointBuilderExtensions
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="httpClient">An HttpClient with BaseAddress set to the remote service.</param>
-    /// <param name="path">The dispatch endpoint path. Defaults to "/api/dispatch".</param>
+    /// <param name="basePath">The base Conduit endpoint path. Defaults to "/api/conduit".</param>
     /// <returns>The endpoint builder for chaining.</returns>
     public static EndpointBuilder UseHttp(
         this EndpointBuilder builder,
         HttpClient httpClient,
-        string path = "/api/dispatch")
+        string basePath = "/api/conduit")
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(httpClient);
 
         builder.Services.AddKeyedSingleton(
-            builder.EndpointName, new HttpTransport(httpClient, path));
+            builder.EndpointName, new HttpTransport(httpClient, basePath));
 
         return builder.UseTransport<HttpTransport>();
     }

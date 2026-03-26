@@ -8,19 +8,24 @@ namespace Conduit.TypeGen;
 /// </summary>
 public static class BaseFileEmitter
 {
+    private const string DefaultBasePath = "/api/conduit";
+    private const string DefaultHubPath = "/conduit";
+
     private static readonly HashSet<string> DefaultTransports =
         new(StringComparer.OrdinalIgnoreCase) { "Http", "SignalR" };
 
     /// <summary>
     /// Returns the base TypeScript file content with default transports (Http + SignalR).
     /// </summary>
-    public static string Emit() => Emit(null);
+    public static string Emit() => Emit(null, DefaultBasePath, DefaultHubPath);
 
     /// <summary>
-    /// Returns the base TypeScript file content with the specified transports.
+    /// Returns the base TypeScript file content with the specified transports and paths.
     /// </summary>
     /// <param name="transports">The transports to include. Defaults to Http + SignalR.</param>
-    public static string Emit(HashSet<string>? transports)
+    /// <param name="basePath">The base path for Conduit HTTP endpoints.</param>
+    /// <param name="hubPath">The path for the SignalR hub.</param>
+    public static string Emit(HashSet<string>? transports, string basePath, string hubPath)
     {
         transports ??= DefaultTransports;
         var includeSignalR = transports.Contains("SignalR");
@@ -31,17 +36,17 @@ public static class BaseFileEmitter
 
         if (includeSignalR)
         {
-            sb.AppendLine("import { HubConnection } from '@microsoft/signalr';");
+            sb.AppendLine("import { HubConnectionBuilder, HubConnection } from '@microsoft/signalr';");
             sb.AppendLine();
         }
 
         EmitBaseTypes(sb);
         EmitTransportInterface(sb);
-        EmitHttpTransport(sb);
+        EmitHttpTransport(sb, basePath);
 
         if (includeSignalR)
         {
-            EmitSignalRTransport(sb);
+            EmitSignalRTransport(sb, hubPath);
         }
 
         return sb.ToString();
@@ -81,13 +86,13 @@ public static class BaseFileEmitter
         sb.AppendLine();
     }
 
-    private static void EmitHttpTransport(StringBuilder sb)
+    private static void EmitHttpTransport(StringBuilder sb, string basePath)
     {
         sb.AppendLine("export class HttpTransport implements ConduitTransport {");
-        sb.AppendLine("  constructor(private baseUrl: string, private path: string = '/api/dispatch') {}");
+        sb.AppendLine("  constructor(private baseUrl: string, private basePath: string = '" + basePath + "') {}");
         sb.AppendLine();
         sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>> {");
-        sb.AppendLine("    const response = await fetch(this.baseUrl + this.path, {");
+        sb.AppendLine("    const response = await fetch(this.baseUrl + this.basePath + '/dispatch', {");
         sb.AppendLine("      method: 'POST',");
         sb.AppendLine("      headers: { 'Content-Type': 'application/json' },");
         sb.AppendLine("      body: JSON.stringify({ type, payload }),");
@@ -101,7 +106,7 @@ public static class BaseFileEmitter
         sb.AppendLine("  }");
         sb.AppendLine();
         sb.AppendLine("  async sendEvent(type: string, data: unknown): Promise<void> {");
-        sb.AppendLine("    const response = await fetch(this.baseUrl + this.path + '/publish', {");
+        sb.AppendLine("    const response = await fetch(this.baseUrl + this.basePath + '/publish', {");
         sb.AppendLine("      method: 'POST',");
         sb.AppendLine("      headers: { 'Content-Type': 'application/json' },");
         sb.AppendLine("      body: JSON.stringify({ type, payload: data }),");
@@ -118,10 +123,25 @@ public static class BaseFileEmitter
         sb.AppendLine();
     }
 
-    private static void EmitSignalRTransport(StringBuilder sb)
+    private static void EmitSignalRTransport(StringBuilder sb, string hubPath)
     {
         sb.AppendLine("export class SignalRTransport implements ConduitTransport {");
-        sb.AppendLine("  constructor(private connection: HubConnection) {}");
+        sb.AppendLine("  private connection: HubConnection;");
+        sb.AppendLine();
+        sb.AppendLine("  constructor(hubPath: string = '" + hubPath + "') {");
+        sb.AppendLine("    this.connection = new HubConnectionBuilder()");
+        sb.AppendLine("      .withUrl(hubPath)");
+        sb.AppendLine("      .withAutomaticReconnect()");
+        sb.AppendLine("      .build();");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async start(): Promise<void> {");
+        sb.AppendLine("    await this.connection.start();");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async stop(): Promise<void> {");
+        sb.AppendLine("    await this.connection.stop();");
+        sb.AppendLine("  }");
         sb.AppendLine();
         sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>> {");
         sb.AppendLine("    return await this.connection.invoke<DispatchResult<TResult>>('Dispatch', type, payload);");

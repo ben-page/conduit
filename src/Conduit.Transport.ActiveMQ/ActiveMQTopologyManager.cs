@@ -107,7 +107,7 @@ internal sealed class ActiveMQTopologyManager
 
             await this.CreateQueueAsync(
                 session, anycastAddress, queueName, "ANYCAST",
-                filterExpression: $"AMQPSubject='{commandQueryType}'");
+                filterExpression: $"JMSType='{commandQueryType}'");
 
             sharedCommandQueryQueues.Add(queueName);
             cancellationToken.ThrowIfCancellationRequested();
@@ -157,7 +157,7 @@ internal sealed class ActiveMQTopologyManager
 
                     await this.CreateQueueAsync(
                         session, anycastAddress, sharedPoolQueueName, "ANYCAST",
-                        filterExpression: $"AMQPSubject='{messageType}'");
+                        filterExpression: $"JMSType='{messageType}'");
 
                     poolCommandQueryQueues.Add((sharedPoolQueueName, pool.PrefetchCount));
                 }

@@ -502,7 +502,6 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             source,
             null);
 
-        receiverLink.SetCredit(prefetchCount);
         receiverLink.Start(prefetchCount, this.OnMessageReceived);
         this.consumerLinks.Add(receiverLink);
     }
@@ -515,7 +514,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             Message = message,
         };
 
-        // Fire and forget — ProcessInboundMessageAsync handles ack/nack
+        // Fire and forget — ProcessInboundMessageAsync handles ack/abandon
         _ = this.ProcessInboundMessageAsync(inboundMessage);
     }
 
