@@ -31,7 +31,7 @@ public partial class Program
         app.UseDefaultFiles();
         app.UseStaticFiles();
         app.MapConduitEndpoint();
-        app.MapHub<ConduitHub>("/hub");
+        app.MapHub<ConduitHub>("/conduit");
         app.Run();
     }
 }

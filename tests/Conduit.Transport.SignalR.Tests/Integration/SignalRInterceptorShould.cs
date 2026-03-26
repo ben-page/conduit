@@ -30,13 +30,13 @@ public class SignalRInterceptorShould
                 });
                 builder.Services.AddConduitSignalR();
             },
-            app => app.MapHub<ConduitHub>("/hub"));
+            app => app.MapHub<ConduitHub>("/conduit"));
     }
 
     private static async Task<HubConnection> ConnectToHub(string address)
     {
         var connection = new HubConnectionBuilder()
-            .WithUrl($"{address}/hub")
+            .WithUrl($"{address}/conduit")
             .Build();
         await connection.StartAsync();
         return connection;

@@ -2,6 +2,8 @@
   <PropertyGroup>
     <ConduitTypeGenOutput Condition="'$(ConduitTypeGenOutput)' == ''">ClientApp/generated</ConduitTypeGenOutput>
     <ConduitTransports Condition="'$(ConduitTransports)' == ''">Http;SignalR</ConduitTransports>
+    <ConduitBasePath Condition="'$(ConduitBasePath)' == ''">/api/conduit</ConduitBasePath>
+    <ConduitHubPath Condition="'$(ConduitHubPath)' == ''">/conduit</ConduitHubPath>
   </PropertyGroup>
 
   <!-- NuGet package layout: AssemblyFile resolves from package build/ folder -->
@@ -19,6 +21,8 @@
     <TypeGenTask
       AssemblyPath="$(TargetPath)"
       OutputDirectory="$(ConduitTypeGenOutput)"
-      Transports="$(ConduitTransports)" />
+      Transports="$(ConduitTransports)"
+      BasePath="$(ConduitBasePath)"
+      HubPath="$(ConduitHubPath)" />
   </Target>
 </Project>

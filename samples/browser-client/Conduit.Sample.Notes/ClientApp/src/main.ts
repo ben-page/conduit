@@ -1,13 +1,9 @@
-import { HubConnectionBuilder } from '@microsoft/signalr';
 import { ConduitClient, SignalRTransport } from '../generated/conduit.generated';
 
-const connection = new HubConnectionBuilder()
-  .withUrl('/hub')
-  .build();
+const transport = new SignalRTransport();
+const conduit = new ConduitClient(transport);
 
-const conduit = new ConduitClient(new SignalRTransport(connection));
-
-await connection.start();
+await transport.start();
 document.getElementById('status')!.textContent = 'Connected';
 
 async function loadNotes() {

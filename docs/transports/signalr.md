@@ -20,7 +20,7 @@ builder.Services.AddConduit();
 builder.Services.AddConduitSignalR();
 
 var app = builder.Build();
-app.MapHub<ConduitHub>("/hub");
+app.MapHub<ConduitHub>("/conduit");
 app.Run();
 ```
 
@@ -104,7 +104,7 @@ builder.Services.AddConduit(conduit =>
 {
     conduit.AddEndpoint("inventory", endpoint =>
     {
-        endpoint.UseSignalR(new Uri("https://inventory-service/hub"));
+        endpoint.UseSignalR(new Uri("https://inventory-service/conduit"));
         endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
     });
 });
@@ -120,7 +120,7 @@ builder.Services.AddConduit();
 builder.Services.AddConduitSignalR();
 
 var app = builder.Build();
-app.MapHub<ConduitHub>("/hub");
+app.MapHub<ConduitHub>("/conduit");
 app.Run();
 ```
 

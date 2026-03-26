@@ -32,7 +32,7 @@ public class InterceptorPipelineShould
 
         var app = builder.Build();
         app.MapConduitEndpoint();
-        app.MapHub<ConduitHub>("/hub");
+        app.MapHub<ConduitHub>("/conduit");
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
 
@@ -51,7 +51,7 @@ public class InterceptorPipelineShould
             var payload = JsonSerializer.SerializeToElement(new { Name = "Test" });
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.CreateItemCommand", payload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             response.StatusCode.Should().Be(HttpStatusCode.OK);
         }
@@ -67,7 +67,7 @@ public class InterceptorPipelineShould
             var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
             var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.DeleteItemCommand", payload);
 
-            var response = await client.PostAsJsonAsync("/api/dispatch", envelope);
+            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
 
             ((int)response.StatusCode).Should().Be(401);
         }

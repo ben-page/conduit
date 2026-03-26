@@ -18,7 +18,7 @@ public partial class Program
         builder.Services.AddConduitSignalR();
 
         var app = builder.Build();
-        app.MapHub<ConduitHub>("/hub");
+        app.MapHub<ConduitHub>("/conduit");
         app.Run();
     }
 }

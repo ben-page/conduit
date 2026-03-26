@@ -129,16 +129,11 @@ These maps drive the type safety. When you call `client.execute('MyApp.Commands.
 A complete setup from connection to dispatch:
 
 ```typescript
-import { HubConnectionBuilder } from '@microsoft/signalr';
 import { ConduitClient, SignalRTransport } from './generated/conduit.generated';
 
-const connection = new HubConnectionBuilder()
-  .withUrl('/conduit')
-  .build();
-
-await connection.start();
-
-const client = new ConduitClient(new SignalRTransport(connection));
+const transport = new SignalRTransport();
+const client = new ConduitClient(transport);
+await transport.start();
 
 // Execute a command
 const createResult = await client.execute(
@@ -194,7 +189,7 @@ const client = new ConduitClient(new HttpTransport('https://api.example.com'));
 
 `HttpTransport` uses the native `fetch` API with zero npm dependencies. It supports `execute`, `fetch`, and `publish`. Calling `on` throws because HTTP has no server-to-client push. Use `SignalRTransport` for event subscriptions.
 
-`HttpTransport` takes two arguments: `baseUrl` (required) and `path` (optional, defaults to `'/api/dispatch'`).
+`HttpTransport` takes two arguments: `baseUrl` (required) and `basePath` (optional, defaults to `'/api/conduit'`). The transport appends `/dispatch` and `/publish` to the base path.
 
 ## Type mapping
 

@@ -29,6 +29,18 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
     public string Transports { get; set; } = "Http;SignalR";
 
     /// <summary>
+    /// The base path for Conduit HTTP endpoints. Defaults to "/api/conduit".
+    /// The generated TypeScript HttpTransport appends "/dispatch" and "/publish".
+    /// </summary>
+    public string BasePath { get; set; } = "/api/conduit";
+
+    /// <summary>
+    /// The path for the SignalR hub. Defaults to "/conduit".
+    /// The generated TypeScript SignalRTransport uses this to build the HubConnection.
+    /// </summary>
+    public string HubPath { get; set; } = "/conduit";
+
+    /// <summary>
     /// Parses the <see cref="Transports"/> property into a set of transport names.
     /// </summary>
     public HashSet<string> ParseTransports()
@@ -66,7 +78,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
             File.WriteAllText(
                 Path.Combine(outputDir, "conduit.ts"),
-                BaseFileEmitter.Emit(transports));
+                BaseFileEmitter.Emit(transports, this.BasePath, this.HubPath));
 
             File.WriteAllText(
                 Path.Combine(outputDir, "conduit.generated.ts"),

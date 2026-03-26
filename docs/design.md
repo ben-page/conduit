@@ -636,8 +636,8 @@ The generator emits diagnostics for:
 ### Envelope Dispatch Endpoint
 
 `MapConduitEndpoint()` maps two POST endpoints for Conduit-aware consumers (service-to-service, TypeScript mediator):
-- `POST /api/dispatch` — commands and queries (returns `DispatchResult<object>`)
-- `POST /api/dispatch/publish` — events (fire-and-forget, returns 200 OK)
+- `POST /api/conduit/dispatch` — commands and queries (returns `DispatchResult<object>`)
+- `POST /api/conduit/publish` — events (fire-and-forget, returns 200 OK)
 
 Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `ErrorCode.ToHttpStatusCode()`. Returns `DispatchResult` envelope format.
 
@@ -691,14 +691,14 @@ Dual-mode transport implementing `IConduitTransport`:
 Sends commands and queries to a remote Conduit endpoint via HTTP POST:
 
 ```csharp
-public class HttpTransport(HttpClient httpClient, string path = "/api/dispatch") : IConduitTransport
+public class HttpTransport(HttpClient httpClient, string basePath = "/api/conduit") : IConduitTransport
 {
     public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw new NotSupportedException("HTTP transport does not support fire-and-forget events.");
 
     public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
-        var response = await httpClient.PostAsJsonAsync(path, envelope, cancellationToken);
+        var response = await httpClient.PostAsJsonAsync(basePath + "/dispatch", envelope, cancellationToken);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<DispatchResult<JsonElement?>>(cancellationToken);
         if (result?.Error is not null)
@@ -724,7 +724,7 @@ builder.Services.AddConduit(conduit =>       // generated — registers handlers
 builder.Services.AddConduitSignalR();        // registers SignalR hub + server-mode transport
 
 app.MapConduitEndpoint();                    // envelope dispatch for Conduit-aware consumers
-app.MapHub<ConduitHub>("/hub");              // SignalR hub
+app.MapHub<ConduitHub>("/conduit");           // SignalR hub
 
 // RESTful endpoints for external consumers
 app.MapConduitGet<GetItemQuery>("/api/items/{id}");
@@ -842,12 +842,11 @@ Key design decisions:
 ### Usage
 
 ```typescript
-import { HubConnectionBuilder } from '@microsoft/signalr';
 import { ConduitClient, SignalRTransport } from '../generated/conduit.generated';
 
-const connection = new HubConnectionBuilder().withUrl('/hub').build();
-const conduit = new ConduitClient(new SignalRTransport(connection));
-await connection.start();
+const transport = new SignalRTransport();
+const conduit = new ConduitClient(transport);
+await transport.start();
 
 // Fully typed — IDE autocomplete, compile-time checking
 const result = await conduit.execute('MyApp.Commands.CreateNoteCommand', { text: 'hello' });
