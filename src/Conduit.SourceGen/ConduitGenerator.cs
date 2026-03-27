@@ -7,9 +7,14 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Conduit.SourceGen;
 
+/// <summary>
+/// Roslyn incremental source generator that discovers dispatchable types and handlers,
+/// then emits the mediator, dispatch methods, DI registration, and REST endpoint mappings.
+/// </summary>
 [Generator(LanguageNames.CSharp)]
 public sealed class ConduitGenerator : IIncrementalGenerator
 {
+    /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         // Collect all type declarations

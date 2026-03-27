@@ -5,8 +5,19 @@ using Conduit.Analysis;
 
 namespace Conduit.SourceGen;
 
+/// <summary>
+/// Emits the <c>ConduitMediator</c> class implementing <c>IWireMediator</c>.
+/// Contains the dispatch switch for commands/queries, event publishing with listener invocation,
+/// and wire dispatch methods for inbound transport messages.
+/// </summary>
 public static class MediatorEmitter
 {
+    /// <summary>
+    /// Generates the mediator implementation source code.
+    /// </summary>
+    /// <param name="types">All discovered dispatchable types.</param>
+    /// <param name="handlers">All discovered handler registrations.</param>
+    /// <param name="listenerGroups">All discovered event listener groups.</param>
     public static string Emit(
         IReadOnlyList<DispatchableTypeInfo> types,
         IReadOnlyList<HandlerInfo> handlers,

@@ -2,10 +2,12 @@
 # All files
 [*]
 indent_style = space
+end_of_line = lf
 
 # Visual Studio Solution Files
 [*.sln]
 indent_style = tab
+end_of_line = crlf
 
 # XML project files
 [*.{csproj,vbproj,vcxproj,vcxproj.filters,proj,projitems,shproj}]
@@ -76,9 +78,6 @@ indent_size = 4
 insert_final_newline = true
 trim_trailing_whitespace = true
 charset = utf-8-bom
-
-[*.{cs,vb,razor}]
-tab_width = 4
 end_of_line = crlf
 
 ### Code Style Rules ###
@@ -136,14 +135,6 @@ dotnet_diagnostic.SA1512.severity = none
 dotnet_code_quality.CA1826.exclude_ordefault_methods = true
 # IDE0066: Convert switch statement to expression
 dotnet_diagnostic.IDE0066.severity = suggestion
-
-# CA1812: Avoid uninstantiated internal classes (handlers are resolved via DI)
-dotnet_diagnostic.CA1812.severity = none
-# CA1515: Consider making types internal (Blazor components must be public to match Razor-generated partial class)
-dotnet_diagnostic.CA1515.severity = none
-
-# temporary
-dotnet_diagnostic.CS1591.severity = none
 
 ## Language Rules Options
 # https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/style-rules/language-rules

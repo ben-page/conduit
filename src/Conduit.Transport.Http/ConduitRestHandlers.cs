@@ -20,6 +20,7 @@ namespace Conduit.Transport.Http;
 /// </remarks>
 public static class ConduitRestHandlers
 {
+    /// <summary>Maps a query type to a RESTful endpoint using route/query parameter binding.</summary>
     public static RouteHandlerBuilder MapQuery<TQuery, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
@@ -41,6 +42,7 @@ public static class ConduitRestHandlers
             });
     }
 
+    /// <summary>Maps a command-with-result type to a RESTful endpoint using JSON body binding.</summary>
     public static RouteHandlerBuilder MapCommandBody<TCommand, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
@@ -62,6 +64,7 @@ public static class ConduitRestHandlers
             });
     }
 
+    /// <summary>Maps a command-with-result type to a RESTful endpoint using route/query parameter binding.</summary>
     public static RouteHandlerBuilder MapCommandRoute<TCommand, TResult>(
         IEndpointRouteBuilder endpoints,
         string pattern,
@@ -83,6 +86,7 @@ public static class ConduitRestHandlers
             });
     }
 
+    /// <summary>Maps a void command type to a RESTful endpoint using JSON body binding.</summary>
     public static RouteHandlerBuilder MapVoidCommandBody<TCommand>(
         IEndpointRouteBuilder endpoints,
         string pattern,
@@ -104,6 +108,7 @@ public static class ConduitRestHandlers
             });
     }
 
+    /// <summary>Maps a void command type to a RESTful endpoint using route/query parameter binding.</summary>
     public static RouteHandlerBuilder MapVoidCommandRoute<TCommand>(
         IEndpointRouteBuilder endpoints,
         string pattern,

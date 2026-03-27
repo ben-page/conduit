@@ -6,8 +6,17 @@ using Conduit.Analysis;
 
 namespace Conduit.SourceGen;
 
+/// <summary>
+/// Emits the <c>ConduitDispatch</c> partial class with typed dispatch extension methods
+/// (ExecuteAsync, FetchAsync, PublishAsync) for each discovered message type.
+/// </summary>
 public static class DispatchEmitter
 {
+    /// <summary>
+    /// Generates the dispatch extension methods source code.
+    /// </summary>
+    /// <param name="types">All discovered dispatchable types.</param>
+    /// <param name="handlers">All discovered handler registrations.</param>
     public static string Emit(
         IReadOnlyList<DispatchableTypeInfo> types,
         IReadOnlyList<HandlerInfo> handlers)

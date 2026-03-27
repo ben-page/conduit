@@ -1,6 +1,10 @@
 [*.cs]
 # CA1707: Identifiers should not contain underscores (test method names use underscores)
 dotnet_diagnostic.CA1707.severity = none
+# CA1515: Types can be made internal (MSTest requires public test classes)
+dotnet_diagnostic.CA1515.severity = none
+# CA1812: Avoid uninstantiated internal classes (handlers/listeners instantiated by DI)
+dotnet_diagnostic.CA1812.severity = none
 # CA1852: Type can be sealed (test classes are not sealed by convention)
 dotnet_diagnostic.CA1852.severity = none
 # CA1062: Validate arguments of public methods (test methods don't need null guards)

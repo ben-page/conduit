@@ -221,33 +221,23 @@ internal sealed class ActiveMQTopologyManager
         try
         {
             var isDurable = this.conduitOptions.TopologyMode == TopologyMode.Production;
-            var autoDelete = this.conduitOptions.TopologyMode != TopologyMode.Production;
-            var autoDeleteDelayMs = this.conduitOptions.TopologyMode switch
-            {
-                TopologyMode.Production => -1L,
-                TopologyMode.Developer => (long)TimeSpan.FromHours(4).TotalMilliseconds,
-                TopologyMode.Test => (long)TimeSpan.FromMinutes(5).TotalMilliseconds,
-                _ => -1L,
-            };
 
-            // Artemis createQueue accepts a single JSON config string wrapped in a JSON array.
-            // The config string itself is a serialized JSON object with queue properties.
-            // Wire format: body = '["{ \"name\": ..., \"address\": ... }"]'
-            var queueConfig = JsonSerializer.Serialize(new
+            // Artemis createQueue uses positional parameters (NOT a JSON config object).
+            // The JSON config format silently defaults to multicast with no filter.
+            // Positional: [address, routingType, name, filter, durable, maxConsumers,
+            //              purgeOnNoConsumers, autoCreateAddress]
+            var body = JsonSerializer.Serialize(new object?[]
             {
-                name = queueName,
-                address = addressName,
-                routingType,
-                durable = isDurable,
-                filterString = filterExpression ?? "",
-                autoDelete,
-                autoDeleteDelay = autoDeleteDelayMs,
-                maxConsumers = -1,
-                purgeOnNoConsumers = false,
-                autoCreateAddress = false,
+                addressName,                   // address
+                routingType,                   // routingType (ANYCAST or MULTICAST)
+                queueName,                     // name
+                filterExpression,              // filter (null = no filter)
+                isDurable,                     // durable
+                -1,                            // maxConsumers (-1 = unlimited)
+                false,                         // purgeOnNoConsumers
+                false,                         // autoCreateAddress
             });
 
-            var body = JsonSerializer.Serialize(new[] { queueConfig });
             using var request = CreateManagementRequest("createQueue", body);
 
             await SendManagementRequestAsync(session, request);

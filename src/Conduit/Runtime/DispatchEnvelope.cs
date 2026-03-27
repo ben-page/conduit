@@ -18,6 +18,11 @@ public sealed record DispatchEnvelope
     /// </summary>
     public JsonElement Payload { get; init; }
 
+    /// <summary>
+    /// Creates a new envelope with the specified type discriminator and payload.
+    /// </summary>
+    /// <param name="type">The fully-qualified type name of the message.</param>
+    /// <param name="payload">The JSON payload to deserialize.</param>
     public DispatchEnvelope(string type, JsonElement payload)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);

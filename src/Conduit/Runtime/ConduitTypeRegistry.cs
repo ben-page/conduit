@@ -13,6 +13,12 @@ namespace Conduit.Runtime;
 /// </remarks>
 public sealed class ConduitTypeRegistry
 {
+    /// <summary>
+    /// Initializes the registry with the source-generated message type lists.
+    /// </summary>
+    /// <param name="eventTypes">All discovered event types.</param>
+    /// <param name="commandTypes">All discovered command types.</param>
+    /// <param name="queryTypes">All discovered query types.</param>
     public ConduitTypeRegistry(
         IReadOnlyList<Type> eventTypes,
         IReadOnlyList<Type> commandTypes,
