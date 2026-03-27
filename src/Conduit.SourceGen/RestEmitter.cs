@@ -12,6 +12,10 @@ namespace Conduit.SourceGen;
 /// </summary>
 public static class RestEmitter
 {
+    /// <summary>
+    /// Generates the REST endpoint mapping source code.
+    /// </summary>
+    /// <param name="types">All discovered dispatchable types.</param>
     public static string Emit(IReadOnlyList<DispatchableTypeInfo> types)
     {
         if (types is null)

@@ -13,9 +13,14 @@ public sealed class InventoryStore
         ["GADGET-002"] = 50,
     };
 
+    /// <summary>Returns the current stock level for a product.</summary>
+    /// <param name="productId">The product identifier.</param>
     public int GetStock(string productId) =>
         this.stock.TryGetValue(productId, out var qty) ? qty : 0;
 
+    /// <summary>Attempts to reserve the specified quantity, returning true on success.</summary>
+    /// <param name="productId">The product identifier.</param>
+    /// <param name="quantity">The quantity to reserve.</param>
     public bool TryReserve(string productId, int quantity)
     {
         while (true)

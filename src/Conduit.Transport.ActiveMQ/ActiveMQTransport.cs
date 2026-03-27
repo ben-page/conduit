@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using Amqp;
 using Amqp.Framing;
@@ -118,12 +118,12 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     {
         // Create sender links for the two addresses
         this.commandSender = new SenderLink(
-            this.session!,
+            this.session,
             "command-sender",
             anycastAddress);
 
         this.eventSender = new SenderLink(
-            this.session!,
+            this.session,
             "event-sender",
             multicastAddress);
 
@@ -136,7 +136,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
 
         var attachedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         this.replyReceiver = new ReceiverLink(
-            this.session!,
+            this.session,
             "reply-receiver",
             replySource,
             (link, attach) =>
@@ -370,7 +370,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             return;
         }
 
-        var replySender = new SenderLink(this.session!, $"reply-{Guid.NewGuid():N}", replyAddress);
+        var replySender = new SenderLink(this.session, $"reply-{Guid.NewGuid():N}", replyAddress);
         try
         {
             using var replyMessage = new Message(replyBody.ToArray())
@@ -497,7 +497,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         };
 
         var receiverLink = new ReceiverLink(
-            this.session!,
+            this.session,
             $"consumer-{queueName}-{Guid.NewGuid():N}"[..50],
             source,
             null);

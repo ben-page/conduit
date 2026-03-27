@@ -6,8 +6,18 @@ using Conduit.Analysis;
 
 namespace Conduit.SourceGen;
 
+/// <summary>
+/// Emits the <c>AddConduit()</c> extension method that registers the mediator,
+/// handlers, listeners, and <c>ConduitTypeRegistry</c> in DI.
+/// </summary>
 public static class RegistrationEmitter
 {
+    /// <summary>
+    /// Generates the DI registration source code.
+    /// </summary>
+    /// <param name="handlers">All discovered handler registrations.</param>
+    /// <param name="listenerGroups">All discovered event listener groups.</param>
+    /// <param name="types">All discovered dispatchable types (used for type registry population).</param>
     public static string Emit(
         IReadOnlyList<HandlerInfo> handlers,
         IReadOnlyList<ListenerGroup> listenerGroups,

@@ -7,5 +7,6 @@ namespace Conduit.Transport.Kafka;
 /// </summary>
 public sealed class KafkaInboundMessage
 {
+    /// <summary>The underlying Kafka consume result containing the message and metadata.</summary>
     public required ConsumeResult<string, byte[]> ConsumeResult { get; init; }
 }
