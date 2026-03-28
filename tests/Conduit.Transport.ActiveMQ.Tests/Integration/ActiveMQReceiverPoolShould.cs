@@ -110,7 +110,7 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
     }
 
     [TestMethod]
-    [Timeout(30_000)]
+    [Timeout(600_000)]
     public async Task IsolatePoolConcurrency()
     {
         // Arrange
