@@ -53,10 +53,18 @@ internal sealed class ActiveMQTopologyManager
         var anycastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "commands", 256);
         var multicastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "events", 256);
 
-        await this.CreateAddressAsync(session, anycastAddress, "ANYCAST");
-        cancellationToken.ThrowIfCancellationRequested();
+        var (sender, receiver, replyAddress) = await OpenManagementLinksAsync(session);
+        try
+        {
+            await this.CreateAddressAsync(sender, receiver, replyAddress, anycastAddress, "ANYCAST");
+            cancellationToken.ThrowIfCancellationRequested();
 
-        await this.CreateAddressAsync(session, multicastAddress, "MULTICAST");
+            await this.CreateAddressAsync(sender, receiver, replyAddress, multicastAddress, "MULTICAST");
+        }
+        finally
+        {
+            await CloseManagementLinksAsync(sender, receiver);
+        }
 
         return (anycastAddress, multicastAddress);
     }
@@ -75,14 +83,36 @@ internal sealed class ActiveMQTopologyManager
         var anycastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "commands", 256);
         var multicastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "events", 256);
 
+        // Open management links once — reuse for all operations
+        var (sender, receiver, replyAddress) = await OpenManagementLinksAsync(session);
+        try
+        {
+            return await this.EnsureTopologyCoreAsync(
+                sender, receiver, replyAddress,
+                anycastAddress, multicastAddress,
+                subscribedEventTypes, handledCommandQueryTypes, cancellationToken);
+        }
+        finally
+        {
+            await CloseManagementLinksAsync(sender, receiver);
+        }
+    }
+
+    private async Task<TopologyResult> EnsureTopologyCoreAsync(
+        SenderLink sender, ReceiverLink receiver, string replyAddress,
+        string anycastAddress, string multicastAddress,
+        IReadOnlyList<string> subscribedEventTypes,
+        IReadOnlyList<string> handledCommandQueryTypes,
+        CancellationToken cancellationToken)
+    {
         // Create the two addresses
-        await this.CreateAddressAsync(session, anycastAddress, "ANYCAST");
+        await this.CreateAddressAsync(sender, receiver, replyAddress, anycastAddress, "ANYCAST");
         cancellationToken.ThrowIfCancellationRequested();
 
-        await this.CreateAddressAsync(session, multicastAddress, "MULTICAST");
+        await this.CreateAddressAsync(sender, receiver, replyAddress, multicastAddress, "MULTICAST");
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Collect pool-assigned types so they are only bound to their pool queue, not the default queue
+        // Collect pool-assigned types
         var poolAssignedTypes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pool in this.options.Pools)
         {
@@ -106,7 +136,8 @@ internal sealed class ActiveMQTopologyManager
                 this.conduitOptions, commandQueryType, 256);
 
             await this.CreateQueueAsync(
-                session, anycastAddress, queueName, "ANYCAST",
+                sender, receiver, replyAddress,
+                anycastAddress, queueName, "ANYCAST",
                 filterExpression: $"JMSType='{commandQueryType}'");
 
             sharedCommandQueryQueues.Add(queueName);
@@ -126,17 +157,16 @@ internal sealed class ActiveMQTopologyManager
 
             if (!hasAppEventQueue)
             {
-                // Create the app-level event queue on the multicast address (no filter — receives all events)
                 await this.CreateQueueAsync(
-                    session, multicastAddress, appEventQueueName, "MULTICAST",
+                    sender, receiver, replyAddress,
+                    multicastAddress, appEventQueueName, "MULTICAST",
                     filterExpression: null);
                 hasAppEventQueue = true;
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
 
-        // Pool queues — events use per-app pool queues (multicast),
-        // commands/queries use shared pool queues (unicast)
+        // Pool queues
         var commandQuerySet = new HashSet<string>(handledCommandQueryTypes, StringComparer.Ordinal);
         var poolEventQueues = new List<(string QueueName, int PrefetchCount)>();
         var poolCommandQueryQueues = new List<(string QueueName, int PrefetchCount)>();
@@ -151,23 +181,23 @@ internal sealed class ActiveMQTopologyManager
             {
                 if (commandQuerySet.Contains(messageType))
                 {
-                    // Command/query in pool -> shared pool queue (unicast — competing consumers)
                     var sharedPoolQueueName = TopologyNaming.CreateSharedResourceName(
                         this.conduitOptions, $"{pool.Name}.{messageType}", 256);
 
                     await this.CreateQueueAsync(
-                        session, anycastAddress, sharedPoolQueueName, "ANYCAST",
+                        sender, receiver, replyAddress,
+                        anycastAddress, sharedPoolQueueName, "ANYCAST",
                         filterExpression: $"JMSType='{messageType}'");
 
                     poolCommandQueryQueues.Add((sharedPoolQueueName, pool.PrefetchCount));
                 }
                 else
                 {
-                    // Event in pool -> per-app pool queue (multicast)
                     if (!hasPoolEvents)
                     {
                         await this.CreateQueueAsync(
-                            session, multicastAddress, poolEventQueueName, "MULTICAST",
+                            sender, receiver, replyAddress,
+                            multicastAddress, poolEventQueueName, "MULTICAST",
                             filterExpression: null);
                         hasPoolEvents = true;
                     }
@@ -189,7 +219,9 @@ internal sealed class ActiveMQTopologyManager
             poolCommandQueryQueues);
     }
 
-    private async Task CreateAddressAsync(Session session, string addressName, string routingType)
+    private async Task CreateAddressAsync(
+        SenderLink sender, ReceiverLink receiver, string replyAddress,
+        string addressName, string routingType)
     {
         LogCreatingAddress(this.logger, addressName, null);
 
@@ -198,7 +230,7 @@ internal sealed class ActiveMQTopologyManager
             var body = JsonSerializer.Serialize(new object[] { addressName, routingType });
             using var request = CreateManagementRequest("createAddress", body);
 
-            await SendManagementRequestAsync(session, request);
+            await SendManagementRequestAsync(sender, receiver, replyAddress, request);
         }
 #pragma warning disable CA1031
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
@@ -210,10 +242,8 @@ internal sealed class ActiveMQTopologyManager
     }
 
     private async Task CreateQueueAsync(
-        Session session,
-        string addressName,
-        string queueName,
-        string routingType,
+        SenderLink sender, ReceiverLink receiver, string replyAddress,
+        string addressName, string queueName, string routingType,
         string? filterExpression)
     {
         LogCreatingQueue(this.logger, queueName, null);
@@ -240,7 +270,7 @@ internal sealed class ActiveMQTopologyManager
 
             using var request = CreateManagementRequest("createQueue", body);
 
-            await SendManagementRequestAsync(session, request);
+            await SendManagementRequestAsync(sender, receiver, replyAddress, request);
         }
 #pragma warning disable CA1031
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
@@ -252,26 +282,14 @@ internal sealed class ActiveMQTopologyManager
     }
 
     /// <summary>
-    /// Sends a management request to the Artemis <c>activemq.management</c> address.
+    /// Opens a reusable management sender/receiver link pair. Call <see cref="CloseManagementLinksAsync"/>
+    /// when all operations are complete. Reusing links avoids the AMQP attach/detach handshake
+    /// per request, which dominates topology creation time.
     /// </summary>
-    /// <remarks>
-    /// Artemis management over AMQP 1.0 requires:
-    /// 1. A dynamic receiver link for replies (broker assigns the reply queue address).
-    /// 2. Operation parameters in the message body as a JSON array string
-    ///    (NOT in application properties). The body is wrapped in an AmqpValue section
-    ///    automatically by <c>new Message(string)</c>.
-    /// 3. <c>_AMQ_ResourceName</c> and <c>_AMQ_OperationName</c> as application properties.
-    ///
-    /// Without a body, Artemis throws a buffer underflow when reading parameters
-    /// from the CoreMessage body buffer (writerIndex=0).
-    /// </remarks>
-    private static async Task SendManagementRequestAsync(Session session, Message request)
+    private static async Task<(SenderLink Sender, ReceiverLink Receiver, string ReplyAddress)>
+        OpenManagementLinksAsync(Session session)
     {
-        var managementAddress = "activemq.management";
-
-        // Artemis requires a dynamic receiver link — the broker assigns a temporary
-        // reply queue. A fabricated address won't work because no queue exists at it.
-        var replyAddressTcs = new TaskCompletionSource<string>();
+        var replyAddressTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var receiverLink = new ReceiverLink(
             session,
             $"mgmt-recv-{Guid.NewGuid():N}",
@@ -290,62 +308,67 @@ internal sealed class ActiveMQTopologyManager
             });
 
         var replyAddress = await replyAddressTcs.Task;
+        var senderLink = new SenderLink(session, $"mgmt-send-{Guid.NewGuid():N}", "activemq.management");
 
-        request.Properties.ReplyTo = replyAddress;
-        request.Properties.MessageId = $"mgmt-{Guid.NewGuid():N}";
+        return (senderLink, receiverLink, replyAddress);
+    }
 
-        var senderLink = new SenderLink(session, $"mgmt-send-{Guid.NewGuid():N}", managementAddress);
+    private static async Task CloseManagementLinksAsync(SenderLink sender, ReceiverLink receiver)
+    {
+        try
+        {
+            if (!sender.IsClosed)
+            {
+                await sender.CloseAsync();
+            }
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Best-effort cleanup
+        }
 
         try
         {
-            await senderLink.SendAsync(request);
-
-            var reply = await receiverLink.ReceiveAsync(TimeSpan.FromSeconds(10));
-            if (reply is not null)
+            if (!receiver.IsClosed)
             {
-                receiverLink.Accept(reply);
-
-                // Check for errors in the management response
-                if (reply.ApplicationProperties is not null &&
-                    reply.ApplicationProperties.Map.ContainsKey("_AMQ_OperationSucceeded"))
-                {
-                    var succeeded = reply.ApplicationProperties["_AMQ_OperationSucceeded"];
-                    if (succeeded is bool success && !success)
-                    {
-                        var errorBody = reply.Body?.ToString() ?? "Unknown management error";
-                        throw new InvalidOperationException(errorBody);
-                    }
-                }
+                await receiver.CloseAsync();
             }
         }
-        finally
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
         {
-            try
-            {
-                if (!senderLink.IsClosed)
-                {
-                    await senderLink.CloseAsync();
-                }
-            }
-#pragma warning disable CA1031
-            catch (Exception)
-#pragma warning restore CA1031
-            {
-                // Best-effort cleanup
-            }
+            // Best-effort cleanup
+        }
+    }
 
-            try
+    /// <summary>
+    /// Sends a management request using pre-opened links.
+    /// </summary>
+    private static async Task SendManagementRequestAsync(
+        SenderLink sender, ReceiverLink receiver, string replyAddress, Message request)
+    {
+        request.Properties.ReplyTo = replyAddress;
+        request.Properties.MessageId = $"mgmt-{Guid.NewGuid():N}";
+
+        await sender.SendAsync(request);
+
+        var reply = await receiver.ReceiveAsync(TimeSpan.FromSeconds(10));
+        if (reply is not null)
+        {
+            receiver.Accept(reply);
+
+            if (reply.ApplicationProperties is not null &&
+                reply.ApplicationProperties.Map.ContainsKey("_AMQ_OperationSucceeded"))
             {
-                if (!receiverLink.IsClosed)
+                var succeeded = reply.ApplicationProperties["_AMQ_OperationSucceeded"];
+                if (succeeded is bool success && !success)
                 {
-                    await receiverLink.CloseAsync();
+                    var errorBody = reply.Body?.ToString() ?? "Unknown management error";
+                    throw new InvalidOperationException(errorBody);
                 }
-            }
-#pragma warning disable CA1031
-            catch (Exception)
-#pragma warning restore CA1031
-            {
-                // Best-effort cleanup
             }
         }
     }
