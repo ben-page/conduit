@@ -132,19 +132,29 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         this.consumerCts = new CancellationTokenSource();
         var token = this.consumerCts.Token;
 
-        // Command/query consumer — shared group (unicast)
-        var sharedGroupName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 249);
-        this.commandQueryConsumer = this.CreateConsumer(sharedGroupName);
-        this.commandQueryConsumer.Subscribe(this.sharedTopicName);
-        this.commandQueryConsumerTask = Task.Run(
-            () => this.ConsumeLoopAsync(this.commandQueryConsumer, isCommandQueryConsumer: true, token), token);
+        // Command/query consumer — shared group (unicast).
+        // Only start if this host handles command/query types. A host with no
+        // command/query types in its registry must not join the shared group —
+        // it would steal partitions and discard messages other hosts need.
+        if (this.commandQueryTypeNames.Count > 0)
+        {
+            var sharedGroupName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 249);
+            this.commandQueryConsumer = this.CreateConsumer(sharedGroupName);
+            this.commandQueryConsumer.Subscribe(this.sharedTopicName);
+            this.commandQueryConsumerTask = Task.Run(
+                () => this.ConsumeLoopAsync(this.commandQueryConsumer, isCommandQueryConsumer: true, token), token);
+        }
 
-        // Event consumer — per-app group (multicast)
-        var appGroupName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 249);
-        this.eventConsumer = this.CreateConsumer(appGroupName);
-        this.eventConsumer.Subscribe(this.sharedTopicName);
-        this.eventConsumerTask = Task.Run(
-            () => this.ConsumeLoopAsync(this.eventConsumer, isCommandQueryConsumer: false, token), token);
+        // Event consumer — per-app group (multicast).
+        // Only start if this host handles event types.
+        if (this.eventTypeNames.Count > 0)
+        {
+            var appGroupName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 249);
+            this.eventConsumer = this.CreateConsumer(appGroupName);
+            this.eventConsumer.Subscribe(this.sharedTopicName);
+            this.eventConsumerTask = Task.Run(
+                () => this.ConsumeLoopAsync(this.eventConsumer, isCommandQueryConsumer: false, token), token);
+        }
 
         this.StartReplyConsumer();
 
