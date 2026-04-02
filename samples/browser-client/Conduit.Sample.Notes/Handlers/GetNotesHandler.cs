@@ -3,9 +3,11 @@ using Conduit.Sample.Notes.Queries;
 
 namespace Conduit.Sample.Notes.Handlers;
 
-internal sealed class GetNotesHandler(NoteStore store)
+/// <inheritdoc />
+public sealed class GetNotesHandler(NoteStore store)
     : IQueryHandler<GetNotesQuery, IReadOnlyList<NoteDto>>
 {
+    /// <inheritdoc />
     public Task<IReadOnlyList<NoteDto>> HandleAsync(
         GetNotesQuery query,
         CancellationToken cancellationToken)

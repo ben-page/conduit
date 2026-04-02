@@ -4,11 +4,15 @@ using Conduit.Sample.Notes.Events;
 
 namespace Conduit.Sample.Notes.Handlers;
 
-internal sealed class DeleteNoteHandler(NoteStore store, IMediator mediator)
+/// <inheritdoc />
+public sealed class DeleteNoteHandler(NoteStore store, IMediator mediator)
     : ICommandHandler<DeleteNoteCommand>
 {
+    /// <inheritdoc />
     public async Task HandleAsync(DeleteNoteCommand command, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(command);
+
         store.Remove(command.Id);
         await mediator.PublishAsync(new NoteDeletedEvent(command.Id), cancellationToken);
     }

@@ -1,5 +1,3 @@
 [*.cs]
 # CA1515: Types can be made internal (sample apps need public types for DI and source generators)
 dotnet_diagnostic.CA1515.severity = none
-# CA1812: Avoid uninstantiated internal classes (handlers/listeners instantiated by DI)
-dotnet_diagnostic.CA1812.severity = none

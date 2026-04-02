@@ -3,13 +3,17 @@ using Conduit.Sample.Inventory.Queries;
 
 namespace Conduit.Sample.Inventory.Handlers;
 
-internal sealed class CheckStockHandler(InventoryStore store)
+/// <inheritdoc />
+public sealed class CheckStockHandler(InventoryStore store)
     : IQueryHandler<CheckStockQuery, int>
 {
+    /// <inheritdoc />
     public Task<int> HandleAsync(
         CheckStockQuery query,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(query);
+
         return Task.FromResult(store.GetStock(query.ProductId));
     }
 }
