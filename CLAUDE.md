@@ -61,7 +61,8 @@ src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTra
 - **Event broadcast model**: `PublishAsync` dispatches to local listeners AND broadcasts to all DI-registered `IConduitTransport` instances (server-mode transports). Events marked `[LocalOnly]` skip transport broadcast at compile time. Wire-inbound events use `PublishLocalAsync` (private) to prevent re-broadcast loops.
 - **Event error propagation**: Listener failures use continue-on-failure semantics — all listeners run even if some throw. `PublishLocalAsync` collects exceptions and throws `EventListenerException` if any failed. `PublishAsync` (local path) catches and logs it (fire-and-forget). `DispatchEventAsync` (wire path) lets it propagate so transports can retry/dead-letter. Generated code emits inline try/catch per listener (no runtime helper wrapper).
 - **Transport limitations**: HTTP has no server→client push — events only flow client→server over HTTP. SignalR supports bidirectional event flow. Cross-pod unsolicited events require a SignalR backplane.
-- **Wire discriminator**: `FullTypeName` (e.g. `"Orders.Commands.CreateOrder"`) is used as the type discriminator in `DispatchEnvelope` on the wire.
+- **Unified wire format**: All transports send the plain serialized message as the body with the type discriminator (`FullTypeName`, e.g. `"Orders.Commands.CreateOrder"`) in transport-native properties. HTTP uses the `X-Conduit-Type` header, SignalR uses a hub method parameter, broker transports use native message properties (AMQP `Type`/`Subject`, Kafka header, etc.). `DispatchEnvelope` is the internal handoff type — it is not exposed on the wire.
+- **Browser MessageContext**: Browser clients (TypeScript) are always conversation origins. They do not send `MessageContext` — the server mints a fresh context on receipt. C# service-to-service transports propagate `MessageContext` automatically via transport-native properties/headers.
 - **Dual-mode SignalRTransport**: Server mode (IHubContext, pushes events) and client mode (HubConnection, sends commands + receives events). Client mode uses lazy connect (auto-starts on first use via `EnsureConnectedAsync`).
 - **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `ErrorCode.ToHttpStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization.
@@ -138,14 +139,15 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 
 ### Conduit.Transport.Http
 - `HttpTransport` — outbound C#→C# request/response via HTTP POST. `UseHttp(httpClient)` registers as keyed singleton by endpoint name and calls `UseTransport<HttpTransport>()`
-- `MapConduitEndpoint()` — inbound HTTP envelope dispatch endpoint, maps POST `/api/conduit/dispatch` and `/api/conduit/publish` (base path configurable)
+- `MapConduitEndpoint()` — inbound HTTP wire dispatch endpoint, maps POST `/api/conduit/dispatch` and `/api/conduit/publish` (base path configurable)
+- Wire format: request body = plain serialized message JSON, type in `X-Conduit-Type` header, `MessageContext` in `X-Conduit-Message-Id`/`X-Conduit-Causation-Id`/`X-Conduit-Conversation-Id` headers. Matches the broker wire format (type in transport-native properties, body is the raw message).
 - `ConduitRestHandlers` — typed handler helpers for RESTful endpoint mapping (query→route binding, command→body binding)
 - RESTful extension methods (`MapConduitGet<T>`, `MapConduitPost<T>`, etc.) are source-generated into `ConduitRestEndpoints` — conditionally emitted only when `Conduit.Transport.Http` is referenced
-- Maps `DispatchResult` error codes to HTTP status codes via `ErrorCode.ToHttpStatusCode()` (envelope endpoint); `ConduitException` → Problem Details (RESTful endpoints)
+- Maps `DispatchResult` error codes to HTTP status codes via `ErrorCode.ToHttpStatusCode()` (wire dispatch endpoint); `ConduitException` → Problem Details (RESTful endpoints)
 
 ### Conduit.Transport.SignalR
-- `ConduitHub` — inbound SignalR hub with `Dispatch` and `Publish` methods, injects `IWireMediator` via constructor
-- `SignalRTransport` — outbound dual-mode transport with lazy connect (`EnsureConnectedAsync`). `UseSignalR(hubUri)` registers as keyed singleton by endpoint name and calls `UseTransport<SignalRTransport>()`
+- `ConduitHub` — inbound SignalR hub with `Dispatch(type, payload, context?)` and `Publish(type, payload, context?)` methods, injects `IWireMediator` via constructor. The `context` parameter is a `Dictionary<string, string>?` for `MessageContext` propagation — browser clients pass `null`, C# clients populate it.
+- `SignalRTransport` — outbound dual-mode transport with lazy connect (`EnsureConnectedAsync`). `UseSignalR(hubUri)` registers as keyed singleton by endpoint name and calls `UseTransport<SignalRTransport>()`. Client mode sends `MessageContext.Current` as the context dictionary.
 - `AddConduitSignalR()` registers SignalR services and server-mode transport as non-keyed `IConduitTransport` (for event broadcast to connected clients)
 
 ### Conduit.Transport.AzureServiceBus

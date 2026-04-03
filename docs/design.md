@@ -633,13 +633,15 @@ The generator emits diagnostics for:
 
 ## HTTP Integration (`Conduit.Transport.Http`)
 
-### Envelope Dispatch Endpoint
+### Wire Dispatch Endpoint
 
-`MapConduitEndpoint()` maps two POST endpoints for Conduit-aware consumers (service-to-service, TypeScript mediator):
+`MapConduitEndpoint()` maps two POST endpoints for Conduit-aware consumers (service-to-service, TypeScript client):
 - `POST /api/conduit/dispatch` — commands and queries (returns `DispatchResult<object>`)
 - `POST /api/conduit/publish` — events (fire-and-forget, returns 200 OK)
 
-Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `ErrorCode.ToHttpStatusCode()`. Returns `DispatchResult` envelope format.
+The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the broker wire format (type in transport-native properties, body is the raw message). `MessageContext` is propagated via `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers when present (C# clients). Browser clients omit these headers — the server creates a fresh context.
+
+Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `ErrorCode.ToHttpStatusCode()`. Returns `DispatchResult` response format.
 
 ### RESTful Endpoint Mapping
 
@@ -688,22 +690,23 @@ Dual-mode transport implementing `IConduitTransport`:
 
 ### HTTP Transport
 
-Sends commands and queries to a remote Conduit endpoint via HTTP POST:
+Sends commands and queries to a remote Conduit endpoint via HTTP POST. The message type is sent in the `X-Conduit-Type` header and the body contains the plain serialized message — matching the broker wire format. `MessageContext` values are sent via `X-Conduit-*` headers for cross-service propagation.
 
 ```csharp
 public class HttpTransport(HttpClient httpClient, string basePath = "/api/conduit") : IConduitTransport
 {
-    public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
-        => throw new NotSupportedException("HTTP transport does not support fire-and-forget events.");
-
     public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
-        var response = await httpClient.PostAsJsonAsync(basePath + "/dispatch", envelope, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var request = new HttpRequestMessage(HttpMethod.Post, basePath + "/dispatch")
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(envelope.Payload, ConduitRuntime.JsonOptions), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Conduit-Type", envelope.Type);
+        // MessageContext headers added when present...
+        using var response = await httpClient.SendAsync(request, cancellationToken);
         var result = await response.Content.ReadFromJsonAsync<DispatchResult<JsonElement?>>(cancellationToken);
-        if (result?.Error is not null)
-            throw new InvalidOperationException($"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
-        return result?.Data;
+        return ConduitRuntime.UnwrapReply(result);
     }
 }
 ```

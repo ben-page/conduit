@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Conduit.Runtime;
 
@@ -6,7 +7,8 @@ namespace Conduit.Transport.Http;
 
 /// <summary>
 /// Sends commands and queries to a remote Conduit endpoint via HTTP POST.
-/// Used for C#-to-C# service communication.
+/// Used for C#-to-C# service communication. The message type is sent in the
+/// <c>X-Conduit-Type</c> header and the body contains the plain serialized message.
 /// </summary>
 public class HttpTransport(HttpClient httpClient, string basePath = "/api/conduit") : IConduitTransport
 {
@@ -23,7 +25,28 @@ public class HttpTransport(HttpClient httpClient, string basePath = "/api/condui
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
-        using var response = await httpClient.PostAsJsonAsync(basePath + "/dispatch", envelope, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, basePath + "/dispatch")
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(envelope.Payload, ConduitRuntime.JsonOptions),
+                Encoding.UTF8,
+                "application/json"),
+        };
+
+        request.Headers.Add("X-Conduit-Type", envelope.Type);
+
+        var context = MessageContext.Current;
+        if (context is not null)
+        {
+            request.Headers.Add("X-Conduit-Message-Id", context.MessageId);
+            request.Headers.Add("X-Conduit-Conversation-Id", context.ConversationId);
+            if (context.CausationId is not null)
+            {
+                request.Headers.Add("X-Conduit-Causation-Id", context.CausationId);
+            }
+        }
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
 
         // Read the body first to extract structured error info from DispatchResult,
         // then fall back to EnsureSuccessStatusCode for non-Conduit errors (503, network, etc.)

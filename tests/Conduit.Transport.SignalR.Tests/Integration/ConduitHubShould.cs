@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Runtime;
 using Conduit.TestUtils;
@@ -44,8 +44,9 @@ public class ConduitHubShould
         var payload = JsonSerializer.SerializeToElement(new { Name = "Hub Test" });
 
         // Act
+        Dictionary<string, string>? noContext = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext);
 
         // Assert
         result.Should().NotBeNull();
@@ -62,8 +63,9 @@ public class ConduitHubShould
         var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
 
         // Act
+        Dictionary<string, string>? noContext = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.GetItemQuery", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.GetItemQuery", payload, noContext);
 
         // Assert
         result.Should().NotBeNull();
@@ -82,8 +84,9 @@ public class ConduitHubShould
             new { Id = Guid.NewGuid(), Name = "Hub Event" });
 
         // Act
+        Dictionary<string, string>? noContext = null;
         await connection.InvokeAsync(
-            "Publish", "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload);
+            "Publish", "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload, noContext);
 
         // Assert
         await spy.WaitForCountAsync(1);
@@ -100,10 +103,12 @@ public class ConduitHubShould
         var payload = JsonSerializer.SerializeToElement(new { Data = "boom" });
 
         // Act — publish an event whose listener throws
+        Dictionary<string, string>? noContext = null;
         var act = () => connection.InvokeAsync(
             "Publish",
             "Conduit.Transport.SignalR.Tests.Support.ExplodingEvent",
-            payload);
+            payload,
+            noContext);
 
         // Assert — exception propagates to the caller
         await act.Should().ThrowAsync<Exception>();

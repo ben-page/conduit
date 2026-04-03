@@ -191,6 +191,20 @@ const client = new ConduitClient(new HttpTransport('https://api.example.com'));
 
 `HttpTransport` takes two arguments: `baseUrl` (required) and `basePath` (optional, defaults to `'/api/conduit'`). The transport appends `/dispatch` and `/publish` to the base path.
 
+## Wire format
+
+Both transports send the plain serialized message as the payload — no envelope wrapper.
+
+**HTTP**: The message type is sent in the `X-Conduit-Type` header. The request body contains only the serialized message JSON.
+
+**SignalR**: The message type and payload are separate hub method arguments. The third argument is a context dictionary (`null` from browser clients).
+
+## MessageContext
+
+Browser clients are always the origin of a new conversation. They do not send `MessageContext` headers — the server creates a fresh context (`MessageId`, `ConversationId`) when it receives the request. All downstream dispatches (to other services via broker transports) inherit this context through the causal chain.
+
+C# service-to-service transports (HTTP, SignalR, brokers) propagate `MessageContext` automatically. HTTP uses `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers. SignalR uses a context dictionary as the third hub method argument. Broker transports use transport-native message properties.
+
 ## Type mapping
 
 | C# | TypeScript |

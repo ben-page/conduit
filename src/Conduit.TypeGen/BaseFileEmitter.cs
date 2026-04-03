@@ -94,8 +94,8 @@ public static class BaseFileEmitter
         sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>> {");
         sb.AppendLine("    const response = await fetch(this.baseUrl + this.basePath + '/dispatch', {");
         sb.AppendLine("      method: 'POST',");
-        sb.AppendLine("      headers: { 'Content-Type': 'application/json' },");
-        sb.AppendLine("      body: JSON.stringify({ type, payload }),");
+        sb.AppendLine("      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type },");
+        sb.AppendLine("      body: JSON.stringify(payload),");
         sb.AppendLine("    });");
         sb.AppendLine("    if (!response.ok) {");
         sb.AppendLine("      const text = await response.text();");
@@ -108,8 +108,8 @@ public static class BaseFileEmitter
         sb.AppendLine("  async sendEvent(type: string, data: unknown): Promise<void> {");
         sb.AppendLine("    const response = await fetch(this.baseUrl + this.basePath + '/publish', {");
         sb.AppendLine("      method: 'POST',");
-        sb.AppendLine("      headers: { 'Content-Type': 'application/json' },");
-        sb.AppendLine("      body: JSON.stringify({ type, payload: data }),");
+        sb.AppendLine("      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type },");
+        sb.AppendLine("      body: JSON.stringify(data),");
         sb.AppendLine("    });");
         sb.AppendLine("    if (!response.ok) {");
         sb.AppendLine("      throw new Error(`Conduit publish failed with status ${response.status}`);");
@@ -144,11 +144,11 @@ public static class BaseFileEmitter
         sb.AppendLine("  }");
         sb.AppendLine();
         sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>> {");
-        sb.AppendLine("    return await this.connection.invoke<DispatchResult<TResult>>('Dispatch', type, payload);");
+        sb.AppendLine("    return await this.connection.invoke<DispatchResult<TResult>>('Dispatch', type, payload, null);");
         sb.AppendLine("  }");
         sb.AppendLine();
         sb.AppendLine("  async sendEvent(type: string, data: unknown): Promise<void> {");
-        sb.AppendLine("    await this.connection.invoke('Publish', type, data);");
+        sb.AppendLine("    await this.connection.invoke('Publish', type, data, null);");
         sb.AppendLine("  }");
         sb.AppendLine();
         sb.AppendLine("  subscribe(eventName: string, handler: (data: unknown) => void): Subscription {");

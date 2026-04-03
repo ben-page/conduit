@@ -51,7 +51,7 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         await this.EnsureConnectedAsync(cancellationToken);
 
         var result = await this.hubConnection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", envelope.Type, envelope.Payload, cancellationToken);
+            "Dispatch", envelope.Type, envelope.Payload, BuildContext(), cancellationToken);
 
         return ConduitRuntime.UnwrapReply(result);
     }
@@ -70,11 +70,33 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         if (this.hubConnection is not null)
         {
             await this.EnsureConnectedAsync(cancellationToken);
-            await this.hubConnection.InvokeAsync("Publish", envelope.Type, envelope.Payload, cancellationToken);
+            await this.hubConnection.InvokeAsync("Publish", envelope.Type, envelope.Payload, BuildContext(), cancellationToken);
             return;
         }
 
         throw new InvalidOperationException("Transport not configured.");
+    }
+
+    private static Dictionary<string, string>? BuildContext()
+    {
+        var context = MessageContext.Current;
+        if (context is null)
+        {
+            return null;
+        }
+
+        var dict = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["MessageId"] = context.MessageId,
+            ["ConversationId"] = context.ConversationId,
+        };
+
+        if (context.CausationId is not null)
+        {
+            dict["CausationId"] = context.CausationId;
+        }
+
+        return dict;
     }
 
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
