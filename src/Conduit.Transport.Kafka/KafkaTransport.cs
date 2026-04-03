@@ -408,6 +408,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         config.GroupId = groupId;
         config.EnableAutoCommit = false;
         config.AutoOffsetReset = AutoOffsetReset.Earliest;
+        config.SessionTimeoutMs ??= 10_000;
 
         return new ConsumerBuilder<string, byte[]>(config).Build();
     }
@@ -444,9 +445,16 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
                 var messageType = GetHeaderString(result.Message.Headers, "conduit-type");
                 if (messageType is null || !relevantTypes.Contains(messageType))
                 {
-                    // Commit offset for irrelevant messages to avoid blocking
-                    consumer.StoreOffset(result);
-                    consumer.Commit(result);
+                    try
+                    {
+                        consumer.StoreOffset(result);
+                        consumer.Commit(result);
+                    }
+                    catch (KafkaException)
+                    {
+                        // Partition revoked during rebalance
+                    }
+
                     continue;
                 }
 
@@ -454,11 +462,22 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
                 {
                     ConsumeResult = result,
                 };
+
                 await this.ProcessInboundMessageAsync(inboundMessage);
 
-                // Commit offset after processing
-                consumer.StoreOffset(result);
-                consumer.Commit(result);
+                // Commit offset after processing. StoreOffset/Commit can throw
+                // if a rebalance revoked this partition during processing.
+                // The message will be redelivered to the new partition owner.
+                try
+                {
+                    consumer.StoreOffset(result);
+                    consumer.Commit(result);
+                }
+                catch (KafkaException)
+                {
+                    // Partition was revoked during processing — safe to continue.
+                    // The message will be redelivered to the new partition owner.
+                }
             }
         }
         catch (OperationCanceledException)

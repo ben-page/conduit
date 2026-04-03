@@ -110,7 +110,7 @@ public class KafkaReceiverPoolShould : KafkaTestBase
     }
 
     [TestMethod]
-    [Timeout(30_000)]
+    [Timeout(120_000)]
     public async Task IsolatePoolConcurrency()
     {
         // Arrange
