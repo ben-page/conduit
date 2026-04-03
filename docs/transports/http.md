@@ -112,7 +112,7 @@ throw new NotFoundException($"Todo {query.Id} not found");
 
 See [Error Handling](../error-handling.md) for built-in error codes and custom error code support.
 
-## Envelope dispatch
+## Wire dispatch
 
 For internal consumers that speak the Conduit wire protocol:
 
@@ -122,8 +122,12 @@ app.MapConduitEndpoint(); // defaults to /api/conduit
 
 This registers two POST endpoints:
 
-- **POST /api/conduit/dispatch** accepts a `DispatchEnvelope`, dispatches through `IWireMediator`, and returns a `DispatchResult` envelope.
-- **POST /api/conduit/publish** accepts a `DispatchEnvelope` for event publication.
+- **POST /api/conduit/dispatch** — commands and queries. Returns `DispatchResult` envelope.
+- **POST /api/conduit/publish** — events. Returns 200 OK.
+
+The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the wire format used by broker transports (type in transport-native properties, body is the raw message).
+
+`MessageContext` is propagated via `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, and `X-Conduit-Conversation-Id` headers. When these headers are absent (e.g. browser clients), the server mints a fresh context.
 
 You can customize the base path:
 
@@ -132,13 +136,13 @@ app.MapConduitEndpoint("/internal/conduit");
 // Creates /internal/conduit/dispatch and /internal/conduit/publish
 ```
 
-The envelope endpoint maps error code strings to HTTP status codes using a hardcoded switch (`NotFound` to 404, `Unauthorized` to 401, `Conflict` to 409, `InternalError` to 500, everything else to 400). Custom `ErrorCode` values with non-standard status codes fall through to 400. For accurate HTTP status codes on custom errors, use RESTful endpoints.
+The dispatch endpoint maps error code strings to HTTP status codes using a hardcoded switch (`NotFound` to 404, `Unauthorized` to 401, `Conflict` to 409, `InternalError` to 500, everything else to 400). Custom `ErrorCode` values with non-standard status codes fall through to 400. For accurate HTTP status codes on custom errors, use RESTful endpoints.
 
 ## When to use which
 
 **RESTful endpoints** for external APIs: browser clients, mobile apps, third-party integrations. You get conventional routes, OpenAPI/Swagger, and accurate HTTP status codes for all error types.
 
-**Envelope dispatch** for internal service-to-service communication and the TypeScript client over HTTP. The `HttpTransport` class speaks this protocol. The envelope carries a full type discriminator, so services do not need shared route configuration.
+**Wire dispatch** for internal service-to-service communication and the TypeScript client over HTTP. The `HttpTransport` class speaks this protocol. The `X-Conduit-Type` header carries the full type discriminator, so services do not need shared route configuration.
 
 ## Outbound HttpTransport
 
@@ -155,7 +159,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs `DispatchEnvelope` payloads to `/api/conduit/dispatch` (configurable via the `basePath` parameter).
+`UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs the plain serialized message to `/api/conduit/dispatch` with the type in the `X-Conduit-Type` header (configurable via the `basePath` parameter).
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
 

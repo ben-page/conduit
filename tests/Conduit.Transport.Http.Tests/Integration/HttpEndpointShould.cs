@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http;
@@ -34,11 +35,26 @@ public class HttpEndpointShould
         return (app, client);
     }
 
+    private static async Task<HttpResponseMessage> PostConduitAsync(
+        HttpClient client, string path, string type, object payload)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(payload, ConduitRuntime.JsonOptions),
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.Add("X-Conduit-Type", type);
+        return await client.SendAsync(request);
+    }
+
     private static async Task<string> CreateItem(HttpClient client, string name)
     {
-        var payload = JsonSerializer.SerializeToElement(new { Name = name });
-        var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.CreateItemCommand", payload);
-        var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
+        var response = await PostConduitAsync(
+            client, "/api/conduit/dispatch",
+            "Conduit.Transport.Http.Tests.Support.CreateItemCommand",
+            new { Name = name });
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         return json.GetProperty("data").GetString()!;
@@ -51,11 +67,13 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { Name = "Test Item" });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.CreateItemCommand", payload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.CreateItemCommand",
+                new { Name = "Test Item" });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
-
+            // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -74,11 +92,13 @@ public class HttpEndpointShould
         {
             var id = await CreateItem(client, "To Delete");
 
-            var deletePayload = JsonSerializer.SerializeToElement(new { Id = id });
-            var deleteEnvelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.DeleteItemCommand", deletePayload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.DeleteItemCommand",
+                new { Id = id });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", deleteEnvelope);
-
+            // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
         }
     }
@@ -92,11 +112,13 @@ public class HttpEndpointShould
         {
             var id = await CreateItem(client, "Query Test");
 
-            var queryPayload = JsonSerializer.SerializeToElement(new { Id = id });
-            var queryEnvelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.GetItemQuery", queryPayload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.GetItemQuery",
+                new { Id = id });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", queryEnvelope);
-
+            // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             var data = json.GetProperty("data").GetString();
@@ -111,11 +133,13 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var queryPayload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
-            var queryEnvelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.GetItemQuery", queryPayload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.GetItemQuery",
+                new { Id = Guid.NewGuid() });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", queryEnvelope);
-
+            // Assert
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             var error = json.GetProperty("error");
@@ -131,11 +155,13 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("NonExistent.NonExistentCommand", payload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "NonExistent.NonExistentCommand",
+                new { });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
-
+            // Assert
             ((int)response.StatusCode).Should().BeGreaterThanOrEqualTo(400);
         }
     }
@@ -148,11 +174,11 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid(), Name = "Event" });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ItemCreatedEvent", payload);
-
             // Act
-            var response = await client.PostAsJsonAsync("/api/conduit/publish", envelope);
+            var response = await PostConduitAsync(
+                client, "/api/conduit/publish",
+                "Conduit.Transport.Http.Tests.Support.ItemCreatedEvent",
+                new { Id = Guid.NewGuid(), Name = "Event" });
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -167,11 +193,11 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ThrowConflictCommand", payload);
-
             // Act
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.ThrowConflictCommand",
+                new { });
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.Conflict);
@@ -188,11 +214,11 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ThrowUnauthorizedCommand", payload);
-
             // Act
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.ThrowUnauthorizedCommand",
+                new { });
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -209,11 +235,11 @@ public class HttpEndpointShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.ThrowGenericCommand", payload);
-
             // Act
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.ThrowGenericCommand",
+                new { });
 
             // Assert
             ((int)response.StatusCode).Should().Be(500);

@@ -1,5 +1,5 @@
 using System.Net;
-using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http;
@@ -41,6 +41,20 @@ public class InterceptorPipelineShould
         return (app, client);
     }
 
+    private static async Task<HttpResponseMessage> PostConduitAsync(
+        HttpClient client, string path, string type, object payload)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(payload, ConduitRuntime.JsonOptions),
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.Add("X-Conduit-Type", type);
+        return await client.SendAsync(request);
+    }
+
     [TestMethod]
     public async Task DispatchAllowedType()
     {
@@ -48,11 +62,13 @@ public class InterceptorPipelineShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { Name = "Test" });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.CreateItemCommand", payload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.CreateItemCommand",
+                new { Name = "Test" });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
-
+            // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
         }
     }
@@ -64,11 +80,13 @@ public class InterceptorPipelineShould
         await using (app)
         using (client)
         {
-            var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
-            var envelope = new DispatchEnvelope("Conduit.Transport.Http.Tests.Support.DeleteItemCommand", payload);
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.DeleteItemCommand",
+                new { Id = Guid.NewGuid() });
 
-            var response = await client.PostAsJsonAsync("/api/conduit/dispatch", envelope);
-
+            // Assert
             ((int)response.StatusCode).Should().Be(401);
         }
     }

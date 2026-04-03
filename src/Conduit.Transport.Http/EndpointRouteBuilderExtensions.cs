@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conduit.Exceptions;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.Builder;
@@ -12,8 +13,8 @@ namespace Conduit.Transport.Http;
 public static class EndpointRouteBuilderExtensions
 {
     /// <summary>
-    /// Maps POST endpoints that accept <see cref="DispatchEnvelope"/> payloads
-    /// and dispatch them through the <see cref="IWireMediator"/>.
+    /// Maps POST endpoints for Conduit wire dispatch. The message type is read from the
+    /// <c>X-Conduit-Type</c> header and the request body contains the plain serialized message.
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="basePath">The base URL path for Conduit endpoints. Defaults to "/api/conduit".
@@ -24,10 +25,13 @@ public static class EndpointRouteBuilderExtensions
         string basePath = "/api/conduit")
     {
         endpoints.MapPost(basePath + "/dispatch", async (
-            DispatchEnvelope envelope,
+            HttpRequest httpRequest,
             IWireMediator mediator,
             CancellationToken cancellationToken) =>
         {
+            var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
+            StartMessageContext(httpRequest);
+
             var result = await mediator.HandleWireRequestAsync(envelope, cancellationToken);
 
             if (result.Error is not null)
@@ -39,14 +43,47 @@ public static class EndpointRouteBuilderExtensions
         });
 
         endpoints.MapPost(basePath + "/publish", async (
-            DispatchEnvelope envelope,
+            HttpRequest httpRequest,
             IWireMediator mediator,
             CancellationToken cancellationToken) =>
         {
+            var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
+            StartMessageContext(httpRequest);
+
             await mediator.HandleWireEventAsync(envelope, cancellationToken);
             return Results.Ok();
         });
 
         return endpoints;
+    }
+
+    private static async Task<DispatchEnvelope> ReadEnvelopeAsync(
+        HttpRequest httpRequest, CancellationToken cancellationToken)
+    {
+        var type = httpRequest.Headers["X-Conduit-Type"].ToString();
+        if (string.IsNullOrWhiteSpace(type))
+        {
+            throw new BadHttpRequestException("Missing required X-Conduit-Type header.");
+        }
+
+        var payload = await JsonSerializer.DeserializeAsync<JsonElement>(
+            httpRequest.Body, ConduitRuntime.JsonOptions, cancellationToken);
+
+        return new DispatchEnvelope(type, payload);
+    }
+
+    private static void StartMessageContext(HttpRequest httpRequest)
+    {
+        var messageId = httpRequest.Headers["X-Conduit-Message-Id"].ToString();
+        var conversationId = httpRequest.Headers["X-Conduit-Conversation-Id"].ToString();
+
+        if (!string.IsNullOrWhiteSpace(messageId) && !string.IsNullOrWhiteSpace(conversationId))
+        {
+            var causationId = httpRequest.Headers["X-Conduit-Causation-Id"].ToString();
+            MessageContext.StartDispatchFromTransport(
+                messageId,
+                string.IsNullOrWhiteSpace(causationId) ? null : causationId,
+                conversationId);
+        }
     }
 }

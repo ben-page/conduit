@@ -51,8 +51,9 @@ public class SignalRInterceptorShould
         var payload = JsonSerializer.SerializeToElement(new { Name = "Allowed" });
 
         // Act
+        Dictionary<string, string>? noContext = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext);
 
         // Assert
         result.Should().NotBeNull();
@@ -68,8 +69,9 @@ public class SignalRInterceptorShould
         var payload = JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid() });
 
         // Act
+        Dictionary<string, string>? noContext = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.DeleteItemCommand", payload);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.DeleteItemCommand", payload, noContext);
 
         // Assert
         result.Should().NotBeNull();
