@@ -281,12 +281,44 @@ public static class MediatorEmitter
     {
         var localOnlyTypes = new HashSet<string>(
             events.Where(e => e.IsLocalOnly).Select(e => e.FullTypeName));
+        var fireAndForgetTypes = new HashSet<string>(
+            events.Where(e => e.IsFireAndForget).Select(e => e.FullTypeName));
 
         // PublishAsync dispatches to local listeners AND broadcasts to all registered transports.
         // Events marked [LocalOnly] skip the broadcast step entirely.
+        // Events marked [FireAndForget] enqueue everything to the background dispatcher.
         // Catches EventListenerException — local publish is fire-and-forget.
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
+
+        // F&F events enqueue everything to the background dispatcher and return immediately
+        if (fireAndForgetTypes.Count > 0)
+        {
+            sb.AppendLine("        if (@event is " + string.Join(" or ", fireAndForgetTypes) + ")");
+            sb.AppendLine("        {");
+            sb.AppendLine("            var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
+            sb.AppendLine("            var captured = @event;");
+            sb.AppendLine("            dispatcher.Enqueue(async ct =>");
+            sb.AppendLine("            {");
+            sb.AppendLine("                var ctx = MessageContext.StartDispatch();");
+            sb.AppendLine("                try");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    await PublishLocalAsync(captured, ct);");
+            sb.AppendLine("                }");
+            sb.AppendLine($"                catch ({EmitConstants.NamespaceExceptions}.EventListenerException ex)");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    logger.LogError(ex, \"One or more event listeners failed for {EventType}\", captured.GetType().FullName);");
+            sb.AppendLine("                }");
+            sb.AppendLine("                finally");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    MessageContext.RestoreContext(null);");
+            sb.AppendLine("                }");
+            sb.AppendLine("            });");
+            sb.AppendLine("            return;");
+            sb.AppendLine("        }");
+            sb.AppendLine();
+        }
+
         EmitContextStart(sb);
         sb.AppendLine("        try");
         sb.AppendLine("        {");
