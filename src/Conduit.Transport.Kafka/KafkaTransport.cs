@@ -41,6 +41,9 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
 
+    [ThreadStatic]
+    private static Dictionary<string, string>? pendingTraceHeaders;
+
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
@@ -395,6 +398,21 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     }
 
     // -----------------------------------------------------------------------
+    // Trace context
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override void InjectTraceHeader(string key, string value)
+    {
+        pendingTraceHeaders ??= new Dictionary<string, string>();
+        pendingTraceHeaders[key] = value;
+    }
+
+    /// <inheritdoc />
+    protected override string? ExtractTraceHeader(KafkaInboundMessage message, string key) =>
+        GetHeaderString(message.ConsumeResult.Message.Headers, key);
+
+    // -----------------------------------------------------------------------
     // Private helpers — Consumer loops
     // -----------------------------------------------------------------------
 
@@ -613,6 +631,16 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
             }
 
             headers.Add("conduit-conversation-id", Encoding.UTF8.GetBytes(context.ConversationId));
+        }
+
+        if (pendingTraceHeaders is not null)
+        {
+            foreach (var (key, value) in pendingTraceHeaders)
+            {
+                headers.Add(key, Encoding.UTF8.GetBytes(value));
+            }
+
+            pendingTraceHeaders = null;
         }
 
         return headers;

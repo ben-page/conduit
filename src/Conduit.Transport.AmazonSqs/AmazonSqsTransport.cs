@@ -29,6 +29,9 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<Task> pollingTasks = [];
 
+    [ThreadStatic]
+    private static Dictionary<string, string>? pendingTraceHeaders;
+
     private AmazonSimpleNotificationServiceClient? snsClient;
     private AmazonSQSClient? sqsClient;
     private string? topicArn;
@@ -406,6 +409,23 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     }
 
     // -----------------------------------------------------------------------
+    // Trace context
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override void InjectTraceHeader(string key, string value)
+    {
+        pendingTraceHeaders ??= new Dictionary<string, string>();
+        pendingTraceHeaders[key] = value;
+    }
+
+    /// <inheritdoc />
+    protected override string? ExtractTraceHeader(AmazonSqsInboundMessage message, string key) =>
+        message.Message.MessageAttributes.TryGetValue(key, out var attr)
+            ? attr.StringValue
+            : null;
+
+    // -----------------------------------------------------------------------
     // Private helpers -- polling loops
     // -----------------------------------------------------------------------
 
@@ -563,6 +583,20 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 DataType = "String",
                 StringValue = context.ConversationId,
             };
+        }
+
+        if (pendingTraceHeaders is not null)
+        {
+            foreach (var (key, value) in pendingTraceHeaders)
+            {
+                attributes[key] = new SqsMessageAttributeValue
+                {
+                    DataType = "String",
+                    StringValue = value,
+                };
+            }
+
+            pendingTraceHeaders = null;
         }
 
         return attributes;

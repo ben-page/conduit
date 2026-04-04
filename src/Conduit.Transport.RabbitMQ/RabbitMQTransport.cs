@@ -32,6 +32,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     private readonly List<string> consumerTags = [];
     private readonly List<IChannel> consumerChannels = [];
 
+    [ThreadStatic]
+    private static Dictionary<string, string>? pendingTraceHeaders;
+
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
@@ -392,6 +395,21 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     }
 
     // -----------------------------------------------------------------------
+    // Trace context
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override void InjectTraceHeader(string key, string value)
+    {
+        pendingTraceHeaders ??= new Dictionary<string, string>();
+        pendingTraceHeaders[key] = value;
+    }
+
+    /// <inheritdoc />
+    protected override string? ExtractTraceHeader(RabbitMQInboundMessage message, string key) =>
+        GetHeaderString(message.Args.BasicProperties.Headers, key);
+
+    // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
 
@@ -447,6 +465,16 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             }
 
             headers["ConversationId"] = Encoding.UTF8.GetBytes(context.ConversationId);
+        }
+
+        if (pendingTraceHeaders is not null)
+        {
+            foreach (var (key, value) in pendingTraceHeaders)
+            {
+                headers[key] = Encoding.UTF8.GetBytes(value);
+            }
+
+            pendingTraceHeaders = null;
         }
 
         return headers;
