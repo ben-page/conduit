@@ -41,6 +41,7 @@ public static class MediatorEmitter
         sb.AppendLine();
         sb.AppendLine("using System;");
         sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using System.Diagnostics;");
         sb.AppendLine("using System.Linq;");
         sb.AppendLine("using System.Text.Json;");
         sb.AppendLine("using System.Threading;");
@@ -73,11 +74,13 @@ public static class MediatorEmitter
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            EmitContextStart(sb);
+            EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command");
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
+            sb.AppendLine($"                __activity?.SetTag(\"conduit.dispatch\", \"remote\");");
+            sb.AppendLine($"                __activity?.SetTag(\"conduit.endpoint\", endpoint.Name);");
             sb.AppendLine($"                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var result = await transport.SendRequestAsync(");
@@ -90,6 +93,7 @@ public static class MediatorEmitter
             if (hasHandler)
             {
                 sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
+                sb.AppendLine($"            __activity?.SetTag(\"conduit.dispatch\", \"local\");");
                 sb.AppendLine($"            return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
@@ -110,11 +114,13 @@ public static class MediatorEmitter
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            EmitContextStart(sb);
+            EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command");
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
+            sb.AppendLine($"                __activity?.SetTag(\"conduit.dispatch\", \"remote\");");
+            sb.AppendLine($"                __activity?.SetTag(\"conduit.endpoint\", endpoint.Name);");
             sb.AppendLine($"                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
 
@@ -137,6 +143,7 @@ public static class MediatorEmitter
             if (hasHandler)
             {
                 sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
+                sb.AppendLine($"            __activity?.SetTag(\"conduit.dispatch\", \"local\");");
                 sb.AppendLine($"            await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
@@ -157,11 +164,13 @@ public static class MediatorEmitter
             sb.AppendLine($"        {query.FullTypeName} query,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            EmitContextStart(sb);
+            EmitContextStart(sb, $"\"{query.FullTypeName}\"", "query");
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{query.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{query.FullTypeName}\", endpoint.Name);");
+            sb.AppendLine($"                __activity?.SetTag(\"conduit.dispatch\", \"remote\");");
+            sb.AppendLine($"                __activity?.SetTag(\"conduit.endpoint\", endpoint.Name);");
             sb.AppendLine($"                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(query, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var result = await transport.SendRequestAsync(");
@@ -174,6 +183,7 @@ public static class MediatorEmitter
             if (hasHandler)
             {
                 sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{query.FullTypeName}\");");
+                sb.AppendLine($"            __activity?.SetTag(\"conduit.dispatch\", \"local\");");
                 sb.AppendLine($"            return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
             }
             else
@@ -320,7 +330,7 @@ public static class MediatorEmitter
             sb.AppendLine();
         }
 
-        EmitContextStart(sb);
+        EmitContextStart(sb, "@event.GetType().FullName!", "event");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            await PublishLocalAsync(@event, cancellationToken);");
@@ -532,10 +542,11 @@ public static class MediatorEmitter
         sb.AppendLine();
     }
 
-    private static void EmitContextStart(StringBuilder sb)
+    private static void EmitContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
     {
         sb.AppendLine($"        var previousContext = {EmitConstants.MessageContext}.Current;");
         sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch();");
+        sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
     }

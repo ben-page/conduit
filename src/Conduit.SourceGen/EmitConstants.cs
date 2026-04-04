@@ -41,6 +41,9 @@ internal static class EmitConstants
     // Context types
     internal const string MessageContext = "Conduit.Runtime.MessageContext";
 
+    // Telemetry types
+    internal const string ConduitTelemetry = "Conduit.Runtime.ConduitTelemetry";
+
     // Transport types
     internal const string IConduitTransport = "Conduit.Runtime.IConduitTransport";
 
