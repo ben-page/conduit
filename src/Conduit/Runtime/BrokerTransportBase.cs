@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Conduit.Configuration;
 using Conduit.Exceptions;
@@ -117,10 +118,18 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 "Transport has not been started. Ensure the host is running before sending messages.");
         }
 
+        using var activity = ConduitTelemetry.StartProducerActivity<BrokerTransportBase<TMessage>>(envelope.Type);
+        activity?.SetTag("conduit.transport", this.GetType().Name);
+        ConduitTelemetry.InjectTraceContext(activity, this.InjectTraceHeader);
+
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
+        var sw = Stopwatch.StartNew();
         var replyData = await this.PublishRequestAsync(envelope, body, cancellationToken);
+        sw.Stop();
+
+        ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
 
         var result = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
             replyData, ConduitRuntime.JsonOptions);
@@ -139,10 +148,18 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 "Transport has not been started. Ensure the host is running before publishing events.");
         }
 
+        using var activity = ConduitTelemetry.StartProducerActivity<BrokerTransportBase<TMessage>>(envelope.Type);
+        activity?.SetTag("conduit.transport", this.GetType().Name);
+        ConduitTelemetry.InjectTraceContext(activity, this.InjectTraceHeader);
+
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
+        var sw = Stopwatch.StartNew();
         await this.PublishEventAsync(envelope, body, cancellationToken);
+        sw.Stop();
+
+        ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
     }
 
     // -----------------------------------------------------------------------
@@ -166,6 +183,11 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         LogReceivedMessage(this.Logger, messageType, null);
 
+        var parentContext = ConduitTelemetry.ExtractTraceContext(key => this.ExtractTraceHeader(message, key));
+        using var activity = ConduitTelemetry.StartConsumerActivity<BrokerTransportBase<TMessage>>(messageType, parentContext);
+        activity?.SetTag("conduit.transport", this.GetType().Name);
+
+        var success = false;
         var previousContext = MessageContext.Current;
         try
         {
@@ -212,10 +234,13 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                     await this.DispatchEventAsync(message, messageType, envelope, wireMediator);
                 }
             }
+
+            success = true;
         }
         finally
         {
             MessageContext.RestoreContext(previousContext);
+            ConduitTelemetry.RecordTransportReceive(messageType, this.GetType().Name, success);
         }
     }
 
@@ -397,4 +422,18 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         DispatchEnvelope envelope,
         BinaryData body,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Injects a trace context header into the outbound message.
+    /// Called during send to propagate W3C traceparent/tracestate.
+    /// Transports map this to their native header format.
+    /// </summary>
+    protected abstract void InjectTraceHeader(string key, string value);
+
+    /// <summary>
+    /// Extracts a trace context header from an inbound message.
+    /// Called during receive to restore the parent trace context.
+    /// Transports map this to their native header format.
+    /// </summary>
+    protected abstract string? ExtractTraceHeader(TMessage message, string key);
 }
