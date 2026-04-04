@@ -92,6 +92,41 @@ public class ValidationBehavior<TRequest, TResult> : IPipelineBehavior<TRequest,
 
 Check `typeof(TRequest)`, cast to an interface, look for attributes. If the behavior does not apply, call `next()` and pass through.
 
+## OpenTelemetry
+
+Conduit has built-in distributed tracing and metrics. Spans are created automatically for dispatch, wire dispatch, and transport send/receive. No pipeline behavior needed.
+
+### Setup
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddSource("Conduit"))
+    .WithMetrics(m => m.AddMeter("Conduit"));
+```
+
+### Traces
+
+Conduit creates spans for:
+- Local command/query/event dispatch (`ConduitMediator`)
+- Wire request/event dispatch (`ConduitRuntime`)
+- Transport send and receive (`BrokerTransportBase`)
+
+Tags: `conduit.message.type`, `conduit.message.kind`, `conduit.message.id`, `conduit.conversation.id`, `conduit.dispatch` (local/remote), `conduit.endpoint`, `conduit.transport`.
+
+Trace context propagates through broker message headers (W3C `traceparent`/`tracestate`), so commands dispatched to a remote service via RabbitMQ, Kafka, etc. appear as a single distributed trace in Jaeger/Zipkin.
+
+### Metrics
+
+| Metric | Type | Tags |
+|---|---|---|
+| `conduit.dispatch.count` | Counter | `conduit.message.type`, `conduit.message.kind`, `conduit.outcome` |
+| `conduit.dispatch.duration` | Histogram (ms) | `conduit.message.type`, `conduit.message.kind`, `conduit.outcome` |
+| `conduit.transport.send.count` | Counter | `conduit.message.type`, `conduit.transport` |
+| `conduit.transport.send.duration` | Histogram (ms) | `conduit.message.type`, `conduit.transport` |
+| `conduit.transport.receive.count` | Counter | `conduit.message.type`, `conduit.transport`, `conduit.outcome` |
+
+All instrumentation is zero-cost when no OTel listener is attached.
+
 ---
 
 Previous: [RabbitMQ](transports/rabbitmq.md) | [Home](../README.md) | Next: [Error Handling](error-handling.md)
