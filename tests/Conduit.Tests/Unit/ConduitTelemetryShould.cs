@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using Conduit.Runtime;
 
@@ -149,6 +150,71 @@ public sealed class ConduitTelemetryShould : IDisposable
         // Assert — round-trip preserves trace ID
         extractedContext.Should().NotBeNull();
         extractedContext!.Value.TraceId.Should().Be(producerActivity!.TraceId);
+    }
+
+    [TestMethod]
+    public void RecordDispatchCountMetric()
+    {
+        // Arrange
+        var measurements = new List<(long Value, string Type, string Kind, string Outcome)>();
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Name == "conduit.dispatch.count")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((instrument, value, tags, state) =>
+        {
+            var tagList = tags.ToArray();
+            var type = tagList.FirstOrDefault(t => t.Key == "conduit.message.type").Value?.ToString() ?? "";
+            var kind = tagList.FirstOrDefault(t => t.Key == "conduit.message.kind").Value?.ToString() ?? "";
+            var outcome = tagList.FirstOrDefault(t => t.Key == "conduit.outcome").Value?.ToString() ?? "";
+            measurements.Add((value, type, kind, outcome));
+        });
+        meterListener.Start();
+
+        // Act
+        ConduitTelemetry.RecordDispatch("Test.Commands.DoSomething", "command", success: true, durationMs: 42.0);
+
+        // Assert
+        measurements.Should().ContainSingle();
+        measurements[0].Type.Should().Be("Test.Commands.DoSomething");
+        measurements[0].Kind.Should().Be("command");
+        measurements[0].Outcome.Should().Be("success");
+    }
+
+    [TestMethod]
+    public void RecordDispatchDurationMetric()
+    {
+        // Arrange
+        var measurements = new List<(double Value, string Type, string Kind)>();
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Name == "conduit.dispatch.duration")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<double>((instrument, value, tags, state) =>
+        {
+            var tagList = tags.ToArray();
+            var type = tagList.FirstOrDefault(t => t.Key == "conduit.message.type").Value?.ToString() ?? "";
+            var kind = tagList.FirstOrDefault(t => t.Key == "conduit.message.kind").Value?.ToString() ?? "";
+            measurements.Add((value, type, kind));
+        });
+        meterListener.Start();
+
+        // Act
+        ConduitTelemetry.RecordDispatch("Test.Queries.GetSomething", "query", success: true, durationMs: 123.5);
+
+        // Assert
+        measurements.Should().ContainSingle();
+        measurements[0].Value.Should().Be(123.5);
+        measurements[0].Type.Should().Be("Test.Queries.GetSomething");
+        measurements[0].Kind.Should().Be("query");
     }
 
     [TestMethod]
