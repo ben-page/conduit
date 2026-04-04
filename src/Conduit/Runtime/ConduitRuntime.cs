@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -198,6 +199,8 @@ public static class ConduitRuntime
         ArgumentNullException.ThrowIfNull(dispatch);
         LogWireRequestReceived(logger, envelope.Type, null);
 
+        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), envelope.Type, "command", nameof(HandleWireRequest));
+
         var previousContext = MessageContext.Current;
         MessageContext.StartDispatch();
 
@@ -213,16 +216,19 @@ public static class ConduitRuntime
         try
         {
             var result = await chain();
+            activity?.SetStatus(ActivityStatusCode.Ok);
             return DispatchResult<object>.Ok(result);
         }
         catch (ConduitException ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return DispatchResult<object>.Fail(ex.Code.Value, ex.Message);
         }
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             LogDispatchError(logger, envelope.Type, ex);
             return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
         }
@@ -248,6 +254,8 @@ public static class ConduitRuntime
         ArgumentNullException.ThrowIfNull(dispatch);
         LogWireEventReceived(logger, envelope.Type, null);
 
+        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), envelope.Type, "event", nameof(HandleWireEvent));
+
         var previousContext = MessageContext.Current;
         MessageContext.StartDispatch();
 
@@ -263,15 +271,18 @@ public static class ConduitRuntime
         try
         {
             await chain();
+            activity?.SetStatus(ActivityStatusCode.Ok);
         }
-        catch (EventListenerException)
+        catch (EventListenerException ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             LogPublishError(logger, envelope.Type, ex);
         }
         finally
