@@ -124,4 +124,54 @@ public sealed class ConduitTelemetryShould : IDisposable
         activity.Should().NotBeNull();
         activity!.Kind.Should().Be(ActivityKind.Internal);
     }
+
+    [TestMethod]
+    public void PropagateTraceContextThroughCarrier()
+    {
+        // Arrange — start a producer activity so there is an active context
+        using var producerActivity = ConduitTelemetry.StartProducerActivity<ConduitTelemetryShould>(
+            "Test.Commands.DoSomething");
+        producerActivity.Should().NotBeNull();
+
+        var headers = new Dictionary<string, string>();
+
+        // Act — inject trace context into carrier
+        ConduitTelemetry.InjectTraceContext(producerActivity, (key, value) => headers[key] = value);
+
+        // Assert — traceparent should be present
+        headers.Should().ContainKey("traceparent");
+        headers["traceparent"].Should().StartWith("00-");
+
+        // Act — extract trace context from carrier
+        var extractedContext = ConduitTelemetry.ExtractTraceContext(key =>
+            headers.TryGetValue(key, out var value) ? value : null);
+
+        // Assert — round-trip preserves trace ID
+        extractedContext.Should().NotBeNull();
+        extractedContext!.Value.TraceId.Should().Be(producerActivity!.TraceId);
+    }
+
+    [TestMethod]
+    public void LinkConsumerActivityToProducerActivity()
+    {
+        // Arrange — create a producer activity and extract its context
+        using var producerActivity = ConduitTelemetry.StartProducerActivity<ConduitTelemetryShould>(
+            "Test.Commands.DoSomething");
+        producerActivity.Should().NotBeNull();
+
+        var headers = new Dictionary<string, string>();
+        ConduitTelemetry.InjectTraceContext(producerActivity, (key, value) => headers[key] = value);
+
+        var parentContext = ConduitTelemetry.ExtractTraceContext(key =>
+            headers.TryGetValue(key, out var value) ? value : null);
+
+        // Act — create a consumer activity linked to the producer
+        using var consumerActivity = ConduitTelemetry.StartConsumerActivity<ConduitTelemetryShould>(
+            "Test.Commands.DoSomething", parentContext);
+
+        // Assert — consumer shares the same trace ID
+        consumerActivity.Should().NotBeNull();
+        consumerActivity!.TraceId.Should().Be(producerActivity!.TraceId);
+        consumerActivity.ParentSpanId.Should().Be(producerActivity.SpanId);
+    }
 }

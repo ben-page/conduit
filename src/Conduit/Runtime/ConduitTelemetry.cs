@@ -86,6 +86,54 @@ public static class ConduitTelemetry
         return activity;
     }
 
+    /// <summary>
+    /// Injects W3C trace context (traceparent/tracestate) into a carrier
+    /// using the current <see cref="DistributedContextPropagator"/>.
+    /// Each transport maps the setter to its native header format.
+    /// </summary>
+    public static void InjectTraceContext(Activity? activity, Action<string, string> setter)
+    {
+        if (activity is null)
+        {
+            return;
+        }
+
+        DistributedContextPropagator.Current.Inject(
+            activity, setter, static (carrier, key, value) =>
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    ((Action<string, string>)carrier!)(key, value);
+                }
+            });
+    }
+
+    /// <summary>
+    /// Extracts W3C trace context from a carrier, returning the parent ActivityContext
+    /// for linking consumer spans to producer spans across transport boundaries.
+    /// </summary>
+    public static ActivityContext? ExtractTraceContext(Func<string, string?> getter)
+    {
+        DistributedContextPropagator.Current.ExtractTraceIdAndState(
+            getter,
+            static (carrier, key, out value, out values) =>
+            {
+                value = ((Func<string, string?>)carrier!)(key);
+                values = null;
+            },
+            out var traceParent,
+            out var traceState);
+
+        if (string.IsNullOrEmpty(traceParent))
+        {
+            return null;
+        }
+
+        return ActivityContext.TryParse(traceParent, traceState, out var context)
+            ? context
+            : null;
+    }
+
     private static void SetMessageContextTags(Activity activity)
     {
         var context = MessageContext.Current;
