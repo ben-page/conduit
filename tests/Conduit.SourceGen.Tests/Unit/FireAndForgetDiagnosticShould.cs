@@ -26,7 +26,7 @@ namespace App.Commands
         var (_, diagnostics) = RunGenerator(source);
 
         // Assert
-        diagnostics.Should().Contain(d => d.Id == "CONDUIT002");
+        diagnostics.Should().Contain(d => d.Id == "CONDUIT003");
     }
 
     [TestMethod]
@@ -48,7 +48,7 @@ namespace App.Queries
         var (_, diagnostics) = RunGenerator(source);
 
         // Assert
-        diagnostics.Should().Contain(d => d.Id == "CONDUIT002");
+        diagnostics.Should().Contain(d => d.Id == "CONDUIT003");
     }
 
     [TestMethod]
@@ -79,7 +79,7 @@ namespace App.Commands
         var (_, diagnostics) = RunGenerator(source);
 
         // Assert
-        diagnostics.Should().NotContain(d => d.Id == "CONDUIT002");
+        diagnostics.Should().NotContain(d => d.Id == "CONDUIT003");
     }
 
     [TestMethod]
@@ -110,6 +110,6 @@ namespace App.Events
         var (_, diagnostics) = RunGenerator(source);
 
         // Assert
-        diagnostics.Should().NotContain(d => d.Id == "CONDUIT002");
+        diagnostics.Should().NotContain(d => d.Id == "CONDUIT003");
     }
 }

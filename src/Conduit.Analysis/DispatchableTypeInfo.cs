@@ -26,4 +26,7 @@ public sealed class DispatchableTypeInfo
 
     /// <summary>Whether the type has a <c>[LocalOnly]</c> attribute (events only).</summary>
     public bool IsLocalOnly { get; init; }
+
+    /// <summary>Whether the type has a <c>[FireAndForget]</c> attribute.</summary>
+    public bool IsFireAndForget { get; init; }
 }

@@ -58,7 +58,15 @@ public static class DispatchEmitter
                     EmitCommandWithResult(sb, type, handler);
                     break;
                 case DispatchableKind.VoidCommand:
-                    EmitVoidCommand(sb, type, handler);
+                    if (type.IsFireAndForget)
+                    {
+                        EmitFireAndForgetVoidCommand(sb, type, handler);
+                    }
+                    else
+                    {
+                        EmitVoidCommand(sb, type, handler);
+                    }
+
                     break;
                 case DispatchableKind.Query:
                     EmitQuery(sb, type, handler);
@@ -132,6 +140,55 @@ public static class DispatchEmitter
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.IQuery}<{type.ResultFullTypeName}>)query).Validate();");
         EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: false);
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    private static void EmitFireAndForgetVoidCommand(
+        StringBuilder sb,
+        DispatchableTypeInfo type,
+        HandlerInfo _)
+    {
+        var handlerInterface =
+            $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}>";
+
+        // Execute method: runs pipeline in caller context, enqueues handler to background dispatcher
+        sb.AppendLine($"    public static Task Execute(");
+        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
+        sb.AppendLine();
+        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, object>(conduitOptions, serviceProvider);");
+        sb.AppendLine($"        var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
+        sb.AppendLine();
+        sb.AppendLine($"        // The handler call enqueues to the background dispatcher instead of executing inline.");
+        sb.AppendLine($"        // Pipeline behaviors wrap this — they run in the caller context, the handler runs in the background.");
+        sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            dispatcher.Enqueue(async ct =>");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
+        sb.AppendLine($"                await handler.HandleAsync(command, ct);");
+        sb.AppendLine("            });");
+        sb.AppendLine($"            return Task.FromResult<object?>({EmitConstants.Unit}.Value)!;");
+        sb.AppendLine("        };");
+        sb.AppendLine();
+        sb.AppendLine($"        return {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors(command, behaviors, handlerCall, cancellationToken);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        // ExecuteVoid wrapper (for wire dispatch compatibility)
+        sb.AppendLine($"    public static async Task<object?> ExecuteVoid(");
+        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        await Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+        sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
         sb.AppendLine("    }");
         sb.AppendLine();
     }

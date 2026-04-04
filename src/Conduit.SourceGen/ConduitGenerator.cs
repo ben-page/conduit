@@ -197,7 +197,20 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     Location.None,
                     type.FullTypeName));
             }
+
+            // [FireAndForget] is only valid on void commands and events
+            if (type.IsFireAndForget && type.Kind is DispatchableKind.Command or DispatchableKind.Query)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticDescriptors.InvalidFireAndForget,
+                    Location.None,
+                    type.FullTypeName));
+            }
         }
+
+        // Also check events for invalid [FireAndForget] (events are skipped above)
+        // Events ARE valid for [FireAndForget], so no diagnostic needed — this loop only
+        // catches commands/queries. Events with [FireAndForget] are fine.
     }
 
     private static string GetExpectedHandlerInterface(DispatchableTypeInfo type)
