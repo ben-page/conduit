@@ -16,6 +16,21 @@ public static class ConduitTelemetry
     internal static readonly ActivitySource Source = new("Conduit");
     internal static readonly Meter MeterInstance = new("Conduit");
 
+    private static readonly Counter<long> DispatchCount =
+        MeterInstance.CreateCounter<long>("conduit.dispatch.count", description: "Number of dispatched messages");
+
+    private static readonly Histogram<double> DispatchDuration =
+        MeterInstance.CreateHistogram<double>("conduit.dispatch.duration", unit: "ms", description: "Dispatch duration");
+
+    private static readonly Counter<long> TransportSendCount =
+        MeterInstance.CreateCounter<long>("conduit.transport.send.count", description: "Number of transport sends");
+
+    private static readonly Histogram<double> TransportSendDuration =
+        MeterInstance.CreateHistogram<double>("conduit.transport.send.duration", unit: "ms", description: "Transport send duration");
+
+    private static readonly Counter<long> TransportReceiveCount =
+        MeterInstance.CreateCounter<long>("conduit.transport.receive.count", description: "Number of transport receives");
+
     /// <summary>
     /// Starts an activity for internal operations (local dispatch, wire dispatch).
     /// Returns null when no listener is attached (zero-cost).
@@ -132,6 +147,49 @@ public static class ConduitTelemetry
         return ActivityContext.TryParse(traceParent, traceState, out var context)
             ? context
             : null;
+    }
+
+    /// <summary>
+    /// Records dispatch count and duration metrics.
+    /// </summary>
+    public static void RecordDispatch(string messageType, string messageKind, bool success, double durationMs)
+    {
+        var outcome = success ? "success" : "error";
+
+        DispatchCount.Add(1,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.message.kind", messageKind),
+            new KeyValuePair<string, object?>("conduit.outcome", outcome));
+
+        DispatchDuration.Record(durationMs,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.message.kind", messageKind),
+            new KeyValuePair<string, object?>("conduit.outcome", outcome));
+    }
+
+    /// <summary>
+    /// Records transport send count and duration metrics.
+    /// </summary>
+    public static void RecordTransportSend(string messageType, string transport, double durationMs)
+    {
+        TransportSendCount.Add(1,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.transport", transport));
+
+        TransportSendDuration.Record(durationMs,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.transport", transport));
+    }
+
+    /// <summary>
+    /// Records transport receive count metric.
+    /// </summary>
+    public static void RecordTransportReceive(string messageType, string transport, bool success)
+    {
+        TransportReceiveCount.Add(1,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.transport", transport),
+            new KeyValuePair<string, object?>("conduit.outcome", success ? "success" : "error"));
     }
 
     private static void SetMessageContextTags(Activity activity)
