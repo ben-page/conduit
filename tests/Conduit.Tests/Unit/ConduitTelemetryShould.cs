@@ -153,6 +153,7 @@ public sealed class ConduitTelemetryShould : IDisposable
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public void RecordDispatchCountMetric()
     {
         // Arrange
@@ -186,6 +187,7 @@ public sealed class ConduitTelemetryShould : IDisposable
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public void RecordDispatchDurationMetric()
     {
         // Arrange
