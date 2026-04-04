@@ -34,6 +34,9 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<ReceiverLink> consumerLinks = [];
 
+    [ThreadStatic]
+    private static Dictionary<string, string>? pendingTraceHeaders;
+
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
@@ -484,6 +487,30 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     }
 
     // -----------------------------------------------------------------------
+    // Trace context
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override void InjectTraceHeader(string key, string value)
+    {
+        pendingTraceHeaders ??= new Dictionary<string, string>();
+        pendingTraceHeaders[key] = value;
+    }
+
+    /// <inheritdoc />
+    protected override string? ExtractTraceHeader(ActiveMQInboundMessage message, string key)
+    {
+        if (message.Message.ApplicationProperties?.Map is null)
+        {
+            return null;
+        }
+
+        return message.Message.ApplicationProperties.Map.TryGetValue(key, out var value)
+            ? value?.ToString()
+            : null;
+    }
+
+    // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
 
@@ -558,6 +585,16 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             {
                 properties["CausationId"] = context.CausationId;
             }
+        }
+
+        if (pendingTraceHeaders is not null)
+        {
+            foreach (var (key, value) in pendingTraceHeaders)
+            {
+                properties[key] = value;
+            }
+
+            pendingTraceHeaders = null;
         }
 
         return properties;

@@ -23,6 +23,9 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     private ServiceBusClient? client;
     private ServiceBusSender? topicSender;
 
+    [ThreadStatic]
+    private static Dictionary<string, string>? pendingTraceHeaders;
+
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogSendingRequest =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "SendingRequest"),
@@ -259,6 +262,23 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     }
 
     // -----------------------------------------------------------------------
+    // Trace context
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    protected override void InjectTraceHeader(string key, string value)
+    {
+        pendingTraceHeaders ??= new Dictionary<string, string>();
+        pendingTraceHeaders[key] = value;
+    }
+
+    /// <inheritdoc />
+    protected override string? ExtractTraceHeader(ProcessMessageEventArgs message, string key) =>
+        message.Message.ApplicationProperties.TryGetValue(key, out var value)
+            ? value?.ToString()
+            : null;
+
+    // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
 
@@ -315,17 +335,25 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     private static void SeedOutboundMessageContext(ServiceBusMessage message)
     {
         var context = MessageContext.Current;
-        if (context is null)
+        if (context is not null)
         {
-            return;
+            message.MessageId = context.MessageId;
+            message.CorrelationId = context.ConversationId;
+
+            if (context.CausationId is not null)
+            {
+                message.ApplicationProperties["CausationId"] = context.CausationId;
+            }
         }
 
-        message.MessageId = context.MessageId;
-        message.CorrelationId = context.ConversationId;
-
-        if (context.CausationId is not null)
+        if (pendingTraceHeaders is not null)
         {
-            message.ApplicationProperties["CausationId"] = context.CausationId;
+            foreach (var (key, value) in pendingTraceHeaders)
+            {
+                message.ApplicationProperties[key] = value;
+            }
+
+            pendingTraceHeaders = null;
         }
     }
 }
