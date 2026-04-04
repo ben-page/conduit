@@ -39,9 +39,21 @@ public static class ConduitTelemetry
         string messageType,
         string messageKind,
         [CallerMemberName] string operation = "")
+        => StartActivity(typeof(TCaller).Name, messageType, messageKind, operation);
+
+    /// <summary>
+    /// Starts an activity for internal operations using an explicit caller name.
+    /// Use this overload when the caller is a static class (which cannot be a type argument).
+    /// Returns null when no listener is attached (zero-cost).
+    /// </summary>
+    public static Activity? StartActivity(
+        string callerName,
+        string messageType,
+        string messageKind,
+        string operation)
     {
         var activity = Source.StartActivity(
-            $"{typeof(TCaller).Name}/{operation}",
+            $"{callerName}/{operation}",
             ActivityKind.Internal);
 
         if (activity is not null)
