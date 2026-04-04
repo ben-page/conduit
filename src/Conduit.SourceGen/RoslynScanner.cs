@@ -16,6 +16,7 @@ public static class RoslynScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
+    private const string FireAndForgetAttributeName = "Conduit.Attributes.FireAndForgetAttribute";
 
     /// <summary>
     /// Scans the compilation for all dispatchable types implementing
@@ -63,6 +64,7 @@ public static class RoslynScanner
                 ResultTypeName = resultTypeName,
                 ResultFullTypeName = resultFullTypeName,
                 IsLocalOnly = HasAttribute(typeSymbol, LocalOnlyAttributeName),
+                IsFireAndForget = HasAttribute(typeSymbol, FireAndForgetAttributeName),
             });
         }
 

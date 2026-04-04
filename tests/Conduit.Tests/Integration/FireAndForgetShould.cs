@@ -154,10 +154,10 @@ public class FireAndForgetShould
             {
                 conduit.AddEndpoint("worker", endpoint =>
                 {
+                    endpoint.RouteNamespace<ImportDataCommand>();
                     endpoint.UseTransport<SpyTransport>();
                     builder.Services.AddKeyedSingleton<IConduitTransport>("worker", spyTransport);
                 });
-                conduit.Route("Conduit.Tests.Support").To("worker");
             });
         });
         var mediator = host.GetRequiredService<IMediator>();
@@ -184,10 +184,10 @@ public class FireAndForgetShould
             {
                 conduit.AddEndpoint("worker", endpoint =>
                 {
+                    endpoint.RouteNamespace<ImportDataCommand>();
                     endpoint.UseTransport<SpyTransport>();
                     builder.Services.AddKeyedSingleton<IConduitTransport>("worker", routedTransport);
                 });
-                conduit.Route("Conduit.Tests.Support").To("worker");
             });
         });
         var mediator = host.GetRequiredService<IMediator>();

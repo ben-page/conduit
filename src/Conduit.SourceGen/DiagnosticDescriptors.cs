@@ -18,4 +18,10 @@ public static class DiagnosticDescriptors
         "CONDUIT002", "Multiple handlers found",
         "Multiple handlers found for {0}, only one handler per command/query is allowed",
         "Conduit", DiagnosticSeverity.Error, true);
+
+    /// <summary>CONDUIT003: [FireAndForget] is only valid on void commands (ICommand) and events (IEvent).</summary>
+    public static readonly DiagnosticDescriptor InvalidFireAndForget = new(
+        "CONDUIT003", "Invalid [FireAndForget] usage",
+        "[FireAndForget] on {0} is not supported — only void commands (ICommand) and events (IEvent) can be fire-and-forget. Commands with results and queries require a response.",
+        "Conduit", DiagnosticSeverity.Warning, true);
 }

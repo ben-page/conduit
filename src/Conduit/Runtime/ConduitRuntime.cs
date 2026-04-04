@@ -330,6 +330,10 @@ public static class ConduitRuntime
             return options;
         });
 
+        // Background dispatcher for [FireAndForget] commands and events
+        services.AddSingleton<ConduitBackgroundDispatcher>();
+        services.AddHostedService(sp => sp.GetRequiredService<ConduitBackgroundDispatcher>());
+
         return services;
     }
 
