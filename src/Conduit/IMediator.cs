@@ -55,7 +55,7 @@ public interface IWireMediator : IMediator
 {
     /// <summary>
     /// Handles an inbound wire request. Chains registered
-    /// <see cref="IWireInterceptor"/> instances, deserializes the payload,
+    /// <see cref="IInboundInterceptor"/> instances, deserializes the payload,
     /// dispatches to the handler, and wraps the result in <see cref="DispatchResult{T}"/>.
     /// </summary>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
@@ -67,7 +67,7 @@ public interface IWireMediator : IMediator
 
     /// <summary>
     /// Handles an inbound wire event. Chains registered
-    /// <see cref="IWireInterceptor"/> instances, deserializes the payload,
+    /// <see cref="IInboundInterceptor"/> instances, deserializes the payload,
     /// and publishes to local listeners. Swallows exceptions (fire-and-forget).
     /// </summary>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>

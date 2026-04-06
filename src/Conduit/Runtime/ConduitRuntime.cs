@@ -190,7 +190,7 @@ public static class ConduitRuntime
     /// </summary>
     public static async Task<DispatchResult<object>> HandleWireRequest(
         DispatchEnvelope envelope,
-        IEnumerable<IWireInterceptor> interceptors,
+        IEnumerable<IInboundInterceptor> interceptors,
         Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
@@ -245,7 +245,7 @@ public static class ConduitRuntime
     /// </summary>
     public static async Task HandleWireEvent(
         DispatchEnvelope envelope,
-        IEnumerable<IWireInterceptor> interceptors,
+        IEnumerable<IInboundInterceptor> interceptors,
         Func<string, JsonElement, CancellationToken, Task> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
