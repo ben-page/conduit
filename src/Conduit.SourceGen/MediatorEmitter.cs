@@ -118,8 +118,18 @@ public static class MediatorEmitter
             sb.AppendLine($"                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
 
-            sb.AppendLine($"                await transport.SendEventAsync(");
-            sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            if (cmd.IsFireAndForget)
+            {
+                // F&F commands use the event path — no reply expected
+                sb.AppendLine($"                await transport.SendEventAsync(");
+                sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            }
+            else
+            {
+                // Non-F&F void commands use request/response to confirm handler execution
+                sb.AppendLine($"                await transport.SendRequestAsync(");
+                sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            }
 
             sb.AppendLine("                return;");
             sb.AppendLine("            }");
@@ -475,7 +485,10 @@ public static class MediatorEmitter
 
         foreach (var cmd in voidCommands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
-            sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.ExecuteVoid(");
+            // F&F void commands use ExecuteVoidWire (inline handler) to avoid scope lifetime issues.
+            // The background dispatcher path would execute after the DI scope is disposed.
+            var method = cmd.IsFireAndForget ? "ExecuteVoidWire" : "ExecuteVoid";
+            sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.{method}(");
             sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                serviceProvider,");
             sb.AppendLine($"                conduitOptions,");

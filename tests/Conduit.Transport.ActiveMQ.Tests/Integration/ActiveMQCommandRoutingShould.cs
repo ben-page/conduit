@@ -161,6 +161,31 @@ public class ActiveMQCommandRoutingShould : ActiveMQTestBase
     }
 
     [TestMethod]
+    public async Task DeliverFireAndForgetCommandToHandler()
+    {
+        // Arrange
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
+
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
+
+        var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
+        var mediator = senderHost.GetRequiredService<IMediator>();
+
+        await Task.Delay(1000);
+
+        // Act — F&F command returns immediately, no reply expected
+        await mediator.ExecuteAsync(new FireAndForgetCommand("fire-and-forget"));
+
+        // Assert — handler eventually receives and processes the command
+        await handlerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+        handlerSpy.Invocations.OfType<FireAndForgetCommand>().Should().ContainSingle(
+            c => c.Input == "fire-and-forget");
+    }
+
+    [TestMethod]
     [Timeout(15_000)]
     public async Task TimeoutWhenNoHandlerAvailable()
     {
