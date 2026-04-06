@@ -19,5 +19,6 @@
     <PackageVersion Include="AWSSDK.SimpleNotificationService" Version="3.7.500" />
     <PackageVersion Include="AWSSDK.SQS" Version="3.7.400.107" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Resilience" Version="10.1.0" />
   </ItemGroup>
 </Project>
