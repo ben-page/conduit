@@ -203,6 +203,10 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 {
                     await this.DispatchRequestAsync(message, messageType, envelope, wireMediator);
                 }
+                else if (this.IsFireAndForgetCommand(message, messageType, wireMediator))
+                {
+                    await this.DispatchFireAndForgetCommandAsync(message, messageType, envelope, wireMediator);
+                }
                 else
                 {
                     await this.DispatchEventAsync(message, messageType, envelope, wireMediator);
@@ -275,6 +279,47 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         catch (EventListenerException ex)
         {
             LogMessageAbandoned(this.Logger, messageType, ex);
+            await this.AbandonAsync(message);
+        }
+    }
+
+    /// <summary>
+    /// Checks if the inbound message is a fire-and-forget command (not a request, not an event).
+    /// Fire-and-forget commands arrive without reply headers but their type is a command type.
+    /// </summary>
+    private bool IsFireAndForgetCommand(TMessage message, string messageType, IWireMediator _)
+    {
+        if (this.IsRequest(message))
+        {
+            return false;
+        }
+
+        // Check if this message type is a command/query type in the registry
+        var typeRegistry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
+        return typeRegistry.CommandTypeNames.Contains(messageType)
+            || typeRegistry.QueryTypeNames.Contains(messageType);
+    }
+
+    /// <summary>
+    /// Dispatches a fire-and-forget command: runs the handler, acknowledges, no reply sent.
+    /// </summary>
+    private async Task DispatchFireAndForgetCommandAsync(
+        TMessage message,
+        string messageType,
+        DispatchEnvelope envelope,
+        IWireMediator wireMediator)
+    {
+        try
+        {
+            await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
+            await this.AcknowledgeAsync(message);
+            LogMessageCompleted(this.Logger, messageType, null);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogMessageProcessingError(this.Logger, messageType, ex);
             await this.AbandonAsync(message);
         }
     }
