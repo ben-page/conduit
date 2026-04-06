@@ -31,7 +31,7 @@ internal static class EmitConstants
 
     // Middleware types
     internal const string IPipelineBehavior = "Conduit.Middleware.IPipelineBehavior";
-    internal const string IWireInterceptor = "Conduit.Middleware.IWireInterceptor";
+    internal const string IInboundInterceptor = "Conduit.Middleware.IInboundInterceptor";
 
     // Message interface casts (for Validate() calls)
     internal const string ICommand = "Conduit.Messages.ICommand";

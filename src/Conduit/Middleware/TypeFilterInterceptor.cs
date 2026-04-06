@@ -9,7 +9,7 @@ namespace Conduit.Middleware;
 /// Rejects dispatch requests for message types not in the configured allowed set.
 /// This prevents browser clients from dispatching internal-only commands.
 /// </summary>
-public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IWireInterceptor
+public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IInboundInterceptor
 {
     /// <inheritdoc />
     public Task<object?> InterceptRequestAsync(

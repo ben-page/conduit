@@ -149,7 +149,7 @@ public class ConduitBuilder
         });
 
         this.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<IWireInterceptor, TypeFilterInterceptor>());
+            ServiceDescriptor.Singleton<IInboundInterceptor, TypeFilterInterceptor>());
         return this;
     }
 }

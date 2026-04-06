@@ -61,7 +61,7 @@ public static class MediatorEmitter
         sb.AppendLine("internal sealed class ConduitMediator(");
         sb.AppendLine("    IServiceProvider serviceProvider,");
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
-        sb.AppendLine("    IEnumerable<IWireInterceptor> interceptors,");
+        sb.AppendLine("    IEnumerable<IInboundInterceptor> interceptors,");
         sb.AppendLine("    ConduitOptions conduitOptions,");
         sb.AppendLine("    ILogger<ConduitMediator> logger) : IWireMediator");
         sb.AppendLine("{");

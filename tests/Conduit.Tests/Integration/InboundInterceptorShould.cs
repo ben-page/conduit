@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Tests.Integration;
 
 [TestClass]
-public class WireInterceptorShould
+public class InboundInterceptorShould
 {
     private static TestWebHost CreateTestHost(Action<IServiceCollection>? configure = null)
     {
@@ -30,7 +30,7 @@ public class WireInterceptorShould
         // Arrange
         var interceptor = new StubInterceptor();
         await using var host = CreateTestHost(services =>
-            services.AddSingleton<IWireInterceptor>(interceptor));
+            services.AddSingleton<IInboundInterceptor>(interceptor));
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var envelope = new DispatchEnvelope(
             "Conduit.Tests.Support.CreateItemCommand",
@@ -51,7 +51,7 @@ public class WireInterceptorShould
         // Arrange
         var interceptor = new StubInterceptor();
         await using var host = CreateTestHost(services =>
-            services.AddSingleton<IWireInterceptor>(interceptor));
+            services.AddSingleton<IInboundInterceptor>(interceptor));
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
         var envelope = new DispatchEnvelope(
@@ -75,8 +75,8 @@ public class WireInterceptorShould
         var second = new OrderTrackingInterceptor("second", callOrder);
         await using var host = CreateTestHost(services =>
         {
-            services.AddSingleton<IWireInterceptor>(first);
-            services.AddSingleton<IWireInterceptor>(second);
+            services.AddSingleton<IInboundInterceptor>(first);
+            services.AddSingleton<IInboundInterceptor>(second);
         });
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var envelope = new DispatchEnvelope(
@@ -145,7 +145,7 @@ public class WireInterceptorShould
     }
 }
 
-file class StubInterceptor : IWireInterceptor
+file class StubInterceptor : IInboundInterceptor
 {
     public List<string> RequestLog { get; } = [];
     public List<string> EventLog { get; } = [];
@@ -169,7 +169,7 @@ file class StubInterceptor : IWireInterceptor
     }
 }
 
-file class OrderTrackingInterceptor(string name, List<string> callOrder) : IWireInterceptor
+file class OrderTrackingInterceptor(string name, List<string> callOrder) : IInboundInterceptor
 {
     public async Task<object?> InterceptRequestAsync(
         DispatchEnvelope envelope,
