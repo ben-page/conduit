@@ -20,11 +20,13 @@
     <Project Path="src/Conduit.Transport.Kafka/Conduit.Transport.Kafka.csproj" />
     <Project Path="src/Conduit.Transport.RabbitMQ/Conduit.Transport.RabbitMQ.csproj" />
     <Project Path="src/Conduit.Transport.SignalR/Conduit.Transport.SignalR.csproj" />
+    <Project Path="src/Conduit.Outbox/Conduit.Outbox.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
     <Project Path="src/Conduit.TypeGen/Conduit.TypeGen.csproj" />
     <Project Path="src/Conduit/Conduit.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Conduit.Outbox.Tests/Conduit.Outbox.Tests.csproj" />
 <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.TestUtils/Conduit.TestUtils.csproj" />
