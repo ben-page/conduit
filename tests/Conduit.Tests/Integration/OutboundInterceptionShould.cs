@@ -59,6 +59,37 @@ public class OutboundInterceptionShould
     }
 
     [TestMethod]
+    public async Task CaptureVoidRoutedCommandWhenInterceptorRegistered()
+    {
+        // Arrange
+        var spyTransport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddScoped<IOutboundInterceptor, SpyOutboundInterceptor>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.AddEndpoint("remote", endpoint =>
+                {
+                    endpoint.UseTransport(spyTransport);
+                    endpoint.RouteNamespace<DeleteItemCommand>();
+                });
+            });
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+        var interceptor = (SpyOutboundInterceptor)host.GetRequiredService<IOutboundInterceptor>();
+
+        // Act
+        await mediator.ExecuteAsync(new DeleteItemCommand(Guid.NewGuid()));
+
+        // Assert -- interceptor captured the command, transport did NOT receive it
+        interceptor.Captured.Should().ContainSingle();
+        interceptor.Captured[0].Type.Should().Contain("DeleteItemCommand");
+        spyTransport.SentRequests.Should().BeEmpty();
+    }
+
+    [TestMethod]
     public async Task NotInterceptLocalOnlyEvents()
     {
         // Arrange
