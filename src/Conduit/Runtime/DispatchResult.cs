@@ -35,7 +35,7 @@ public sealed record DispatchResult<T>
         => new() { Error = new DispatchError(code, message, details) };
 
     /// <summary>
-    /// Creates a failed result from an <see cref="Conduit.Exceptions.ErrorCode"/>.
+    /// Creates a failed result from an <see cref="Exceptions.ErrorCode"/>.
     /// </summary>
     public static DispatchResult<T> Fail(Exceptions.ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
     {

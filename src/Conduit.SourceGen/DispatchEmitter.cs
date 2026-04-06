@@ -180,7 +180,7 @@ public static class DispatchEmitter
         sb.AppendLine("    }");
         sb.AppendLine();
 
-        // ExecuteVoid wrapper (for wire dispatch compatibility)
+        // ExecuteVoid wrapper (for wire dispatch compatibility — local callers use background dispatch)
         sb.AppendLine($"    public static async Task<object?> ExecuteVoid(");
         sb.AppendLine($"        {type.FullTypeName} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
@@ -188,6 +188,25 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        await Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+        sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        // ExecuteVoidWire — inline handler execution for wire-inbound dispatch.
+        // Wire dispatch already provides fire-and-forget semantics (no reply), so the handler
+        // must run inline within the DI scope. Using the background dispatcher here would cause
+        // the handler to execute after the scope is disposed.
+        sb.AppendLine($"    public static async Task<object?> ExecuteVoidWire(");
+        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
+        sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
+        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, object>(conduitOptions, serviceProvider);");
+        sb.AppendLine($"        Func<Task<object>> handlerCall = () => {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync(command, cancellationToken));");
+        sb.AppendLine($"        await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors(command, behaviors, handlerCall, cancellationToken);");
         sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
         sb.AppendLine("    }");
         sb.AppendLine();
