@@ -24,6 +24,7 @@
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
     <Project Path="src/Conduit.TypeGen/Conduit.TypeGen.csproj" />
     <Project Path="src/Conduit/Conduit.csproj" />
+    <Project Path="src/Conduit.Resilience/Conduit.Resilience.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Conduit.Outbox.Tests/Conduit.Outbox.Tests.csproj" />
@@ -38,5 +39,6 @@
     <Project Path="tests/Conduit.Transport.RabbitMQ.Tests/Conduit.Transport.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.SignalR.Tests/Conduit.Transport.SignalR.Tests.csproj" />
     <Project Path="tests/Conduit.TypeGen.Tests/Conduit.TypeGen.Tests.csproj" />
+    <Project Path="tests/Conduit.Resilience.Tests/Conduit.Resilience.Tests.csproj" />
   </Folder>
 </Solution>

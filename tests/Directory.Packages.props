@@ -16,5 +16,6 @@
     <PackageVersion Include="Testcontainers.Kafka" Version="4.11.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.11.0" />
     <PackageVersion Include="Testcontainers.ServiceBus" Version="4.11.0" />
+    <PackageVersion Include="Microsoft.Extensions.Resilience" Version="10.1.0" />
   </ItemGroup>
 </Project>
