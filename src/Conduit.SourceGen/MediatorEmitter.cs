@@ -118,23 +118,29 @@ public static class MediatorEmitter
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
+            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
+            sb.AppendLine($"                var envelope = new DispatchEnvelope(\"{cmd.FullTypeName}\", payload);");
+            sb.AppendLine($"                var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
+            sb.AppendLine("                if (outboundInterceptor != null)");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    outboundInterceptor.Intercept(envelope);");
+            sb.AppendLine("                    return;");
+            sb.AppendLine("                }");
+            sb.AppendLine();
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
             sb.AppendLine($"                __activity?.SetTag(\"conduit.dispatch\", \"remote\");");
             sb.AppendLine($"                __activity?.SetTag(\"conduit.endpoint\", endpoint.Name);");
             sb.AppendLine($"                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
-            sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
 
             if (cmd.IsFireAndForget)
             {
                 // F&F commands use the event path — no reply expected
-                sb.AppendLine($"                await transport.SendEventAsync(");
-                sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+                sb.AppendLine($"                await transport.SendEventAsync(envelope, cancellationToken);");
             }
             else
             {
                 // Non-F&F void commands use request/response to confirm handler execution
-                sb.AppendLine($"                await transport.SendRequestAsync(");
-                sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+                sb.AppendLine($"                await transport.SendRequestAsync(envelope, cancellationToken);");
             }
 
             sb.AppendLine("                return;");
@@ -443,17 +449,25 @@ public static class MediatorEmitter
         sb.AppendLine($"        {indent}var eventEnvelope = new DispatchEnvelope(");
         sb.AppendLine($"        {indent}    @event.GetType().FullName!,");
         sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event, @event.GetType(), ConduitRuntime.JsonOptions));");
-        sb.AppendLine($"        {indent}var transportList = transports.ToArray();");
-        sb.AppendLine($"        {indent}ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transportList.Length);");
-        sb.AppendLine($"        {indent}foreach (var transport in transportList)");
+        sb.AppendLine($"        {indent}var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
+        sb.AppendLine($"        {indent}if (outboundInterceptor != null)");
         sb.AppendLine($"        {indent}{{");
-        sb.AppendLine($"        {indent}    try");
+        sb.AppendLine($"        {indent}    outboundInterceptor.Intercept(eventEnvelope);");
+        sb.AppendLine($"        {indent}}}");
+        sb.AppendLine($"        {indent}else");
+        sb.AppendLine($"        {indent}{{");
+        sb.AppendLine($"        {indent}    var transportList = transports.ToArray();");
+        sb.AppendLine($"        {indent}    ConduitRuntime.LogBroadcast(logger, eventEnvelope.Type, transportList.Length);");
+        sb.AppendLine($"        {indent}    foreach (var transport in transportList)");
         sb.AppendLine($"        {indent}    {{");
-        sb.AppendLine($"        {indent}        await transport.SendEventAsync(eventEnvelope, cancellationToken);");
-        sb.AppendLine($"        {indent}    }}");
-        sb.AppendLine($"        {indent}    catch (Exception ex)");
-        sb.AppendLine($"        {indent}    {{");
-        sb.AppendLine($"        {indent}        ConduitRuntime.LogListenerFailure(logger, transport.GetType().Name, ex);");
+        sb.AppendLine($"        {indent}        try");
+        sb.AppendLine($"        {indent}        {{");
+        sb.AppendLine($"        {indent}            await transport.SendEventAsync(eventEnvelope, cancellationToken);");
+        sb.AppendLine($"        {indent}        }}");
+        sb.AppendLine($"        {indent}        catch (Exception ex)");
+        sb.AppendLine($"        {indent}        {{");
+        sb.AppendLine($"        {indent}            ConduitRuntime.LogListenerFailure(logger, transport.GetType().Name, ex);");
+        sb.AppendLine($"        {indent}        }}");
         sb.AppendLine($"        {indent}    }}");
         sb.AppendLine($"        {indent}}}");
     }
