@@ -118,17 +118,8 @@ public static class MediatorEmitter
             sb.AppendLine($"                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
 
-            if (cmd.IsFireAndForget)
-            {
-                // F&F commands use SendEventAsync (no reply) instead of SendRequestAsync
-                sb.AppendLine($"                await transport.SendEventAsync(");
-                sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
-            }
-            else
-            {
-                sb.AppendLine($"                await transport.SendRequestAsync(");
-                sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
-            }
+            sb.AppendLine($"                await transport.SendEventAsync(");
+            sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
 
             sb.AppendLine("                return;");
             sb.AppendLine("            }");
