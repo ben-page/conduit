@@ -51,4 +51,7 @@ internal static class EmitConstants
     // REST endpoint types (from Conduit.Transport.Http — only referenced in generated code)
     internal const string ConduitRestHandlers = "Conduit.Transport.Http.ConduitRestHandlers";
     internal const string ConduitRestHandlersShort = "ConduitRestHandlers";
+
+    // Resilience types (from Conduit.Resilience — only referenced in generated code)
+    internal const string ResilienceBehavior = "Conduit.Resilience.ResilienceBehavior";
 }

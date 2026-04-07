@@ -134,6 +134,14 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             var restSource = RestEmitter.Emit(dispatchableTypes);
             context.AddSource("ConduitRestEndpoints.g.cs", restSource);
         }
+
+        // Generate resilience dispatch (only if Conduit.Resilience is referenced)
+        var resilienceType = compilation.GetTypeByMetadataName(EmitConstants.ResilienceBehavior);
+        if (resilienceType != null)
+        {
+            var resilienceSource = ResilienceEmitter.Emit(dispatchableTypes);
+            context.AddSource("ConduitResilienceDispatch.g.cs", resilienceSource);
+        }
     }
 
     private static List<string> GetRemoteContractPatterns(Compilation compilation)
