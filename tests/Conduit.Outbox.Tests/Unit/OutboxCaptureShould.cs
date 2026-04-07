@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Outbox.Runtime;
+using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
@@ -62,5 +63,37 @@ public class OutboxCaptureShould
         // Assert
         store.MarkedSent.Should().BeEmpty();
         transport.SentEvents.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task FlushAsyncSendClaimedEntriesAndMarkSent()
+    {
+        // Arrange
+        var store = new StubOutboxStore();
+        var transport = new SpyTransport();
+        var capture = CreateCapture(store, [transport]);
+
+        var envelope1 = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var envelope2 = new DispatchEnvelope("MyApp.Events.OrderShipped", JsonSerializer.SerializeToElement(new { orderId = 2 }));
+
+        capture.SetWrittenMessages([
+            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope1),
+            new WrittenOutboxMessage("msg-2", "conv-2", null, envelope2),
+        ]);
+
+        store.ClaimedEntries =
+        [
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+            new ClaimedOutboxEntry { Id = 11, MessageId = "msg-2" },
+        ];
+
+        // Act
+        await capture.FlushAsync(CancellationToken.None);
+
+        // Assert
+        transport.SentEvents.Should().HaveCount(2);
+        transport.SentEvents[0].Type.Should().Be("MyApp.Events.OrderPlaced");
+        transport.SentEvents[1].Type.Should().Be("MyApp.Events.OrderShipped");
+        store.MarkedSent.Should().BeEquivalentTo([10L, 11L]);
     }
 }
