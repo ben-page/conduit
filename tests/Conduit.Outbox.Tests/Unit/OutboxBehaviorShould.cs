@@ -84,6 +84,36 @@ public class OutboxBehaviorShould
         result.Should().Be("response");
         store.SavedEntries.Should().BeEmpty();
     }
+
+    [TestMethod]
+    public async Task SetWrittenMessagesOnCaptureAfterSave()
+    {
+        // Arrange
+        var store = new StubOutboxStore();
+        var transport = new SpyTransport();
+        var conduitOptions = new ConduitOptions();
+        var serviceProvider = new ServiceCollection().BuildServiceProvider();
+        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions);
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        var envelope = new DispatchEnvelope("Test.OrderPlaced", JsonSerializer.SerializeToElement(new { id = 1 }));
+        capture.Intercept(envelope);
+
+        var behavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Act
+        await behavior.HandleAsync("request", () => Task.FromResult("result"), CancellationToken.None);
+
+        // Assert -- after behavior runs, FlushAsync should be able to send
+        var savedMessageId = store.SavedEntries[0].MessageId;
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 1, MessageId = savedMessageId }];
+
+        await capture.FlushAsync(CancellationToken.None);
+
+        transport.SentEvents.Should().HaveCount(1);
+        transport.SentEvents[0].Type.Should().Be("Test.OrderPlaced");
+        store.MarkedSent.Should().BeEquivalentTo([1L]);
+    }
 }
 
 file sealed class StubTransactionFactory(bool hasTransaction) : IOutboxConnectionFactory
