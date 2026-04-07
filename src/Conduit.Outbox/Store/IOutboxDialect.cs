@@ -19,4 +19,6 @@ public interface IOutboxDialect
     public string MarkFailedSql { get; }
     /// <summary>Delete completed/failed entries. Parameter: @RetentionCutoff.</summary>
     public string DeleteCompletedSql { get; }
+    /// <summary>SELECT Id and MessageId with row-level locking, filtered by MessageId list. The SQL must contain a placeholder token {0} where the comma-separated @p0, @p1, ... parameter list will be inserted.</summary>
+    public string ClaimByMessageIdsSql { get; }
 }

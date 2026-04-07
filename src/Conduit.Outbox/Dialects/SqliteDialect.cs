@@ -49,4 +49,11 @@ public sealed class SqliteDialect : IOutboxDialect
 
     /// <inheritdoc/>
     public string DeleteCompletedSql => "DELETE FROM conduit_outbox WHERE Status IN (1, 2) AND CreatedAt <= @RetentionCutoff";
+
+    /// <inheritdoc/>
+    public string ClaimByMessageIdsSql => """
+        SELECT Id, MessageId FROM conduit_outbox
+        WHERE MessageId IN ({0}) AND Status = 0
+        ORDER BY Id
+        """;
 }
