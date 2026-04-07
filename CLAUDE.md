@@ -77,12 +77,14 @@ src/Conduit.Outbox/                     Transactional outbox — pipeline behavi
 - **Configurable ResponseTimeout**: Each broker transport options class has a `ResponseTimeout` property (default 60s). Configurable per-transport.
 - **ProducerOnly mode**: `ConduitOptions.ProducerOnly` makes a broker transport host only publish messages. Skips inbound topology (subscriptions, bindings) and consumers. Reply queues for request/response still created via `EnsureOutboundTopologyAsync`. Use for API hosts that route commands to workers, or test sender hosts.
 - **No application retry in transports**: Broker transports are one-shot dispatch + dead letter on failure. Application retry is the user's concern via `IPipelineBehavior<,>` + Polly.
+- **Fire-and-forget dispatch**: `ConduitBackgroundDispatcher` is a `BackgroundService` with an unbounded `Channel<T>` that executes F&F work items sequentially. For local F&F void commands, the generated `ConduitDispatch.Execute` enqueues the handler to the background dispatcher. For wire-inbound F&F commands, `ConduitDispatch.ExecuteVoidWire` runs the handler inline within the DI scope (the transport already provides F&F semantics). For F&F events, local listeners are enqueued to the background dispatcher but transport broadcast proceeds inline. Pipeline behaviors run in the caller context for all F&F paths.
 
 ## Attributes
 
 | Attribute | Scope | Purpose |
 |---|---|---|
 | `[LocalOnly]` | Type | Prevent event from being broadcast to transports |
+| `[FireAndForget]` | Type | Void commands: local handler runs in background, routed dispatch uses `SendEventAsync` (no reply). Events: local listeners run in background (transport broadcast unchanged — events are already fire-and-forget on the wire). Invalid on `ICommand<TResult>` or `IQuery<TResult>` (CONDUIT003). |
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
 | `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
 
@@ -121,6 +123,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `TopologyNaming` static class — generates shared resource names (`CreateSharedResourceName`) and app-scoped resource names (`CreateAppResourceName`) with consistent prefix/truncation/hashing across all transports
 - `ConduitTypeRegistry` — compile-time registry of event, command, and query message types. Properties: `EventTypes`, `CommandTypes`, `QueryTypes` (Type lists) and pre-computed `EventTypeNames`, `CommandTypeNames`, `QueryTypeNames` (string lists). Populated by source generator in `AddConduit()` with `typeof()` expressions. Broker transports resolve from DI for topology discovery instead of scanning `IServiceCollection` at runtime.
 - `ApplicationName` on `ConduitOptions` defaults from `IHostEnvironment.ApplicationName` at first resolution via factory registration in `AddConduitCore`. No transport-side mutation needed.
+- `ConduitBackgroundDispatcher` — `BackgroundService` with unbounded `Channel<T>` for F&F work items. Registered in DI by `AddConduitCore`. Sequential execution, linked cancellation for graceful shutdown.
 - `BrokerTransportBase<TMessage>` — abstract base class for all 5 broker transports (ASB, RMQ, Kafka, SQS, ActiveMQ). Owns `IHostedService` lifecycle, inbound dispatch orchestration (context save/restore, scope creation, request/event branching, error handling), and outbound send (serialization, reply unwrap via `ConduitRuntime.UnwrapReply`). Transports implement ~15 abstract methods for transport-specific primitives. Uses `BinaryData` for payload passing. `StartAsync` branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + `EnsureTopologyAsync` + `StartConsumersAsync`. `EnsureOutboundTopologyAsync` is an abstract method for producer-only topology (reply queue + topic/exchange only).
 
 ### Conduit.Outbox
@@ -142,6 +145,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `EnforceExtendedAnalyzerRules=true`, `IsRoslynComponent=true`, `NoWarn=RS2008`
 - Auto-discovers ALL types implementing `ICommand`, `IQuery`, `IEvent` across the full compilation graph (no attributes needed). Cross-assembly discovery is intentional for shared contract libraries. Uses `compilation.GlobalNamespace` walk — not incremental, but necessary for cross-assembly support.
 - Reads `[LocalOnly]` attribute to suppress event broadcast in generated code
+- Reads `[FireAndForget]` attribute: F&F void commands emit `Execute` (background dispatch) + `ExecuteVoidWire` (inline for wire-inbound). F&F events enqueue local listeners to background dispatcher, broadcast to transports inline. CONDUIT003 diagnostic for F&F on result types/queries.
 - Reads `[assembly: RemoteContracts("Ns")]` to suppress CONDUIT001 for types in remote contract namespaces
 - Emits: `ConduitDispatch.g.cs`, `ConduitRegistration.g.cs`, `ConduitMediator.g.cs`, `ConduitRestEndpoints.g.cs` (conditional)
 - Generated `AddConduit()` calls `ConduitRuntime.AddConduitCore()` and registers handlers/listeners by interface type (e.g. `ICommandHandler<T,R>`, `IEventListener<T>`) — enables test substitution
