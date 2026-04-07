@@ -143,4 +143,82 @@ public class OutboundInterceptionShould
         interceptor.Captured.Should().BeEmpty();
         spyTransport.SentEvents.Should().BeEmpty();
     }
+
+    [TestMethod]
+    public async Task NotInterceptCommandsWithResults()
+    {
+        // Arrange
+        var spyTransport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddScoped<IOutboundInterceptor, SpyOutboundInterceptor>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.AddEndpoint("remote", endpoint =>
+                {
+                    endpoint.UseTransport(spyTransport);
+                    endpoint.RouteNamespace<CreateItemCommand>();
+                });
+            });
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+        var interceptor = (SpyOutboundInterceptor)host.GetRequiredService<IOutboundInterceptor>();
+
+        // Act — CreateItemCommand returns Guid, so it's request/response, not fire-and-forget.
+        // SpyTransport can't fulfill request/response (returns null), so the dispatch throws.
+        // That's fine — we only care that the interceptor was NOT called.
+        try
+        {
+            await mediator.ExecuteAsync(new CreateItemCommand("Test"));
+        }
+        catch (NullReferenceException)
+        {
+            // Expected — SpyTransport returns null, mediator can't deserialize result
+        }
+
+        // Assert -- interceptor was NOT called, transport received the request
+        interceptor.Captured.Should().BeEmpty();
+        spyTransport.SentRequests.Should().ContainSingle();
+    }
+
+    [TestMethod]
+    public async Task NotInterceptQueries()
+    {
+        // Arrange
+        var spyTransport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddScoped<IOutboundInterceptor, SpyOutboundInterceptor>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.AddEndpoint("remote", endpoint =>
+                {
+                    endpoint.UseTransport(spyTransport);
+                    endpoint.RouteNamespace<GetItemQuery>();
+                });
+            });
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+        var interceptor = (SpyOutboundInterceptor)host.GetRequiredService<IOutboundInterceptor>();
+
+        // Act — GetItemQuery returns string, always request/response.
+        // SpyTransport can't fulfill request/response, so the dispatch throws.
+        // We only care that the interceptor was NOT called.
+        try
+        {
+            await mediator.FetchAsync(new GetItemQuery(Guid.NewGuid()));
+        }
+        catch (NullReferenceException)
+        {
+            // Expected — SpyTransport returns null, mediator can't deserialize result
+        }
+
+        // Assert -- interceptor was NOT called, transport received the request
+        interceptor.Captured.Should().BeEmpty();
+        spyTransport.SentRequests.Should().ContainSingle();
+    }
 }
