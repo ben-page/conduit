@@ -96,4 +96,30 @@ public class SqsEventRoutingShould : SqsTestBase
         await spy.WaitForCountAsync(1);
         spy.Invocations.OfType<ThrowingTestEvent>().Should().Contain(e => e.Value == "boom");
     }
+
+    [TestMethod]
+    public async Task DeliverFireAndForgetEventToSubscribingApp()
+    {
+        // Arrange — [FireAndForget] only affects local listener execution (background),
+        // transport broadcast should still deliver the event to subscribing apps
+        var publisherName = UniqueAppName("pub");
+        var listenerName = UniqueAppName("listener");
+
+        await using var listenerHost = await CreateHostAsync(listenerName);
+        var prefix = listenerHost.TopologyPrefix!;
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
+
+        var listenerSpy = listenerHost.GetRequiredService<SpyLog>();
+        var mediator = publisherHost.GetRequiredService<IMediator>();
+
+        await Task.Delay(3000);
+
+        // Act
+        await mediator.PublishAsync(new FireAndForgetEvent("f&f-event"));
+
+        // Assert
+        await listenerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(15));
+        listenerSpy.Invocations.OfType<FireAndForgetEvent>().Should().ContainSingle(
+            e => e.Value == "f&f-event");
+    }
 }

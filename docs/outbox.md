@@ -210,12 +210,13 @@ The grace period prevents the relay from racing with the handler. After the tran
 
 ## What gets captured
 
-The outbox captures **fire-and-forget messages only**:
+The outbox captures **fire-and-forget messages only** — messages where no reply is expected and the caller doesn't wait for confirmation:
 
 | Message type | Captured? | Why |
 |---|---|---|
-| Events (`PublishAsync`) | Yes | Fire-and-forget broadcast |
-| Void routed commands (`ICommand`) | Yes | Fire-and-forget to remote endpoint |
+| Events (`PublishAsync`) | Yes | Always fire-and-forget on the transport side |
+| `[FireAndForget]` void routed commands | Yes | No reply expected — true fire-and-forget |
+| Non-`[FireAndForget]` void commands (`ICommand`) | No | Uses request/response to confirm handler execution |
 | Commands with results (`ICommand<TResult>`) | No | Caller awaits response — can't defer |
 | Queries (`IQuery<TResult>`) | No | Caller awaits response — can't defer |
 | `[LocalOnly]` events | No | Never sent to transports |

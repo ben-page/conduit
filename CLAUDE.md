@@ -124,8 +124,8 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `BrokerTransportBase<TMessage>` — abstract base class for all 5 broker transports (ASB, RMQ, Kafka, SQS, ActiveMQ). Owns `IHostedService` lifecycle, inbound dispatch orchestration (context save/restore, scope creation, request/event branching, error handling), and outbound send (serialization, reply unwrap via `ConduitRuntime.UnwrapReply`). Transports implement ~15 abstract methods for transport-specific primitives. Uses `BinaryData` for payload passing. `StartAsync` branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + `EnsureTopologyAsync` + `StartConsumersAsync`. `EnsureOutboundTopologyAsync` is an abstract method for producer-only topology (reply queue + topic/exchange only).
 
 ### Conduit.Outbox
-- Transactional outbox for reliable fire-and-forget message delivery
-- `IOutboundInterceptor` in core — generated mediator checks before transport sends
+- Transactional outbox for reliable fire-and-forget message delivery (events + `[FireAndForget]` void routed commands only — non-F&F void commands use request/response for confirmation and are not outboxed)
+- `IOutboundInterceptor` in core — generated mediator checks before transport sends for fire-and-forget paths only
 - `OutboxCapture` — scoped `IOutboundInterceptor` that buffers `DispatchEnvelope`s
 - `OutboxBehavior<TRequest, TResult>` — pipeline behavior that writes captured messages to outbox store within handler's DB transaction
 - `OutboxRelay` — `BackgroundService` that polls for pending entries and sends via transports
