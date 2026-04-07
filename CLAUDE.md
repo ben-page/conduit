@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Eleven source projects, ten test projects, one shared test utility, four sample apps:
+Twelve source projects, eleven test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -19,6 +19,7 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 src/Conduit.Transport.Kafka/             Kafka transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.AmazonSqs/         Amazon SQS (+SNS) transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTransport + IHostedService) — net10.0
+src/Conduit.Outbox/                     Transactional outbox — pipeline behavior, relay, store — net10.0
 ```
 
 **Dependency graph:**
@@ -29,6 +30,7 @@ src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTra
 - `Transport.Kafka` → `Conduit` (core) + Confluent.Kafka
 - `Transport.AmazonSqs` → `Conduit` (core) + AWSSDK.SimpleNotificationService + AWSSDK.SQS
 - `Transport.ActiveMQ` → `Conduit` (core) + AMQPNetLite.Core
+- `Outbox` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
 - Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, and Options.
@@ -39,7 +41,7 @@ src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTra
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes, `TopologyMode` (`src/Conduit/Configuration/`)
 - `Conduit.Runtime` — wire types + runtime: `ConduitRuntime`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport`, `MessageContext`, `TopologyNaming`, `ConduitTypeRegistry` (`src/Conduit/Runtime/`)
-- `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IWireInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
+- `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IInboundInterceptor`, `IOutboundInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — `ICommand`, `IQuery`, `IEvent`, `Unit` (`src/Conduit/Messages/`)
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
 - `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute` (`src/Conduit/Attributes/`)
@@ -54,7 +56,8 @@ src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTra
 - **Topology modes**: `TopologyMode` enum (Production/Developer/Test) on `ConduitOptions` controls resource naming and durability. `SystemName` (default `"conduit"`) replaces per-transport topic/exchange name configuration. `TopologyNaming` static class in core generates all resource names consistently across transports, using `TopologyPrefix` which auto-resolves on first access (Developer defaults to `Environment.UserName`, Test generates a random 13-char prefix, Production resolves to null). Ephemeral resources: Developer mode = 4h auto-delete, Test mode = 5min auto-delete.
 - **TypeFilterInterceptor**: Access control interceptor in core that rejects dispatch requests for types not in the allowed set. Configured via `conduit.AddTypeFilter(filter => filter.AllowType(...))`. Transport-agnostic — works with any inbound path.
 - `IWireMediator : IMediator` — extended interface for inbound wire dispatch. Adds `HandleWireRequestAsync` and `HandleWireEventAsync`. Transport packages inject this; application code uses `IMediator`.
-- `IWireInterceptor` interface (in `Conduit.Middleware`) wraps wire dispatch calls with a middleware pipeline. Chained by `ConduitRuntime` in reverse registration order.
+- `IInboundInterceptor` interface (in `Conduit.Middleware`) wraps inbound wire dispatch calls with a middleware pipeline. Chained by `ConduitRuntime` in reverse registration order.
+- `IOutboundInterceptor` interface (in `Conduit.Middleware`) intercepts outbound sends before they reach the transport. Checked by the generated mediator before forwarding to transport.
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendEventAsync` (fire-and-forget events), both envelope-based.
 - Generated `ConduitMediator` implements `IWireMediator`, checks route table for commands/queries before local dispatch. Registered as **transient** (stateless — resolves handlers from `IServiceProvider` per call). Handlers are also transient. This allows `IMediator` to be injected into singletons like `BackgroundService` without scope issues.
 - **Unified pipeline behaviors**: `IPipelineBehavior<TRequest, TResult>` wraps commands, queries, and events uniformly. Register open generics via `conduit.AddPipeline(typeof(MyPipeline<,>))`. Order is explicit (first registered = outermost). Pipeline types are stored in `ConduitOptions.PipelineTypes` and resolved via `ConduitRuntime.ResolvePipelines` — ordering is owned by Conduit, not DI.
@@ -87,7 +90,7 @@ src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTra
 
 ```bash
 dotnet build          # builds everything including sample apps
-dotnet test           # runs all tests across 10 test projects
+dotnet test           # runs all tests across 11 test projects
 ```
 
 Solution file is `Conduit.slnx` (.NET 10 format).
@@ -119,6 +122,16 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `ConduitTypeRegistry` — compile-time registry of event, command, and query message types. Properties: `EventTypes`, `CommandTypes`, `QueryTypes` (Type lists) and pre-computed `EventTypeNames`, `CommandTypeNames`, `QueryTypeNames` (string lists). Populated by source generator in `AddConduit()` with `typeof()` expressions. Broker transports resolve from DI for topology discovery instead of scanning `IServiceCollection` at runtime.
 - `ApplicationName` on `ConduitOptions` defaults from `IHostEnvironment.ApplicationName` at first resolution via factory registration in `AddConduitCore`. No transport-side mutation needed.
 - `BrokerTransportBase<TMessage>` — abstract base class for all 5 broker transports (ASB, RMQ, Kafka, SQS, ActiveMQ). Owns `IHostedService` lifecycle, inbound dispatch orchestration (context save/restore, scope creation, request/event branching, error handling), and outbound send (serialization, reply unwrap via `ConduitRuntime.UnwrapReply`). Transports implement ~15 abstract methods for transport-specific primitives. Uses `BinaryData` for payload passing. `StartAsync` branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + `EnsureTopologyAsync` + `StartConsumersAsync`. `EnsureOutboundTopologyAsync` is an abstract method for producer-only topology (reply queue + topic/exchange only).
+
+### Conduit.Outbox
+- Transactional outbox for reliable fire-and-forget message delivery
+- `IOutboundInterceptor` in core — generated mediator checks before transport sends
+- `OutboxCapture` — scoped `IOutboundInterceptor` that buffers `DispatchEnvelope`s
+- `OutboxBehavior<TRequest, TResult>` — pipeline behavior that writes captured messages to outbox store within handler's DB transaction
+- `OutboxRelay` — `BackgroundService` that polls for pending entries and sends via transports
+- `IOutboxStore` interface with built-in `DbConnectionOutboxStore` (raw ADO.NET)
+- `IOutboxDialect` with SQL Server, PostgreSQL, SQLite, MySQL implementations
+- `AddOutbox()` extension on `ConduitBuilder` for registration
 
 ### Conduit.Analysis (netstandard2.0)
 - Target netstandard2.0 for Roslyn analyzer compatibility
