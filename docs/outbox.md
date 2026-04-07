@@ -2,6 +2,8 @@
 
 - [Overview](#overview)
 - [The problem](#the-problem)
+  - [Why not a distributed transaction?](#why-not-a-distributed-transaction)
+  - [The solution](#the-solution)
 - [How it works](#how-it-works)
 - [Setup](#setup)
 - [Providing a transaction](#providing-a-transaction)
@@ -17,21 +19,43 @@ The transactional outbox guarantees at-least-once delivery for fire-and-forget m
 
 ## The problem
 
-When a handler saves business data and publishes a message, there's no atomicity guarantee:
+When a handler saves business data and publishes a message, two separate systems are involved — your database and the message broker. There's no atomicity guarantee across them:
 
 ```
 1. Save order to database        ← succeeds
 2. Publish OrderCreated event     ← process crashes here — event lost
 ```
 
-The outbox solves this by making the message part of the database transaction:
+The order exists but no downstream service ever hears about it. Reversing the order doesn't help either — publishing first means the event goes out before the data is committed, and a failed commit leaves consumers acting on data that doesn't exist.
+
+This is the **dual-write problem**: writing to two systems without a shared transaction.
+
+### Why not a distributed transaction?
+
+Two-phase commit (2PC) could make the database and broker atomic, but it's not viable in practice:
+
+| Broker | 2PC Support |
+|---|---|
+| Azure Service Bus | Only with SQL Server on Windows via MSDTC |
+| RabbitMQ | None — publisher confirms are async, not transactional with a DB |
+| Kafka | Kafka-to-Kafka only — can't enlist a database |
+| Amazon SQS | None |
+| ActiveMQ | Requires MSDTC (AmqpNetLite doesn't support enlistment) |
+
+Even where technically possible (ASB + SQL Server), MSDTC is Windows-only, incompatible with containers and cloud-native deployments, and adds a single point of failure. The industry moved away from 2PC for this reason.
+
+### The solution
+
+The outbox pattern sidesteps the problem by writing the message to your database instead of the broker. Since both writes (business data + outbox entry) hit the same database, they share a single transaction — no distributed coordination needed:
 
 ```
 1. Save order to database        ← same transaction
 2. Write outbox entry             ← same transaction
-3. Commit                         ← atomic
+3. Commit                         ← atomic, single database
 4. Relay sends to broker          ← eventually, with retries
 ```
+
+The tradeoff is eventual consistency — messages arrive at the broker with a small delay (the relay polling interval). But delivery is guaranteed as long as the database is durable.
 
 ## How it works
 
