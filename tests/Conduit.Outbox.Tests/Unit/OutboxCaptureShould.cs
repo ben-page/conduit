@@ -125,4 +125,28 @@ public class OutboxCaptureShould
         store.MarkedSent.Should().BeEmpty();
         store.RetriesIncremented.Should().BeEquivalentTo([10L]);
     }
+
+    [TestMethod]
+    public async Task FlushAsyncSkipEntriesAlreadyClaimedByRelay()
+    {
+        // Arrange
+        var store = new StubOutboxStore();
+        var transport = new SpyTransport();
+        var capture = CreateCapture(store, [transport]);
+
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+
+        capture.SetWrittenMessages([
+            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope),
+        ]);
+
+        store.ClaimedEntries = [];
+
+        // Act
+        await capture.FlushAsync(CancellationToken.None);
+
+        // Assert
+        transport.SentEvents.Should().BeEmpty();
+        store.MarkedSent.Should().BeEmpty();
+    }
 }
