@@ -13,8 +13,8 @@ Multi-host integration tests validating message routing correctness. Each test s
 ### Test Infrastructure
 
 Each transport test project contains:
-- `Support/Contracts/` — 16 contract types (commands, queries, events, results) discovered by the source generator
-- `Support/Handlers/` — 13 handlers/listeners recording invocations via `SpyLog`
+- `Support/Contracts/` — 18 contract types (commands, queries, events, results, F&F types) discovered by the source generator
+- `Support/Handlers/` — 16 handlers/listeners recording invocations via `SpyLog`
 - `Integration/{Transport}Fixture.cs` — extends `TransportTestFixture` from `Conduit.TestUtils`, manages broker container via Testcontainers
 
 Shared infrastructure in `Conduit.TestUtils`:
@@ -208,7 +208,7 @@ These tests validate broker-specific topology features that don't apply to all t
 
 When adding a new broker transport, create a test project and implement:
 
-1. **All 28 transport behavior tests** (Matrix 1) — copy the test class structure from an existing transport, adjust the fixture
+1. **All 30 transport behavior tests** (Matrix 1) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
 
@@ -218,8 +218,8 @@ When adding a new broker transport, create a test project and implement:
 tests/Conduit.Transport.{Name}.Tests/
     Conduit.Transport.{Name}.Tests.csproj
     Support/
-        Contracts/          # 16 contract types (source gen requires per-assembly)
-        Handlers/           # 13 handler/listener types
+        Contracts/          # 18 contract types (source gen requires per-assembly)
+        Handlers/           # 16 handler/listener types
     Integration/
         {Name}Fixture.cs    # Extends TransportTestFixture, manages container
         {Name}CommandRoutingShould.cs
