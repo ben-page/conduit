@@ -23,4 +23,6 @@ public interface IOutboxStore
     public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken);
     /// <summary>Creates the outbox table if it does not exist.</summary>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken);
+    /// <summary>Claims entries by MessageId using row-level locking. Returns only Id and MessageId for entries that are still Pending.</summary>
+    public Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(IReadOnlyList<string> messageIds, CancellationToken cancellationToken);
 }

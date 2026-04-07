@@ -226,6 +226,87 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task ClaimEntriesByMessageIds()
+    {
+        // Arrange
+        var factory = new StubConnectionFactory();
+        await using var _ = factory;
+        var store = new DbConnectionOutboxStore(factory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        await factory.BeginTransactionAsync();
+        var transaction = factory.GetCurrentTransaction()!;
+        await store.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = "msg-1",
+                    ConversationId = "conv-1",
+                    Type = "TestEvent",
+                    Payload = """{"value":1}""",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+                new OutboxEntry
+                {
+                    MessageId = "msg-2",
+                    ConversationId = "conv-2",
+                    Type = "TestEvent",
+                    Payload = """{"value":2}""",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            transaction,
+            CancellationToken.None);
+        await factory.CommitAsync();
+
+        // Act
+        var claimed = await store.ClaimByMessageIdsAsync(["msg-1", "msg-2"], CancellationToken.None);
+
+        // Assert
+        claimed.Should().HaveCount(2);
+        claimed[0].MessageId.Should().Be("msg-1");
+        claimed[1].MessageId.Should().Be("msg-2");
+        claimed[0].Id.Should().BeGreaterThan(0);
+        claimed[1].Id.Should().BeGreaterThan(claimed[0].Id);
+    }
+
+    [TestMethod]
+    public async Task NotClaimAlreadySentEntries()
+    {
+        // Arrange
+        var factory = new StubConnectionFactory();
+        await using var _ = factory;
+        var store = new DbConnectionOutboxStore(factory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        await factory.BeginTransactionAsync();
+        var transaction = factory.GetCurrentTransaction()!;
+        await store.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = "msg-1",
+                    ConversationId = "conv-1",
+                    Type = "TestEvent",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            transaction,
+            CancellationToken.None);
+        await factory.CommitAsync();
+
+        var pending = await store.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
+        await store.MarkSentAsync(pending[0].Id, CancellationToken.None);
+
+        // Act
+        var claimed = await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);
+
+        // Assert
+        claimed.Should().BeEmpty();
+    }
+
+    [TestMethod]
     public async Task DeleteCompletedEntriesOlderThanRetentionPeriod()
     {
         // Arrange — save an entry, mark it sent
