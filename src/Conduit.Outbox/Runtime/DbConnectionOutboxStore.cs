@@ -1,8 +1,9 @@
+using Conduit.Outbox.Store;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Runtime;
 
 /// <summary>
 /// ADO.NET outbox store implementation. Delegates all SQL to <see cref="IOutboxDialect"/>,

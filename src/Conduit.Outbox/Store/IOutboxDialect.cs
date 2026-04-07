@@ -1,4 +1,4 @@
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Store;
 
 /// <summary>
 /// Generates database-specific SQL for the outbox table.

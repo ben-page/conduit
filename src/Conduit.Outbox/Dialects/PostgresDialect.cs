@@ -1,3 +1,5 @@
+using Conduit.Outbox.Store;
+
 namespace Conduit.Outbox.Dialects;
 
 /// <summary>PostgreSQL dialect. Uses FOR UPDATE SKIP LOCKED for concurrent claiming.</summary>

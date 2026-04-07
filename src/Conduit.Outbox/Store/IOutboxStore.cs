@@ -1,6 +1,6 @@
 using System.Data.Common;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Store;
 
 /// <summary>
 /// Persistence interface for the outbox. Built-in implementation uses

@@ -1,4 +1,4 @@
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Store;
 
 /// <summary>
 /// Status of an outbox entry.

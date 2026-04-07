@@ -1,7 +1,7 @@
 using Conduit.Middleware;
 using Conduit.Runtime;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Runtime;
 
 /// <summary>
 /// Scoped <see cref="IOutboundInterceptor"/> implementation that buffers

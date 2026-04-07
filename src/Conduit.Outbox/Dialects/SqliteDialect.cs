@@ -1,3 +1,5 @@
+using Conduit.Outbox.Store;
+
 namespace Conduit.Outbox.Dialects;
 
 /// <summary>
