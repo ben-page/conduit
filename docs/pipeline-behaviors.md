@@ -127,6 +127,59 @@ Trace context propagates through broker message headers (W3C `traceparent`/`trac
 
 All instrumentation is zero-cost when no OTel listener is attached.
 
+## Resilience (Polly)
+
+The `Conduit.Resilience` package integrates Polly v8 resilience pipelines with Conduit's dispatch pipeline. Retry, circuit breaker, timeout, and other strategies wrap command/query/event dispatch via `IPipelineBehavior`.
+
+### Setup
+
+Install `Conduit.Resilience` and configure in `AddConduit`:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.AddResilience(resilience =>
+    {
+        // Default pipeline for all message types
+        resilience.AddDefaultPipeline(pipeline => pipeline
+            .AddRetry(new RetryStrategyOptions
+            {
+                ShouldHandle = ConduitPredicates.TransientErrors(),
+                MaxRetryAttempts = 3,
+                BackoffType = DelayBackoffType.Exponential,
+            }));
+
+        // Per-type override
+        resilience.AddPipelineForType<SyncInventory>(pipeline => pipeline
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+            {
+                ShouldHandle = ConduitPredicates.TransientErrors(),
+            }));
+    });
+});
+```
+
+### Exception Predicates
+
+`ConduitPredicates` provides pre-built predicates that understand Conduit's exception hierarchy:
+
+- **`TransientErrors<T>()`** — `TimeoutException`, `InvalidOperationException`. Does NOT handle `NotFoundException`, `UnauthorizedException`, `ConflictException` (business errors).
+- **`AllErrors<T>()`** — everything except `OperationCanceledException`.
+
+Compose with your own: chain additional `.Handle<MyException>()` calls on the returned builder.
+
+### Pipeline Resolution
+
+1. Type-specific pipeline (registered via `AddPipelineForType<T>`)
+2. Default pipeline (registered via `AddDefaultPipeline`)
+3. Pass-through (no wrapping — `next()` called directly)
+
+The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors.
+
+### MessageContext Enrichment
+
+`MessageContext.Current` is automatically injected into Polly's `ResilienceContext` during execution. Access via `ResilienceBehavior.MessageIdKey` and `ResilienceBehavior.ConversationIdKey` in retry/circuit-breaker event handlers.
+
 ---
 
 Previous: [RabbitMQ](transports/rabbitmq.md) | [Home](../README.md) | Next: [Error Handling](error-handling.md)
