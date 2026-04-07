@@ -534,8 +534,16 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
                     tcs.TrySetResult(result.Message.Value);
                 }
 
-                consumer.StoreOffset(result);
-                consumer.Commit(result);
+                try
+                {
+                    consumer.StoreOffset(result);
+                    consumer.Commit(result);
+                }
+                catch (KafkaException)
+                {
+                    // Group membership can change even for manually-assigned consumers.
+                    // The reply was already delivered — offset commit is best-effort.
+                }
             }
         }
         catch (OperationCanceledException)
