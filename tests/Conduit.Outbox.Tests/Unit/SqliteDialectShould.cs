@@ -108,4 +108,20 @@ public class SqliteDialectShould
         sql.Should().Contain("DELETE");
         sql.Should().Contain("@RetentionCutoff");
     }
+
+    [TestMethod]
+    public void ClaimByMessageIdsSqlContainsSelectAndMessageIdFilter()
+    {
+        // Arrange
+        var dialect = new SqliteDialect();
+
+        // Act
+        var sql = dialect.ClaimByMessageIdsSql;
+
+        // Assert
+        sql.Should().Contain("SELECT");
+        sql.Should().Contain("Id");
+        sql.Should().Contain("MessageId");
+        sql.Should().Contain("Status = 0");
+    }
 }

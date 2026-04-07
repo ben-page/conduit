@@ -51,4 +51,12 @@ public sealed class PostgresDialect : IOutboxDialect
 
     /// <inheritdoc/>
     public string DeleteCompletedSql => "DELETE FROM conduit_outbox WHERE status IN (1, 2) AND created_at <= @RetentionCutoff";
+
+    /// <inheritdoc/>
+    public string ClaimByMessageIdsSql => """
+        SELECT id AS "Id", message_id AS "MessageId" FROM conduit_outbox
+        WHERE message_id IN ({0}) AND status = 0
+        ORDER BY id
+        FOR UPDATE SKIP LOCKED
+        """;
 }
