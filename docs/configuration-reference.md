@@ -23,6 +23,7 @@ builder.Services.AddConduit(conduit =>
 | `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport and routes | `conduit.AddEndpoint("orders", e => { e.UseHttp(httpClient); e.RouteNamespace<CreateOrder>(); })` |
 | `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
+| `AddOutbox(configure)` | Enable the transactional outbox for reliable fire-and-forget delivery. See [Outbox](outbox.md). | `conduit.AddOutbox(o => o.UseSqlite("Data Source=app.db"))` |
 
 ## ConduitBuilder properties
 

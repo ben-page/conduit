@@ -112,6 +112,8 @@ public class UpdateCompletionStats : IEventListener<TodoCompleted>
 
 An event with zero listeners is valid. It has no effect locally but may still broadcast to transports.
 
+When the [transactional outbox](outbox.md) is enabled, events published during handler execution are captured and persisted to the outbox table atomically with business data, rather than sent directly to transports.
+
 ## Dispatching
 
 Inject `IMediator` and use the method that matches the message type:
