@@ -12,6 +12,7 @@
 - [Custom stores](#custom-stores)
 - [Relay configuration](#relay-configuration)
 - [What gets captured](#what-gets-captured)
+- [Immediate send](#immediate-send)
 - [Limitations](#limitations)
 
 ## Why use an outbox?
@@ -86,7 +87,13 @@ Handler executes (in managed transaction)
   ├── OutboxBehavior writes captured envelopes to outbox table
   └── Transaction commits (business data + outbox entries, atomic)
 
-OutboxRelay (background service)
+IOutboxFlusher.FlushAsync (optional — immediate send)
+  ├── Claims entries by MessageId (same row-locking as relay)
+  ├── Sends from in-memory buffer (no DB read)
+  ├── Marks entries as sent on success
+  └── Increments retry on failure — relay picks up later
+
+OutboxRelay (background service — safety net)
   ├── Polls outbox table for pending entries
   ├── Sends each entry via the appropriate transport
   ├── Marks entries as sent on success
@@ -112,7 +119,7 @@ builder.Services.AddConduit(conduit =>
 ```
 
 The `AddOutbox` call registers:
-- `OutboxCapture` as the `IOutboundInterceptor` (scoped)
+- `OutboxCapture` as both `IOutboundInterceptor` and `IOutboxFlusher` (scoped)
 - `OutboxBehavior<,>` as a pipeline behavior
 - `OutboxRelay` as a background service
 - `DbConnectionOutboxStore` with the chosen dialect
@@ -221,6 +228,70 @@ The outbox captures **fire-and-forget messages only** — messages where no repl
 | Queries (`IQuery<TResult>`) | No | Caller awaits response — can't defer |
 | `[LocalOnly]` events | No | Never sent to transports |
 
+## Immediate send
+
+By default, outbox messages wait for the relay's next poll cycle before reaching the broker. The immediate send optimization bypasses this delay by sending messages from the in-memory buffer right after the transaction commits, using the relay only as a safety net for failures.
+
+### Usage
+
+Inject `IOutboxFlusher` and call `FlushAsync` after committing your transaction:
+
+```csharp
+public class PlaceOrderHandler(
+    AppDbContext dbContext,
+    IMediator mediator,
+    IOutboxFlusher flusher) : ICommandHandler<PlaceOrderCommand, Guid>
+{
+    public async Task<Guid> HandleAsync(PlaceOrderCommand command, CancellationToken cancellationToken)
+    {
+        var order = new Order(command.Product);
+        dbContext.Orders.Add(order);
+
+        await mediator.PublishAsync(new OrderPlacedEvent(order.Id, command.Product), cancellationToken);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await flusher.FlushAsync(cancellationToken);
+
+        return order.Id;
+    }
+}
+```
+
+### Behavior
+
+`FlushAsync` claims the outbox entries written during the current scope using the same row-locking mechanism as the relay (`ClaimByMessageIds` with `SKIP LOCKED` on supported databases). It then sends each entry via the appropriate transport using the in-memory envelope — no database read needed. Successfully sent entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the relay picks it up on its next sweep.
+
+`FlushAsync` is a no-op when nothing was captured during the scope, and safe to call unconditionally. If the relay has already claimed an entry before `FlushAsync` runs, the claim returns nothing and the call completes without sending duplicates.
+
+### EF Core auto-flush
+
+For EF Core applications, a `SaveChangesInterceptor` can call `FlushAsync` automatically after every successful save:
+
+```csharp
+public class OutboxFlushInterceptor(IOutboxFlusher flusher) : SaveChangesInterceptor
+{
+    public override async ValueTask<int> SavedChangesAsync(
+        SaveChangesCompletedEventData eventData,
+        int result,
+        CancellationToken cancellationToken = default)
+    {
+        await flusher.FlushAsync(cancellationToken);
+        return result;
+    }
+}
+```
+
+Register it:
+
+```csharp
+builder.Services.AddScoped<OutboxFlushInterceptor>();
+
+builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
+{
+    options.AddInterceptors(serviceProvider.GetRequiredService<OutboxFlushInterceptor>());
+});
+```
+
 ## Limitations
 
 **At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again. Consumers must handle duplicates. A future inbox feature will provide application-level deduplication.
@@ -229,4 +300,4 @@ The outbox captures **fire-and-forget messages only** — messages where no repl
 
 **Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — concurrent claiming via `SKIP LOCKED` prevents duplicate sends (except SQLite, which is single-writer).
 
-**No immediate send optimization yet.** Currently all captured messages go through the outbox table and relay. A future optimization will attempt immediate delivery after commit, using the relay only as a safety net.
+**Immediate send is best-effort.** `FlushAsync` attempts to send messages immediately, but the relay is still the safety net. If the process crashes between commit and `FlushAsync`, or if `FlushAsync` itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when immediate send is configured.
