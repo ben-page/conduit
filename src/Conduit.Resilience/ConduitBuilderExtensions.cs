@@ -1,5 +1,6 @@
 using Conduit.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Polly;
 
 namespace Conduit.Resilience;
 
@@ -25,6 +26,10 @@ public static class ConduitBuilderExtensions
         Action<ConduitResilienceBuilder>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
+
+        // Always register the pipeline registry so ResilienceBehavior can be resolved
+        // even when no pipelines are configured (pass-through mode).
+        builder.Services.AddResiliencePipelineRegistry<string>();
 
         var resilienceBuilder = new ConduitResilienceBuilder(builder.Services);
         configure?.Invoke(resilienceBuilder);
