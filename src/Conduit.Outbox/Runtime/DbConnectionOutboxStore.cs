@@ -134,6 +134,52 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(
+        IReadOnlyList<string> messageIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(messageIds);
+
+        if (messageIds.Count == 0)
+        {
+            return [];
+        }
+
+        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
+
+        var paramNames = new string[messageIds.Count];
+        for (var i = 0; i < messageIds.Count; i++)
+        {
+            paramNames[i] = $"@p{i}";
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            this.dialect.ClaimByMessageIdsSql,
+            string.Join(", ", paramNames));
+
+        for (var i = 0; i < messageIds.Count; i++)
+        {
+            AddParameter(command, $"@p{i}", messageIds[i]);
+        }
+
+        using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var results = new List<ClaimedOutboxEntry>();
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new ClaimedOutboxEntry
+            {
+                Id = reader.GetInt64(reader.GetOrdinal("Id")),
+                MessageId = reader.GetString(reader.GetOrdinal("MessageId")),
+            });
+        }
+
+        return results;
+    }
+
     private static OutboxEntry ReadEntry(DbDataReader reader)
     {
         var sentAtOrdinal = reader.GetOrdinal("SentAt");
