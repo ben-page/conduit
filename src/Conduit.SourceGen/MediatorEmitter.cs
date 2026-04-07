@@ -308,7 +308,10 @@ public static class MediatorEmitter
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
 
-        // F&F events enqueue everything to the background dispatcher and return immediately
+        EmitContextStart(sb, "@event.GetType().FullName!", "event");
+
+        // F&F events enqueue local listeners to background dispatcher instead of running inline.
+        // Transport broadcast still happens inline — events are already fire-and-forget on the wire.
         if (fireAndForgetTypes.Count > 0)
         {
             sb.AppendLine("        if (@event is " + string.Join(" or ", fireAndForgetTypes) + ")");
@@ -317,7 +320,6 @@ public static class MediatorEmitter
             sb.AppendLine("            var captured = @event;");
             sb.AppendLine("            dispatcher.Enqueue(async ct =>");
             sb.AppendLine("            {");
-            sb.AppendLine("                var ctx = MessageContext.StartDispatch();");
             sb.AppendLine("                try");
             sb.AppendLine("                {");
             sb.AppendLine("                    await PublishLocalAsync(captured, ct);");
@@ -326,17 +328,13 @@ public static class MediatorEmitter
             sb.AppendLine("                {");
             sb.AppendLine("                    logger.LogError(ex, \"One or more event listeners failed for {EventType}\", captured.GetType().FullName);");
             sb.AppendLine("                }");
-            sb.AppendLine("                finally");
-            sb.AppendLine("                {");
-            sb.AppendLine("                    MessageContext.RestoreContext(null);");
-            sb.AppendLine("                }");
             sb.AppendLine("            });");
-            sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            sb.AppendLine();
+            sb.AppendLine("        else");
+            sb.AppendLine("        {");
         }
 
-        EmitContextStart(sb, "@event.GetType().FullName!", "event");
+        // Non-F&F events run local listeners inline
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            await PublishLocalAsync(@event, cancellationToken);");
@@ -345,6 +343,12 @@ public static class MediatorEmitter
         sb.AppendLine("        {");
         sb.AppendLine("            logger.LogError(ex, \"One or more event listeners failed for {EventType}\", @event.GetType().FullName);");
         sb.AppendLine("        }");
+
+        if (fireAndForgetTypes.Count > 0)
+        {
+            sb.AppendLine("        }");
+        }
+
         sb.AppendLine();
 
         if (localOnlyTypes.Count == events.Count)
