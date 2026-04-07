@@ -59,7 +59,39 @@ public class OutboundInterceptionShould
     }
 
     [TestMethod]
-    public async Task CaptureVoidRoutedCommandWhenInterceptorRegistered()
+    public async Task CaptureFireAndForgetVoidCommandWhenInterceptorRegistered()
+    {
+        // Arrange
+        var spyTransport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddSingleton<EventSpy<ImportDataCommand>>();
+            builder.Services.AddScoped<IOutboundInterceptor, SpyOutboundInterceptor>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.AddEndpoint("remote", endpoint =>
+                {
+                    endpoint.UseTransport(spyTransport);
+                    endpoint.RouteNamespace<ImportDataCommand>();
+                });
+            });
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+        var interceptor = (SpyOutboundInterceptor)host.GetRequiredService<IOutboundInterceptor>();
+
+        // Act — ImportDataCommand is [FireAndForget], so it should be intercepted
+        await mediator.ExecuteAsync(new ImportDataCommand("/data/file.csv"));
+
+        // Assert -- interceptor captured the F&F command, transport did NOT receive it
+        interceptor.Captured.Should().ContainSingle();
+        interceptor.Captured[0].Type.Should().Contain("ImportDataCommand");
+        spyTransport.SentEvents.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task NotInterceptNonFireAndForgetVoidCommand()
     {
         // Arrange
         var spyTransport = new SpyTransport();
@@ -80,13 +112,12 @@ public class OutboundInterceptionShould
         var mediator = host.GetRequiredService<IMediator>();
         var interceptor = (SpyOutboundInterceptor)host.GetRequiredService<IOutboundInterceptor>();
 
-        // Act
+        // Act — DeleteItemCommand is NOT [FireAndForget], so it should NOT be intercepted
         await mediator.ExecuteAsync(new DeleteItemCommand(Guid.NewGuid()));
 
-        // Assert -- interceptor captured the command, transport did NOT receive it
-        interceptor.Captured.Should().ContainSingle();
-        interceptor.Captured[0].Type.Should().Contain("DeleteItemCommand");
-        spyTransport.SentRequests.Should().BeEmpty();
+        // Assert -- interceptor was NOT called, transport received the command directly
+        interceptor.Captured.Should().BeEmpty();
+        spyTransport.SentRequests.Should().ContainSingle();
     }
 
     [TestMethod]

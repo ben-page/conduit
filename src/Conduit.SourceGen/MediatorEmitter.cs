@@ -120,13 +120,19 @@ public static class MediatorEmitter
             sb.AppendLine("            {");
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var envelope = new DispatchEnvelope(\"{cmd.FullTypeName}\", payload);");
-            sb.AppendLine($"                var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
-            sb.AppendLine("                if (outboundInterceptor != null)");
-            sb.AppendLine("                {");
-            sb.AppendLine("                    outboundInterceptor.Intercept(envelope);");
-            sb.AppendLine("                    return;");
-            sb.AppendLine("                }");
-            sb.AppendLine();
+
+            if (cmd.IsFireAndForget)
+            {
+                // F&F commands can be intercepted by the outbox — no reply expected
+                sb.AppendLine($"                var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
+                sb.AppendLine("                if (outboundInterceptor != null)");
+                sb.AppendLine("                {");
+                sb.AppendLine("                    outboundInterceptor.Intercept(envelope);");
+                sb.AppendLine("                    return;");
+                sb.AppendLine("                }");
+                sb.AppendLine();
+            }
+
             sb.AppendLine($"                ConduitRuntime.LogRouteDispatch(logger, \"{cmd.FullTypeName}\", endpoint.Name);");
             sb.AppendLine($"                __activity?.SetTag(\"conduit.dispatch\", \"remote\");");
             sb.AppendLine($"                __activity?.SetTag(\"conduit.endpoint\", endpoint.Name);");
