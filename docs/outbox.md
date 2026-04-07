@@ -1,7 +1,8 @@
 # Transactional Outbox
 
-- [Overview](#overview)
-- [The problem](#the-problem)
+- [Why use an outbox?](#why-use-an-outbox)
+  - [When to use it](#when-to-use-it)
+- [The dual-write problem](#the-dual-write-problem)
   - [Why not a distributed transaction?](#why-not-a-distributed-transaction)
   - [The solution](#the-solution)
 - [How it works](#how-it-works)
@@ -13,22 +14,40 @@
 - [What gets captured](#what-gets-captured)
 - [Limitations](#limitations)
 
-## Overview
+## Why use an outbox?
 
-The transactional outbox guarantees at-least-once delivery for fire-and-forget messages. Outbound events and void routed commands are written to an outbox table in the same database transaction as your business data. A background relay delivers them to the broker.
+Without an outbox, publishing a message is a best-effort operation. Several things can go wrong:
 
-## The problem
+**Your application crashes.** The handler saves an order to the database, then calls `PublishAsync`. The process crashes — or the container is killed, or a deployment rolls through — after the database commit but before the message reaches the broker. The order exists. No other service knows about it.
 
-When a handler saves business data and publishes a message, two separate systems are involved — your database and the message broker. There's no atomicity guarantee across them:
+**The broker is down.** RabbitMQ is restarting, the Kafka cluster is unreachable, or the Azure Service Bus namespace is throttling. The database commit succeeds but the publish call fails. The message is lost unless you catch the exception and retry — but retry logic is fragile and doesn't survive process restarts.
+
+**You publish before committing.** Publishing first avoids losing the message, but creates a worse problem. A downstream service receives `OrderCreated`, queries your API for the order, and gets a 404 — because the transaction hasn't committed yet, or it rolled back. Now downstream services are reacting to data that doesn't exist.
+
+These aren't edge cases. In a distributed system with multiple services, they're inevitable. The question is whether your architecture handles them or hopes they don't happen.
+
+### When to use it
+
+Use the outbox when:
+- **Reliability matters.** Messages must not be silently lost when the broker is temporarily unavailable or the process crashes at the wrong moment.
+- **Consistency matters.** Downstream services should never see events about data that hasn't been committed, and committed data should always produce its events.
+- **You have a database.** The outbox shares a transaction with your business data. If your service is stateless (no database), the outbox doesn't apply — the broker's own delivery guarantees are sufficient.
+
+You may not need it when:
+- You're comfortable with best-effort delivery and can tolerate occasional lost messages.
+- Your messages are idempotent regenerations (e.g., a cache invalidation that can be repeated on the next request).
+- You're in a development or prototyping phase where reliability isn't the focus yet.
+
+## The dual-write problem
+
+The root cause is that your handler writes to two separate systems — the database and the message broker — without a shared transaction. This is called the **dual-write problem**.
 
 ```
 1. Save order to database        ← succeeds
 2. Publish OrderCreated event     ← process crashes here — event lost
 ```
 
-The order exists but no downstream service ever hears about it. Reversing the order doesn't help either — publishing first means the event goes out before the data is committed, and a failed commit leaves consumers acting on data that doesn't exist.
-
-This is the **dual-write problem**: writing to two systems without a shared transaction.
+No matter which order you do the writes, one of them can fail after the other succeeds, leaving the two systems inconsistent.
 
 ### Why not a distributed transaction?
 
