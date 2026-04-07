@@ -1105,6 +1105,22 @@ All 5 broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveM
 
 **Concurrency:** AMQP link credit (prefetch count) per receiver link.
 
+## Transactional Outbox (`Conduit.Outbox`)
+
+The outbox guarantees at-least-once delivery for fire-and-forget messages (events and void routed commands). It solves the dual-write problem: business data and outbound messages are written in the same database transaction.
+
+**Interception mechanism:** `IOutboundInterceptor` (in `Conduit.Middleware`) is checked by the generated mediator before sending fire-and-forget messages to transports. When registered, `OutboxCapture` buffers dispatch envelopes instead of sending them. This is the symmetric counterpart to `IInboundInterceptor` (which intercepts messages arriving from transports).
+
+**Pipeline behavior:** `OutboxBehavior<TRequest, TResult>` wraps the handler. After the handler returns, the behavior reads captured envelopes from `OutboxCapture` and writes them to the outbox table via `IOutboxStore`, using the transaction from `IOutboxConnectionFactory.GetCurrentTransaction()`. If no transaction is active, the behavior passes through (no persistence).
+
+**Relay:** `OutboxRelay` is a `BackgroundService` that polls the outbox table for pending entries older than a configurable grace period. It sends each entry via the appropriate transport (routing via `ConduitRuntime.ResolveRoute` for commands, broadcast for events) and marks entries as sent. Failed entries are retried up to `MaxRetries`, then marked as permanently failed. Uses `SKIP LOCKED` (or equivalent) for concurrent relay instances.
+
+**Store abstraction:** `IOutboxStore` is the persistence interface. The built-in `DbConnectionOutboxStore` uses raw ADO.NET with `IOutboxDialect` for database-specific SQL. Four dialects ship: SQLite, SQL Server (`ROWLOCK + UPDLOCK + READPAST`), PostgreSQL (`FOR UPDATE SKIP LOCKED`), MySQL 8.0+ (`FOR UPDATE SKIP LOCKED`). Custom stores (Cosmos DB, MongoDB, etc.) implement `IOutboxStore` directly.
+
+**Registration:** `conduit.AddOutbox(outbox => outbox.UseSqlite(...))` registers the capture, behavior, relay, store, and options in one call.
+
+**Not captured:** Request/response messages (commands with results, queries) are excluded — the caller awaits a response and dispatch cannot be deferred. `[LocalOnly]` events are excluded — they never reach transports.
+
 ## Shared Analysis Library (`Conduit.Analysis`)
 
 `Conduit.Analysis` provides a shared type model (`DispatchableTypeInfo`, `DispatchableKind`) used by both scanning paths. The scanners themselves live in their consumers:
