@@ -42,6 +42,7 @@ Test class: `{Transport}CommandRoutingShould`
 | 1.4 | `PropagateConduitExceptionAsFailResult` | A sends, B throws `NotFoundException` | A gets `InvalidOperationException` with error code |
 | 1.5 | `ReturnInternalErrorForUnexpectedException` | A sends, B throws `InvalidOperationException` | A gets `InternalError`, no details leaked |
 | 1.6 | `TimeoutWhenNoHandlerAvailable` | A sends, no handler host | Throws after `ResponseTimeout` (use short 5s timeout) |
+| 1.7 | `DeliverFireAndForgetCommandToHandler` | A sends `[FireAndForget]` command, B handles | B spy == 1 with correct data, no reply expected |
 
 ### Category 2: Query Routing
 
@@ -109,7 +110,7 @@ Test class: `{Transport}TopologyModeShould`
 
 ### Totals
 
-28 test scenarios per transport (27 for transports without 7.4).
+29 test scenarios per transport (28 for transports without 7.4).
 
 ---
 
