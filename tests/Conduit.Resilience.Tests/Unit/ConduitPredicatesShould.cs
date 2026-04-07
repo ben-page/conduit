@@ -43,7 +43,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.TransientErrors,
+            ConduitPredicates.TransientErrors<object>(),
             () => throw new TimeoutException());
 
         // Assert
@@ -55,7 +55,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.TransientErrors,
+            ConduitPredicates.TransientErrors<object>(),
             () => throw new InvalidOperationException());
 
         // Assert
@@ -67,7 +67,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.TransientErrors,
+            ConduitPredicates.TransientErrors<object>(),
             () => throw new NotFoundException("not found"));
 
         // Assert
@@ -79,7 +79,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.TransientErrors,
+            ConduitPredicates.TransientErrors<object>(),
             () => throw new UnauthorizedException("unauthorized"));
 
         // Assert
@@ -91,7 +91,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.TransientErrors,
+            ConduitPredicates.TransientErrors<object>(),
             () => throw new ConflictException("conflict"));
 
         // Assert
@@ -103,7 +103,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.AllErrors,
+            ConduitPredicates.AllErrors<object>(),
             () => throw new InvalidOperationException("unhandled application error"));
 
         // Assert
@@ -115,7 +115,7 @@ public class ConduitPredicatesShould
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
-            ConduitPredicates.AllErrors,
+            ConduitPredicates.AllErrors<object>(),
             () => throw new OperationCanceledException());
 
         // Assert

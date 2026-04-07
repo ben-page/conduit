@@ -5,8 +5,8 @@ namespace Conduit.Resilience;
 
 /// <summary>
 /// Pre-built Polly v8 predicates that understand Conduit's exception hierarchy.
-/// Each property returns a fresh <see cref="PredicateBuilder{T}"/> instance so callers
-/// can safely chain additional <c>.Handle&lt;T&gt;()</c> calls without mutating a shared instance.
+/// Each method returns a fresh <see cref="PredicateBuilder{T}"/> instance so callers
+/// can safely chain additional <c>.Handle&lt;TException&gt;()</c> calls without mutating a shared instance.
 /// </summary>
 public static class ConduitPredicates
 {
@@ -17,8 +17,13 @@ public static class ConduitPredicates
     /// outcomes (<see cref="NotFoundException"/>, <see cref="UnauthorizedException"/>,
     /// <see cref="ConflictException"/>) and should not be retried.
     /// </summary>
-    public static PredicateBuilder<object> TransientErrors =>
-        new PredicateBuilder<object>()
+    /// <typeparam name="T">
+    /// The result type of the resilience pipeline. For exception-only predicates the
+    /// result type does not affect which exceptions are handled — it only needs to match
+    /// the <see cref="Polly.Retry.RetryStrategyOptions{TResult}"/> type parameter.
+    /// </typeparam>
+    public static PredicateBuilder<T> TransientErrors<T>() =>
+        new PredicateBuilder<T>()
             .Handle<TimeoutException>()
             .Handle<InvalidOperationException>();
 
@@ -26,7 +31,11 @@ public static class ConduitPredicates
     /// Handles all exceptions except <see cref="OperationCanceledException"/>.
     /// Use when you want to retry on any failure that isn't an explicit cancellation.
     /// </summary>
-    public static PredicateBuilder<object> AllErrors =>
-        new PredicateBuilder<object>()
+    /// <typeparam name="T">
+    /// The result type of the resilience pipeline. For exception-only predicates the
+    /// result type does not affect which exceptions are handled.
+    /// </typeparam>
+    public static PredicateBuilder<T> AllErrors<T>() =>
+        new PredicateBuilder<T>()
             .Handle<Exception>(ex => ex is not OperationCanceledException);
 }
