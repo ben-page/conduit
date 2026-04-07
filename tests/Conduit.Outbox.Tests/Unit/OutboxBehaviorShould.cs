@@ -1,8 +1,10 @@
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.Outbox.Runtime;
 using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.Runtime;
+using Microsoft.Extensions.DependencyInjection;
 using System.Data;
 using System.Data.Common;
 using System.Text.Json;
@@ -12,11 +14,20 @@ namespace Conduit.Outbox.Tests.Unit;
 [TestClass]
 public class OutboxBehaviorShould
 {
+    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, IConduitTransport[]? transports = null)
+    {
+        return new OutboxCapture(
+            store ?? new StubOutboxStore(),
+            transports ?? [],
+            new ServiceCollection().BuildServiceProvider(),
+            new ConduitOptions());
+    }
+
     [TestMethod]
     public async Task WriteCapturedMessagesToStore()
     {
         // Arrange
-        var capture = new OutboxCapture();
+        var capture = CreateCapture();
         var store = new StubOutboxStore();
         var factory = new StubTransactionFactory(hasTransaction: true);
 
@@ -40,7 +51,7 @@ public class OutboxBehaviorShould
     public async Task SkipPersistenceWhenNoTransaction()
     {
         // Arrange
-        var capture = new OutboxCapture();
+        var capture = CreateCapture();
         var store = new StubOutboxStore();
         var factory = new StubTransactionFactory(hasTransaction: false);
 
@@ -60,7 +71,7 @@ public class OutboxBehaviorShould
     public async Task PassThroughWhenNothingCaptured()
     {
         // Arrange
-        var capture = new OutboxCapture();
+        var capture = CreateCapture();
         var store = new StubOutboxStore();
         var factory = new StubTransactionFactory(hasTransaction: true);
 

@@ -43,7 +43,7 @@ public class StubOutboxStore : IOutboxStore
     public virtual Task EnsureTableExistsAsync(CancellationToken cancellationToken)
         => Task.CompletedTask;
 
-    public List<ClaimedOutboxEntry> ClaimedEntries { get; } = [];
+    public IReadOnlyList<ClaimedOutboxEntry> ClaimedEntries { get; set; } = [];
 
     public virtual Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(
         IReadOnlyList<string> messageIds,
