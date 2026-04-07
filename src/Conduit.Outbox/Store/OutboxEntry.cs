@@ -1,4 +1,4 @@
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Store;
 
 /// <summary>
 /// Represents a message stored in the outbox table for reliable delivery.

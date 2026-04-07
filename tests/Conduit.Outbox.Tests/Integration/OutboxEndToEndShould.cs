@@ -1,6 +1,9 @@
 using AwesomeAssertions;
 using Conduit.Generated;
+using Conduit.Outbox.Configuration;
 using Conduit.Outbox.Dialects;
+using Conduit.Outbox.Runtime;
+using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;

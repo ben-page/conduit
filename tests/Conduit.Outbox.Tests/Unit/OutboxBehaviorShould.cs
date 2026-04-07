@@ -1,4 +1,6 @@
 using AwesomeAssertions;
+using Conduit.Outbox.Runtime;
+using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.Runtime;
 using System.Data;

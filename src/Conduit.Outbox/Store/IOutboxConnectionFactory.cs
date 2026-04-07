@@ -1,6 +1,6 @@
 using System.Data.Common;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Store;
 
 /// <summary>
 /// Provides database connections and transaction access for the outbox.

@@ -1,3 +1,4 @@
+using Conduit.Outbox.Store;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 

@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Outbox.Dialects;
+using Conduit.Outbox.Runtime;
+using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Microsoft.Data.Sqlite;
 

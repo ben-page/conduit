@@ -1,10 +1,14 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Outbox.Configuration;
+using Conduit.Outbox.Runtime;
+using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+
 namespace Conduit.Outbox.Tests.Unit;
 
 [TestClass]

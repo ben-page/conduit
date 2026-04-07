@@ -1,3 +1,4 @@
+using Conduit.Outbox.Store;
 using System.Data.Common;
 
 namespace Conduit.Outbox.Tests.Support;

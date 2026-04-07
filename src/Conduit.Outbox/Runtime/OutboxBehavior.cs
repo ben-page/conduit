@@ -1,7 +1,8 @@
 using Conduit.Middleware;
+using Conduit.Outbox.Store;
 using Conduit.Runtime;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Runtime;
 
 /// <summary>
 /// Pipeline behavior that writes captured outbound messages to the outbox table

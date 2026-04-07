@@ -1,3 +1,5 @@
+using Conduit.Outbox.Store;
+
 namespace Conduit.Outbox.Dialects;
 
 /// <summary>SQL Server dialect. Uses ROWLOCK + UPDLOCK + READPAST for concurrent claiming.</summary>

@@ -1,11 +1,13 @@
 using Conduit.Configuration;
+using Conduit.Outbox.Configuration;
+using Conduit.Outbox.Store;
 using Conduit.Runtime;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Runtime;
 
 /// <summary>
 /// Background service that polls the outbox table for pending entries

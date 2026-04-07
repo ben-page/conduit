@@ -1,8 +1,9 @@
 using Conduit.Outbox.Dialects;
+using Conduit.Outbox.Store;
 using Microsoft.Extensions.DependencyInjection;
 using System.Data.Common;
 
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Configuration;
 
 /// <summary>
 /// Fluent builder for configuring the transactional outbox.

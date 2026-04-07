@@ -1,4 +1,4 @@
-namespace Conduit.Outbox;
+namespace Conduit.Outbox.Configuration;
 
 /// <summary>
 /// Configuration for the transactional outbox.

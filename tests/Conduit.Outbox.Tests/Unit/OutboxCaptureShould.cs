@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Middleware;
+using Conduit.Outbox.Runtime;
 using Conduit.Runtime;
 using System.Text.Json;
 
