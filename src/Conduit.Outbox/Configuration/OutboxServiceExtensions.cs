@@ -39,6 +39,8 @@ public static class OutboxServiceExtensions
         builder.Services.AddScoped<OutboxCapture>();
         builder.Services.AddScoped<IOutboundInterceptor>(
             serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
+        builder.Services.AddScoped<IOutboxFlusher>(
+            serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
 
         // Register the pipeline behavior
         builder.AddPipeline(typeof(OutboxBehavior<,>));
