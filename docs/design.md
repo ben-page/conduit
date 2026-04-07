@@ -254,7 +254,7 @@ public interface IWireMediator : IMediator
 }
 ```
 
-Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IWireInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events — lets `EventListenerException` propagate to the transport for retry/dead-letter, swallows other exceptions.
+Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IInboundInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events — lets `EventListenerException` propagate to the transport for retry/dead-letter, swallows other exceptions.
 
 ### Message Context
 
@@ -271,7 +271,7 @@ Two factory methods:
 - `MessageContext.StartDispatch()` — local dispatch, generates IDs, inherits from parent if nested
 - `MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId)` — inbound wire dispatch, all values from broker message properties
 
-Access via `MessageContext.Current` (static property). Set automatically by the generated mediator and `ConduitRuntime` wire dispatch. Context is set before the `IWireInterceptor` chain runs.
+Access via `MessageContext.Current` (static property). Set automatically by the generated mediator and `ConduitRuntime` wire dispatch. Context is set before the `IInboundInterceptor` chain runs.
 
 ### Endpoint-Based Routing (Commands and Queries Only)
 
@@ -617,7 +617,7 @@ The generated `ConduitMediator` implements `IWireMediator` (which extends `IMedi
 - **Strongly-typed overloads** per command/query — compiler picks these, zero boxing
 - **Route-aware dispatch** — checks `ConduitRuntime.ResolveRoute` before local dispatch; if a route matches, resolves the transport via `ConduitRuntime.ResolveTransport` (keyed DI) and sends via `DispatchEnvelope`
 - **Event broadcast** — `PublishAsync` dispatches to local listeners via `PublishLocalAsync`, then broadcasts to all DI-registered `IConduitTransport` instances (unless `[LocalOnly]`)
-- **Wire dispatch** — `HandleWireRequestAsync`/`HandleWireEventAsync` chain `IWireInterceptor` instances, deserialize by type name, and dispatch locally
+- **Wire dispatch** — `HandleWireRequestAsync`/`HandleWireEventAsync` chain `IInboundInterceptor` instances, deserialize by type name, and dispatch locally
 - **Pipeline behaviors** — resolved via `ConduitRuntime.ResolvePipelines` in registration order (first = outermost)
 
 ### 5. REST Endpoint Mappings (conditional)

@@ -3,12 +3,12 @@
 - [Overview](#overview)
 - [TypeFilterInterceptor](#typefilterinterceptor)
 - [\[LocalOnly\]](#localonly)
-- [IWireInterceptor](#iwireinterceptor)
+- [IInboundInterceptor](#iwireinterceptor)
 - [ASP.NET Core auth](#aspnet-core-auth)
 
 ## Overview
 
-Conduit provides three layers of security alongside ASP.NET Core's authentication and authorization: type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent events from leaving the process, and `IWireInterceptor` for custom wire-level middleware.
+Conduit provides three layers of security alongside ASP.NET Core's authentication and authorization: type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent events from leaving the process, and `IInboundInterceptor` for custom wire-level middleware.
 
 ## TypeFilterInterceptor
 
@@ -26,7 +26,7 @@ builder.Services.AddConduit(conduit =>
 
 Any inbound wire dispatch for a type not in the allowed set is rejected with `UnauthorizedException` before the message reaches a handler. The type name matched is the full type name from `DispatchEnvelope.Type`.
 
-`TypeFilterInterceptor` implements `IWireInterceptor`. It checks commands and queries only. Events pass through unfiltered because inbound events are server-initiated broadcasts.
+`TypeFilterInterceptor` implements `IInboundInterceptor`. It checks commands and queries only. Events pass through unfiltered because inbound events are server-initiated broadcasts.
 
 The filter is transport-agnostic. It works the same whether the request arrives over HTTP, SignalR, or a service bus.
 
@@ -41,7 +41,7 @@ Events marked `[LocalOnly]` never leave the process. The source generator omits 
 
 See [Transports](transports/index.md) for the full broadcast model.
 
-## IWireInterceptor
+## IInboundInterceptor
 
 Wire interceptors wrap inbound dispatch calls with custom middleware. They operate on the raw `DispatchEnvelope` before deserialization.
 
@@ -50,7 +50,7 @@ using Conduit.Runtime;
 using Conduit.Middleware;
 using Microsoft.Extensions.Logging;
 
-public class AuditInterceptor(ILogger<AuditInterceptor> logger) : IWireInterceptor
+public class AuditInterceptor(ILogger<AuditInterceptor> logger) : IInboundInterceptor
 {
     public async Task<object?> InterceptRequestAsync(
         DispatchEnvelope envelope,
@@ -77,7 +77,7 @@ public class AuditInterceptor(ILogger<AuditInterceptor> logger) : IWireIntercept
 Register interceptors as singletons:
 
 ```csharp
-builder.Services.AddSingleton<IWireInterceptor, AuditInterceptor>();
+builder.Services.AddSingleton<IInboundInterceptor, AuditInterceptor>();
 ```
 
 Multiple interceptors chain in reverse registration order. First registered is outermost.
@@ -90,7 +90,7 @@ AuditInterceptor (enter)
 AuditInterceptor (exit)
 ```
 
-`TypeFilterInterceptor` is itself an `IWireInterceptor`. When you call `AddTypeFilter(...)`, it registers into the same chain.
+`TypeFilterInterceptor` is itself an `IInboundInterceptor`. When you call `AddTypeFilter(...)`, it registers into the same chain.
 
 ## ASP.NET Core auth
 
