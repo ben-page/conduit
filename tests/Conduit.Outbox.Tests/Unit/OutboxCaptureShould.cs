@@ -96,4 +96,33 @@ public class OutboxCaptureShould
         transport.SentEvents[1].Type.Should().Be("MyApp.Events.OrderShipped");
         store.MarkedSent.Should().BeEquivalentTo([10L, 11L]);
     }
+
+    [TestMethod]
+    public async Task FlushAsyncIncrementRetryOnTransportFailure()
+    {
+        // Arrange
+        var store = new StubOutboxStore();
+        var transport = new ThrowingTransport();
+        var conduitOptions = new ConduitOptions();
+        var serviceProvider = new ServiceCollection().BuildServiceProvider();
+        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions);
+
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+
+        capture.SetWrittenMessages([
+            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope),
+        ]);
+
+        store.ClaimedEntries =
+        [
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+        ];
+
+        // Act
+        await capture.FlushAsync(CancellationToken.None);
+
+        // Assert
+        store.MarkedSent.Should().BeEmpty();
+        store.RetriesIncremented.Should().BeEquivalentTo([10L]);
+    }
 }
