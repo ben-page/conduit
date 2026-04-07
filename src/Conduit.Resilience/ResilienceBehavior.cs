@@ -62,41 +62,78 @@ public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TR
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        var pipeline = this.ResolvePipeline();
-
-        if (pipeline is null)
+        if (this.TryResolveTypedPipeline(out var typedPipeline))
         {
-            return await next();
+            var context = ResilienceContextPool.Shared.Get(cancellationToken);
+            try
+            {
+                EnrichContext(context);
+                return await typedPipeline!.ExecuteAsync(async _ => await next(), context);
+            }
+            finally
+            {
+                ResilienceContextPool.Shared.Return(context);
+            }
         }
 
-        var context = ResilienceContextPool.Shared.Get(cancellationToken);
+        if (this.TryResolveNonGenericPipeline(out var nonGenericPipeline))
+        {
+            var context = ResilienceContextPool.Shared.Get(cancellationToken);
+            try
+            {
+                EnrichContext(context);
+                return await nonGenericPipeline!.ExecuteAsync(async _ => await next(), context);
+            }
+            finally
+            {
+                ResilienceContextPool.Shared.Return(context);
+            }
+        }
 
-        try
-        {
-            EnrichContext(context);
-            return await pipeline.ExecuteAsync(
-                async _ => await next(),
-                context);
-        }
-        finally
-        {
-            ResilienceContextPool.Shared.Return(context);
-        }
+        return await next();
     }
 
-    private ResiliencePipeline<TResult>? ResolvePipeline()
+    /// <summary>
+    /// Tries to resolve a typed <see cref="ResiliencePipeline{TResult}"/> by type key,
+    /// then by the default key. Typed pipelines are registered via
+    /// <c>AddResiliencePipeline&lt;string, TResult&gt;</c>.
+    /// </summary>
+    private bool TryResolveTypedPipeline(out ResiliencePipeline<TResult>? pipeline)
     {
-        if (this.pipelineProvider.TryGetPipeline<TResult>(TypeKey, out var typePipeline))
+        if (this.pipelineProvider.TryGetPipeline<TResult>(TypeKey, out pipeline))
         {
-            return typePipeline;
+            return true;
         }
 
-        if (this.pipelineProvider.TryGetPipeline<TResult>(ResilienceBehavior.DefaultPipelineKey, out var defaultPipeline))
+        if (this.pipelineProvider.TryGetPipeline<TResult>(ResilienceBehavior.DefaultPipelineKey, out pipeline))
         {
-            return defaultPipeline;
+            return true;
         }
 
-        return null;
+        pipeline = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Tries to resolve a non-generic <see cref="ResiliencePipeline"/> by type key,
+    /// then by the default key. Non-generic pipelines are registered via
+    /// <c>AddResiliencePipeline(key, builder =&gt; ...)</c>, as used by
+    /// <see cref="ConduitResilienceBuilder"/>.
+    /// </summary>
+    private bool TryResolveNonGenericPipeline(out ResiliencePipeline? pipeline)
+    {
+        if (this.pipelineProvider.TryGetPipeline(TypeKey, out pipeline))
+        {
+            return true;
+        }
+
+        if (this.pipelineProvider.TryGetPipeline(ResilienceBehavior.DefaultPipelineKey, out pipeline))
+        {
+            return true;
+        }
+
+        pipeline = null;
+        return false;
     }
 
     private static void EnrichContext(ResilienceContext context)
