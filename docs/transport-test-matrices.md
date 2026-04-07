@@ -65,6 +65,7 @@ Test class: `{Transport}EventRoutingShould`
 | 3.2 | `NotBroadcastLocalOnlyEvent` | A publishes `[LocalOnly]` event | A local spy == 1, B spy == 0 |
 | 3.3 | `DeliverEventToListenerDespiteOtherListenerFailure` | B has throwing listener for `ThrowingTestEvent` | Spy records before throwing (count >= 1) |
 | 3.4 | `PropagateWireEventListenerFailure` | A publishes, B listener throws | Transport retry/dead-letter semantics exercised |
+| 3.5 | `DeliverFireAndForgetEventToSubscribingApp` | A publishes `[FireAndForget]` event, B listens | B spy == 1 (F&F only affects local listeners, transport broadcast unchanged) |
 
 ### Category 4: Competing Instance Isolation
 
@@ -110,7 +111,7 @@ Test class: `{Transport}TopologyModeShould`
 
 ### Totals
 
-29 test scenarios per transport (28 for transports without 7.4).
+30 test scenarios per transport (29 for transports without 7.4).
 
 ---
 

@@ -140,6 +140,28 @@ public class FireAndForgetShould
         spy.Events.Should().ContainSingle(e => e.Action == "user.login");
     }
 
+    [TestMethod]
+    public async Task BroadcastFireAndForgetEventToTransports()
+    {
+        // Arrange — register a non-keyed SpyTransport (event broadcast target)
+        var spyTransport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<EventSpy<AuditLogEvent>>();
+            builder.Services.AddSingleton<IConduitTransport>(spyTransport);
+            builder.Services.AddConduit();
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.PublishAsync(new AuditLogEvent("user.login"));
+
+        // Assert — F&F attribute only affects local listeners (background),
+        // transport broadcast should still happen
+        spyTransport.SentEvents.Should().ContainSingle(
+            e => e.Type.Contains("AuditLogEvent"));
+    }
+
     // --- Transport dispatch ---
 
     [TestMethod]
