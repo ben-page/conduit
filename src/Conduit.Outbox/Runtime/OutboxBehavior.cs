@@ -51,6 +51,14 @@ public sealed class OutboxBehavior<TRequest, TResult>(
         }
 
         await store.SaveAsync(entries, transaction, cancellationToken);
+
+        capture.SetWrittenMessages(
+            entries.Select((entry, index) => new WrittenOutboxMessage(
+                entry.MessageId,
+                entry.ConversationId,
+                entry.CausationId,
+                captured[index])).ToList());
+
         return result;
     }
 }
