@@ -15,13 +15,19 @@ namespace Conduit.Outbox.Tests.Unit;
 [TestClass]
 public class OutboxBehaviorShould
 {
-    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, IConduitTransport[]? transports = null)
+    private static TransportDispatcher CreateDispatcher(params IConduitTransport[] transports)
+    {
+        return new TransportDispatcher(
+            new ConduitOptions(),
+            new ServiceCollection().BuildServiceProvider(),
+            transports);
+    }
+
+    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, TransportDispatcher? dispatcher = null)
     {
         return new OutboxCapture(
             store ?? new StubOutboxStore(),
-            transports ?? [],
-            new ServiceCollection().BuildServiceProvider(),
-            new ConduitOptions(),
+            dispatcher ?? CreateDispatcher(),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -93,9 +99,7 @@ public class OutboxBehaviorShould
         // Arrange
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var conduitOptions = new ConduitOptions();
-        var serviceProvider = new ServiceCollection().BuildServiceProvider();
-        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions, NullLogger<OutboxCapture>.Instance);
+        var capture = new OutboxCapture(store, CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance);
         var factory = new StubTransactionFactory(hasTransaction: true);
 
         var envelope = new DispatchEnvelope("Test.OrderPlaced", JsonSerializer.SerializeToElement(new { id = 1 }));

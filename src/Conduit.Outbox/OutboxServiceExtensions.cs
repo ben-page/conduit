@@ -1,12 +1,13 @@
 using Conduit.Configuration;
 using Conduit.Middleware;
+using Conduit.Outbox.Configuration;
 using Conduit.Outbox.Runtime;
 using Conduit.Outbox.Store;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
-namespace Conduit.Outbox.Configuration;
+namespace Conduit.Outbox;
 
 /// <summary>
 /// Extension methods for registering the transactional outbox.

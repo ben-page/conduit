@@ -26,22 +26,25 @@ public class OutboxRelayShould
             RetryCount = retryCount,
         };
 
+    private static TransportDispatcher CreateDispatcher(params IConduitTransport[] transports)
+    {
+        return new TransportDispatcher(
+            new ConduitOptions(),
+            new ServiceCollection().BuildServiceProvider(),
+            transports);
+    }
+
     private static OutboxRelay BuildRelay(
         IOutboxStore store,
-        IEnumerable<IConduitTransport> transports,
-        OutboxOptions? outboxOptions = null,
-        IServiceProvider? serviceProvider = null)
+        TransportDispatcher dispatcher,
+        OutboxOptions? outboxOptions = null)
     {
         var options = Options.Create(outboxOptions ?? new OutboxOptions { MaxRetries = 3 });
-        var conduitOptions = new ConduitOptions();
-        serviceProvider ??= new ServiceCollection().BuildServiceProvider();
 
         return new OutboxRelay(
             store,
-            transports,
-            serviceProvider,
+            dispatcher,
             options,
-            conduitOptions,
             NullLogger<OutboxRelay>.Instance);
     }
 
@@ -52,7 +55,7 @@ public class OutboxRelayShould
         var entry = MakeEntry(id: 1, type: "Orders.Events.OrderCreated");
         var store = new CapturingStubOutboxStore([entry]);
         var transport = new CapturingTransport();
-        var relay = BuildRelay(store, [transport]);
+        var relay = BuildRelay(store, CreateDispatcher(transport));
 
         // Act
         await relay.ProcessPendingAsync(CancellationToken.None);
@@ -72,7 +75,7 @@ public class OutboxRelayShould
         var entry = MakeEntry(id: 2, type: "Orders.Events.OrderCreated", retryCount: 2);
         var store = new CapturingStubOutboxStore([entry]);
         var transport = new ThrowingTransport(new InvalidOperationException("broker down"));
-        var relay = BuildRelay(store, [transport], new OutboxOptions { MaxRetries = 3 });
+        var relay = BuildRelay(store, CreateDispatcher(transport), new OutboxOptions { MaxRetries = 3 });
 
         // Act
         await relay.ProcessPendingAsync(CancellationToken.None);
@@ -90,7 +93,7 @@ public class OutboxRelayShould
         var entry = MakeEntry(id: 3, type: "Orders.Events.OrderCreated", retryCount: 0);
         var store = new CapturingStubOutboxStore([entry]);
         var transport = new ThrowingTransport(new InvalidOperationException("broker down"));
-        var relay = BuildRelay(store, [transport], new OutboxOptions { MaxRetries = 3 });
+        var relay = BuildRelay(store, CreateDispatcher(transport), new OutboxOptions { MaxRetries = 3 });
 
         // Act
         await relay.ProcessPendingAsync(CancellationToken.None);
@@ -107,7 +110,7 @@ public class OutboxRelayShould
         // Arrange
         var store = new CapturingStubOutboxStore([]);
         var transport = new CapturingTransport();
-        var relay = BuildRelay(store, [transport]);
+        var relay = BuildRelay(store, CreateDispatcher(transport));
 
         // Act
         await relay.ProcessPendingAsync(CancellationToken.None);

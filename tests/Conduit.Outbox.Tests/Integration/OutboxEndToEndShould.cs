@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Generated;
-using Conduit.Outbox.Configuration;
+using Conduit.Outbox;
 using Conduit.Outbox.Dialects;
 using Conduit.Outbox.Runtime;
 using Conduit.Outbox.Store;
