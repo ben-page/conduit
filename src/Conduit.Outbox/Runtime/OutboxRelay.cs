@@ -1,4 +1,3 @@
-using Conduit.Configuration;
 using Conduit.Outbox.Configuration;
 using Conduit.Outbox.Store;
 using Conduit.Runtime;
@@ -15,10 +14,8 @@ namespace Conduit.Outbox.Runtime;
 /// </summary>
 public sealed partial class OutboxRelay(
     IOutboxStore store,
-    IEnumerable<IConduitTransport> transports,
-    IServiceProvider serviceProvider,
+    TransportDispatcher transportDispatcher,
     IOptions<OutboxOptions> options,
-    ConduitOptions conduitOptions,
     ILogger<OutboxRelay> logger) : BackgroundService
 {
     /// <inheritdoc />
@@ -65,8 +62,6 @@ public sealed partial class OutboxRelay(
             return;
         }
 
-        var transportArray = transports.ToArray();
-
         foreach (var entry in pending)
         {
             try
@@ -80,8 +75,7 @@ public sealed partial class OutboxRelay(
                     entry.CausationId,
                     entry.ConversationId);
 
-                await ConduitRuntime.SendViaTransportsAsync(
-                    envelope, conduitOptions, serviceProvider, transportArray, cancellationToken);
+                await transportDispatcher.SendAsync(envelope, cancellationToken);
 
                 await store.MarkSentAsync(entry.Id, cancellationToken);
             }

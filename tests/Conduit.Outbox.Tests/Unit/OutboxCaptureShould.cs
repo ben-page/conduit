@@ -13,13 +13,19 @@ namespace Conduit.Outbox.Tests.Unit;
 [TestClass]
 public class OutboxCaptureShould
 {
-    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, IConduitTransport[]? transports = null)
+    private static TransportDispatcher CreateDispatcher(params IConduitTransport[] transports)
+    {
+        return new TransportDispatcher(
+            new ConduitOptions(),
+            new ServiceCollection().BuildServiceProvider(),
+            transports);
+    }
+
+    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, TransportDispatcher? dispatcher = null)
     {
         return new OutboxCapture(
             store ?? new StubOutboxStore(),
-            transports ?? [],
-            new ServiceCollection().BuildServiceProvider(),
-            new ConduitOptions(),
+            dispatcher ?? CreateDispatcher(),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -57,7 +63,7 @@ public class OutboxCaptureShould
         // Arrange
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = CreateCapture(store, [transport]);
+        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         // Act
         await capture.FlushAsync(CancellationToken.None);
@@ -73,7 +79,7 @@ public class OutboxCaptureShould
         // Arrange
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = CreateCapture(store, [transport]);
+        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         var envelope1 = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
         var envelope2 = new DispatchEnvelope("MyApp.Events.OrderShipped", JsonSerializer.SerializeToElement(new { orderId = 2 }));
@@ -105,9 +111,7 @@ public class OutboxCaptureShould
         // Arrange
         var store = new StubOutboxStore();
         var transport = new ThrowingTransport();
-        var conduitOptions = new ConduitOptions();
-        var serviceProvider = new ServiceCollection().BuildServiceProvider();
-        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions, NullLogger<OutboxCapture>.Instance);
+        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
 
@@ -134,7 +138,7 @@ public class OutboxCaptureShould
         // Arrange
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = CreateCapture(store, [transport]);
+        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
 

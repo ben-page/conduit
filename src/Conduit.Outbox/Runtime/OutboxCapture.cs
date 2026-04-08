@@ -1,4 +1,3 @@
-using Conduit.Configuration;
 using Conduit.Middleware;
 using Conduit.Outbox.Store;
 using Conduit.Runtime;
@@ -16,9 +15,7 @@ namespace Conduit.Outbox.Runtime;
 public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 {
     private readonly IOutboxStore store;
-    private readonly IConduitTransport[] transports;
-    private readonly IServiceProvider serviceProvider;
-    private readonly ConduitOptions conduitOptions;
+    private readonly TransportDispatcher transportDispatcher;
     private readonly ILogger<OutboxCapture> logger;
     private readonly List<DispatchEnvelope> captured = [];
     private List<WrittenOutboxMessage> writtenMessages = [];
@@ -28,15 +25,11 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     /// </summary>
     public OutboxCapture(
         IOutboxStore store,
-        IEnumerable<IConduitTransport> transports,
-        IServiceProvider serviceProvider,
-        ConduitOptions conduitOptions,
+        TransportDispatcher transportDispatcher,
         ILogger<OutboxCapture> logger)
     {
         this.store = store;
-        this.transports = transports.ToArray();
-        this.serviceProvider = serviceProvider;
-        this.conduitOptions = conduitOptions;
+        this.transportDispatcher = transportDispatcher;
         this.logger = logger;
     }
 
@@ -111,8 +104,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                         written.CausationId,
                         written.ConversationId);
 
-                    await ConduitRuntime.SendViaTransportsAsync(
-                        written.Envelope, this.conduitOptions, this.serviceProvider, this.transports, cancellationToken);
+                    await this.transportDispatcher.SendAsync(written.Envelope, cancellationToken);
 
                     await this.store.MarkSentAsync(entry.Id, cancellationToken);
                 }
