@@ -5,6 +5,7 @@ using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Data;
 using System.Data.Common;
 using System.Text.Json;
@@ -20,7 +21,8 @@ public class OutboxBehaviorShould
             store ?? new StubOutboxStore(),
             transports ?? [],
             new ServiceCollection().BuildServiceProvider(),
-            new ConduitOptions());
+            new ConduitOptions(),
+            NullLogger<OutboxCapture>.Instance);
     }
 
     [TestMethod]
@@ -93,7 +95,7 @@ public class OutboxBehaviorShould
         var transport = new SpyTransport();
         var conduitOptions = new ConduitOptions();
         var serviceProvider = new ServiceCollection().BuildServiceProvider();
-        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions);
+        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions, NullLogger<OutboxCapture>.Instance);
         var factory = new StubTransactionFactory(hasTransaction: true);
 
         var envelope = new DispatchEnvelope("Test.OrderPlaced", JsonSerializer.SerializeToElement(new { id = 1 }));
