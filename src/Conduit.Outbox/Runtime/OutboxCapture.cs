@@ -2,6 +2,7 @@ using Conduit.Configuration;
 using Conduit.Middleware;
 using Conduit.Outbox.Store;
 using Conduit.Runtime;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Outbox.Runtime;
 
@@ -12,12 +13,13 @@ namespace Conduit.Outbox.Runtime;
 /// the handler's transaction commits.
 /// Registered as scoped — one instance per dispatch scope.
 /// </summary>
-public sealed class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
+public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 {
     private readonly IOutboxStore store;
     private readonly IConduitTransport[] transports;
     private readonly IServiceProvider serviceProvider;
     private readonly ConduitOptions conduitOptions;
+    private readonly ILogger<OutboxCapture> logger;
     private readonly List<DispatchEnvelope> captured = [];
     private List<WrittenOutboxMessage> writtenMessages = [];
 
@@ -28,12 +30,14 @@ public sealed class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
         IOutboxStore store,
         IEnumerable<IConduitTransport> transports,
         IServiceProvider serviceProvider,
-        ConduitOptions conduitOptions)
+        ConduitOptions conduitOptions,
+        ILogger<OutboxCapture> logger)
     {
         this.store = store;
         this.transports = transports.ToArray();
         this.serviceProvider = serviceProvider;
         this.conduitOptions = conduitOptions;
+        this.logger = logger;
     }
 
     /// <summary>The envelopes captured during this scope.</summary>
@@ -87,47 +91,59 @@ public sealed class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
             queue.Enqueue(written);
         }
 
-        foreach (var entry in claimed)
+        var previousContext = MessageContext.Current;
+        try
         {
-            if (!envelopesByMessageId.TryGetValue(entry.MessageId, out var queue) || queue.Count == 0)
+            foreach (var entry in claimed)
             {
-                continue;
-            }
-
-            var written = queue.Dequeue();
-
-            try
-            {
-                // Restore original MessageContext for correlation
-                MessageContext.StartDispatchFromTransport(
-                    written.MessageId,
-                    written.CausationId,
-                    written.ConversationId);
-
-                // Check if this type routes to a specific endpoint
-                var endpoint = ConduitRuntime.ResolveRoute(this.conduitOptions, written.Envelope.Type);
-                if (endpoint != null)
+                if (!envelopesByMessageId.TryGetValue(entry.MessageId, out var queue) || queue.Count == 0)
                 {
-                    var transport = ConduitRuntime.ResolveTransport(this.serviceProvider, endpoint);
-                    await transport.SendRequestAsync(written.Envelope, cancellationToken);
+                    continue;
                 }
-                else
+
+                var written = queue.Dequeue();
+
+                try
                 {
-                    // Event — broadcast to all transports
-                    foreach (var transport in this.transports)
+                    // Restore original MessageContext for correlation
+                    MessageContext.StartDispatchFromTransport(
+                        written.MessageId,
+                        written.CausationId,
+                        written.ConversationId);
+
+                    // Check if this type routes to a specific endpoint
+                    var endpoint = ConduitRuntime.ResolveRoute(this.conduitOptions, written.Envelope.Type);
+                    if (endpoint != null)
                     {
-                        await transport.SendEventAsync(written.Envelope, cancellationToken);
+                        var transport = ConduitRuntime.ResolveTransport(this.serviceProvider, endpoint);
+                        await transport.SendRequestAsync(written.Envelope, cancellationToken);
                     }
-                }
+                    else
+                    {
+                        // Event — broadcast to all transports
+                        foreach (var transport in this.transports)
+                        {
+                            await transport.SendEventAsync(written.Envelope, cancellationToken);
+                        }
+                    }
 
-                await this.store.MarkSentAsync(entry.Id, cancellationToken);
-            }
+                    await this.store.MarkSentAsync(entry.Id, cancellationToken);
+                }
 #pragma warning disable CA1031
-            catch (Exception)
+                catch (Exception exception)
 #pragma warning restore CA1031
-            {
-                await this.store.IncrementRetryAsync(entry.Id, cancellationToken);
+                {
+                    LogFlushSendFailed(this.logger, entry.Id, written.Envelope.Type, exception);
+                    await this.store.IncrementRetryAsync(entry.Id, cancellationToken);
+                }
             }
         }
+        finally
+        {
+            MessageContext.RestoreContext(previousContext);
+        }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to flush outbox entry {EntryId} (type: {Type}), leaving for relay")]
+    private static partial void LogFlushSendFailed(ILogger logger, long entryId, string type, Exception exception);
 }

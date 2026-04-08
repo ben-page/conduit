@@ -5,6 +5,7 @@ using Conduit.Outbox.Store;
 using Conduit.Outbox.Tests.Support;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 
 namespace Conduit.Outbox.Tests.Unit;
@@ -18,7 +19,8 @@ public class OutboxCaptureShould
             store ?? new StubOutboxStore(),
             transports ?? [],
             new ServiceCollection().BuildServiceProvider(),
-            new ConduitOptions());
+            new ConduitOptions(),
+            NullLogger<OutboxCapture>.Instance);
     }
 
     [TestMethod]
@@ -105,7 +107,7 @@ public class OutboxCaptureShould
         var transport = new ThrowingTransport();
         var conduitOptions = new ConduitOptions();
         var serviceProvider = new ServiceCollection().BuildServiceProvider();
-        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions);
+        var capture = new OutboxCapture(store, [transport], serviceProvider, conduitOptions, NullLogger<OutboxCapture>.Instance);
 
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
 
