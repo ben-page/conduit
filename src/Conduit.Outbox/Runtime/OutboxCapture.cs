@@ -111,21 +111,8 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                         written.CausationId,
                         written.ConversationId);
 
-                    // Check if this type routes to a specific endpoint
-                    var endpoint = ConduitRuntime.ResolveRoute(this.conduitOptions, written.Envelope.Type);
-                    if (endpoint != null)
-                    {
-                        var transport = ConduitRuntime.ResolveTransport(this.serviceProvider, endpoint);
-                        await transport.SendRequestAsync(written.Envelope, cancellationToken);
-                    }
-                    else
-                    {
-                        // Event — broadcast to all transports
-                        foreach (var transport in this.transports)
-                        {
-                            await transport.SendEventAsync(written.Envelope, cancellationToken);
-                        }
-                    }
+                    await ConduitRuntime.SendViaTransportsAsync(
+                        written.Envelope, this.conduitOptions, this.serviceProvider, this.transports, cancellationToken);
 
                     await this.store.MarkSentAsync(entry.Id, cancellationToken);
                 }

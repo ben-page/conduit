@@ -80,21 +80,8 @@ public sealed partial class OutboxRelay(
                     entry.CausationId,
                     entry.ConversationId);
 
-                // Check if this type routes to a specific endpoint
-                var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, entry.Type);
-                if (endpoint != null)
-                {
-                    var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);
-                    await transport.SendRequestAsync(envelope, cancellationToken);
-                }
-                else
-                {
-                    // Event — broadcast to all transports
-                    foreach (var transport in transportArray)
-                    {
-                        await transport.SendEventAsync(envelope, cancellationToken);
-                    }
-                }
+                await ConduitRuntime.SendViaTransportsAsync(
+                    envelope, conduitOptions, serviceProvider, transportArray, cancellationToken);
 
                 await store.MarkSentAsync(entry.Id, cancellationToken);
             }
