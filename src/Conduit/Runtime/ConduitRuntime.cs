@@ -374,4 +374,37 @@ public static class ConduitRuntime
     /// <summary>Logs that an individual event listener threw an exception.</summary>
     public static void LogListenerFailure(ILogger logger, string listenerName, Exception exception)
         => LogListenerFailed(logger, listenerName, exception);
+
+    /// <summary>
+    /// Sends a dispatch envelope to transports. Routed types go to the endpoint's
+    /// keyed transport via <see cref="IConduitTransport.SendRequestAsync"/>.
+    /// Unrouted types broadcast to all transports via <see cref="IConduitTransport.SendEventAsync"/>.
+    /// Used by the outbox relay and immediate-send flusher.
+    /// </summary>
+    public static async Task SendViaTransportsAsync(
+        DispatchEnvelope envelope,
+        ConduitOptions options,
+        IServiceProvider serviceProvider,
+        IConduitTransport[] transports,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(serviceProvider);
+        ArgumentNullException.ThrowIfNull(transports);
+
+        var endpoint = ResolveRoute(options, envelope.Type);
+        if (endpoint != null)
+        {
+            var transport = ResolveTransport(serviceProvider, endpoint);
+            await transport.SendRequestAsync(envelope, cancellationToken);
+        }
+        else
+        {
+            foreach (var transport in transports)
+            {
+                await transport.SendEventAsync(envelope, cancellationToken);
+            }
+        }
+    }
 }
