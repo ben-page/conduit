@@ -29,8 +29,6 @@ public class KafkaMessageContextShould : KafkaTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act
         await mediator.ExecuteAsync(new ContextCaptureCommand("ctx-test"));
 
@@ -55,8 +53,6 @@ public class KafkaMessageContextShould : KafkaTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(3000);
 
         // Act
         await mediator.FetchAsync(new ContextCaptureQuery("ctx-test"));
@@ -83,8 +79,6 @@ public class KafkaMessageContextShould : KafkaTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act
         await mediator.PublishAsync(new ContextCaptureEvent("ctx-test"));
 
@@ -108,8 +102,6 @@ public class KafkaMessageContextShould : KafkaTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(3000);
 
         // Act — NestingCommandHandler captures outer context, then dispatches TestCommand locally
         var result = await mediator.ExecuteAsync(new NestingCommand("nested-ctx"));
