@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Twelve source projects, eleven test projects, one shared test utility, four sample apps:
+Thirteen source projects, twelve test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -19,7 +19,7 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 src/Conduit.Transport.Kafka/             Kafka transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.AmazonSqs/         Amazon SQS (+SNS) transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTransport + IHostedService) — net10.0
-src/Conduit.Outbox/                     Transactional outbox — pipeline behavior, relay, store — net10.0
+src/Conduit.Durability/                 Durable messaging — transactional outbox + inbox (idempotent dedup) — net10.0
 ```
 
 **Dependency graph:**
@@ -30,7 +30,7 @@ src/Conduit.Outbox/                     Transactional outbox — pipeline behavi
 - `Transport.Kafka` → `Conduit` (core) + Confluent.Kafka
 - `Transport.AmazonSqs` → `Conduit` (core) + AWSSDK.SimpleNotificationService + AWSSDK.SQS
 - `Transport.ActiveMQ` → `Conduit` (core) + AMQPNetLite.Core
-- `Outbox` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
+- `Durability` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
 - Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, and Options.
@@ -41,7 +41,7 @@ src/Conduit.Outbox/                     Transactional outbox — pipeline behavi
 **Namespace layout** (within `src/Conduit/`):
 - `Conduit.Configuration` — builder, options, endpoints, routes, `TopologyMode` (`src/Conduit/Configuration/`)
 - `Conduit.Runtime` — wire types + runtime: `ConduitRuntime`, `TransportDispatcher`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport`, `MessageContext`, `TopologyNaming`, `ConduitTypeRegistry` (`src/Conduit/Runtime/`)
-- `Conduit.Middleware` — pipeline + interceptor types: `IPipelineBehavior`, `IInboundInterceptor`, `IOutboundInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
+- `Conduit.Middleware` — pipeline, gate, and interceptor types: `IPipelineBehavior`, `IInboundInterceptor` (gate), `IOutboundInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — `ICommand`, `IQuery`, `IEvent`, `Unit` (`src/Conduit/Messages/`)
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
 - `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute` (`src/Conduit/Attributes/`)
@@ -56,8 +56,10 @@ src/Conduit.Outbox/                     Transactional outbox — pipeline behavi
 - **Topology modes**: `TopologyMode` enum (Production/Developer/Test) on `ConduitOptions` controls resource naming and durability. `SystemName` (default `"conduit"`) replaces per-transport topic/exchange name configuration. `TopologyNaming` static class in core generates all resource names consistently across transports, using `TopologyPrefix` which auto-resolves on first access (Developer defaults to `Environment.UserName`, Test generates a random 13-char prefix, Production resolves to null). Ephemeral resources: Developer mode = 4h auto-delete, Test mode = 5min auto-delete.
 - **TypeFilterInterceptor**: Access control interceptor in core that rejects dispatch requests for types not in the allowed set. Configured via `conduit.AddTypeFilter(filter => filter.AllowType(...))`. Transport-agnostic — works with any inbound path.
 - `IWireMediator : IMediator` — extended interface for inbound wire dispatch. Adds `HandleWireRequestAsync` and `HandleWireEventAsync`. Transport packages inject this; application code uses `IMediator`.
-- `IInboundInterceptor` interface (in `Conduit.Middleware`) wraps inbound wire dispatch calls with a middleware pipeline. Chained by `ConduitRuntime` in reverse registration order.
-- `IOutboundInterceptor` interface (in `Conduit.Middleware`) intercepts outbound sends before they reach the transport. Checked by the generated mediator before forwarding to transport.
+- **Three-layer middleware model** for inbound wire messages:
+  - `IInboundInterceptor` (gate) — pre-deserialization, receives only `string messageType`. Returns `bool` to allow/reject. Runs before payload deserialization. Used by `TypeFilterInterceptor` (access control) and `InboxInterceptor` (dedup). `MessageContext.Current` is available for accessing the transport-provided MessageId.
+  - `IPipelineBehavior<TRequest, TResult>` — post-deserialization, wraps the strongly-typed handler with `next()` chain. Used by resilience, outbox, validation.
+  - `IOutboundInterceptor` — intercepts outbound F&F sends. When present, the generated mediator calls the interceptor *instead of* sending to the transport. Used by outbox capture.
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendEventAsync` (fire-and-forget events), both envelope-based.
 - Generated `ConduitMediator` implements `IWireMediator`, checks route table for commands/queries before local dispatch. Registered as **transient** (stateless — resolves handlers from `IServiceProvider` per call). Handlers are also transient. This allows `IMediator` to be injected into singletons like `BackgroundService` without scope issues.
 - **Unified pipeline behaviors**: `IPipelineBehavior<TRequest, TResult>` wraps commands, queries, and events uniformly. Register open generics via `conduit.AddPipeline(typeof(MyPipeline<,>))`. Order is explicit (first registered = outermost). Pipeline types are stored in `ConduitOptions.PipelineTypes` and resolved via `ConduitRuntime.ResolvePipelines` — ordering is owned by Conduit, not DI.
@@ -116,9 +118,9 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 
 ### Conduit (core)
 - No ASP.NET dependency — only DI abstractions, Hosting abstractions, Logging abstractions, Options
-- `ConduitRuntime` — static class centralizing route resolution, transport resolution (keyed DI), pipeline chaining, interceptor chaining, error handling. Called primarily by source-generated mediator code.
+- `ConduitRuntime` — static class centralizing route resolution, transport resolution (keyed DI), inbound gate chain, pipeline chaining, error handling. `HandleWireRequest`/`HandleWireEvent` run `IInboundInterceptor` gates before deserialization, then dispatch. Called primarily by source-generated mediator code.
 - `TransportDispatcher` — singleton service encapsulating route resolution + transport dispatch. `SendAsync(envelope, ct)` resolves routes via `ConduitRuntime.ResolveRoute`, then sends via the endpoint's keyed transport (`SendRequestAsync`) or broadcasts to all transports (`SendEventAsync`). Registered by `AddConduitCore`. Used by `OutboxRelay` and `OutboxCapture.FlushAsync` instead of duplicating transport resolution logic.
-- `TypeFilterInterceptor` (in `Conduit.Middleware`) — access control interceptor, rejects types not in `TypeFilterOptions.AllowedTypes`
+- `TypeFilterInterceptor` (in `Conduit.Middleware`) — `IInboundInterceptor` gate that throws `UnauthorizedException` for types not in `TypeFilterOptions.AllowedTypes`. Configured via `conduit.AddTypeFilter()`.
 - `AddConduit()` is generated by source gen. All configuration goes through `ConduitBuilder`: `AddEndpoint`, `AddPipeline`, `AddTypeFilter`. Routing is configured per-endpoint via `EndpointBuilder.RouteNamespace<T>()` and `EndpointBuilder.RouteType<T>()`.
 - `TopologyMode` enum (Production/Developer/Test) and `SystemName`/`TopologyPrefix` properties on `ConduitOptions` — controls topology resource naming and durability across broker transports
 - `TopologyNaming` static class — generates shared resource names (`CreateSharedResourceName`) and app-scoped resource names (`CreateAppResourceName`) with consistent prefix/truncation/hashing across all transports
@@ -127,8 +129,14 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `ConduitBackgroundDispatcher` — `BackgroundService` with unbounded `Channel<T>` for F&F work items. Registered in DI by `AddConduitCore`. Sequential execution, linked cancellation for graceful shutdown.
 - `BrokerTransportBase<TMessage>` — abstract base class for all 5 broker transports (ASB, RMQ, Kafka, SQS, ActiveMQ). Owns `IHostedService` lifecycle, inbound dispatch orchestration (context save/restore, scope creation, request/event branching, error handling), and outbound send (serialization, reply unwrap via `ConduitRuntime.UnwrapReply`). Transports implement ~15 abstract methods for transport-specific primitives. Uses `BinaryData` for payload passing. `StartAsync` branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + `EnsureTopologyAsync` + `StartConsumersAsync`. `EnsureOutboundTopologyAsync` is an abstract method for producer-only topology (reply queue + topic/exchange only).
 
-### Conduit.Outbox
-- Transactional outbox for reliable fire-and-forget message delivery (events + `[FireAndForget]` void routed commands only — non-F&F void commands use request/response for confirmation and are not outboxed)
+### Conduit.Durability
+Durable messaging infrastructure — inbox (inbound deduplication) and outbox (outbound capture + relay). Shared database infrastructure via `IDurabilityConnectionFactory`. Renamed from `Conduit.Outbox`.
+
+**Shared infrastructure:**
+- `IDurabilityConnectionFactory` — provides `DbConnection` and optional `DbTransaction` access. Registered scoped. Shared by inbox and outbox. Implementations: `ConnectionStringFactory<TConnection>` (internal, used by both builders).
+- SQL dialect pattern — `IOutboxDialect` and `IInboxDialect` provide database-specific SQL. Four implementations each: SQLite, SQL Server, PostgreSQL, MySQL.
+
+**Outbox** (transactional outbox for reliable F&F delivery):
 - `IOutboundInterceptor` in core — generated mediator checks before transport sends for fire-and-forget paths only
 - `OutboxCapture` — scoped `IOutboundInterceptor` + `IOutboxFlusher` that buffers `DispatchEnvelope`s. `FlushAsync` sends captured messages immediately from the in-memory buffer after transaction commit, claiming entries via `IOutboxStore.ClaimByMessageIdsAsync` (same row-locking as relay) and dispatching via `TransportDispatcher`. No database read — payloads come from memory. Marks sent on success, increments retry on failure. No-op when nothing captured. Safe to not call — relay picks up entries on its normal schedule.
 - `IOutboxFlusher` — user-facing interface with `FlushAsync(CancellationToken)`. Always registered by `AddOutbox()`. Users inject this and call after transaction commit for immediate send. EF Core users can auto-wire via `SaveChangesInterceptor` (documented pattern, not built in).
@@ -136,7 +144,19 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - `OutboxRelay` — `BackgroundService` that polls for pending entries and sends via `TransportDispatcher`
 - `IOutboxStore` interface with built-in `DbConnectionOutboxStore` (raw ADO.NET). Includes `ClaimByMessageIdsAsync` for immediate-send entry claiming.
 - `IOutboxDialect` with SQL Server, PostgreSQL, SQLite, MySQL implementations. Each provides `ClaimByMessageIdsSql` with dialect-appropriate row-locking (`FOR UPDATE SKIP LOCKED`, `ROWLOCK/UPDLOCK/READPAST`, or none for SQLite).
-- `AddOutbox()` extension on `ConduitBuilder` for registration (namespace: `Conduit.Outbox`)
+- `AddOutbox()` extension on `ConduitBuilder` for registration
+
+**Inbox** (idempotent message processing):
+- Application-level message deduplication for all inbound wire messages (commands, queries, events). Prevents duplicate handler execution when brokers redeliver messages. Duplicates are silently discarded — no result caching.
+- `InboxInterceptor` — `IInboundInterceptor` gate that checks `MessageContext.Current.MessageId` against `IInboxStore`. If already recorded, returns false (discard). If new, records and returns true (proceed). No-op when no `MessageContext` (local dispatch).
+- `IInboxStore` interface with `ExistsAsync`, `RecordAsync`, `DeleteExpiredAsync`, `EnsureTableExistsAsync`. Built-in `DbConnectionInboxStore` (raw ADO.NET). Table schema: `MessageId` (PK) + `ProcessedAt`.
+- `IInboxDialect` — INSERT uses upsert/ignore semantics for concurrent safety. Four implementations: SQLite (`INSERT OR IGNORE`), SQL Server (`WHERE NOT EXISTS`), PostgreSQL (`ON CONFLICT DO NOTHING`), MySQL (`INSERT IGNORE`).
+- `InboxCleanup` — `BackgroundService` that periodically removes expired entries.
+- `InboxOptions` — `RetentionPeriod` (default 30min), `CleanupInterval` (default 5min).
+- `InboxBuilder` — fluent API: `UseSqlite(cs)`, `UseSqlServer<T>(cs)`, `UsePostgres<T>(cs)`, `UseMySql<T>(cs)`, `WithRetentionPeriod(ts)`, `WithCleanupInterval(ts)`. Uses `TryAddScoped` for `IDurabilityConnectionFactory` so outbox registration is not overwritten.
+- `AddInbox()` extension on `ConduitBuilder` for registration
+- **Edge case: record-then-crash** — if process crashes after `RecordAsync` but before handler completes, the message is recorded as processed but was never handled. At-most-once semantics. Standard trade-off (MassTransit/Wolverine same behavior). Users needing at-least-once should use broker-native retry without the inbox.
+- **Broker-native dedup** — ASB `RequiresDuplicateDetection`, SQS FIFO `MessageDeduplicationId` are viable alternatives. Not abstracted by Conduit — configure via passthrough broker options.
 
 ### Conduit.Analysis (netstandard2.0)
 - Target netstandard2.0 for Roslyn analyzer compatibility
