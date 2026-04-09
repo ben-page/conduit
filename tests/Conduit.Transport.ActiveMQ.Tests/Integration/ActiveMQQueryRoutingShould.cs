@@ -41,8 +41,6 @@ public class ActiveMQQueryRoutingShould : ActiveMQTestBase
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(1000);
-
         // Act
         var result = await mediator.FetchAsync(new TestQuery("hello"));
 
@@ -51,7 +49,7 @@ public class ActiveMQQueryRoutingShould : ActiveMQTestBase
         await handlerSpy.WaitForCountAsync(1);
 
         // Allow brief settling time to catch any delayed spurious deliveries
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         handlerSpy.Invocations.OfType<TestQuery>().Should().HaveCount(1);
         bystanderSpy.Invocations.OfType<TestQuery>().Should().HaveCount(0);
@@ -69,8 +67,6 @@ public class ActiveMQQueryRoutingShould : ActiveMQTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act
         var result = await mediator.FetchAsync(new TestQuery("round-trip"));
@@ -91,8 +87,6 @@ public class ActiveMQQueryRoutingShould : ActiveMQTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act
         var action = () => mediator.FetchAsync(new ThrowingQuery("missing"));
@@ -115,8 +109,6 @@ public class ActiveMQQueryRoutingShould : ActiveMQTestBase
             opts => opts.ResponseTimeout = TimeSpan.FromSeconds(5));
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act
         var action = () => mediator.FetchAsync(new TestQuery("nobody-home"));
