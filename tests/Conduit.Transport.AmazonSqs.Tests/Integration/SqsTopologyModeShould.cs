@@ -86,8 +86,6 @@ public class SqsTopologyModeShould : SqsTestBase
         var spy2 = host2.GetRequiredService<SpyLog>();
         var mediator1 = host1.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act -- publish event on host1
         await mediator1.PublishAsync(new TestEvent("isolated"));
 

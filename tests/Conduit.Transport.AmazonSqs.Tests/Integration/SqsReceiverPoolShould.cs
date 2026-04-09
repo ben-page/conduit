@@ -74,8 +74,6 @@ public class SqsReceiverPoolShould : SqsTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act -- SlowCommand is assigned to the "slow" pool
         var result = await mediator.ExecuteAsync(new SlowCommand("pooled", 100));
 
@@ -99,8 +97,6 @@ public class SqsReceiverPoolShould : SqsTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(3000);
 
         // Act -- TestCommand is NOT in any pool, goes to default queue
         var result = await mediator.ExecuteAsync(new TestCommand("default"));
@@ -127,8 +123,6 @@ public class SqsReceiverPoolShould : SqsTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(3000);
 
         // Act -- send a slow command (pool queue, maxConcurrency=1) and a fast command concurrently
         var slowTask = mediator.ExecuteAsync(new SlowCommand("slow", 2000));
