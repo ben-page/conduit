@@ -45,8 +45,6 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
         var spyB = hostB.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act
         await mediator.PublishAsync(new TestEvent("broadcast"));
 
@@ -80,8 +78,6 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
         var publisherSpy = publisherHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act — publish a [LocalOnly] event from the publisher
         await mediator.PublishAsync(new LocalOnlyTestEvent("local-only"));
 
@@ -109,8 +105,6 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
 
         var spy = host.GetRequiredService<SpyLog>();
         var mediator = host.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act — ThrowingEventListener records then throws
         await mediator.PublishAsync(new ThrowingTestEvent("boom"));
@@ -142,8 +136,6 @@ public class RabbitMqEventRoutingShould : RabbitMqTestBase
 
         var listenerSpy = listenerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act
         await mediator.PublishAsync(new FireAndForgetEvent("f&f-event"));

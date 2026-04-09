@@ -38,8 +38,6 @@ public class RabbitMqCompetingInstanceShould : RabbitMqTestBase
         var spy3 = handler3.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act
         for (var i = 0; i < messageCount; i++)
         {
@@ -47,7 +45,7 @@ public class RabbitMqCompetingInstanceShould : RabbitMqTestBase
         }
 
         // Assert — total across all instances equals exactly messageCount (each handled once)
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         var totalSpy = spy1.Count + spy2.Count + spy3.Count;
         totalSpy.Should().Be(messageCount,
@@ -76,8 +74,6 @@ public class RabbitMqCompetingInstanceShould : RabbitMqTestBase
         var spy3 = handler3.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act
         for (var i = 0; i < messageCount; i++)
         {
@@ -86,7 +82,7 @@ public class RabbitMqCompetingInstanceShould : RabbitMqTestBase
         }
 
         // Assert — total across all instances equals exactly messageCount
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         var totalSpy = spy1.Count + spy2.Count + spy3.Count;
         totalSpy.Should().Be(messageCount,
@@ -137,8 +133,6 @@ public class RabbitMqCompetingInstanceShould : RabbitMqTestBase
         var spyC1 = hostC1.GetRequiredService<SpyLog>();
         var spyC2 = hostC2.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act
         for (var i = 0; i < messageCount; i++)

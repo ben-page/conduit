@@ -43,8 +43,6 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(1000);
-
         // Act
         var result = await mediator.ExecuteAsync(new TestCommand("hello"));
 
@@ -53,7 +51,7 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         await handlerSpy.WaitForCountAsync(1);
 
         // Allow brief settling time to catch any delayed spurious deliveries
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         handlerSpy.Invocations.OfType<TestCommand>().Should().HaveCount(1);
         bystanderSpy.Invocations.OfType<TestCommand>().Should().HaveCount(0);
@@ -71,8 +69,6 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act
         var result = await mediator.ExecuteAsync(new TestCommand("round-trip"));
@@ -102,14 +98,12 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(1000);
-
         // Act
         await mediator.ExecuteAsync(new TestVoidCommand("fire"));
 
         // Assert — handler received exactly one invocation, bystander gets nothing
         await handlerSpy.WaitForCountAsync(1);
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         handlerSpy.Invocations.OfType<TestVoidCommand>().Should().HaveCount(1);
         bystanderSpy.Invocations.OfType<TestVoidCommand>().Should().HaveCount(0);
@@ -127,8 +121,6 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act
         var action = () => mediator.ExecuteAsync(new ThrowingCommand("missing"));
@@ -151,8 +143,6 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(1000);
-
         // Act
         var action = () => mediator.ExecuteAsync(new UnexpectedThrowCommand("boom"));
 
@@ -174,8 +164,6 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(1000);
-
         // Act
         var action = () => mediator.ExecuteAsync(new TestCommand("nobody-home"));
 
@@ -196,8 +184,6 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act — F&F command returns immediately, no reply expected
         await mediator.ExecuteAsync(new FireAndForgetCommand("fire-and-forget"));
