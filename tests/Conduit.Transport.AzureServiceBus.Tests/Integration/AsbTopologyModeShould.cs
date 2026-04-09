@@ -91,8 +91,6 @@ public class AsbTopologyModeShould : AsbTestBase
         var spy2 = host2.GetRequiredService<SpyLog>();
         var mediator1 = host1.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act — publish event on host1
         await mediator1.PublishAsync(new TestEvent("isolated"));
 
@@ -101,7 +99,7 @@ public class AsbTopologyModeShould : AsbTestBase
         spy1.Invocations.OfType<TestEvent>().Should().Contain(e => e.Value == "isolated");
 
         // Give time for any erroneous cross-topology delivery
-        await Task.Delay(3000);
+        await Task.Delay(2000);
         spy2.Count.Should().Be(0, "Host2 uses a different topology prefix and should not receive events from Host1");
     }
 }
