@@ -1,5 +1,4 @@
 using Conduit.Configuration;
-using Conduit.Runtime;
 using Conduit.Exceptions;
 using Microsoft.Extensions.Options;
 
@@ -8,36 +7,22 @@ namespace Conduit.Middleware;
 /// <summary>
 /// Rejects dispatch requests for message types not in the configured allowed set.
 /// This prevents browser clients from dispatching internal-only commands.
+/// Throws <see cref="UnauthorizedException"/> for rejected types rather than
+/// returning false — unauthorized access is an error, not a silent discard.
 /// </summary>
 public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IInboundInterceptor
 {
     /// <inheritdoc />
-    public Task<object?> InterceptRequestAsync(
-        DispatchEnvelope envelope,
-        Func<Task<object?>> next,
-        CancellationToken cancellationToken)
+    public Task<bool> ShouldProcessAsync(string messageType, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(envelope);
-        ArgumentNullException.ThrowIfNull(next);
+        ArgumentNullException.ThrowIfNull(messageType);
 
-        if (!options.Value.AllowedTypes.Contains(envelope.Type))
+        if (!options.Value.AllowedTypes.Contains(messageType))
         {
             throw new UnauthorizedException(
-                $"Type '{envelope.Type}' is not allowed by the type filter.");
+                $"Type '{messageType}' is not allowed by the type filter.");
         }
 
-        return next();
-    }
-
-    /// <inheritdoc />
-    public Task InterceptEventAsync(
-        DispatchEnvelope envelope,
-        Func<Task> next,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(envelope);
-        ArgumentNullException.ThrowIfNull(next);
-        // Events flow both directions but are not filtered — type filter applies to commands/queries only
-        return next();
+        return Task.FromResult(true);
     }
 }

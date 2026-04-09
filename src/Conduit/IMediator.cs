@@ -54,9 +54,9 @@ public interface IMediator
 public interface IWireMediator : IMediator
 {
     /// <summary>
-    /// Handles an inbound wire request. Chains registered
-    /// <see cref="IInboundInterceptor"/> instances, deserializes the payload,
-    /// dispatches to the handler, and wraps the result in <see cref="DispatchResult{T}"/>.
+    /// Handles an inbound wire request. Runs registered <see cref="IInboundInterceptor"/>
+    /// gates before deserialization, then dispatches to the handler and wraps the result
+    /// in <see cref="DispatchResult{T}"/>.
     /// </summary>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -66,9 +66,9 @@ public interface IWireMediator : IMediator
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Handles an inbound wire event. Chains registered
-    /// <see cref="IInboundInterceptor"/> instances, deserializes the payload,
-    /// and publishes to local listeners. Swallows exceptions (fire-and-forget).
+    /// Handles an inbound wire event. Runs registered <see cref="IInboundInterceptor"/>
+    /// gates before deserialization, then publishes to local listeners.
+    /// Swallows exceptions (fire-and-forget).
     /// </summary>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

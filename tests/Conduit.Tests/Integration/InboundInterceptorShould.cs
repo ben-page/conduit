@@ -25,58 +25,75 @@ public class InboundInterceptorShould
     }
 
     [TestMethod]
-    public async Task InvokeInterceptorOnWireRequest()
+    public async Task RejectMessageWhenGateReturnsFalse()
     {
         // Arrange
-        var interceptor = new StubInterceptor();
+        var interceptor = new RejectAllInterceptor();
         await using var host = CreateTestHost(services =>
             services.AddSingleton<IInboundInterceptor>(interceptor));
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var envelope = new DispatchEnvelope(
             "Conduit.Tests.Support.CreateItemCommand",
-            JsonSerializer.SerializeToElement(new { Name = "Wire Test" }));
+            JsonSerializer.SerializeToElement(new { Name = "Should Be Rejected" }));
+
+        // Act
+        var result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
+
+        // Assert — gate rejected, so dispatch did not happen
+        result.Data.Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task AllowMessageWhenGateReturnsTrue()
+    {
+        // Arrange
+        var interceptor = new AllowAllInterceptor();
+        await using var host = CreateTestHost(services =>
+            services.AddSingleton<IInboundInterceptor>(interceptor));
+        var wireMediator = host.GetRequiredService<IWireMediator>();
+        var envelope = new DispatchEnvelope(
+            "Conduit.Tests.Support.CreateItemCommand",
+            JsonSerializer.SerializeToElement(new { Name = "Allowed" }));
 
         // Act
         var result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
 
         // Assert
-        interceptor.RequestLog.Should().Contain("Conduit.Tests.Support.CreateItemCommand");
         result.Error.Should().BeNull();
         result.Data.Should().NotBeNull();
     }
 
     [TestMethod]
-    public async Task InvokeInterceptorOnWireEvent()
+    public async Task RejectEventWhenGateReturnsFalse()
     {
         // Arrange
-        var interceptor = new StubInterceptor();
+        var interceptor = new RejectAllInterceptor();
         await using var host = CreateTestHost(services =>
             services.AddSingleton<IInboundInterceptor>(interceptor));
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
         var envelope = new DispatchEnvelope(
             "Conduit.Tests.Support.ItemCreatedEvent",
-            JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid(), Name = "Wire Event" }));
+            JsonSerializer.SerializeToElement(new { Id = Guid.NewGuid(), Name = "Rejected Event" }));
 
         // Act
         await wireMediator.HandleWireEventAsync(envelope, CancellationToken.None);
 
-        // Assert
-        interceptor.EventLog.Should().Contain("Conduit.Tests.Support.ItemCreatedEvent");
-        await spy.WaitForCountAsync(1);
+        // Assert — event should NOT reach the listener
+        await Task.Delay(100);
+        spy.Events.Should().BeEmpty();
     }
 
     [TestMethod]
-    public async Task ChainMultipleInterceptorsInRegistrationOrder()
+    public async Task ChainMultipleGatesFirstRejectionWins()
     {
         // Arrange
-        var callOrder = new List<string>();
-        var first = new OrderTrackingInterceptor("first", callOrder);
-        var second = new OrderTrackingInterceptor("second", callOrder);
+        var allow = new AllowAllInterceptor();
+        var reject = new RejectAllInterceptor();
         await using var host = CreateTestHost(services =>
         {
-            services.AddSingleton<IInboundInterceptor>(first);
-            services.AddSingleton<IInboundInterceptor>(second);
+            services.AddSingleton<IInboundInterceptor>(allow);
+            services.AddSingleton<IInboundInterceptor>(reject);
         });
         var wireMediator = host.GetRequiredService<IWireMediator>();
         var envelope = new DispatchEnvelope(
@@ -84,12 +101,10 @@ public class InboundInterceptorShould
             JsonSerializer.SerializeToElement(new { Name = "Chain Test" }));
 
         // Act
-        await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
+        var result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
 
-        // Assert — first registered interceptor is outermost (runs first)
-        callOrder.Should().HaveCount(2);
-        callOrder[0].Should().Be("first");
-        callOrder[1].Should().Be("second");
+        // Assert — second gate rejects
+        result.Data.Should().BeNull();
     }
 
     [TestMethod]
@@ -113,9 +128,9 @@ public class InboundInterceptorShould
         // Act
         var result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
 
-        // Assert — type filter rejects the unauthorized type
+        // Assert
         result.Error.Should().NotBeNull();
-        result.Error.Code.Should().Be("Unauthorized");
+        result.Error!.Code.Should().Be("Unauthorized");
     }
 
     [TestMethod]
@@ -145,47 +160,18 @@ public class InboundInterceptorShould
     }
 }
 
-file class StubInterceptor : IInboundInterceptor
+file class RejectAllInterceptor : IInboundInterceptor
 {
-    public List<string> RequestLog { get; } = [];
-    public List<string> EventLog { get; } = [];
-
-    public async Task<object?> InterceptRequestAsync(
-        DispatchEnvelope envelope,
-        Func<Task<object?>> next,
-        CancellationToken cancellationToken)
+    public Task<bool> ShouldProcessAsync(string messageType, CancellationToken cancellationToken)
     {
-        this.RequestLog.Add(envelope.Type);
-        return await next();
-    }
-
-    public async Task InterceptEventAsync(
-        DispatchEnvelope envelope,
-        Func<Task> next,
-        CancellationToken cancellationToken)
-    {
-        this.EventLog.Add(envelope.Type);
-        await next();
+        return Task.FromResult(false);
     }
 }
 
-file class OrderTrackingInterceptor(string name, List<string> callOrder) : IInboundInterceptor
+file class AllowAllInterceptor : IInboundInterceptor
 {
-    public async Task<object?> InterceptRequestAsync(
-        DispatchEnvelope envelope,
-        Func<Task<object?>> next,
-        CancellationToken cancellationToken)
+    public Task<bool> ShouldProcessAsync(string messageType, CancellationToken cancellationToken)
     {
-        callOrder.Add(name);
-        return await next();
-    }
-
-    public async Task InterceptEventAsync(
-        DispatchEnvelope envelope,
-        Func<Task> next,
-        CancellationToken cancellationToken)
-    {
-        callOrder.Add(name);
-        await next();
+        return Task.FromResult(true);
     }
 }
