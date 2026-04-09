@@ -29,8 +29,6 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(1000);
-
         // Act
         await mediator.ExecuteAsync(new ContextCaptureCommand("ctx-test"));
 
@@ -55,8 +53,6 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act
         await mediator.FetchAsync(new ContextCaptureQuery("ctx-test"));
@@ -91,8 +87,6 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act
         await mediator.PublishAsync(new ContextCaptureEvent("ctx-test"));
 
@@ -116,8 +110,6 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
 
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(1000);
 
         // Act — NestingCommandHandler captures outer context, then dispatches TestCommand locally
         var result = await mediator.ExecuteAsync(new NestingCommand("nested-ctx"));
