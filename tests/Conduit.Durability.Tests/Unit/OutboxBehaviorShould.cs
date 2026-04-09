@@ -1,7 +1,8 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Configuration;
-using Conduit.Durability.Runtime;
-using Conduit.Durability.Store;
+using Conduit.Durability.Persistence;
+using Conduit.Durability.Persistence.Outbox;
+using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;

@@ -1,5 +1,6 @@
-using AwesomeAssertions;
-using Conduit.Durability.Inbox;
+﻿using AwesomeAssertions;
+using Conduit.Durability.Persistence.Inbox;
+using Conduit.Durability.Runtime.Inbox;
 using Conduit.Runtime;
 
 namespace Conduit.Durability.Tests.Unit;

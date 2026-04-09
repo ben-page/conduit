@@ -1,6 +1,6 @@
-using AwesomeAssertions;
-using Conduit.Durability.Inbox;
-using Conduit.Durability.Inbox.Dialects;
+﻿using AwesomeAssertions;
+using Conduit.Durability.Persistence.Dialects;
+using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Tests.Support;
 
 namespace Conduit.Durability.Tests.Unit;
@@ -15,7 +15,7 @@ public sealed class DbConnectionInboxStoreShould : IAsyncDisposable
     public async Task Setup()
     {
         this.factory = new StubConnectionFactory();
-        this.store = new DbConnectionInboxStore(this.factory, new SqliteInboxDialect());
+        this.store = new DbConnectionInboxStore(this.factory, new SqliteDialect());
         await this.store.EnsureTableExistsAsync(CancellationToken.None);
     }
 

@@ -7,28 +7,34 @@
     <Project Path="samples/rest-api/Conduit.Sample.Todos/Conduit.Sample.Todos.csproj" />
   </Folder>
   <Folder Name="/samples/service-to-service/">
-    <Project Path="samples/service-to-service/Conduit.Sample.Orders/Conduit.Sample.Orders.csproj" />
-    <Project Path="samples/service-to-service/Conduit.Sample.Inventory/Conduit.Sample.Inventory.csproj" />
     <Project Path="samples/service-to-service/Conduit.Sample.Inventory.Contracts/Conduit.Sample.Inventory.Contracts.csproj" />
+    <Project Path="samples/service-to-service/Conduit.Sample.Inventory/Conduit.Sample.Inventory.csproj" />
+    <Project Path="samples/service-to-service/Conduit.Sample.Orders/Conduit.Sample.Orders.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <File Path="src/Directory.Build.props" />
+    <File Path="src/Directory.Packages.props" />
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
-    <Project Path="src/Conduit.Transport.Http/Conduit.Transport.Http.csproj" />
+    <Project Path="src/Conduit.Durability/Conduit.Durability.csproj" />
+    <Project Path="src/Conduit.Resilience/Conduit.Resilience.csproj" />
+    <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
+    <Project Path="src/Conduit.Transport.ActiveMQ/Conduit.Transport.ActiveMQ.csproj" />
     <Project Path="src/Conduit.Transport.AmazonSqs/Conduit.Transport.AmazonSqs.csproj" />
     <Project Path="src/Conduit.Transport.AzureServiceBus/Conduit.Transport.AzureServiceBus.csproj" />
-    <Project Path="src/Conduit.Transport.ActiveMQ/Conduit.Transport.ActiveMQ.csproj" />
+    <Project Path="src/Conduit.Transport.Http/Conduit.Transport.Http.csproj" />
     <Project Path="src/Conduit.Transport.Kafka/Conduit.Transport.Kafka.csproj" />
     <Project Path="src/Conduit.Transport.RabbitMQ/Conduit.Transport.RabbitMQ.csproj" />
     <Project Path="src/Conduit.Transport.SignalR/Conduit.Transport.SignalR.csproj" />
-    <Project Path="src/Conduit.Durability/Conduit.Durability.csproj" />
-    <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
     <Project Path="src/Conduit.TypeGen/Conduit.TypeGen.csproj" />
     <Project Path="src/Conduit/Conduit.csproj" />
-    <Project Path="src/Conduit.Resilience/Conduit.Resilience.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <File Path="tests/.editorconfig" />
+    <File Path="tests/Directory.Build.props" />
+    <File Path="tests/Directory.Packages.props" />
     <Project Path="tests/Conduit.Durability.Tests/Conduit.Durability.Tests.csproj" />
-<Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
+    <Project Path="tests/Conduit.Resilience.Tests/Conduit.Resilience.Tests.csproj" />
+    <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
     <Project Path="tests/Conduit.TestUtils/Conduit.TestUtils.csproj" />
     <Project Path="tests/Conduit.Transport.ActiveMQ.Tests/Conduit.Transport.ActiveMQ.Tests.csproj" />
@@ -39,6 +45,5 @@
     <Project Path="tests/Conduit.Transport.RabbitMQ.Tests/Conduit.Transport.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.SignalR.Tests/Conduit.Transport.SignalR.Tests.csproj" />
     <Project Path="tests/Conduit.TypeGen.Tests/Conduit.TypeGen.Tests.csproj" />
-    <Project Path="tests/Conduit.Resilience.Tests/Conduit.Resilience.Tests.csproj" />
   </Folder>
 </Solution>
