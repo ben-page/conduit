@@ -356,19 +356,22 @@ internal sealed class ActiveMQTopologyManager
         await sender.SendAsync(request);
 
         var reply = await receiver.ReceiveAsync(TimeSpan.FromSeconds(10));
-        if (reply is not null)
+        if (reply is null)
         {
-            receiver.Accept(reply);
+            throw new TimeoutException(
+                $"ActiveMQ management request timed out after 10 seconds. Operation: {request.ApplicationProperties?["_AMQ_OperationType"]}");
+        }
 
-            if (reply.ApplicationProperties is not null &&
-                reply.ApplicationProperties.Map.ContainsKey("_AMQ_OperationSucceeded"))
+        receiver.Accept(reply);
+
+        if (reply.ApplicationProperties is not null &&
+            reply.ApplicationProperties.Map.ContainsKey("_AMQ_OperationSucceeded"))
+        {
+            var succeeded = reply.ApplicationProperties["_AMQ_OperationSucceeded"];
+            if (succeeded is bool success && !success)
             {
-                var succeeded = reply.ApplicationProperties["_AMQ_OperationSucceeded"];
-                if (succeeded is bool success && !success)
-                {
-                    var errorBody = reply.Body?.ToString() ?? "Unknown management error";
-                    throw new InvalidOperationException(errorBody);
-                }
+                var errorBody = reply.Body?.ToString() ?? "Unknown management error";
+                throw new InvalidOperationException(errorBody);
             }
         }
     }
