@@ -1,7 +1,5 @@
-using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Configuration;
-using Conduit.Runtime;
 using Conduit.Middleware;
 using Microsoft.Extensions.Options;
 
@@ -24,54 +22,27 @@ public class TypeFilterInterceptorShould
     [TestMethod]
     public async Task AllowPermittedType()
     {
+        // Arrange
         var interceptor = CreateInterceptor("CreateOrder");
-        var envelope = new DispatchEnvelope("CreateOrder", JsonSerializer.SerializeToElement(new { }));
-        var nextCalled = false;
 
-        var result = await interceptor.InterceptRequestAsync(
-            envelope,
-            () =>
-            {
-                nextCalled = true;
-                return Task.FromResult<object?>("ok");
-            },
-            CancellationToken.None);
+        // Act
+        var result = await interceptor.ShouldProcessAsync("CreateOrder", CancellationToken.None);
 
-        nextCalled.Should().BeTrue();
-        result.Should().Be("ok");
+        // Assert
+        result.Should().BeTrue();
     }
 
     [TestMethod]
     public async Task RejectForbiddenType()
     {
+        // Arrange
         var interceptor = CreateInterceptor("CreateOrder");
-        var envelope = new DispatchEnvelope("DeleteDatabase", JsonSerializer.SerializeToElement(new { }));
 
-        var action = () => interceptor.InterceptRequestAsync(
-            envelope,
-            () => Task.FromResult<object?>("ok"),
-            CancellationToken.None);
+        // Act
+        var action = () => interceptor.ShouldProcessAsync("DeleteDatabase", CancellationToken.None);
 
-        await action.Should().ThrowExactlyAsync<Exceptions.UnauthorizedException>()
+        // Assert
+        await action.Should().ThrowAsync<Conduit.Exceptions.UnauthorizedException>()
             .WithMessage("*DeleteDatabase*");
-    }
-
-    [TestMethod]
-    public async Task AlwaysPassEvents()
-    {
-        var interceptor = CreateInterceptor(); // no types allowed
-        var envelope = new DispatchEnvelope("SomeEvent", JsonSerializer.SerializeToElement(new { }));
-        var nextCalled = false;
-
-        await interceptor.InterceptEventAsync(
-            envelope,
-            () =>
-            {
-                nextCalled = true;
-                return Task.CompletedTask;
-            },
-            CancellationToken.None);
-
-        nextCalled.Should().BeTrue();
     }
 }

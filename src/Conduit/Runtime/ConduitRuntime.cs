@@ -185,37 +185,41 @@ public static class ConduitRuntime
     }
 
     /// <summary>
-    /// Chains interceptors and executes a wire request dispatch.
+    /// Runs inbound interceptor gates, then deserializes and dispatches a wire request.
     /// Returns DispatchResult with Ok/Fail wrapping.
     /// </summary>
     public static async Task<DispatchResult<object>> HandleWireRequest(
-        DispatchEnvelope envelope,
+        string messageType,
         IEnumerable<IInboundInterceptor> interceptors,
+        Func<DispatchEnvelope> createEnvelope,
         Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(messageType);
+        ArgumentNullException.ThrowIfNull(interceptors);
+        ArgumentNullException.ThrowIfNull(createEnvelope);
         ArgumentNullException.ThrowIfNull(dispatch);
-        LogWireRequestReceived(logger, envelope.Type, null);
+        LogWireRequestReceived(logger, messageType, null);
 
-        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), envelope.Type, "command", nameof(HandleWireRequest));
+        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "command", nameof(HandleWireRequest));
 
         var previousContext = MessageContext.Current;
         MessageContext.StartDispatch();
 
-        Func<Task<object?>> chain = () =>
-            dispatch(envelope.Type, envelope.Payload, cancellationToken);
-
-        foreach (var interceptor in interceptors.Reverse())
-        {
-            var next = chain;
-            chain = () => interceptor.InterceptRequestAsync(envelope, next, cancellationToken);
-        }
-
         try
         {
-            var result = await chain();
+            foreach (var interceptor in interceptors)
+            {
+                if (!await interceptor.ShouldProcessAsync(messageType, cancellationToken))
+                {
+                    activity?.SetStatus(ActivityStatusCode.Ok);
+                    return DispatchResult<object>.Ok(null);
+                }
+            }
+
+            var envelope = createEnvelope();
+            var result = await dispatch(envelope.Type, envelope.Payload, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return DispatchResult<object>.Ok(result);
         }
@@ -229,7 +233,7 @@ public static class ConduitRuntime
 #pragma warning restore CA1031
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            LogDispatchError(logger, envelope.Type, ex);
+            LogDispatchError(logger, messageType, ex);
             return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
         }
         finally
@@ -239,38 +243,42 @@ public static class ConduitRuntime
     }
 
     /// <summary>
-    /// Chains interceptors and executes a wire event dispatch.
+    /// Runs inbound interceptor gates, then deserializes and dispatches a wire event.
     /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter.
     /// Swallows all other exceptions.
     /// </summary>
     public static async Task HandleWireEvent(
-        DispatchEnvelope envelope,
+        string messageType,
         IEnumerable<IInboundInterceptor> interceptors,
+        Func<DispatchEnvelope> createEnvelope,
         Func<string, JsonElement, CancellationToken, Task> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(messageType);
+        ArgumentNullException.ThrowIfNull(interceptors);
+        ArgumentNullException.ThrowIfNull(createEnvelope);
         ArgumentNullException.ThrowIfNull(dispatch);
-        LogWireEventReceived(logger, envelope.Type, null);
+        LogWireEventReceived(logger, messageType, null);
 
-        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), envelope.Type, "event", nameof(HandleWireEvent));
+        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "event", nameof(HandleWireEvent));
 
         var previousContext = MessageContext.Current;
         MessageContext.StartDispatch();
 
-        Func<Task> chain = () =>
-            dispatch(envelope.Type, envelope.Payload, cancellationToken);
-
-        foreach (var interceptor in interceptors.Reverse())
-        {
-            var next = chain;
-            chain = () => interceptor.InterceptEventAsync(envelope, next, cancellationToken);
-        }
-
         try
         {
-            await chain();
+            foreach (var interceptor in interceptors)
+            {
+                if (!await interceptor.ShouldProcessAsync(messageType, cancellationToken))
+                {
+                    activity?.SetStatus(ActivityStatusCode.Ok);
+                    return;
+                }
+            }
+
+            var envelope = createEnvelope();
+            await dispatch(envelope.Type, envelope.Payload, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
         catch (EventListenerException ex)
@@ -283,7 +291,7 @@ public static class ConduitRuntime
 #pragma warning restore CA1031
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            LogPublishError(logger, envelope.Type, ex);
+            LogPublishError(logger, messageType, ex);
         }
         finally
         {
