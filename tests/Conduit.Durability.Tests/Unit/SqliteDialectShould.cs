@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using Conduit.Durability.Dialects;
+using Conduit.Durability.Persistence.Dialects;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -8,17 +8,19 @@ public class SqliteDialectShould
 {
     private readonly SqliteDialect dialect = new();
 
+    // Outbox
+
     [TestMethod]
-    public void CreateTableSqlContainsCreateTableIfNotExists()
+    public void OutboxCreateTableSqlContainsCreateTableIfNotExists()
     {
-        this.dialect.CreateTableSql.Should().Contain("CREATE TABLE IF NOT EXISTS");
+        this.dialect.OutboxCreateTableSql.Should().Contain("CREATE TABLE IF NOT EXISTS");
     }
 
     [TestMethod]
-    public void CreateTableSqlContainsRequiredColumns()
+    public void OutboxCreateTableSqlContainsRequiredColumns()
     {
         // Arrange / Act
-        var sql = this.dialect.CreateTableSql;
+        var sql = this.dialect.OutboxCreateTableSql;
 
         // Assert
         sql.Should().Contain("Id");
@@ -34,10 +36,10 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void InsertEntrySqlContainsInsertAndRequiredParameters()
+    public void OutboxInsertEntrySqlContainsInsertAndRequiredParameters()
     {
         // Arrange / Act
-        var sql = this.dialect.InsertEntrySql;
+        var sql = this.dialect.OutboxInsertEntrySql;
 
         // Assert
         sql.Should().Contain("INSERT INTO");
@@ -50,10 +52,10 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void ClaimPendingEntriesSqlContainsSelectAndRequiredParameters()
+    public void OutboxClaimPendingEntriesSqlContainsSelectAndRequiredParameters()
     {
         // Arrange / Act
-        var sql = this.dialect.ClaimPendingEntriesSql;
+        var sql = this.dialect.OutboxClaimPendingEntriesSql;
 
         // Assert
         sql.Should().Contain("SELECT");
@@ -65,10 +67,10 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void MarkSentSqlContainsUpdateAndRequiredParameters()
+    public void OutboxMarkSentSqlContainsUpdateAndRequiredParameters()
     {
         // Arrange / Act
-        var sql = this.dialect.MarkSentSql;
+        var sql = this.dialect.OutboxMarkSentSql;
 
         // Assert
         sql.Should().Contain("UPDATE");
@@ -77,10 +79,10 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void IncrementRetrySqlContainsUpdateAndIdParameter()
+    public void OutboxIncrementRetrySqlContainsUpdateAndIdParameter()
     {
         // Arrange / Act
-        var sql = this.dialect.IncrementRetrySql;
+        var sql = this.dialect.OutboxIncrementRetrySql;
 
         // Assert
         sql.Should().Contain("UPDATE");
@@ -88,10 +90,10 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void MarkFailedSqlContainsUpdateAndIdParameter()
+    public void OutboxMarkFailedSqlContainsUpdateAndIdParameter()
     {
         // Arrange / Act
-        var sql = this.dialect.MarkFailedSql;
+        var sql = this.dialect.OutboxMarkFailedSql;
 
         // Assert
         sql.Should().Contain("UPDATE");
@@ -99,10 +101,10 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void DeleteCompletedSqlContainsDeleteAndRetentionCutoffParameter()
+    public void OutboxDeleteCompletedSqlContainsDeleteAndRetentionCutoffParameter()
     {
         // Arrange / Act
-        var sql = this.dialect.DeleteCompletedSql;
+        var sql = this.dialect.OutboxDeleteCompletedSql;
 
         // Assert
         sql.Should().Contain("DELETE");
@@ -110,18 +112,68 @@ public class SqliteDialectShould
     }
 
     [TestMethod]
-    public void ClaimByMessageIdsSqlContainsSelectAndMessageIdFilter()
+    public void OutboxClaimByMessageIdsSqlContainsSelectAndMessageIdFilter()
     {
-        // Arrange
-        var dialect = new SqliteDialect();
-
-        // Act
-        var sql = dialect.ClaimByMessageIdsSql;
+        // Arrange / Act
+        var sql = this.dialect.OutboxClaimByMessageIdsSql;
 
         // Assert
         sql.Should().Contain("SELECT");
         sql.Should().Contain("Id");
         sql.Should().Contain("MessageId");
         sql.Should().Contain("Status = 0");
+    }
+
+    // Inbox
+
+    [TestMethod]
+    public void InboxCreateTableSqlContainsCreateTableIfNotExists()
+    {
+        this.dialect.InboxCreateTableSql.Should().Contain("CREATE TABLE IF NOT EXISTS");
+    }
+
+    [TestMethod]
+    public void InboxCreateTableSqlContainsRequiredColumns()
+    {
+        // Arrange / Act
+        var sql = this.dialect.InboxCreateTableSql;
+
+        // Assert
+        sql.Should().Contain("MessageId");
+        sql.Should().Contain("ProcessedAt");
+    }
+
+    [TestMethod]
+    public void InboxInsertSqlUsesInsertOrIgnore()
+    {
+        // Arrange / Act
+        var sql = this.dialect.InboxInsertSql;
+
+        // Assert
+        sql.Should().Contain("INSERT OR IGNORE");
+        sql.Should().Contain("@MessageId");
+        sql.Should().Contain("@ProcessedAt");
+    }
+
+    [TestMethod]
+    public void InboxExistsSqlSelectsByMessageId()
+    {
+        // Arrange / Act
+        var sql = this.dialect.InboxExistsSql;
+
+        // Assert
+        sql.Should().Contain("SELECT");
+        sql.Should().Contain("@MessageId");
+    }
+
+    [TestMethod]
+    public void InboxDeleteExpiredSqlDeletesByCutoff()
+    {
+        // Arrange / Act
+        var sql = this.dialect.InboxDeleteExpiredSql;
+
+        // Assert
+        sql.Should().Contain("DELETE");
+        sql.Should().Contain("@Cutoff");
     }
 }

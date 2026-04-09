@@ -1,13 +1,13 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Generated;
-using Conduit.Durability;
-using Conduit.Durability.Dialects;
-using Conduit.Durability.Runtime;
-using Conduit.Durability.Store;
+using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
+using Conduit.Durability.Persistence;
+using Conduit.Durability.Persistence.Outbox;
+using Conduit.Durability.Persistence.Dialects;
 
 namespace Conduit.Durability.Tests.Integration;
 
@@ -29,10 +29,10 @@ public class OutboxEndToEndShould
         {
             builder.Services.AddConduit(conduit =>
             {
-                conduit.AddOutbox(outbox =>
+                conduit.AddDurability(durability =>
                 {
-                    outbox.UseSqlite("Data Source=:memory:");
-                    outbox.WithAutoCreateTable(false);
+                    durability.UseSqlite("Data Source=:memory:");
+                    durability.AddOutbox(options => options.AutoCreateTable = false);
                 });
             });
 
@@ -90,10 +90,10 @@ public class OutboxEndToEndShould
         {
             builder.Services.AddConduit(conduit =>
             {
-                conduit.AddOutbox(outbox =>
+                conduit.AddDurability(durability =>
                 {
-                    outbox.UseSqlite("Data Source=:memory:");
-                    outbox.WithAutoCreateTable(false);
+                    durability.UseSqlite("Data Source=:memory:");
+                    durability.AddOutbox(options => options.AutoCreateTable = false);
                 });
             });
 

@@ -1,9 +1,7 @@
-using AwesomeAssertions;
-using Conduit.Durability.Dialects;
-using Conduit.Durability.Runtime;
-using Conduit.Durability.Store;
+﻿using AwesomeAssertions;
+using Conduit.Durability.Persistence.Dialects;
+using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Tests.Support;
-using Microsoft.Data.Sqlite;
 
 namespace Conduit.Durability.Tests.Unit;
 

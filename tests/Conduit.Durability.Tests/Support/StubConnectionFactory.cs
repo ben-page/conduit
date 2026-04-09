@@ -1,6 +1,6 @@
-using Conduit.Durability.Store;
-using System.Data.Common;
+﻿using System.Data.Common;
 using Microsoft.Data.Sqlite;
+using Conduit.Durability.Persistence;
 
 namespace Conduit.Durability.Tests.Support;
 

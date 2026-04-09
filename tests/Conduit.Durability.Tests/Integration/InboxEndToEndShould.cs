@@ -1,13 +1,13 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
-using Conduit.Durability.Inbox;
-using Conduit.Durability.Inbox.Dialects;
-using Conduit.Durability.Store;
 using Conduit.Durability.Tests.Support;
 using Conduit.Generated;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
+using Conduit.Durability.Persistence;
+using Conduit.Durability.Persistence.Inbox;
+using Conduit.Durability.Persistence.Dialects;
 
 namespace Conduit.Durability.Tests.Integration;
 
@@ -21,7 +21,7 @@ public class InboxEndToEndShould
         var connectionFactory = new StubConnectionFactory();
         await using var _ = connectionFactory;
 
-        var store = new DbConnectionInboxStore(connectionFactory, new SqliteInboxDialect());
+        var store = new DbConnectionInboxStore(connectionFactory, new SqliteDialect());
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
         var handler = new CountHandler();
@@ -30,7 +30,11 @@ public class InboxEndToEndShould
             builder.Services.AddSingleton(handler);
             builder.Services.AddConduit(conduit =>
             {
-                conduit.AddInbox(inbox => inbox.UseSqlite("Data Source=:memory:"));
+                conduit.AddDurability(durability =>
+                {
+                    durability.UseSqlite("Data Source=:memory:");
+                    durability.AddInbox();
+                });
             });
 
             // Override with shared connection
@@ -70,7 +74,7 @@ public class InboxEndToEndShould
         var connectionFactory = new StubConnectionFactory();
         await using var _ = connectionFactory;
 
-        var store = new DbConnectionInboxStore(connectionFactory, new SqliteInboxDialect());
+        var store = new DbConnectionInboxStore(connectionFactory, new SqliteDialect());
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
         var handler = new CountHandler();
@@ -79,7 +83,11 @@ public class InboxEndToEndShould
             builder.Services.AddSingleton(handler);
             builder.Services.AddConduit(conduit =>
             {
-                conduit.AddInbox(inbox => inbox.UseSqlite("Data Source=:memory:"));
+                conduit.AddDurability(durability =>
+                {
+                    durability.UseSqlite("Data Source=:memory:");
+                    durability.AddInbox();
+                });
             });
 
             builder.Services.AddSingleton<IDurabilityConnectionFactory>(connectionFactory);
