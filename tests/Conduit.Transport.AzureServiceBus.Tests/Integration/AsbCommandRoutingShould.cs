@@ -44,8 +44,6 @@ public class AsbCommandRoutingShould : AsbTestBase
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act
         var result = await mediator.ExecuteAsync(new TestCommand("hello"));
 
@@ -53,7 +51,7 @@ public class AsbCommandRoutingShould : AsbTestBase
         result.Value.Should().Be("handled:hello");
         await handlerSpy.WaitForCountAsync(1);
 
-        await Task.Delay(1000);
+        await Task.Delay(2000);
 
         handlerSpy.Invocations.OfType<TestCommand>().Should().HaveCount(1);
         bystanderSpy.Invocations.OfType<TestCommand>().Should().HaveCount(0);
@@ -70,8 +68,6 @@ public class AsbCommandRoutingShould : AsbTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act
         var result = await mediator.ExecuteAsync(new TestCommand("round-trip"));
@@ -101,14 +97,12 @@ public class AsbCommandRoutingShould : AsbTestBase
         var bystanderSpy = bystanderHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act
         await mediator.ExecuteAsync(new TestVoidCommand("fire"));
 
         // Assert — handler received exactly one invocation, bystander gets nothing
         await handlerSpy.WaitForCountAsync(1);
-        await Task.Delay(1000);
+        await Task.Delay(2000);
 
         handlerSpy.Invocations.OfType<TestVoidCommand>().Should().HaveCount(1);
         bystanderSpy.Invocations.OfType<TestVoidCommand>().Should().HaveCount(0);
@@ -125,8 +119,6 @@ public class AsbCommandRoutingShould : AsbTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act
         var action = () => mediator.ExecuteAsync(new ThrowingCommand("missing"));
@@ -147,8 +139,6 @@ public class AsbCommandRoutingShould : AsbTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, handlerHost.TopologyPrefix!, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act
         var action = () => mediator.ExecuteAsync(new UnexpectedThrowCommand("boom"));
@@ -172,8 +162,6 @@ public class AsbCommandRoutingShould : AsbTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(2000);
-
         // Act — F&F command returns immediately, no reply expected
         await mediator.ExecuteAsync(new FireAndForgetCommand("fire-and-forget"));
 
@@ -194,8 +182,6 @@ public class AsbCommandRoutingShould : AsbTestBase
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var mediator = senderHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(2000);
 
         // Act
         var action = () => mediator.ExecuteAsync(new TestCommand("nobody-home"));
