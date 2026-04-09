@@ -33,8 +33,6 @@ public class KafkaEventRoutingShould : KafkaTestBase
         var spyB = hostB.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act
         await mediator.PublishAsync(new TestEvent("broadcast"));
 
@@ -60,8 +58,6 @@ public class KafkaEventRoutingShould : KafkaTestBase
         var publisherSpy = publisherHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
 
-        await Task.Delay(3000);
-
         // Act — publish a [LocalOnly] event from the publisher
         await mediator.PublishAsync(new LocalOnlyTestEvent("local-only"));
 
@@ -71,7 +67,7 @@ public class KafkaEventRoutingShould : KafkaTestBase
             e => e.Value == "local-only");
 
         // Give some time for any erroneous broker delivery
-        await Task.Delay(3000);
+        await Task.Delay(2000);
         handlerSpy.Count.Should().Be(0);
     }
 
@@ -85,8 +81,6 @@ public class KafkaEventRoutingShould : KafkaTestBase
 
         var spy = host.GetRequiredService<SpyLog>();
         var mediator = host.GetRequiredService<IMediator>();
-
-        await Task.Delay(3000);
 
         // Act — ThrowingEventListener records then throws
         await mediator.PublishAsync(new ThrowingTestEvent("boom"));
@@ -110,8 +104,6 @@ public class KafkaEventRoutingShould : KafkaTestBase
 
         var listenerSpy = listenerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();
-
-        await Task.Delay(3000);
 
         // Act
         await mediator.PublishAsync(new FireAndForgetEvent("f&f-event"));
