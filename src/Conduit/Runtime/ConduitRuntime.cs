@@ -205,7 +205,6 @@ public static class ConduitRuntime
         using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "command", nameof(HandleWireRequest));
 
         var previousContext = MessageContext.Current;
-        MessageContext.StartDispatch();
 
         try
         {
@@ -218,6 +217,7 @@ public static class ConduitRuntime
                 }
             }
 
+            MessageContext.StartDispatch();
             var envelope = createEnvelope();
             var result = await dispatch(envelope.Type, envelope.Payload, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -264,7 +264,6 @@ public static class ConduitRuntime
         using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "event", nameof(HandleWireEvent));
 
         var previousContext = MessageContext.Current;
-        MessageContext.StartDispatch();
 
         try
         {
@@ -277,6 +276,7 @@ public static class ConduitRuntime
                 }
             }
 
+            MessageContext.StartDispatch();
             var envelope = createEnvelope();
             await dispatch(envelope.Type, envelope.Payload, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
