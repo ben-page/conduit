@@ -408,6 +408,35 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
             cancellationToken);
     }
 
+    /// <inheritdoc />
+    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        if (this.sqsClient is null || this.appQueueAddress is null)
+        {
+            throw new InvalidOperationException(
+                "Transport has not been started. Ensure the host is running before redelivering messages.");
+        }
+
+        var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            envelope.Payload, ConduitRuntime.JsonOptions));
+
+        // Send directly to the app SQS queue — bypasses SNS topic routing
+        var sendRequest = new SendMessageRequest
+        {
+            QueueUrl = this.appQueueAddress,
+            MessageBody = body.ToString(),
+            MessageAttributes = new Dictionary<string, SqsMessageAttributeValue>
+            {
+                ["Type"] = new() { DataType = "String", StringValue = envelope.Type },
+                ["MessageId"] = new() { DataType = "String", StringValue = Guid.NewGuid().ToString("N") },
+            },
+        };
+
+        await this.sqsClient.SendMessageAsync(sendRequest, cancellationToken);
+    }
+
     // -----------------------------------------------------------------------
     // Trace context
     // -----------------------------------------------------------------------

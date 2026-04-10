@@ -394,6 +394,39 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             cancellationToken: cancellationToken);
     }
 
+    /// <inheritdoc />
+    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        if (!this.IsStarted)
+        {
+            throw new InvalidOperationException(
+                "Transport has not been started. Ensure the host is running before redelivering messages.");
+        }
+
+        var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            envelope.Payload, ConduitRuntime.JsonOptions));
+
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 255);
+
+        var properties = new BasicProperties
+        {
+            ContentType = "application/json",
+            Type = envelope.Type,
+            MessageId = Guid.NewGuid().ToString("N"),
+        };
+
+        // Publish directly to the app queue via the default exchange — bypasses topic routing
+        await this.publishChannel!.BasicPublishAsync(
+            exchange: string.Empty,
+            routingKey: appQueueName,
+            mandatory: false,
+            basicProperties: properties,
+            body: body.ToMemory(),
+            cancellationToken: cancellationToken);
+    }
+
     // -----------------------------------------------------------------------
     // Trace context
     // -----------------------------------------------------------------------
