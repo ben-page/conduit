@@ -1,8 +1,11 @@
 ﻿using System.Data.Common;
+using Conduit.DeadLetterQueue;
 using Conduit.Durability.Persistence;
+using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Dialects;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;
+using Conduit.Durability.Runtime.DeadLetterQueue;
 using Conduit.Durability.Runtime.Inbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Middleware;
@@ -13,7 +16,7 @@ using Microsoft.Extensions.Options;
 namespace Conduit.Durability.Configuration;
 
 /// <summary>
-/// Fluent builder for configuring durable messaging (outbox + inbox).
+/// Fluent builder for configuring durable messaging (outbox, inbox, dead letter queue).
 /// Database is configured once and shared by all features.
 /// </summary>
 public sealed class DurabilityBuilder
@@ -100,6 +103,20 @@ public sealed class DurabilityBuilder
         this.Services.TryAddScoped<IInboxStore, DbConnectionInboxStore>();
         this.Services.AddScoped<IInboundInterceptor, InboxInterceptor>();
         this.Services.AddHostedService<InboxCleanup>();
+        this.Services.AddSingleton(Options.Create(options));
+
+        return this;
+    }
+
+    /// <summary>Adds the dead letter queue (capture failed messages, browse, replay).</summary>
+    public DurabilityBuilder AddDeadLetterQueue(Action<DeadLetterQueueOptions>? configure = null)
+    {
+        var options = new DeadLetterQueueOptions();
+        configure?.Invoke(options);
+
+        this.Services.TryAddScoped<IDeadLetterStore, DbDeadLetterStore>();
+        this.Services.TryAddScoped<IDeadLetterManager, DeadLetterManager>();
+        this.Services.AddHostedService<DeadLetterTableInitializer>();
         this.Services.AddSingleton(Options.Create(options));
 
         return this;
