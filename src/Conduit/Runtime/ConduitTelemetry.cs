@@ -31,6 +31,12 @@ public static class ConduitTelemetry
     private static readonly Counter<long> TransportReceiveCount =
         MeterInstance.CreateCounter<long>("conduit.transport.receive.count", description: "Number of transport receives");
 
+    private static readonly Counter<long> DeadLetteredCount =
+        MeterInstance.CreateCounter<long>("conduit.messages.dead_lettered", description: "Number of messages captured to the dead letter queue");
+
+    private static readonly Counter<long> ReplayedCount =
+        MeterInstance.CreateCounter<long>("conduit.messages.replayed", description: "Number of messages replayed from the dead letter queue");
+
     /// <summary>
     /// Starts an activity for internal operations (local dispatch, wire dispatch).
     /// Returns null when no listener is attached (zero-cost).
@@ -202,6 +208,25 @@ public static class ConduitTelemetry
             new KeyValuePair<string, object?>("conduit.message.type", messageType),
             new KeyValuePair<string, object?>("conduit.transport", transport),
             new KeyValuePair<string, object?>("conduit.outcome", success ? "success" : "error"));
+    }
+
+    /// <summary>
+    /// Records a dead letter capture metric.
+    /// </summary>
+    public static void RecordDeadLettered(string messageType, string sourceEndpoint)
+    {
+        DeadLetteredCount.Add(1,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.source.endpoint", sourceEndpoint));
+    }
+
+    /// <summary>
+    /// Records a dead letter replay metric.
+    /// </summary>
+    public static void RecordReplayed(string messageType)
+    {
+        ReplayedCount.Add(1,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType));
     }
 
     private static void SetMessageContextTags(Activity activity)

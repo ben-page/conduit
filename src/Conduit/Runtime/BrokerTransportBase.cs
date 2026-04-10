@@ -434,6 +434,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             await deadLetterStore.WriteAsync(entry, CancellationToken.None);
             await this.AcknowledgeAsync(message);
             LogDeadLetterCaptured(this.Logger, null);
+            ConduitTelemetry.RecordDeadLettered(messageType, this.EndpointName);
             return true;
         }
 #pragma warning disable CA1031
