@@ -112,4 +112,7 @@ file class StubTransport : IConduitTransport
 
     public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => Task.CompletedTask;
+
+    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+        => Task.CompletedTask;
 }

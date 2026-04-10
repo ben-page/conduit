@@ -93,4 +93,7 @@ file class RecordingTransport : IConduitTransport
         this.SentEvents.Add(envelope);
         return Task.CompletedTask;
     }
+
+    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+        => Task.CompletedTask;
 }

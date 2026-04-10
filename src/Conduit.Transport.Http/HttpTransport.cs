@@ -21,6 +21,12 @@ public class HttpTransport(HttpClient httpClient, string basePath = "/api/condui
     }
 
     /// <inheritdoc />
+    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException("RedeliverAsync not yet implemented for HttpTransport.");
+    }
+
+    /// <inheritdoc />
     public async Task<object?> SendRequestAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
