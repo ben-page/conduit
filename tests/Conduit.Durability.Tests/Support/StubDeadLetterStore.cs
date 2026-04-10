@@ -1,4 +1,4 @@
-using Conduit.DeadLetterQueue;
+using Conduit.Durability.DeadLetterQueue;
 
 namespace Conduit.Durability.Tests.Support;
 

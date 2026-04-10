@@ -1,4 +1,4 @@
-namespace Conduit.DeadLetterQueue;
+namespace Conduit.Durability.DeadLetterQueue;
 
 /// <summary>
 /// Result of a single dead letter replay attempt.

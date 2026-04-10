@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Conduit.DeadLetterQueue;
+using Conduit.Durability.DeadLetterQueue;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

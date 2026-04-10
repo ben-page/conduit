@@ -1,5 +1,5 @@
-using Conduit.DeadLetterQueue;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.DeadLetterQueue;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;

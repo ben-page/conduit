@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using Conduit.DeadLetterQueue;
+using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Runtime.DeadLetterQueue;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;

@@ -1,4 +1,4 @@
-namespace Conduit.DeadLetterQueue;
+namespace Conduit.Durability.DeadLetterQueue;
 
 /// <summary>
 /// A message that failed during inbound handling and was captured for later replay or inspection.

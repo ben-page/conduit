@@ -1,4 +1,4 @@
-namespace Conduit.DeadLetterQueue;
+namespace Conduit.Durability.DeadLetterQueue;
 
 /// <summary>
 /// A page of dead letter entries returned by <see cref="IDeadLetterStore.QueryAsync"/>.

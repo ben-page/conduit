@@ -1,4 +1,4 @@
-namespace Conduit.DeadLetterQueue;
+namespace Conduit.Durability.DeadLetterQueue;
 
 /// <summary>
 /// Persistence abstraction for the dead letter queue.

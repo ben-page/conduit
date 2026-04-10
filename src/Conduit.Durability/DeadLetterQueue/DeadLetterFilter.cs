@@ -1,4 +1,4 @@
-namespace Conduit.DeadLetterQueue;
+namespace Conduit.Durability.DeadLetterQueue;
 
 /// <summary>
 /// Filter criteria for querying the dead letter store.

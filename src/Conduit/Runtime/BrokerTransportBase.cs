@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Conduit.Configuration;
-using Conduit.DeadLetterQueue;
 using Conduit.Exceptions;
+using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -313,7 +313,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         // but the message is preserved for inspection/replay.
         if (handlerException is not null)
         {
-            await this.TryCaptureDeadLetterAsync(scope, message, messageType, handlerException);
+            await this.TryCaptureErrorAsync(scope, message, messageType, handlerException);
         }
 
         // Acknowledge exactly once
@@ -339,7 +339,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             LogMessageAbandoned(this.Logger, messageType, ex);
 
-            if (await this.TryCaptureDeadLetterAsync(scope, message, messageType, ex))
+            if (await this.TryCaptureErrorAsync(scope, message, messageType, ex))
             {
                 return;
             }
@@ -387,7 +387,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             LogMessageProcessingError(this.Logger, messageType, ex);
 
-            if (await this.TryCaptureDeadLetterAsync(scope, message, messageType, ex))
+            if (await this.TryCaptureErrorAsync(scope, message, messageType, ex))
             {
                 return;
             }
@@ -397,51 +397,40 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     }
 
     /// <summary>
-    /// Attempts to capture a failed message to the dead letter store.
-    /// Returns true if captured and acknowledged, false if the store is unavailable or the write failed
-    /// (caller should fall back to abandon).
+    /// Attempts to capture a failed message via a registered <see cref="IInboundErrorInterceptor"/>
+    /// (e.g., the dead letter queue). Returns true if captured and acknowledged, false if no
+    /// interceptor is registered or capture failed (caller should fall back to abandon).
     /// </summary>
-    private async Task<bool> TryCaptureDeadLetterAsync(
+    private async Task<bool> TryCaptureErrorAsync(
         AsyncServiceScope scope,
         TMessage message,
         string messageType,
         Exception exception)
     {
-        var deadLetterStore = scope.ServiceProvider.GetService<IDeadLetterStore>();
-        if (deadLetterStore is null)
+        var interceptor = scope.ServiceProvider.GetService<IInboundErrorInterceptor>();
+        if (interceptor is null)
         {
             return false;
         }
 
         try
         {
-            var context = MessageContext.Current;
-            var entry = new DeadLetterEntry
+            var body = this.GetMessageBody(message);
+            var captured = await interceptor.TryCaptureAsync(messageType, body, exception, CancellationToken.None);
+            if (!captured)
             {
-                Id = Guid.NewGuid(),
-                MessageType = messageType,
-                Body = this.GetMessageBody(message),
-                SourceEndpoint = this.EndpointName,
-                ExceptionType = exception.GetType().FullName,
-                ExceptionMessage = exception.Message,
-                MessageId = context?.MessageId,
-                CausationId = context?.CausationId,
-                ConversationId = context?.ConversationId,
-                AttemptCount = 1,
-                DeadLetteredAt = DateTimeOffset.UtcNow,
-            };
+                return false;
+            }
 
-            await deadLetterStore.WriteAsync(entry, CancellationToken.None);
             await this.AcknowledgeAsync(message);
             LogDeadLetterCaptured(this.Logger, null);
-            ConduitTelemetry.RecordDeadLettered(messageType, this.EndpointName);
             return true;
         }
 #pragma warning disable CA1031
-        catch (Exception storeException)
+        catch (Exception interceptorException)
 #pragma warning restore CA1031
         {
-            LogDeadLetterStoreFailed(this.Logger, storeException);
+            LogDeadLetterStoreFailed(this.Logger, interceptorException);
             return false;
         }
     }
