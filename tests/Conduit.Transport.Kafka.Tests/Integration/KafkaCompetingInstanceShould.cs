@@ -45,8 +45,6 @@ public class KafkaCompetingInstanceShould : KafkaTestBase
         }
 
         // Assert — total across all instances equals exactly messageCount (each handled once)
-        await Task.Delay(2000);
-
         var totalSpy = spy1.Count + spy2.Count + spy3.Count;
         totalSpy.Should().Be(messageCount,
             $"Expected exactly {messageCount} total invocations across 3 competing instances, got {totalSpy}");
@@ -82,8 +80,6 @@ public class KafkaCompetingInstanceShould : KafkaTestBase
         }
 
         // Assert — total across all instances equals exactly messageCount
-        await Task.Delay(2000);
-
         var totalSpy = spy1.Count + spy2.Count + spy3.Count;
         totalSpy.Should().Be(messageCount,
             $"Expected exactly {messageCount} total invocations across 3 competing instances, got {totalSpy}");
