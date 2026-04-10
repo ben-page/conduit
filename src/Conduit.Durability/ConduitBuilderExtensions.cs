@@ -1,6 +1,8 @@
 ﻿using Conduit.Configuration;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Runtime;
 using Conduit.Durability.Runtime.Outbox;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Durability;
 
@@ -35,6 +37,10 @@ public static class ConduitBuilderExtensions
         {
             builder.AddPipeline(typeof(OutboxBehavior<,>));
         }
+
+        // Register the unified table initializer — runs on startup and creates tables
+        // for all registered durability stores (outbox, inbox, dead letter queue)
+        builder.Services.AddHostedService<DurabilityTableInitializer>();
 
         return builder;
     }

@@ -15,8 +15,7 @@ public sealed class InboxCleanup(
     /// <inheritdoc/>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await store.EnsureTableExistsAsync(stoppingToken);
-
+        // Table creation is handled by DurabilityTableInitializer on startup.
         while (!stoppingToken.IsCancellationRequested)
         {
             await store.DeleteExpiredAsync(options.Value.RetentionPeriod, stoppingToken);

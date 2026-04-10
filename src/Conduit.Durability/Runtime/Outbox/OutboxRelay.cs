@@ -21,11 +21,8 @@ public sealed partial class OutboxRelay(
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (options.Value.AutoCreateTable)
-        {
-            await store.EnsureTableExistsAsync(stoppingToken);
-        }
-
+        // Table creation is handled by DurabilityTableInitializer on startup,
+        // which honors OutboxOptions.AutoCreateTable.
         while (!stoppingToken.IsCancellationRequested)
         {
             try

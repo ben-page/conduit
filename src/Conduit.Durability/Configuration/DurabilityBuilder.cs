@@ -117,7 +117,6 @@ public sealed class DurabilityBuilder
         this.Services.TryAddScoped<IDeadLetterStore, DbDeadLetterStore>();
         this.Services.TryAddScoped<IDeadLetters, Runtime.DeadLetterQueue.DeadLetters>();
         this.Services.AddScoped<IInboundErrorInterceptor, DeadLetterErrorInterceptor>();
-        this.Services.AddHostedService<DeadLetterTableInitializer>();
         this.Services.AddSingleton(Options.Create(options));
 
         return this;
