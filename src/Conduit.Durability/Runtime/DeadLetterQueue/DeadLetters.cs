@@ -11,11 +11,11 @@ namespace Conduit.Durability.Runtime.DeadLetterQueue;
 /// Replay re-publishes messages to the broker via the source transport's
 /// <see cref="IConduitTransport.RedeliverAsync"/>.
 /// </summary>
-public sealed class DeadLetterManager : IDeadLetterManager
+public sealed class DeadLetters : IDeadLetters
 {
     private readonly IDeadLetterStore store;
     private readonly IServiceProvider serviceProvider;
-    private readonly ILogger<DeadLetterManager> logger;
+    private readonly ILogger<DeadLetters> logger;
 
     private static readonly Action<ILogger, string, Exception?> LogReplaySucceeded =
         LoggerMessage.Define<string>(
@@ -30,12 +30,12 @@ public sealed class DeadLetterManager : IDeadLetterManager
             "Failed to replay dead letter '{MessageType}'");
 
     /// <summary>
-    /// Initializes a new instance of <see cref="DeadLetterManager"/>.
+    /// Initializes a new instance of <see cref="DeadLetters"/>.
     /// </summary>
-    public DeadLetterManager(
+    public DeadLetters(
         IDeadLetterStore store,
         IServiceProvider serviceProvider,
-        ILogger<DeadLetterManager> logger)
+        ILogger<DeadLetters> logger)
     {
         this.store = store;
         this.serviceProvider = serviceProvider;

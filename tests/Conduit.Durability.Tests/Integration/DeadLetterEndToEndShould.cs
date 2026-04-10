@@ -21,7 +21,7 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
     private StubConnectionFactory connectionFactory = null!;
     private SpyTransport transport = null!;
     private DbDeadLetterStore store = null!;
-    private DeadLetterManager manager = null!;
+    private DeadLetters deadLetters = null!;
 
     [TestInitialize]
     public async Task SetUp()
@@ -36,10 +36,10 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         services.AddKeyedSingleton<IConduitTransport>("orders", this.transport);
         var serviceProvider = services.BuildServiceProvider();
 
-        this.manager = new DeadLetterManager(
+        this.deadLetters = new DeadLetters(
             this.store,
             serviceProvider,
-            NullLogger<DeadLetterManager>.Instance);
+            NullLogger<DeadLetters>.Instance);
     }
 
     public async ValueTask DisposeAsync()
@@ -69,7 +69,7 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         await this.store.WriteAsync(entry, CancellationToken.None);
 
         // Act — browse
-        var page = await this.manager.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+        var page = await this.deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
 
         // Assert
         page.Entries.Should().HaveCount(1);
@@ -77,12 +77,12 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         page.Entries[0].ExceptionMessage.Should().Be("Database connection failed");
 
         // Act — get by ID
-        var retrieved = await this.manager.GetAsync(entry.Id, CancellationToken.None);
+        var retrieved = await this.deadLetters.GetAsync(entry.Id, CancellationToken.None);
         retrieved.Should().NotBeNull();
         retrieved!.Id.Should().Be(entry.Id);
 
         // Act — replay
-        var result = await this.manager.ReplayAsync(entry.Id, CancellationToken.None);
+        var result = await this.deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -90,7 +90,7 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         this.transport.Redelivered[0].Type.Should().Be("Orders.Commands.CreateOrder");
 
         // Verify entry removed from store
-        var afterReplay = await this.manager.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+        var afterReplay = await this.deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
         afterReplay.Entries.Should().BeEmpty();
     }
 
@@ -115,10 +115,10 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         await this.store.WriteAsync(entry, CancellationToken.None);
 
         // Act
-        await this.manager.DiscardAsync(entry.Id, CancellationToken.None);
+        await this.deadLetters.DiscardAsync(entry.Id, CancellationToken.None);
 
         // Assert
-        var afterDiscard = await this.manager.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+        var afterDiscard = await this.deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
         afterDiscard.Entries.Should().BeEmpty();
         this.transport.Redelivered.Should().BeEmpty("discard should not replay");
     }
@@ -159,14 +159,14 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         }, CancellationToken.None);
 
         // Act
-        var results = await this.manager.ReplayByTypeAsync("Orders.Commands.CreateOrder", CancellationToken.None);
+        var results = await this.deadLetters.ReplayByTypeAsync("Orders.Commands.CreateOrder", CancellationToken.None);
 
         // Assert
         results.Should().HaveCount(3);
         results.Should().OnlyContain(r => r.Success);
         this.transport.Redelivered.Should().HaveCount(3);
 
-        var remaining = await this.manager.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+        var remaining = await this.deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
         remaining.Entries.Should().HaveCount(1);
         remaining.Entries[0].MessageType.Should().Be("Orders.Commands.ShipOrder");
     }

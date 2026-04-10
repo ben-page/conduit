@@ -9,11 +9,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Conduit.Durability.Tests.Unit;
 
 [TestClass]
-public sealed class DeadLetterManagerShould
+public sealed class DeadLettersShould
 {
     private StubDeadLetterStore store = null!;
     private SpyTransport transport = null!;
-    private DeadLetterManager manager = null!;
+    private DeadLetters deadLetters = null!;
 
     [TestInitialize]
     public void SetUp()
@@ -25,10 +25,10 @@ public sealed class DeadLetterManagerShould
         services.AddKeyedSingleton<IConduitTransport>("orders", this.transport);
         var serviceProvider = services.BuildServiceProvider();
 
-        this.manager = new DeadLetterManager(
+        this.deadLetters = new DeadLetters(
             this.store,
             serviceProvider,
-            NullLogger<DeadLetterManager>.Instance);
+            NullLogger<DeadLetters>.Instance);
     }
 
     [TestMethod]
@@ -38,7 +38,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(CreateEntry("Test.Command", "orders"), CancellationToken.None);
 
         // Act
-        var page = await this.manager.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+        var page = await this.deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
 
         // Assert
         page.Entries.Should().HaveCount(1);
@@ -52,7 +52,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry, CancellationToken.None);
 
         // Act
-        var result = await this.manager.GetAsync(entry.Id, CancellationToken.None);
+        var result = await this.deadLetters.GetAsync(entry.Id, CancellationToken.None);
 
         // Assert
         result.Should().NotBeNull();
@@ -67,7 +67,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry, CancellationToken.None);
 
         // Act
-        var result = await this.manager.ReplayAsync(entry.Id, CancellationToken.None);
+        var result = await this.deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -80,7 +80,7 @@ public sealed class DeadLetterManagerShould
     public async Task ReturnFailureWhenEntryNotFound()
     {
         // Act
-        var result = await this.manager.ReplayAsync(Guid.NewGuid(), CancellationToken.None);
+        var result = await this.deadLetters.ReplayAsync(Guid.NewGuid(), CancellationToken.None);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -95,7 +95,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry, CancellationToken.None);
 
         // Act
-        var result = await this.manager.ReplayAsync(entry.Id, CancellationToken.None);
+        var result = await this.deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -112,7 +112,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry2, CancellationToken.None);
 
         // Act
-        var results = await this.manager.ReplayAsync([entry1.Id, entry2.Id], CancellationToken.None);
+        var results = await this.deadLetters.ReplayAsync([entry1.Id, entry2.Id], CancellationToken.None);
 
         // Assert
         results.Should().HaveCount(2);
@@ -133,7 +133,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry3, CancellationToken.None);
 
         // Act
-        var results = await this.manager.ReplayByTypeAsync("Target.Command", CancellationToken.None);
+        var results = await this.deadLetters.ReplayByTypeAsync("Target.Command", CancellationToken.None);
 
         // Assert
         results.Should().HaveCount(2);
@@ -150,7 +150,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry, CancellationToken.None);
 
         // Act
-        await this.manager.DiscardAsync(entry.Id, CancellationToken.None);
+        await this.deadLetters.DiscardAsync(entry.Id, CancellationToken.None);
 
         // Assert
         this.store.Entries.Should().BeEmpty();
@@ -167,7 +167,7 @@ public sealed class DeadLetterManagerShould
         await this.store.WriteAsync(entry2, CancellationToken.None);
 
         // Act
-        await this.manager.DiscardAsync([entry1.Id, entry2.Id], CancellationToken.None);
+        await this.deadLetters.DiscardAsync([entry1.Id, entry2.Id], CancellationToken.None);
 
         // Assert
         this.store.Entries.Should().BeEmpty();
