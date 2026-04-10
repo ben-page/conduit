@@ -51,7 +51,7 @@ public abstract class ActiveMQTestBase
                 return;
             }
 
-            container = new ContainerBuilder("apache/activemq-artemis:2.37.0-alpine")
+            container = new ContainerBuilder("apache/activemq-artemis:2.44.0-alpine")
                 .WithPortBinding(61616, true)
                 .WithEnvironment("ARTEMIS_USER", "admin")
                 .WithEnvironment("ARTEMIS_PASSWORD", "admin")

@@ -50,7 +50,7 @@ public abstract class KafkaTestBase
                 return;
             }
 
-            container = new KafkaBuilder("confluentinc/cp-kafka:7.7.1")
+            container = new KafkaBuilder("confluentinc/cp-kafka:7.9.6")
                 .WithLabel("conduit-test", "kafka")
                 .Build();
             await container.StartAsync();

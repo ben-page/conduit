@@ -51,7 +51,7 @@ public abstract class SqsTestBase
                 return;
             }
 
-            container = new ContainerBuilder("localstack/localstack:4.3")
+            container = new ContainerBuilder("localstack/localstack:4.14.0")
                 .WithPortBinding(4566, true)
                 .WithEnvironment("SERVICES", "sns,sqs")
                 .WithLabel("conduit-test", "sqs")

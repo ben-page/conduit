@@ -24,7 +24,7 @@ public class AsbTopologyModeShould : AsbTestBase
         TopologyMode topologyMode,
         string? topologyPrefix = null)
     {
-        return await TestHost.StartAsync(builder =>
+        var host = await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
             builder.Services.AddConduit(conduit =>
@@ -42,6 +42,13 @@ public class AsbTopologyModeShould : AsbTestBase
                         options.AdminConnectionString = AdminConnectionString));
             });
         });
+
+        if (host.TopologyPrefix is not null)
+        {
+            RegisterPrefixForCleanup(host.TopologyPrefix);
+        }
+
+        return host;
     }
 
     [TestMethod]

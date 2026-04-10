@@ -111,8 +111,9 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - AAA pattern with `// Arrange`, `// Act`, `// Assert` comments
 - Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `ContainerHelper`, `MessageContextSnapshot`)
 - Broker transport tests use per-transport abstract base classes (`RabbitMqTestBase`, `AsbTestBase`, etc.) that own container lifecycle (static), factory methods, and `[TestInitialize]` availability guard. `AssemblySetup` delegates to base class static init/cleanup methods.
-- All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent.
+- All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent and disposes the underlying host via `IAsyncDisposable.DisposeAsync` (not sync `Dispose()`) — broker transports implement `IAsyncDisposable` only, and sync disposal deadlocks AmqpNetLite's link close in ActiveMQ.
 - Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
+- **Azure Service Bus emulator caveats**: The emulator has a hard cap of 50 queues+topics combined per namespace (not configurable — see [Azure/azure-service-bus-emulator-installer#48](https://github.com/Azure/azure-service-bus-emulator-installer/issues/48)). `AsbTestBase` tracks per-test topology prefixes via `AsyncLocal` and deletes topics + matching queues in `[TestCleanup]` to stay under the quota. `[assembly: DoNotParallelize]` forces sequential class execution for the same reason. If `Conduit:AzureServiceBus:ConnectionString` is set in user secrets (pointing at a real namespace), pass `Conduit__AzureServiceBus__ConnectionString=""` to force the emulator path.
 
 ## Project-Specific Notes
 
