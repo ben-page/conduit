@@ -111,22 +111,41 @@ internal sealed class AmazonSqsTopologyManager
             }
         }
 
-        // 5. Create SNS subscriptions for events (multicast -- per-app names)
+        // 5. Group all message types by target queue — SNS subscriptions are keyed by
+        // (topic, protocol, endpoint), so each queue gets ONE subscription with a combined
+        // filter policy listing all its message types.
+        var typesByQueue = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
         foreach (var eventType in subscribedEventTypes)
         {
             var targetQueueAddress = this.GetTargetQueueAddressForType(eventType, poolAssignedTypes);
-            var targetQueueArn = await this.GetQueueArnAsync(targetQueueAddress, cancellationToken);
-            await this.CreateFilteredSubscriptionAsync(
-                targetQueueArn, eventType, cancellationToken);
+            if (!typesByQueue.TryGetValue(targetQueueAddress, out var types))
+            {
+                types = [];
+                typesByQueue[targetQueueAddress] = types;
+            }
+
+            types.Add(eventType);
         }
 
-        // 6. Create SNS subscriptions for commands/queries (unicast -- shared names)
         foreach (var commandQueryType in handledCommandQueryTypes)
         {
             var targetQueueAddress = this.GetTargetQueueAddressForType(commandQueryType, poolAssignedTypes);
-            var targetQueueArn = await this.GetQueueArnAsync(targetQueueAddress, cancellationToken);
+            if (!typesByQueue.TryGetValue(targetQueueAddress, out var types))
+            {
+                types = [];
+                typesByQueue[targetQueueAddress] = types;
+            }
+
+            types.Add(commandQueryType);
+        }
+
+        // 6. Create one SNS subscription per queue with combined filter policy
+        foreach (var (queueAddress, messageTypes) in typesByQueue)
+        {
+            var queueArn = await this.GetQueueArnAsync(queueAddress, cancellationToken);
             await this.CreateFilteredSubscriptionAsync(
-                targetQueueArn, commandQueryType, cancellationToken);
+                queueArn, messageTypes, cancellationToken);
         }
 
         // 7. Set SQS policy allowing SNS to send messages to the app queue (and pool queues)
@@ -189,9 +208,10 @@ internal sealed class AmazonSqsTopologyManager
     }
 
     private async Task CreateFilteredSubscriptionAsync(
-        string queueArn, string messageType, CancellationToken cancellationToken)
+        string queueArn, List<string> messageTypes, CancellationToken cancellationToken)
     {
-        // Subscribe the SQS queue to the SNS topic
+        // Subscribe the SQS queue to the SNS topic with a combined filter policy
+        // containing all message types routed to this queue.
         await this.snsClient.SubscribeAsync(
             new SubscribeRequest
             {
@@ -202,18 +222,18 @@ internal sealed class AmazonSqsTopologyManager
                 {
                     // Raw message delivery -- required for filter policies on message attributes
                     ["RawMessageDelivery"] = "true",
-                    // Filter policy on the Type message attribute
+                    // Filter policy on the Type message attribute (OR match)
                     ["FilterPolicy"] = JsonSerializer.Serialize(
                         new Dictionary<string, string[]>
                         {
-                            ["Type"] = [messageType],
+                            ["Type"] = messageTypes.ToArray(),
                         }),
                 },
             },
             cancellationToken);
 
         // SNS subscriptions are idempotent -- re-subscribing with the same
-        // topic+protocol+endpoint returns the existing subscription ARN.
+        // topic+protocol+endpoint and same attributes returns the existing subscription ARN.
     }
 
     private async Task SetSnsToSqsPolicyAsync(
