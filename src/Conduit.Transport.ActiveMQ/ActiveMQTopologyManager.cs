@@ -307,7 +307,7 @@ internal sealed class ActiveMQTopologyManager
                 }
             });
 
-        var replyAddress = await replyAddressTcs.Task;
+        var replyAddress = await replyAddressTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var senderLink = new SenderLink(session, $"mgmt-send-{Guid.NewGuid():N}", "activemq.management");
 
         return (senderLink, receiverLink, replyAddress);
