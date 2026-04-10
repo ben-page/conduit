@@ -155,7 +155,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
                 }
             });
 
-        this.replyQueueAddress = await attachedTcs.Task;
+        this.replyQueueAddress = await attachedTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Set up reply message handler
         this.replyReceiver.Start(10, this.OnReplyReceived);
