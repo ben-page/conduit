@@ -4,7 +4,7 @@ namespace Conduit.Durability.DeadLetterQueue;
 /// User-facing dead letter operations: browse, replay, and discard.
 /// Replay re-publishes messages to the broker via the source transport's redeliver method.
 /// </summary>
-public interface IDeadLetterManager
+public interface IDeadLetters
 {
     /// <summary>Browse dead-lettered messages with optional filtering.</summary>
     public Task<DeadLetterPage> QueryAsync(DeadLetterFilter filter, CancellationToken cancellationToken);
