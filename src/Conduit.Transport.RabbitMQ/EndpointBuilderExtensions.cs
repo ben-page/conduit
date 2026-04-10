@@ -27,7 +27,11 @@ public static class EndpointBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var options = new RabbitMQOptions { ConnectionString = connectionString };
+        var options = new RabbitMQOptions
+        {
+            ConnectionString = connectionString,
+            EndpointName = builder.EndpointName,
+        };
         configure?.Invoke(options);
 
         // Register options and transport as singletons

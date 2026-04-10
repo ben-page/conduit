@@ -275,12 +275,20 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         AsyncServiceScope scope)
     {
         // Dispatch and build reply. On failure, build an error reply.
+        // HandleWireRequestAsync returns DispatchResult — handler exceptions are converted
+        // to Fail results inside ConduitRuntime, so we check the result for failure below.
         BinaryData replyData;
         Exception? handlerException = null;
         try
         {
             var result = await wireMediator.HandleWireRequestAsync(
                 envelope, CancellationToken.None);
+
+            if (result.Error is not null)
+            {
+                handlerException = new InvalidOperationException(
+                    $"[{result.Error.Code}] {result.Error.Message}");
+            }
 
             replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
                 result, ConduitRuntime.JsonOptions));
@@ -337,13 +345,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
         catch (EventListenerException ex)
         {
-            LogMessageAbandoned(this.Logger, messageType, ex);
-
             if (await this.TryCaptureErrorAsync(scope, message, messageType, ex))
             {
                 return;
             }
 
+            LogMessageAbandoned(this.Logger, messageType, ex);
             await this.AbandonAsync(message);
         }
     }
@@ -416,7 +423,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         try
         {
             var body = this.GetMessageBody(message);
-            var captured = await interceptor.TryCaptureAsync(messageType, body, exception, CancellationToken.None);
+            var captured = await interceptor.TryCaptureAsync(
+                messageType, body, this.EndpointName, exception, CancellationToken.None);
             if (!captured)
             {
                 return false;
