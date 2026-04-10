@@ -78,4 +78,62 @@ public sealed class SqliteDialect : IDurabilityDialect
 
     /// <inheritdoc/>
     public string InboxDeleteExpiredSql => "DELETE FROM conduit_inbox WHERE ProcessedAt < @Cutoff";
+
+    // Dead Letter Queue
+
+    /// <inheritdoc/>
+    public string DeadLetterCreateTableSql => """
+        CREATE TABLE IF NOT EXISTS conduit_dead_letters (
+            Id TEXT NOT NULL PRIMARY KEY,
+            MessageType TEXT NOT NULL,
+            Body BLOB NOT NULL,
+            SourceEndpoint TEXT NOT NULL,
+            ExceptionType TEXT,
+            ExceptionMessage TEXT,
+            MessageId TEXT,
+            CausationId TEXT,
+            ConversationId TEXT,
+            AttemptCount INTEGER NOT NULL DEFAULT 1,
+            DeadLetteredAt TEXT NOT NULL
+        )
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterInsertSql => """
+        INSERT INTO conduit_dead_letters (Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt)
+        VALUES (@Id, @MessageType, @Body, @SourceEndpoint, @ExceptionType, @ExceptionMessage, @MessageId, @CausationId, @ConversationId, @AttemptCount, @DeadLetteredAt)
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterSelectByIdSql => """
+        SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
+        FROM conduit_dead_letters WHERE Id = @Id
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterQueryPageSql => """
+        SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
+        FROM conduit_dead_letters
+        WHERE (@MessageType IS NULL OR MessageType = @MessageType)
+          AND (@ExceptionType IS NULL OR ExceptionType = @ExceptionType)
+          AND (@Since IS NULL OR DeadLetteredAt >= @Since)
+          AND (@Until IS NULL OR DeadLetteredAt <= @Until)
+        ORDER BY DeadLetteredAt DESC
+        LIMIT @PageSize OFFSET @Offset
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterCountSql => """
+        SELECT COUNT(*) FROM conduit_dead_letters
+        WHERE (@MessageType IS NULL OR MessageType = @MessageType)
+          AND (@ExceptionType IS NULL OR ExceptionType = @ExceptionType)
+          AND (@Since IS NULL OR DeadLetteredAt >= @Since)
+          AND (@Until IS NULL OR DeadLetteredAt <= @Until)
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterDeleteByIdSql => "DELETE FROM conduit_dead_letters WHERE Id = @Id";
+
+    /// <inheritdoc/>
+    public string DeadLetterDeleteByIdsSql => "DELETE FROM conduit_dead_letters WHERE Id IN ({0})";
 }

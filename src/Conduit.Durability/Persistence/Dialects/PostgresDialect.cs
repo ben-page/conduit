@@ -82,4 +82,70 @@ public sealed class PostgresDialect : IDurabilityDialect
 
     /// <inheritdoc/>
     public string InboxDeleteExpiredSql => "DELETE FROM conduit_inbox WHERE processed_at < @Cutoff";
+
+    // Dead Letter Queue
+
+    /// <inheritdoc/>
+    public string DeadLetterCreateTableSql => """
+        CREATE TABLE IF NOT EXISTS conduit_dead_letters (
+            id UUID NOT NULL PRIMARY KEY,
+            message_type VARCHAR(500) NOT NULL,
+            body BYTEA NOT NULL,
+            source_endpoint VARCHAR(200) NOT NULL,
+            exception_type VARCHAR(500),
+            exception_message TEXT,
+            message_id VARCHAR(64),
+            causation_id VARCHAR(64),
+            conversation_id VARCHAR(64),
+            attempt_count INT NOT NULL DEFAULT 1,
+            dead_lettered_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_conduit_dead_letters_type ON conduit_dead_letters (message_type);
+        CREATE INDEX IF NOT EXISTS ix_conduit_dead_letters_timestamp ON conduit_dead_letters (dead_lettered_at);
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterInsertSql => """
+        INSERT INTO conduit_dead_letters (id, message_type, body, source_endpoint, exception_type, exception_message, message_id, causation_id, conversation_id, attempt_count, dead_lettered_at)
+        VALUES (@Id, @MessageType, @Body, @SourceEndpoint, @ExceptionType, @ExceptionMessage, @MessageId, @CausationId, @ConversationId, @AttemptCount, @DeadLetteredAt)
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterSelectByIdSql => """
+        SELECT id AS "Id", message_type AS "MessageType", body AS "Body", source_endpoint AS "SourceEndpoint",
+               exception_type AS "ExceptionType", exception_message AS "ExceptionMessage",
+               message_id AS "MessageId", causation_id AS "CausationId", conversation_id AS "ConversationId",
+               attempt_count AS "AttemptCount", dead_lettered_at AS "DeadLetteredAt"
+        FROM conduit_dead_letters WHERE id = @Id
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterQueryPageSql => """
+        SELECT id AS "Id", message_type AS "MessageType", body AS "Body", source_endpoint AS "SourceEndpoint",
+               exception_type AS "ExceptionType", exception_message AS "ExceptionMessage",
+               message_id AS "MessageId", causation_id AS "CausationId", conversation_id AS "ConversationId",
+               attempt_count AS "AttemptCount", dead_lettered_at AS "DeadLetteredAt"
+        FROM conduit_dead_letters
+        WHERE (@MessageType IS NULL OR message_type = @MessageType)
+          AND (@ExceptionType IS NULL OR exception_type = @ExceptionType)
+          AND (@Since IS NULL OR dead_lettered_at >= @Since)
+          AND (@Until IS NULL OR dead_lettered_at <= @Until)
+        ORDER BY dead_lettered_at DESC
+        LIMIT @PageSize OFFSET @Offset
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterCountSql => """
+        SELECT COUNT(*) FROM conduit_dead_letters
+        WHERE (@MessageType IS NULL OR message_type = @MessageType)
+          AND (@ExceptionType IS NULL OR exception_type = @ExceptionType)
+          AND (@Since IS NULL OR dead_lettered_at >= @Since)
+          AND (@Until IS NULL OR dead_lettered_at <= @Until)
+        """;
+
+    /// <inheritdoc/>
+    public string DeadLetterDeleteByIdSql => "DELETE FROM conduit_dead_letters WHERE id = @Id";
+
+    /// <inheritdoc/>
+    public string DeadLetterDeleteByIdsSql => "DELETE FROM conduit_dead_letters WHERE id IN ({0})";
 }
