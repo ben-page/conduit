@@ -1,7 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using Conduit.DeadLetterQueue;
+using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.Dialects;
 
 namespace Conduit.Durability.Persistence.DeadLetterQueue;

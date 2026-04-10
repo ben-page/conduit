@@ -24,8 +24,8 @@ public interface IConduitTransport
 
     /// <summary>
     /// Re-publishes a message directly to the service's inbound queue, bypassing the topic/exchange.
-    /// Used by <see cref="Conduit.DeadLetterQueue.IDeadLetterManager"/> for dead letter replay.
-    /// The message enters the normal inbound processing path and is picked up by any available handler instance.
+    /// Used by dead letter queue replay — the message enters the normal inbound processing path
+    /// and is picked up by any available handler instance.
     /// </summary>
     /// <param name="envelope">The dispatch envelope containing the type and payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

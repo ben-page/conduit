@@ -1,5 +1,5 @@
 ﻿using System.Data.Common;
-using Conduit.DeadLetterQueue;
+using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Dialects;
@@ -116,6 +116,7 @@ public sealed class DurabilityBuilder
 
         this.Services.TryAddScoped<IDeadLetterStore, DbDeadLetterStore>();
         this.Services.TryAddScoped<IDeadLetterManager, DeadLetterManager>();
+        this.Services.AddScoped<IInboundErrorInterceptor, DeadLetterErrorInterceptor>();
         this.Services.AddHostedService<DeadLetterTableInitializer>();
         this.Services.AddSingleton(Options.Create(options));
 
