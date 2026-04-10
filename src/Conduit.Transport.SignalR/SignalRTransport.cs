@@ -78,9 +78,23 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
-        throw new NotSupportedException("RedeliverAsync not yet implemented for SignalRTransport.");
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        // Client mode: invoke the hub's Dispatch method fire-and-forget
+        // (ignore the response — no caller waiting for the replayed message)
+        if (this.hubConnection is not null)
+        {
+            await this.EnsureConnectedAsync(cancellationToken);
+            await this.hubConnection.InvokeAsync<DispatchResult<JsonElement?>>(
+                "Dispatch", envelope.Type, envelope.Payload, BuildContext(), cancellationToken);
+            return;
+        }
+
+        throw new NotSupportedException(
+            "Server-mode SignalR transport does not support RedeliverAsync. " +
+            "Dead letter replay requires a client-mode transport with a HubConnection.");
     }
 
     private static Dictionary<string, string>? BuildContext()
