@@ -74,6 +74,7 @@ public sealed class DeadLetterManager : IDeadLetterManager
             await this.store.RemoveAsync(id, cancellationToken);
 
             LogReplaySucceeded(this.logger, entry.MessageType, null);
+            ConduitTelemetry.RecordReplayed(entry.MessageType);
             return new ReplayResult
             {
                 DeadLetterId = id,
