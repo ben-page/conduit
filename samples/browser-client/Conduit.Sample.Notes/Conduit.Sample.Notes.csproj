@@ -19,4 +19,12 @@
 
   <Import Project="..\..\..\src\Conduit.TypeGen\Conduit.TypeGen.targets" />
 
+  <Target Name="BuildClientApp" AfterTargets="ConduitTypeGen">
+    <PropertyGroup>
+      <ClientAppDir>$(MSBuildProjectDirectory)\ClientApp</ClientAppDir>
+    </PropertyGroup>
+    <Exec Command="npm install" WorkingDirectory="$(ClientAppDir)" Condition="!Exists('$(ClientAppDir)\node_modules')" />
+    <Exec Command="npm run build" WorkingDirectory="$(ClientAppDir)" />
+  </Target>
+
 </Project>
