@@ -50,7 +50,7 @@ public abstract class RabbitMqTestBase
                 return;
             }
 
-            container = new RabbitMqBuilder("rabbitmq:4-management-alpine")
+            container = new RabbitMqBuilder("rabbitmq:4.2.5-management-alpine")
                 .WithLabel("conduit-test", "rabbitmq")
                 .Build();
             await container.StartAsync();

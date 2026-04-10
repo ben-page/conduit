@@ -114,13 +114,24 @@ public class AsbEventRoutingShould : AsbTestBase
     public async Task DeliverFireAndForgetEventToSubscribingApp()
     {
         // Arrange — [FireAndForget] only affects local listener execution (background),
-        // transport broadcast should still deliver the event to subscribing apps
+        // transport broadcast should still deliver the event to subscribing apps.
+        // Command/query handlers are cleared on both hosts because the transport enforces
+        // unicast subscriptions for commands/queries (one app per type); leaving handlers
+        // registered in two apps would cause a subscription forward-target collision.
         var publisherName = UniqueAppName("pub");
         var listenerName = UniqueAppName("listener");
 
-        await using var listenerHost = await CreateHostAsync(listenerName);
+        await using var listenerHost = await CreateHostAsync(listenerName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
         var prefix = listenerHost.TopologyPrefix!;
-        await using var publisherHost = await CreateHostAsync(publisherName, prefix);
+        await using var publisherHost = await CreateHostAsync(publisherName, prefix, handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
 
         var listenerSpy = listenerHost.GetRequiredService<SpyLog>();
         var mediator = publisherHost.GetRequiredService<IMediator>();

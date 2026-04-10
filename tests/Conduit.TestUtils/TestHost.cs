@@ -74,6 +74,17 @@ public sealed class TestHost : IAsyncDisposable
         this.disposed = true;
         this.scope.Dispose();
         await this.host.StopAsync();
-        this.host.Dispose();
+
+        // Use async disposal so IAsyncDisposable services (broker transports) are disposed
+        // via their DisposeAsync. Calling the sync IHost.Dispose() wraps DisposeAsync in a
+        // blocking GetResult() which can deadlock AmqpNetLite's link close operations.
+        if (this.host is IAsyncDisposable asyncDisposableHost)
+        {
+            await asyncDisposableHost.DisposeAsync();
+        }
+        else
+        {
+            this.host.Dispose();
+        }
     }
 }
