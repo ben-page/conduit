@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Conduit.Configuration;
+using Conduit.DeadLetterQueue;
 using Conduit.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -42,6 +43,14 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define(LogLevel.Warning, new EventId(505, "SkippingNoType"),
             "Received message with no type discriminator — acknowledging and skipping");
 
+    private static readonly Action<ILogger, Exception?> LogDeadLetterCaptured =
+        LoggerMessage.Define(LogLevel.Information, new EventId(506, "DeadLetterCaptured"),
+            "Message captured to dead letter store");
+
+    private static readonly Action<ILogger, Exception?> LogDeadLetterStoreFailed =
+        LoggerMessage.Define(LogLevel.Warning, new EventId(507, "DeadLetterStoreFailed"),
+            "Failed to write to dead letter store, falling back to abandon");
+
     /// <summary>
     /// Creates a new broker transport base.
     /// </summary>
@@ -70,6 +79,13 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
     /// <summary>Logger for transport diagnostics.</summary>
     protected ILogger Logger { get; }
+
+    /// <summary>
+    /// The identifier stored on dead letter entries as the source endpoint, and used to resolve
+    /// the transport on replay. Defaults to <see cref="ConduitOptions.ApplicationName"/>.
+    /// Concrete transports can override this if they need a different identifier.
+    /// </summary>
+    protected virtual string EndpointName => this.ConduitOptions.ApplicationName ?? string.Empty;
 
     // -----------------------------------------------------------------------
     // IHostedService — sealed template methods
@@ -230,15 +246,15 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             {
                 if (this.IsRequest(message))
                 {
-                    await this.DispatchRequestAsync(message, messageType, envelope, wireMediator);
+                    await this.DispatchRequestAsync(message, messageType, envelope, wireMediator, scope);
                 }
                 else if (this.IsFireAndForgetCommand(message, messageType, wireMediator))
                 {
-                    await this.DispatchFireAndForgetCommandAsync(message, messageType, envelope, wireMediator);
+                    await this.DispatchFireAndForgetCommandAsync(message, messageType, envelope, wireMediator, scope);
                 }
                 else
                 {
-                    await this.DispatchEventAsync(message, messageType, envelope, wireMediator);
+                    await this.DispatchEventAsync(message, messageType, envelope, wireMediator, scope);
                 }
             }
 
@@ -255,10 +271,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         TMessage message,
         string messageType,
         DispatchEnvelope envelope,
-        IWireMediator wireMediator)
+        IWireMediator wireMediator,
+        AsyncServiceScope scope)
     {
         // Dispatch and build reply. On failure, build an error reply.
         BinaryData replyData;
+        Exception? handlerException = null;
         try
         {
             var result = await wireMediator.HandleWireRequestAsync(
@@ -272,6 +290,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 #pragma warning restore CA1031
         {
             LogMessageProcessingError(this.Logger, messageType, ex);
+            handlerException = ex;
 
             replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
                 DispatchResult<object>.Fail("InternalError", ex.Message),
@@ -290,6 +309,13 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             LogReplyError(this.Logger, messageType, ex);
         }
 
+        // Capture to DLQ if the handler failed — the caller already got an error reply,
+        // but the message is preserved for inspection/replay.
+        if (handlerException is not null)
+        {
+            await this.TryCaptureDeadLetterAsync(scope, message, messageType, handlerException);
+        }
+
         // Acknowledge exactly once
         await this.AcknowledgeAsync(message);
         LogMessageCompleted(this.Logger, messageType, null);
@@ -299,7 +325,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         TMessage message,
         string messageType,
         DispatchEnvelope envelope,
-        IWireMediator wireMediator)
+        IWireMediator wireMediator,
+        AsyncServiceScope scope)
     {
         // Dispatch, acknowledge on success, abandon on listener failure
         try
@@ -311,6 +338,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         catch (EventListenerException ex)
         {
             LogMessageAbandoned(this.Logger, messageType, ex);
+
+            if (await this.TryCaptureDeadLetterAsync(scope, message, messageType, ex))
+            {
+                return;
+            }
+
             await this.AbandonAsync(message);
         }
     }
@@ -339,7 +372,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         TMessage message,
         string messageType,
         DispatchEnvelope envelope,
-        IWireMediator wireMediator)
+        IWireMediator wireMediator,
+        AsyncServiceScope scope)
     {
         try
         {
@@ -352,7 +386,62 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 #pragma warning restore CA1031
         {
             LogMessageProcessingError(this.Logger, messageType, ex);
+
+            if (await this.TryCaptureDeadLetterAsync(scope, message, messageType, ex))
+            {
+                return;
+            }
+
             await this.AbandonAsync(message);
+        }
+    }
+
+    /// <summary>
+    /// Attempts to capture a failed message to the dead letter store.
+    /// Returns true if captured and acknowledged, false if the store is unavailable or the write failed
+    /// (caller should fall back to abandon).
+    /// </summary>
+    private async Task<bool> TryCaptureDeadLetterAsync(
+        AsyncServiceScope scope,
+        TMessage message,
+        string messageType,
+        Exception exception)
+    {
+        var deadLetterStore = scope.ServiceProvider.GetService<IDeadLetterStore>();
+        if (deadLetterStore is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var context = MessageContext.Current;
+            var entry = new DeadLetterEntry
+            {
+                Id = Guid.NewGuid(),
+                MessageType = messageType,
+                Body = this.GetMessageBody(message),
+                SourceEndpoint = this.EndpointName,
+                ExceptionType = exception.GetType().FullName,
+                ExceptionMessage = exception.Message,
+                MessageId = context?.MessageId,
+                CausationId = context?.CausationId,
+                ConversationId = context?.ConversationId,
+                AttemptCount = 1,
+                DeadLetteredAt = DateTimeOffset.UtcNow,
+            };
+
+            await deadLetterStore.WriteAsync(entry, CancellationToken.None);
+            await this.AcknowledgeAsync(message);
+            LogDeadLetterCaptured(this.Logger, null);
+            return true;
+        }
+#pragma warning disable CA1031
+        catch (Exception storeException)
+#pragma warning restore CA1031
+        {
+            LogDeadLetterStoreFailed(this.Logger, storeException);
+            return false;
         }
     }
 
