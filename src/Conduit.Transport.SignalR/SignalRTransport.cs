@@ -77,6 +77,12 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         throw new InvalidOperationException("Transport not configured.");
     }
 
+    /// <inheritdoc />
+    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException("RedeliverAsync not yet implemented for SignalRTransport.");
+    }
+
     private static Dictionary<string, string>? BuildContext()
     {
         var context = MessageContext.Current;

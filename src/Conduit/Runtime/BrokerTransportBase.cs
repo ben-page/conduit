@@ -162,6 +162,13 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
     }
 
+    /// <inheritdoc />
+    public virtual Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException(
+            $"{this.GetType().Name} does not support RedeliverAsync. Concrete broker transports must override this method.");
+    }
+
     // -----------------------------------------------------------------------
     // Inbound dispatch — sealed template method
     // -----------------------------------------------------------------------
