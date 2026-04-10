@@ -13,4 +13,10 @@ dotnet_diagnostic.CA1852.severity = none
 dotnet_diagnostic.CA1062.severity = none
 # CA1031: Do not catch general exception type (test infrastructure catches all container startup failures)
 dotnet_diagnostic.CA1031.severity = none
+# CA2234: Pass System.Uri objects instead of strings (test code uses string URIs for brevity)
+dotnet_diagnostic.CA2234.severity = none
+# CA2000: Dispose objects before losing scope (test hosts are disposed via await using)
+dotnet_diagnostic.CA2000.severity = none
+# IDE0005: Using directive is unnecessary (test files may have unused usings during iteration)
+dotnet_diagnostic.IDE0005.severity = none
 
