@@ -21,9 +21,25 @@ public class HttpTransport(HttpClient httpClient, string basePath = "/api/condui
     }
 
     /// <inheritdoc />
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
-        throw new NotSupportedException("RedeliverAsync not yet implemented for HttpTransport.");
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        // POST to the dispatch endpoint — same as SendRequestAsync but we discard the response
+        // (replay is fire-and-forget, no caller waiting for the result).
+        using var request = new HttpRequestMessage(HttpMethod.Post, basePath + "/dispatch")
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(envelope.Payload, ConduitRuntime.JsonOptions),
+                Encoding.UTF8,
+                "application/json"),
+        };
+
+        request.Headers.Add("X-Conduit-Type", envelope.Type);
+        request.Headers.Add("X-Conduit-Message-Id", Guid.NewGuid().ToString("N"));
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     /// <inheritdoc />
