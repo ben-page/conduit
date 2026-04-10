@@ -261,6 +261,34 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         await this.topicSender!.SendMessageAsync(serviceBusMessage, cancellationToken);
     }
 
+    /// <inheritdoc />
+    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        if (this.client is null)
+        {
+            throw new InvalidOperationException(
+                "Transport has not been started. Ensure the host is running before redelivering messages.");
+        }
+
+        var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            envelope.Payload, ConduitRuntime.JsonOptions));
+
+        var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 260);
+
+        var serviceBusMessage = new ServiceBusMessage(body)
+        {
+            Subject = envelope.Type,
+            ContentType = "application/json",
+            MessageId = Guid.NewGuid().ToString("N"),
+        };
+
+        // Send directly to the app queue — bypasses topic routing
+        await using var sender = this.client.CreateSender(appQueueName);
+        await sender.SendMessageAsync(serviceBusMessage, cancellationToken);
+    }
+
     // -----------------------------------------------------------------------
     // Trace context
     // -----------------------------------------------------------------------

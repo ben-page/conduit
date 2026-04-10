@@ -486,6 +486,43 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         await this.eventSender!.SendAsync(message);
     }
 
+    /// <inheritdoc />
+    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        if (this.session is null)
+        {
+            throw new InvalidOperationException(
+                "Transport has not been started. Ensure the host is running before redelivering messages.");
+        }
+
+        var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            envelope.Payload, ConduitRuntime.JsonOptions));
+
+        // Send directly to the app event queue — bypasses multicast address routing
+        var appEventQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 256);
+
+        using var message = new Message(body.ToArray())
+        {
+            Properties = new Properties
+            {
+                Subject = envelope.Type,
+                MessageId = Guid.NewGuid().ToString("N"),
+            },
+        };
+
+        var redeliverSender = new SenderLink(this.session, $"dlq-redeliver-{Guid.NewGuid():N}", appEventQueueName);
+        try
+        {
+            await redeliverSender.SendAsync(message);
+        }
+        finally
+        {
+            await redeliverSender.CloseAsync();
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Trace context
     // -----------------------------------------------------------------------

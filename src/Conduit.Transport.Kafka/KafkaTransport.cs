@@ -397,6 +397,39 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         await this.producer!.ProduceAsync(this.sharedTopicName, message, cancellationToken);
     }
 
+    /// <inheritdoc />
+    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+
+        if (this.producer is null || this.sharedTopicName is null)
+        {
+            throw new InvalidOperationException(
+                "Transport has not been started. Ensure the host is running before redelivering messages.");
+        }
+
+        // Kafka has no direct-to-consumer-group mechanism — produce to the main topic.
+        // All consumer groups see the message; inbox prevents duplicate processing by
+        // non-target services (recommended for Kafka DLQ replay).
+        var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            envelope.Payload, ConduitRuntime.JsonOptions));
+
+        var headers = new Headers
+        {
+            { "conduit-type", Encoding.UTF8.GetBytes(envelope.Type) },
+            { "conduit-message-id", Encoding.UTF8.GetBytes(Guid.NewGuid().ToString("N")) },
+        };
+
+        var message = new Message<string, byte[]>
+        {
+            Key = envelope.Type,
+            Value = body.ToArray(),
+            Headers = headers,
+        };
+
+        await this.producer.ProduceAsync(this.sharedTopicName, message, cancellationToken);
+    }
+
     // -----------------------------------------------------------------------
     // Trace context
     // -----------------------------------------------------------------------
