@@ -22,6 +22,14 @@ public sealed class RabbitMQOptions
     public ushort DefaultPrefetchCount { get; set; } = 10;
 
     /// <summary>
+    /// The endpoint name this transport is registered under in keyed DI.
+    /// Set automatically by <c>UseRabbitMQ()</c> from the <c>EndpointBuilder</c> context.
+    /// Used by dead letter queue capture to record the source endpoint and by replay to
+    /// resolve the correct transport.
+    /// </summary>
+    public string EndpointName { get; internal set; } = string.Empty;
+
+    /// <summary>
     /// Named receiver pools with separate consumer channels and prefetch settings.
     /// </summary>
     public List<ReceiverPoolOptions> Pools { get; } = [];

@@ -1,4 +1,3 @@
-using Conduit.Configuration;
 using Conduit.Durability.DeadLetterQueue;
 using Conduit.Middleware;
 using Conduit.Runtime;
@@ -13,7 +12,6 @@ namespace Conduit.Durability.Runtime.DeadLetterQueue;
 internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
 {
     private readonly IDeadLetterStore store;
-    private readonly ConduitOptions conduitOptions;
     private readonly ILogger<DeadLetterErrorInterceptor> logger;
 
     private static readonly Action<ILogger, string, Exception?> LogCaptureFailed =
@@ -24,17 +22,16 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
 
     public DeadLetterErrorInterceptor(
         IDeadLetterStore store,
-        ConduitOptions conduitOptions,
         ILogger<DeadLetterErrorInterceptor> logger)
     {
         this.store = store;
-        this.conduitOptions = conduitOptions;
         this.logger = logger;
     }
 
     public async Task<bool> TryCaptureAsync(
         string messageType,
         BinaryData body,
+        string sourceEndpoint,
         Exception exception,
         CancellationToken cancellationToken)
     {
@@ -43,8 +40,6 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
         try
         {
             var context = MessageContext.Current;
-            var sourceEndpoint = this.conduitOptions.ApplicationName ?? string.Empty;
-
             var entry = new DeadLetterEntry
             {
                 Id = Guid.NewGuid(),
