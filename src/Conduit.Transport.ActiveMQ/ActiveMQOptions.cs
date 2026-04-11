@@ -32,6 +32,14 @@ public sealed class ActiveMQOptions
     public int DefaultPrefetchCount { get; set; } = 10;
 
     /// <summary>
+    /// The endpoint name this transport is registered under in keyed DI.
+    /// Set automatically by <c>UseActiveMQ()</c> from the <c>EndpointBuilder</c> context.
+    /// Used by dead letter queue capture to record the source endpoint and by replay to
+    /// resolve the correct transport.
+    /// </summary>
+    public string EndpointName { get; internal set; } = string.Empty;
+
+    /// <summary>
     /// Named receiver pools with separate receiver links and prefetch settings.
     /// </summary>
     public List<ActiveMQReceiverPoolOptions> Pools { get; } = [];

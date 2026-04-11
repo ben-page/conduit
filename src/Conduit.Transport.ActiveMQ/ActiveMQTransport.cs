@@ -68,6 +68,9 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         this.options = options;
     }
 
+    /// <inheritdoc/>
+    protected override string EndpointName => this.options.EndpointName;
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
@@ -500,8 +503,11 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
-        // Send directly to the app event queue — bypasses multicast address routing
+        // Send directly to the app event queue using Artemis FQQN (address::queue).
+        // This targets the specific queue rather than broadcasting via the multicast address.
+        var multicastAddress = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, "events", 256);
         var appEventQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 256);
+        var fullyQualifiedQueueName = $"{multicastAddress}::{appEventQueueName}";
 
         using var message = new Message(body.ToArray())
         {
@@ -512,7 +518,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             },
         };
 
-        var redeliverSender = new SenderLink(this.session, $"dlq-redeliver-{Guid.NewGuid():N}", appEventQueueName);
+        var redeliverSender = new SenderLink(this.session, $"dlq-redeliver-{Guid.NewGuid():N}", fullyQualifiedQueueName);
         try
         {
             await redeliverSender.SendAsync(message);

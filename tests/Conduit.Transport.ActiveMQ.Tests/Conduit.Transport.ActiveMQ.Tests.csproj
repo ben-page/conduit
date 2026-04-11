@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Durability\Conduit.Durability.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Transport.ActiveMQ\Conduit.Transport.ActiveMQ.csproj" />
     <ProjectReference Include="..\Conduit.TestUtils\Conduit.TestUtils.csproj" />
   </ItemGroup>
