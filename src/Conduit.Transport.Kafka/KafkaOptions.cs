@@ -23,6 +23,14 @@ public sealed class KafkaOptions
     public int DefaultMaxDegreeOfParallelism { get; set; } = 10;
 
     /// <summary>
+    /// The endpoint name this transport is registered under in keyed DI.
+    /// Set automatically by <c>UseKafka()</c> from the <c>EndpointBuilder</c> context.
+    /// Used by dead letter queue capture to record the source endpoint and by replay to
+    /// resolve the correct transport.
+    /// </summary>
+    public string EndpointName { get; internal set; } = string.Empty;
+
+    /// <summary>
     /// Named consumer pools with separate consumer groups and concurrency settings.
     /// </summary>
     public List<KafkaReceiverPoolOptions> Pools { get; } = [];

@@ -27,7 +27,11 @@ public static class EndpointBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(bootstrapServers);
 
-        var options = new KafkaOptions { BootstrapServers = bootstrapServers };
+        var options = new KafkaOptions
+        {
+            BootstrapServers = bootstrapServers,
+            EndpointName = builder.EndpointName,
+        };
         configure?.Invoke(options);
 
         // Register options and transport as singletons
