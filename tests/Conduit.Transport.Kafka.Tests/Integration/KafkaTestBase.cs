@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Conduit.Durability;
 using Conduit.Generated;
 using Conduit.TestUtils;
 using Conduit.Transport.Kafka;
@@ -150,4 +151,49 @@ public abstract class KafkaTestBase
 
     protected static string UniqueAppName(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}"[..15];
+
+    /// <summary>
+    /// Creates a host with the dead letter queue configured alongside Kafka.
+    /// </summary>
+    protected static async Task<TestHost> CreateHostWithDeadLettersAsync(
+        string applicationName,
+        string dlqDatabasePath,
+        string? topologyPrefix = null,
+        Action<ConduitRegistrationOverrides>? configureHandling = null)
+    {
+        var connectionString = $"Data Source={dlqDatabasePath}";
+
+        return await TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<SpyLog>();
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.ApplicationName = applicationName;
+                conduit.TopologyMode = TopologyMode.Test;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
+
+                conduit.AddEndpoint("self", endpoint =>
+                    endpoint.UseKafka(BootstrapServers!));
+
+                conduit.AddDurability(durability =>
+                {
+                    durability.UseSqlite(connectionString);
+                    durability.AddDeadLetterQueue();
+                });
+            });
+
+            if (configureHandling is not null)
+            {
+                builder.Services.ConfigureConduitRegistrations(configureHandling);
+            }
+        });
+    }
+
+    /// <summary>Returns a unique temp file path for a DLQ test database.</summary>
+    protected static string CreateDeadLetterDatabasePath()
+        => Path.Combine(Path.GetTempPath(), $"conduit-dlq-test-{Guid.NewGuid():N}.db");
 }
