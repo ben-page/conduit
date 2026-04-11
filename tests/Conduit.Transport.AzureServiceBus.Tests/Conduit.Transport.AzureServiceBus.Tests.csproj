@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Durability\Conduit.Durability.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Transport.AzureServiceBus\Conduit.Transport.AzureServiceBus.csproj" />
     <ProjectReference Include="..\Conduit.TestUtils\Conduit.TestUtils.csproj" />
     <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />

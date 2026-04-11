@@ -28,6 +28,14 @@ public sealed class AzureServiceBusOptions
     public int DefaultConcurrency { get; set; } = 10;
 
     /// <summary>
+    /// The endpoint name this transport is registered under in keyed DI.
+    /// Set automatically by <c>UseAzureServiceBus()</c> from the <c>EndpointBuilder</c> context.
+    /// Used by dead letter queue capture to record the source endpoint and by replay to
+    /// resolve the correct transport.
+    /// </summary>
+    public string EndpointName { get; internal set; } = string.Empty;
+
+    /// <summary>
     /// Named receiver pools for concurrency isolation.
     /// Each pool gets its own queue and <c>ServiceBusProcessor</c>.
     /// </summary>
