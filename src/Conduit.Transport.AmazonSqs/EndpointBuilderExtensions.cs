@@ -26,7 +26,7 @@ public static class EndpointBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
-        var options = new AmazonSqsOptions();
+        var options = new AmazonSqsOptions { EndpointName = builder.EndpointName };
         configure(options);
 
         // Register options

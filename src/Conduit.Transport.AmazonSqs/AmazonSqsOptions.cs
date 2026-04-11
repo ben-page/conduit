@@ -54,6 +54,14 @@ public sealed class AmazonSqsOptions
     public bool RawMessageDelivery { get; set; } = true;
 
     /// <summary>
+    /// The endpoint name this transport is registered under in keyed DI.
+    /// Set automatically by <c>UseAmazonSqs()</c> from the <c>EndpointBuilder</c> context.
+    /// Used by dead letter queue capture to record the source endpoint and by replay to
+    /// resolve the correct transport.
+    /// </summary>
+    public string EndpointName { get; internal set; } = string.Empty;
+
+    /// <summary>
     /// Named receiver pools for concurrency isolation.
     /// Each pool gets its own SQS queue and polling loop.
     /// </summary>
