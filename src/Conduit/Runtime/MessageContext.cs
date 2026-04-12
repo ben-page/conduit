@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Conduit.Runtime;
 
 /// <summary>
@@ -10,10 +12,19 @@ public sealed class MessageContext
 {
     private static readonly AsyncLocal<MessageContext?> CurrentContext = new();
 
+    private static readonly IReadOnlyDictionary<string, object?> EmptyProperties =
+        new Dictionary<string, object?>();
+
     /// <summary>
     /// The current message context, or null if no dispatch is active.
     /// </summary>
     public static MessageContext? Current => CurrentContext.Value;
+
+    /// <summary>
+    /// The registered observer that receives observation records during dispatch.
+    /// Set during host startup by the audit infrastructure.
+    /// </summary>
+    internal static IConduitObserver? Observer { get; set; }
 
     /// <summary>Unique ID for this specific message dispatch.</summary>
     public string MessageId { get; }
@@ -24,11 +35,25 @@ public sealed class MessageContext
     /// <summary>Shared across all messages in a causal chain — the MessageId of the first message.</summary>
     public string ConversationId { get; }
 
-    private MessageContext(string messageId, string? causationId, string conversationId)
+    /// <summary>
+    /// User-defined key/value pairs attached to this dispatch via <see cref="DispatchOptions"/>.
+    /// Empty when no options were provided.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?> Properties { get; }
+
+    /// <summary>
+    /// The raw JSON payload of the dispatched message. Set by the generated mediator
+    /// after serialization, consumed by the audit observer for storage.
+    /// </summary>
+    internal JsonElement? Payload { get; private set; }
+
+    private MessageContext(string messageId, string? causationId, string conversationId,
+        IReadOnlyDictionary<string, object?> properties)
     {
         this.MessageId = messageId;
         this.CausationId = causationId;
         this.ConversationId = conversationId;
+        this.Properties = properties;
     }
 
     /// <summary>
@@ -36,7 +61,7 @@ public sealed class MessageContext
     /// inherits <see cref="ConversationId"/> and sets <see cref="CausationId"/>
     /// to the current <see cref="MessageId"/>. Called by the generated mediator.
     /// </summary>
-    public static MessageContext StartDispatch()
+    public static MessageContext StartDispatch(DispatchOptions? options = null)
     {
         var parent = Current;
         var messageId = Guid.NewGuid().ToString("N");
@@ -44,7 +69,10 @@ public sealed class MessageContext
         var context = new MessageContext(
             messageId: messageId,
             causationId: parent?.MessageId,
-            conversationId: parent?.ConversationId ?? messageId);
+            conversationId: parent?.ConversationId ?? messageId,
+            properties: options?.Properties is { Count: > 0 }
+                ? new Dictionary<string, object?>(options.Properties)
+                : EmptyProperties);
 
         CurrentContext.Value = context;
         return context;
@@ -66,10 +94,40 @@ public sealed class MessageContext
         var context = new MessageContext(
             messageId: messageId,
             causationId: causationId,
-            conversationId: conversationId);
+            conversationId: conversationId,
+            properties: EmptyProperties);
 
         CurrentContext.Value = context;
         return context;
+    }
+
+    /// <summary>
+    /// Emits an observation record to the registered observer, if any.
+    /// No-ops when no observer is registered or no current context exists.
+    /// </summary>
+    public static void Observe(MessageObservation observation)
+    {
+        if (Observer is null)
+        {
+            return;
+        }
+
+        var context = Current;
+        if (context is null)
+        {
+            return;
+        }
+
+        Observer.OnObservation(observation, context);
+    }
+
+    /// <summary>
+    /// Sets the raw JSON payload on this context for audit capture.
+    /// Called by the generated mediator after serializing the message.
+    /// </summary>
+    internal void SetPayload(JsonElement payload)
+    {
+        this.Payload = payload;
     }
 
     /// <summary>

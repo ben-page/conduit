@@ -1,0 +1,129 @@
+using AwesomeAssertions;
+using Conduit.Runtime;
+using Conduit.TestUtils;
+
+namespace Conduit.Tests.Unit;
+
+[TestClass]
+[DoNotParallelize]
+public sealed class MessageContextObserveShould
+{
+    [TestCleanup]
+    public void Cleanup()
+    {
+        MessageContext.Observer = null;
+        MessageContext.RestoreContext(null);
+    }
+
+    [TestMethod]
+    public void NoOpWhenNoObserverRegistered()
+    {
+        // Arrange
+        MessageContext.Observer = null;
+        MessageContext.StartDispatch();
+
+        // Act & Assert — should not throw
+        MessageContext.Observe(new DispatchInvoked(DateTimeOffset.UtcNow));
+    }
+
+    [TestMethod]
+    public void NoOpWhenNoCurrentContext()
+    {
+        // Arrange
+        var collector = new ObservationCollector();
+        MessageContext.Observer = collector;
+        MessageContext.RestoreContext(null);
+
+        // Act
+        MessageContext.Observe(new DispatchInvoked(DateTimeOffset.UtcNow));
+
+        // Assert
+        collector.Collected.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public void ForwardObservationToRegisteredObserver()
+    {
+        // Arrange
+        var collector = new ObservationCollector();
+        MessageContext.Observer = collector;
+        MessageContext.StartDispatch();
+        var observation = new DispatchInvoked(DateTimeOffset.UtcNow);
+
+        // Act
+        MessageContext.Observe(observation);
+
+        // Assert
+        collector.Collected.Should().HaveCount(1);
+        collector.Collected[0].Observation.Should().Be(observation);
+    }
+
+    [TestMethod]
+    public void PassCurrentContextToObserver()
+    {
+        // Arrange
+        var collector = new ObservationCollector();
+        MessageContext.Observer = collector;
+        var context = MessageContext.StartDispatch();
+
+        // Act
+        MessageContext.Observe(new DispatchInvoked(DateTimeOffset.UtcNow));
+
+        // Assert
+        collector.Collected[0].MessageId.Should().Be(context.MessageId);
+    }
+
+    [TestMethod]
+    public void FreezePropertiesFromDispatchOptions()
+    {
+        // Arrange
+        var options = new DispatchOptions().Tag("partner", "ACME");
+
+        // Act
+        var context = MessageContext.StartDispatch(options);
+
+        // Assert
+        context.Properties.Should().ContainKey("partner").WhoseValue.Should().Be("ACME");
+    }
+
+    [TestMethod]
+    public void HaveEmptyPropertiesWhenNoOptions()
+    {
+        // Arrange & Act
+        var context = MessageContext.StartDispatch();
+
+        // Assert
+        context.Properties.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public void NotLeakPropertiesAcrossDispatches()
+    {
+        // Arrange
+        var options1 = new DispatchOptions().Tag("key", "value1");
+        var context1 = MessageContext.StartDispatch(options1);
+        MessageContext.RestoreContext(null);
+
+        // Act
+        var context2 = MessageContext.StartDispatch();
+
+        // Assert
+        context1.Properties.Should().ContainKey("key");
+        context2.Properties.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public void SetAndReadPayload()
+    {
+        // Arrange
+        var context = MessageContext.StartDispatch();
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(new { id = 1 });
+
+        // Act
+        context.SetPayload(payload);
+
+        // Assert
+        context.Payload.Should().NotBeNull();
+        context.Payload!.Value.GetProperty("id").GetInt32().Should().Be(1);
+    }
+}
