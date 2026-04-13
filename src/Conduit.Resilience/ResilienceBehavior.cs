@@ -68,7 +68,25 @@ public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TR
             try
             {
                 EnrichContext(context);
-                return await typedPipeline!.ExecuteAsync(async _ => await next(), context);
+                var attempt = 0;
+                return await typedPipeline!.ExecuteAsync(async _ =>
+                {
+                    attempt++;
+                    try
+                    {
+                        return await next();
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageContext.Observe(new RetryAttempted(
+                            DateTimeOffset.UtcNow,
+                            attempt,
+                            ex.Message,
+                            ex.GetType().Name,
+                            null));
+                        throw;
+                    }
+                }, context);
             }
             finally
             {
@@ -82,7 +100,25 @@ public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TR
             try
             {
                 EnrichContext(context);
-                return await nonGenericPipeline!.ExecuteAsync(async _ => await next(), context);
+                var attempt = 0;
+                return await nonGenericPipeline!.ExecuteAsync(async _ =>
+                {
+                    attempt++;
+                    try
+                    {
+                        return await next();
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageContext.Observe(new RetryAttempted(
+                            DateTimeOffset.UtcNow,
+                            attempt,
+                            ex.Message,
+                            ex.GetType().Name,
+                            null));
+                        throw;
+                    }
+                }, context);
             }
             finally
             {
