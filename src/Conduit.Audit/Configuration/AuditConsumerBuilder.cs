@@ -33,8 +33,8 @@ public sealed class AuditConsumerBuilder
             _ => new AuditConnectionStringFactory<SqliteConnection>(connectionString));
         this.Services.AddSingleton<IAuditStore, DbAuditStore>();
         this.Services.AddTransient<IEventListener<AuditBatch>, LocalAuditListener>();
-        this.Services.AddHostedService<AuditPurgeService>();
         this.Services.AddHostedService<AuditTableInitializer>();
+        this.Services.AddHostedService<AuditPurgeService>();
 
         return this;
     }

@@ -12,6 +12,8 @@ namespace Conduit.Audit.Runtime;
 /// </summary>
 public sealed class AuditObserver : IConduitObserver
 {
+    private static readonly string AuditBatchTypeName = typeof(AuditBatch).FullName!;
+
     private readonly ConcurrentDictionary<string, DispatchGroup> activeGroups = new();
     private readonly ChannelWriter<DispatchAuditRecord> channel;
     private readonly string serviceName;
@@ -31,6 +33,22 @@ public sealed class AuditObserver : IConduitObserver
     public void OnObservation(MessageObservation observation, MessageContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+
+        // Skip observations for AuditBatch events to prevent infinite feedback loops.
+        // Publishing an AuditBatch generates its own observations, which would create
+        // another audit record, leading to another AuditBatch, ad infinitum.
+        if (observation is DispatchInvoked invoked
+            && invoked.MessageType == AuditBatchTypeName)
+        {
+            return;
+        }
+
+        // Also skip non-initial observations for message IDs we never started tracking
+        // (because we skipped their DispatchInvoked above).
+        if (observation is not DispatchInvoked && !this.activeGroups.ContainsKey(context.MessageId))
+        {
+            return;
+        }
 
         var group = this.activeGroups.GetOrAdd(
             context.MessageId,

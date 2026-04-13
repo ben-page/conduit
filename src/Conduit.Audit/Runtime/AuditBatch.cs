@@ -8,7 +8,15 @@ namespace Conduit.Audit.Runtime;
 /// Contains records from a single service host, grouped by the <see cref="AuditBatchPublisher"/>
 /// batching window.
 /// </summary>
-[FireAndForget]
+/// <remarks>
+/// Marked <c>[DoNotAudit]</c> to prevent the audit infrastructure from auditing its own
+/// internal events, which would create an infinite feedback loop (audit batch publishes
+/// generate observations that create more audit batches).
+/// Not marked <c>[FireAndForget]</c> because the publisher already runs in a background
+/// service — running listeners inline avoids scope lifetime issues when the mediator
+/// is resolved from a scoped provider that is disposed after <c>PublishAsync</c> returns.
+/// </remarks>
+[DoNotAudit]
 public sealed record AuditBatch(
     string SourceService,
     string SourceHost,
