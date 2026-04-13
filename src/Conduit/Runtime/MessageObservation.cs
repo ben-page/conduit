@@ -10,7 +10,10 @@ public abstract record MessageObservation(DateTimeOffset Timestamp);
 /// Emitted when a dispatch operation is invoked.
 /// </summary>
 /// <param name="Timestamp">When the dispatch was invoked.</param>
-public sealed record DispatchInvoked(DateTimeOffset Timestamp)
+/// <param name="MessageType">The full type name of the dispatched message.</param>
+/// <param name="MessageKind">The kind of message: Command, Query, or Event.</param>
+public sealed record DispatchInvoked(DateTimeOffset Timestamp,
+    string MessageType, string MessageKind)
     : MessageObservation(Timestamp);
 
 /// <summary>

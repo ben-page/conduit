@@ -13,10 +13,12 @@ public sealed class MessageObservationShould
         var timestamp = DateTimeOffset.UtcNow;
 
         // Act
-        var observation = new DispatchInvoked(timestamp);
+        var observation = new DispatchInvoked(timestamp, "Test.Commands.DoThing", "Command");
 
         // Assert
         observation.Timestamp.Should().Be(timestamp);
+        observation.MessageType.Should().Be("Test.Commands.DoThing");
+        observation.MessageKind.Should().Be("Command");
     }
 
     [TestMethod]

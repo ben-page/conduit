@@ -581,7 +581,7 @@ public static class MediatorEmitter
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
 
-        EmitWireContextStart(sb);
+        EmitWireContextStart(sb, "type", "Request");
 
         sb.AppendLine("            // Forward to transport if the type matches a route (handles types not known locally)");
         sb.AppendLine("            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
@@ -647,7 +647,7 @@ public static class MediatorEmitter
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
 
-        EmitWireContextStart(sb);
+        EmitWireContextStart(sb, "type", "Event");
 
         sb.AppendLine("            IEvent @event = type switch");
         sb.AppendLine("            {");
@@ -698,7 +698,7 @@ public static class MediatorEmitter
             }
         }
 
-        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow));");
+        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow, {messageTypeExpr}, \"{messageKind}\"));");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
 
         sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
@@ -735,9 +735,9 @@ public static class MediatorEmitter
     /// Emits the context start block for wire dispatch methods (no DispatchOptions, no payload capture).
     /// Wire dispatch runs within the transport's context so uses simplified observation setup.
     /// </summary>
-    private static void EmitWireContextStart(StringBuilder sb)
+    private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
     {
-        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow));");
+        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow, {messageTypeExpr}, \"{messageKind}\"));");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
