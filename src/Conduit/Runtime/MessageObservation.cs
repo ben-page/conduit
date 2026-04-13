@@ -4,6 +4,23 @@ namespace Conduit.Runtime;
 /// Base type for all observation records emitted by the Conduit dispatch pipeline.
 /// </summary>
 /// <param name="Timestamp">When the observation occurred.</param>
+[System.Text.Json.Serialization.JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(DispatchInvoked), "DispatchInvoked")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(DispatchCompleted), "DispatchCompleted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(DispatchFailed), "DispatchFailed")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(HandlerStarted), "HandlerStarted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(HandlerCompleted), "HandlerCompleted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(HandlerFailed), "HandlerFailed")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(RetryAttempted), "RetryAttempted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(TransportSendStarted), "TransportSendStarted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(TransportSendCompleted), "TransportSendCompleted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(TransportSendFailed), "TransportSendFailed")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(OutboxWritten), "OutboxWritten")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(OutboxSent), "OutboxSent")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(OutboxRetryExhausted), "OutboxRetryExhausted")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(InboxDuplicate), "InboxDuplicate")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(DeadLettered), "DeadLettered")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(CustomObservation), "CustomObservation")]
 public abstract record MessageObservation(DateTimeOffset Timestamp);
 
 /// <summary>
