@@ -22,7 +22,7 @@ public interface IAuditStore
     /// <summary>
     /// Deletes all audit records with a timestamp before the given cutoff.
     /// </summary>
-    public Task PurgeExpiredAsync(DateTimeOffset cutoff, CancellationToken cancellationToken);
+    public Task PurgeExpiredAsync(DateTime cutoff, CancellationToken cancellationToken);
 
     /// <summary>
     /// Creates the audit table if it does not already exist.

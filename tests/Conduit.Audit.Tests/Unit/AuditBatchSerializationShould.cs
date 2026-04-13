@@ -12,7 +12,7 @@ public sealed class AuditBatchSerializationShould
     public void SurviveJsonRoundTrip()
     {
         // Arrange
-        var now = DateTimeOffset.UtcNow;
+        var now = DateTime.UtcNow;
         var record = new DispatchAuditRecord
         {
             MessageId = "msg-1",
@@ -26,21 +26,21 @@ public sealed class AuditBatchSerializationShould
             Properties = new Dictionary<string, object?> { ["partner"] = "ACME" },
             Observations =
             [
-                new DispatchInvoked(now, "Orders.CreateOrder", "Command"),
-                new HandlerStarted(now, "CreateOrderHandler"),
-                new RetryAttempted(now, 1, "timeout", "TimeoutException", 200.0),
-                new HandlerCompleted(now, 450.0),
-                new TransportSendStarted(now, "rabbitmq", "inventory"),
-                new TransportSendCompleted(now, 23.0),
-                new DispatchCompleted(now, 500.0),
-                new DispatchFailed(now, 100.0, "boom", "InvalidOperationException"),
-                new HandlerFailed(now, "handler boom", "NullReferenceException"),
-                new TransportSendFailed(now, "send failed", "TimeoutException"),
-                new OutboxWritten(now, 3),
-                new OutboxSent(now, 42),
-                new InboxDuplicate(now),
-                new DeadLettered(now, "max retries", "orders-queue"),
-                new CustomObservation(now, "my.metric", "custom-data"),
+                new DispatchInvoked("Orders.CreateOrder", "Command"),
+                new HandlerStarted("CreateOrderHandler"),
+                new RetryAttempted(1, "timeout", "TimeoutException", 200.0),
+                new HandlerCompleted(450.0),
+                new TransportSendStarted("rabbitmq", "inventory"),
+                new TransportSendCompleted(23.0),
+                new DispatchCompleted(500.0),
+                new DispatchFailed(100.0, "boom", "InvalidOperationException"),
+                new HandlerFailed("handler boom", "NullReferenceException"),
+                new TransportSendFailed("send failed", "TimeoutException"),
+                new OutboxWritten(3),
+                new OutboxSent(42),
+                new InboxDuplicate(),
+                new DeadLettered("max retries", "orders-queue"),
+                new CustomObservation("my.metric", "custom-data"),
             ],
         };
 

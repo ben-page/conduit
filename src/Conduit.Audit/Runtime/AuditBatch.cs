@@ -20,5 +20,5 @@ namespace Conduit.Audit.Runtime;
 public sealed record AuditBatch(
     string SourceService,
     string SourceHost,
-    DateTimeOffset BatchTimestamp,
+    DateTime BatchTimestamp,
     IReadOnlyList<DispatchAuditRecord> Records) : IEvent;

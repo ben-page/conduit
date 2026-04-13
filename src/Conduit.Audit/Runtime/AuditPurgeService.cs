@@ -18,7 +18,7 @@ public sealed class AuditPurgeService(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var cutoff = DateTimeOffset.UtcNow - options.Value.RetentionPeriod;
+            var cutoff = DateTime.UtcNow - options.Value.RetentionPeriod;
             await store.PurgeExpiredAsync(cutoff, stoppingToken);
             await Task.Delay(options.Value.PurgeInterval, stoppingToken);
         }

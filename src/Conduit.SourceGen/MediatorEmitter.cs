@@ -499,19 +499,19 @@ public static class MediatorEmitter
             sb.AppendLine($"                    {{");
             // Per-listener observations: HandlerStarted
             sb.AppendLine($"                        var __listenerType = listener.GetType().FullName ?? listener.GetType().Name;");
-            sb.AppendLine($"                        {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerStarted}(DateTimeOffset.UtcNow, __listenerType));");
+            sb.AppendLine($"                        {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerStarted}(__listenerType));");
             sb.AppendLine($"                        var __listenerSw = Stopwatch.GetTimestamp();");
             sb.AppendLine($"                        try");
             sb.AppendLine($"                        {{");
             sb.AppendLine($"                            await listener.HandleAsync(e, cancellationToken);");
             // Per-listener observations: HandlerCompleted
             sb.AppendLine($"                            var __listenerElapsed = Stopwatch.GetElapsedTime(__listenerSw).TotalMilliseconds;");
-            sb.AppendLine($"                            {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerCompleted}(DateTimeOffset.UtcNow, __listenerElapsed));");
+            sb.AppendLine($"                            {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerCompleted}(__listenerElapsed));");
             sb.AppendLine($"                        }}");
             sb.AppendLine($"                        catch (Exception ex)");
             sb.AppendLine($"                        {{");
             // Per-listener observations: HandlerFailed
-            sb.AppendLine($"                            {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerFailed}(DateTimeOffset.UtcNow, ex.Message, ex.GetType().FullName ?? ex.GetType().Name));");
+            sb.AppendLine($"                            {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerFailed}(ex.Message, ex.GetType().FullName ?? ex.GetType().Name));");
             sb.AppendLine($"                            ConduitRuntime.LogListenerFailure(logger, listener.GetType().Name, ex);");
             sb.AppendLine($"                            exceptions.Add(ex);");
             sb.AppendLine($"                        }}");
@@ -698,7 +698,7 @@ public static class MediatorEmitter
             }
         }
 
-        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow, {messageTypeExpr}, \"{messageKind}\"));");
+        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
 
         sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
@@ -712,7 +712,7 @@ public static class MediatorEmitter
         sb.AppendLine("        catch (Exception __ex)");
         sb.AppendLine("        {");
         sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(DateTimeOffset.UtcNow, __failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
+        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(__failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
         sb.AppendLine("            throw;");
         sb.AppendLine("        }");
         sb.AppendLine("        finally");
@@ -728,7 +728,7 @@ public static class MediatorEmitter
     private static void EmitDispatchCompleted(StringBuilder sb, string indent)
     {
         sb.AppendLine($"{indent}{{ var __elapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"{indent}{EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchCompleted}(DateTimeOffset.UtcNow, __elapsed)); }}");
+        sb.AppendLine($"{indent}{EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchCompleted}(__elapsed)); }}");
     }
 
     /// <summary>
@@ -737,7 +737,7 @@ public static class MediatorEmitter
     /// </summary>
     private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
     {
-        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow, {messageTypeExpr}, \"{messageKind}\"));");
+        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
@@ -753,7 +753,7 @@ public static class MediatorEmitter
         sb.AppendLine("        catch (Exception __ex)");
         sb.AppendLine("        {");
         sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(DateTimeOffset.UtcNow, __failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
+        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(__failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
         sb.AppendLine("            throw;");
         sb.AppendLine("        }");
     }

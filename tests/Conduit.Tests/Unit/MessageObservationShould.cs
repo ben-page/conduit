@@ -7,16 +7,13 @@ namespace Conduit.Tests.Unit;
 public sealed class MessageObservationShould
 {
     [TestMethod]
-    public void CreateDispatchInvokedWithTimestamp()
+    public void CreateDispatchInvokedWithAutoTimestamp()
     {
-        // Arrange
-        var timestamp = DateTimeOffset.UtcNow;
-
-        // Act
-        var observation = new DispatchInvoked(timestamp, "Test.Commands.DoThing", "Command");
+        // Arrange & Act
+        var observation = new DispatchInvoked("Test.Commands.DoThing", "Command");
 
         // Assert
-        observation.Timestamp.Should().Be(timestamp);
+        observation.Timestamp.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(1));
         observation.MessageType.Should().Be("Test.Commands.DoThing");
         observation.MessageKind.Should().Be("Command");
     }
@@ -24,25 +21,19 @@ public sealed class MessageObservationShould
     [TestMethod]
     public void CreateDispatchCompletedWithDuration()
     {
-        // Arrange
-        var timestamp = DateTimeOffset.UtcNow;
-
-        // Act
-        var observation = new DispatchCompleted(timestamp, 142.5);
+        // Arrange & Act
+        var observation = new DispatchCompleted(142.5);
 
         // Assert
-        observation.Timestamp.Should().Be(timestamp);
+        observation.Timestamp.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(1));
         observation.DurationMs.Should().Be(142.5);
     }
 
     [TestMethod]
     public void CreateDispatchFailedWithErrorDetails()
     {
-        // Arrange
-        var timestamp = DateTimeOffset.UtcNow;
-
-        // Act
-        var observation = new DispatchFailed(timestamp, 55.0, "null reference", "NullReferenceException");
+        // Arrange & Act
+        var observation = new DispatchFailed(55.0, "null reference", "NullReferenceException");
 
         // Assert
         observation.ErrorMessage.Should().Be("null reference");
@@ -53,11 +44,8 @@ public sealed class MessageObservationShould
     [TestMethod]
     public void CreateRetryAttemptedWithAllFields()
     {
-        // Arrange
-        var timestamp = DateTimeOffset.UtcNow;
-
-        // Act
-        var observation = new RetryAttempted(timestamp, 2, "timeout", "TimeoutException", 800.0);
+        // Arrange & Act
+        var observation = new RetryAttempted(2, "timeout", "TimeoutException", 800.0);
 
         // Assert
         observation.Attempt.Should().Be(2);
@@ -70,11 +58,10 @@ public sealed class MessageObservationShould
     public void CreateCustomObservationWithData()
     {
         // Arrange
-        var timestamp = DateTimeOffset.UtcNow;
         var data = new { attempt = 1, status = 503 };
 
         // Act
-        var observation = new CustomObservation(timestamp, "as2.attempt", data);
+        var observation = new CustomObservation("as2.attempt", data);
 
         // Assert
         observation.Name.Should().Be("as2.attempt");
@@ -85,7 +72,7 @@ public sealed class MessageObservationShould
     public void InheritFromMessageObservationBaseType()
     {
         // Arrange & Act
-        MessageObservation observation = new HandlerStarted(DateTimeOffset.UtcNow, "MyHandler");
+        MessageObservation observation = new HandlerStarted("MyHandler");
 
         // Assert
         observation.Should().BeOfType<HandlerStarted>();

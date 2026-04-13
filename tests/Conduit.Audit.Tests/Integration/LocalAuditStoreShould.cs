@@ -24,7 +24,7 @@ public sealed class LocalAuditStoreShould
 
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
-        var now = DateTimeOffset.UtcNow;
+        var now = DateTime.UtcNow;
         var record = new DispatchAuditRecord
         {
             MessageId = "msg-001",
@@ -38,10 +38,10 @@ public sealed class LocalAuditStoreShould
             Timestamp = now,
             Observations =
             [
-                new DispatchInvoked(now, "Orders.Commands.PlaceOrder", "Command"),
-                new HandlerStarted(now.AddMilliseconds(1), "PlaceOrderHandler"),
-                new HandlerCompleted(now.AddMilliseconds(50), 49.0),
-                new DispatchCompleted(now.AddMilliseconds(55), 55.0),
+                new DispatchInvoked("Orders.Commands.PlaceOrder", "Command"),
+                new HandlerStarted("PlaceOrderHandler"),
+                new HandlerCompleted(49.0),
+                new DispatchCompleted(55.0),
             ],
         };
 
@@ -93,8 +93,8 @@ public sealed class LocalAuditStoreShould
 
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
-        var oldTimestamp = DateTimeOffset.UtcNow.AddDays(-10);
-        var recentTimestamp = DateTimeOffset.UtcNow;
+        var oldTimestamp = DateTime.UtcNow.AddDays(-10);
+        var recentTimestamp = DateTime.UtcNow;
 
         var oldRecord = new DispatchAuditRecord
         {
@@ -106,8 +106,8 @@ public sealed class LocalAuditStoreShould
             Timestamp = oldTimestamp,
             Observations =
             [
-                new DispatchInvoked(oldTimestamp, "Test.Commands.OldCommand", "Command"),
-                new DispatchCompleted(oldTimestamp.AddMilliseconds(10), 10.0),
+                new DispatchInvoked("Test.Commands.OldCommand", "Command"),
+                new DispatchCompleted(10.0),
             ],
         };
 
@@ -121,15 +121,15 @@ public sealed class LocalAuditStoreShould
             Timestamp = recentTimestamp,
             Observations =
             [
-                new DispatchInvoked(recentTimestamp, "Test.Commands.RecentCommand", "Command"),
-                new DispatchCompleted(recentTimestamp.AddMilliseconds(5), 5.0),
+                new DispatchInvoked("Test.Commands.RecentCommand", "Command"),
+                new DispatchCompleted(5.0),
             ],
         };
 
         await store.SaveBatchAsync([oldRecord, recentRecord], CancellationToken.None);
 
         // Act
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-1);
+        var cutoff = DateTime.UtcNow.AddDays(-1);
         await store.PurgeExpiredAsync(cutoff, CancellationToken.None);
 
         // Assert

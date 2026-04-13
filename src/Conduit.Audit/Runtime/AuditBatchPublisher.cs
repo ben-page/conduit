@@ -32,7 +32,7 @@ public sealed class AuditBatchPublisher(
             await mediator.PublishAsync(new AuditBatch(
                 SourceService: options.Value.ServiceName ?? "unknown",
                 SourceHost: Environment.MachineName,
-                BatchTimestamp: DateTimeOffset.UtcNow,
+                BatchTimestamp: DateTime.UtcNow,
                 Records: batch), stoppingToken);
         }
     }
