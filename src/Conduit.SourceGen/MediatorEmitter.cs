@@ -70,11 +70,23 @@ public static class MediatorEmitter
         foreach (var cmd in commands)
         {
             var hasHandler = handledTypes.Contains(cmd.FullTypeName);
+
+            // Thin delegating overload (no configure parameter)
             sb.AppendLine($"    public async Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
+            sb.AppendLine($"        => await ExecuteAsync(command, null, cancellationToken);");
+            sb.AppendLine();
+
+            // Full implementation with DispatchOptions
+            sb.AppendLine($"    public async Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
+            sb.AppendLine($"        {cmd.FullTypeName} command,");
+            sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
+            sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command");
+            EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command",
+                emitPayloadCapture: true, requestVarName: "command",
+                requestTypeName: cmd.FullTypeName, isDoNotAudit: cmd.IsDoNotAudit);
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
@@ -85,6 +97,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var result = await transport.SendRequestAsync(");
             sb.AppendLine($"                    new DispatchEnvelope(\"{cmd.FullTypeName}\", payload), cancellationToken);");
+            EmitDispatchCompleted(sb, "                ");
             sb.AppendLine($"                return result is JsonElement je");
             sb.AppendLine($"                    ? JsonSerializer.Deserialize<{cmd.ResultFullTypeName}>(je, ConduitRuntime.JsonOptions)!");
             sb.AppendLine($"                    : ({cmd.ResultFullTypeName})result!;");
@@ -94,7 +107,9 @@ public static class MediatorEmitter
             {
                 sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
                 sb.AppendLine($"            __activity?.SetTag(\"conduit.dispatch\", \"local\");");
-                sb.AppendLine($"            return await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+                sb.AppendLine($"            var __handlerResult = await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+                EmitDispatchCompleted(sb, "            ");
+                sb.AppendLine($"            return __handlerResult;");
             }
             else
             {
@@ -110,11 +125,23 @@ public static class MediatorEmitter
         foreach (var cmd in voidCommands)
         {
             var hasHandler = handledTypes.Contains(cmd.FullTypeName);
+
+            // Thin delegating overload (no configure parameter)
             sb.AppendLine($"    public async Task ExecuteAsync(");
             sb.AppendLine($"        {cmd.FullTypeName} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
+            sb.AppendLine($"        => await ExecuteAsync(command, null, cancellationToken);");
+            sb.AppendLine();
+
+            // Full implementation with DispatchOptions
+            sb.AppendLine($"    public async Task ExecuteAsync(");
+            sb.AppendLine($"        {cmd.FullTypeName} command,");
+            sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
+            sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command");
+            EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command",
+                emitPayloadCapture: true, requestVarName: "command",
+                requestTypeName: cmd.FullTypeName, isDoNotAudit: cmd.IsDoNotAudit);
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
@@ -123,11 +150,12 @@ public static class MediatorEmitter
 
             if (cmd.IsFireAndForget)
             {
-                // F&F commands can be intercepted by the outbox — no reply expected
+                // F&F commands can be intercepted by the outbox -- no reply expected
                 sb.AppendLine($"                var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
                 sb.AppendLine("                if (outboundInterceptor != null)");
                 sb.AppendLine("                {");
                 sb.AppendLine("                    outboundInterceptor.Intercept(envelope);");
+                EmitDispatchCompleted(sb, "                    ");
                 sb.AppendLine("                    return;");
                 sb.AppendLine("                }");
                 sb.AppendLine();
@@ -140,7 +168,7 @@ public static class MediatorEmitter
 
             if (cmd.IsFireAndForget)
             {
-                // F&F commands use the event path — no reply expected
+                // F&F commands use the event path -- no reply expected
                 sb.AppendLine($"                await transport.SendEventAsync(envelope, cancellationToken);");
             }
             else
@@ -149,6 +177,7 @@ public static class MediatorEmitter
                 sb.AppendLine($"                await transport.SendRequestAsync(envelope, cancellationToken);");
             }
 
+            EmitDispatchCompleted(sb, "                ");
             sb.AppendLine("                return;");
             sb.AppendLine("            }");
 
@@ -157,6 +186,7 @@ public static class MediatorEmitter
                 sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{cmd.FullTypeName}\");");
                 sb.AppendLine($"            __activity?.SetTag(\"conduit.dispatch\", \"local\");");
                 sb.AppendLine($"            await ConduitDispatch.Execute(command, serviceProvider, conduitOptions, cancellationToken);");
+                EmitDispatchCompleted(sb, "            ");
             }
             else
             {
@@ -172,11 +202,23 @@ public static class MediatorEmitter
         foreach (var query in queries)
         {
             var hasHandler = handledTypes.Contains(query.FullTypeName);
+
+            // Thin delegating overload (no configure parameter)
             sb.AppendLine($"    public async Task<{query.ResultFullTypeName}> FetchAsync(");
             sb.AppendLine($"        {query.FullTypeName} query,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
+            sb.AppendLine($"        => await FetchAsync(query, null, cancellationToken);");
+            sb.AppendLine();
+
+            // Full implementation with DispatchOptions
+            sb.AppendLine($"    public async Task<{query.ResultFullTypeName}> FetchAsync(");
+            sb.AppendLine($"        {query.FullTypeName} query,");
+            sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
+            sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
-            EmitContextStart(sb, $"\"{query.FullTypeName}\"", "query");
+            EmitContextStart(sb, $"\"{query.FullTypeName}\"", "query",
+                emitPayloadCapture: true, requestVarName: "query",
+                requestTypeName: query.FullTypeName, isDoNotAudit: query.IsDoNotAudit);
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{query.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
@@ -187,6 +229,7 @@ public static class MediatorEmitter
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(query, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var result = await transport.SendRequestAsync(");
             sb.AppendLine($"                    new DispatchEnvelope(\"{query.FullTypeName}\", payload), cancellationToken);");
+            EmitDispatchCompleted(sb, "                ");
             sb.AppendLine($"                return result is JsonElement je");
             sb.AppendLine($"                    ? JsonSerializer.Deserialize<{query.ResultFullTypeName}>(je, ConduitRuntime.JsonOptions)!");
             sb.AppendLine($"                    : ({query.ResultFullTypeName})result!;");
@@ -196,7 +239,9 @@ public static class MediatorEmitter
             {
                 sb.AppendLine($"            ConduitRuntime.LogLocalDispatch(logger, \"{query.FullTypeName}\");");
                 sb.AppendLine($"            __activity?.SetTag(\"conduit.dispatch\", \"local\");");
-                sb.AppendLine($"            return await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
+                sb.AppendLine($"            var __handlerResult = await ConduitDispatch.Fetch(query, serviceProvider, conduitOptions, cancellationToken);");
+                EmitDispatchCompleted(sb, "            ");
+                sb.AppendLine($"            return __handlerResult;");
             }
             else
             {
@@ -226,14 +271,14 @@ public static class MediatorEmitter
         // Wire publish (private, called by HandleWireEventAsync)
         EmitWirePublish(sb, events);
 
-        // HandleWireRequestAsync — delegates to ConduitRuntime
+        // HandleWireRequestAsync -- delegates to ConduitRuntime
         sb.AppendLine("    public Task<DispatchResult<object>> HandleWireRequestAsync(");
         sb.AppendLine("        DispatchEnvelope envelope,");
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("        => ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, cancellationToken);");
         sb.AppendLine();
 
-        // HandleWireEventAsync — delegates to ConduitRuntime
+        // HandleWireEventAsync -- delegates to ConduitRuntime
         sb.AppendLine("    public Task HandleWireEventAsync(");
         sb.AppendLine("        DispatchEnvelope envelope,");
         sb.AppendLine("        CancellationToken cancellationToken)");
@@ -245,15 +290,24 @@ public static class MediatorEmitter
 
     private static void EmitGenericCommandFallback(StringBuilder sb, List<DispatchableTypeInfo> commands)
     {
+        // Parameterless overload delegates to configure overload
         sb.AppendLine("    Task<TResult> IMediator.ExecuteAsync<TResult>(");
         sb.AppendLine("        ICommand<TResult> command,");
         sb.AppendLine("        CancellationToken cancellationToken)");
+        sb.AppendLine($"        => ((IMediator)this).ExecuteAsync(command, null, cancellationToken);");
+        sb.AppendLine();
+
+        // Configure overload with type switch
+        sb.AppendLine($"    Task<TResult> IMediator.ExecuteAsync<TResult>(");
+        sb.AppendLine($"        ICommand<TResult> command,");
+        sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("        => command switch");
         sb.AppendLine("        {");
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"            {cmd.FullTypeName} cmd => ConduitRuntime.CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync(cmd, cancellationToken)),");
+            sb.AppendLine($"            {cmd.FullTypeName} cmd => ConduitRuntime.CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync(cmd, configure, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -263,15 +317,24 @@ public static class MediatorEmitter
 
     private static void EmitVoidCommandFallback(StringBuilder sb, List<DispatchableTypeInfo> voidCommands)
     {
+        // Parameterless overload delegates to configure overload
         sb.AppendLine("    Task IMediator.ExecuteAsync(");
         sb.AppendLine("        ICommand command,");
         sb.AppendLine("        CancellationToken cancellationToken)");
+        sb.AppendLine($"        => ((IMediator)this).ExecuteAsync(command, null, cancellationToken);");
+        sb.AppendLine();
+
+        // Configure overload with type switch
+        sb.AppendLine($"    Task IMediator.ExecuteAsync(");
+        sb.AppendLine($"        ICommand command,");
+        sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("        => command switch");
         sb.AppendLine("        {");
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"            {cmd.FullTypeName} cmd => ExecuteAsync(cmd, cancellationToken),");
+            sb.AppendLine($"            {cmd.FullTypeName} cmd => ExecuteAsync(cmd, configure, cancellationToken),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -281,15 +344,24 @@ public static class MediatorEmitter
 
     private static void EmitQueryFallback(StringBuilder sb, List<DispatchableTypeInfo> queries)
     {
+        // Parameterless overload delegates to configure overload
         sb.AppendLine("    Task<TResult> IMediator.FetchAsync<TResult>(");
         sb.AppendLine("        IQuery<TResult> query,");
         sb.AppendLine("        CancellationToken cancellationToken)");
+        sb.AppendLine($"        => ((IMediator)this).FetchAsync(query, null, cancellationToken);");
+        sb.AppendLine();
+
+        // Configure overload with type switch
+        sb.AppendLine($"    Task<TResult> IMediator.FetchAsync<TResult>(");
+        sb.AppendLine($"        IQuery<TResult> query,");
+        sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("        => query switch");
         sb.AppendLine("        {");
 
         foreach (var q in queries)
         {
-            sb.AppendLine($"            {q.FullTypeName} qry => ConduitRuntime.CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync(qry, cancellationToken)),");
+            sb.AppendLine($"            {q.FullTypeName} qry => ConduitRuntime.CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync(qry, configure, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {query.GetType().Name}\")");
@@ -307,17 +379,21 @@ public static class MediatorEmitter
         var fireAndForgetTypes = new HashSet<string>(
             events.Where(e => e.IsFireAndForget).Select(e => e.FullTypeName));
 
-        // PublishAsync dispatches to local listeners AND broadcasts to all registered transports.
-        // Events marked [LocalOnly] skip the broadcast step entirely.
-        // Events marked [FireAndForget] enqueue everything to the background dispatcher.
-        // Catches EventListenerException — local publish is fire-and-forget.
+        // Thin delegating overload (no configure parameter)
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
+        sb.AppendLine("        => await PublishAsync(@event, null, cancellationToken);");
+        sb.AppendLine();
+
+        // Full implementation with DispatchOptions
+        sb.AppendLine($"    public async Task PublishAsync(IEvent @event, Action<{EmitConstants.DispatchOptions}>? configure, CancellationToken cancellationToken = default)");
         sb.AppendLine("    {");
 
-        EmitContextStart(sb, "@event.GetType().FullName!", "event");
+        EmitContextStart(sb, "@event.GetType().FullName!", "event",
+            emitPayloadCapture: true, requestVarName: "@event",
+            requestTypeName: null, isDoNotAudit: false);
 
         // F&F events enqueue local listeners to background dispatcher instead of running inline.
-        // Transport broadcast still happens inline — events are already fire-and-forget on the wire.
+        // Transport broadcast still happens inline -- events are already fire-and-forget on the wire.
         if (fireAndForgetTypes.Count > 0)
         {
             sb.AppendLine("        if (@event is " + string.Join(" or ", fireAndForgetTypes) + ")");
@@ -359,16 +435,16 @@ public static class MediatorEmitter
 
         if (localOnlyTypes.Count == events.Count)
         {
-            // All events are local-only — no broadcast needed
+            // All events are local-only -- no broadcast needed
         }
         else if (localOnlyTypes.Count == 0)
         {
-            // No local-only events — always broadcast
+            // No local-only events -- always broadcast
             EmitBroadcastBlock(sb);
         }
         else
         {
-            // Mix of local-only and broadcastable — check type at runtime
+            // Mix of local-only and broadcastable -- check type at runtime
             sb.AppendLine("        var shouldBroadcast = @event switch");
             sb.AppendLine("        {");
             foreach (var localOnly in localOnlyTypes)
@@ -385,6 +461,7 @@ public static class MediatorEmitter
             sb.AppendLine("        }");
         }
 
+        EmitDispatchCompleted(sb, "        ");
         EmitContextEnd(sb);
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -420,12 +497,21 @@ public static class MediatorEmitter
             sb.AppendLine($"                    var listeners = serviceProvider.GetServices<{EmitConstants.NamespaceHandlers}.IEventListener<{group.EventFullTypeName}>>();");
             sb.AppendLine($"                    foreach (var listener in listeners)");
             sb.AppendLine($"                    {{");
+            // Per-listener observations: HandlerStarted
+            sb.AppendLine($"                        var __listenerType = listener.GetType().FullName ?? listener.GetType().Name;");
+            sb.AppendLine($"                        {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerStarted}(DateTimeOffset.UtcNow, __listenerType));");
+            sb.AppendLine($"                        var __listenerSw = Stopwatch.GetTimestamp();");
             sb.AppendLine($"                        try");
             sb.AppendLine($"                        {{");
             sb.AppendLine($"                            await listener.HandleAsync(e, cancellationToken);");
+            // Per-listener observations: HandlerCompleted
+            sb.AppendLine($"                            var __listenerElapsed = Stopwatch.GetElapsedTime(__listenerSw).TotalMilliseconds;");
+            sb.AppendLine($"                            {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerCompleted}(DateTimeOffset.UtcNow, __listenerElapsed));");
             sb.AppendLine($"                        }}");
             sb.AppendLine($"                        catch (Exception ex)");
             sb.AppendLine($"                        {{");
+            // Per-listener observations: HandlerFailed
+            sb.AppendLine($"                            {EmitConstants.MessageContext_Observe}(new {EmitConstants.HandlerFailed}(DateTimeOffset.UtcNow, ex.Message, ex.GetType().FullName ?? ex.GetType().Name));");
             sb.AppendLine($"                            ConduitRuntime.LogListenerFailure(logger, listener.GetType().Name, ex);");
             sb.AppendLine($"                            exceptions.Add(ex);");
             sb.AppendLine($"                        }}");
@@ -494,27 +580,31 @@ public static class MediatorEmitter
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        // Forward to transport if the type matches a route (handles types not known locally)");
-        sb.AppendLine("        var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
-        sb.AppendLine("        if (endpoint != null)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            ConduitRuntime.LogWireForward(logger, type, endpoint.Name);");
-        sb.AppendLine("            var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
-        sb.AppendLine("            var result = await transport.SendRequestAsync(");
-        sb.AppendLine("                new DispatchEnvelope(type, payload), cancellationToken);");
-        sb.AppendLine("            return result;");
-        sb.AppendLine("        }");
+
+        EmitWireContextStart(sb);
+
+        sb.AppendLine("            // Forward to transport if the type matches a route (handles types not known locally)");
+        sb.AppendLine("            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
+        sb.AppendLine("            if (endpoint != null)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                ConduitRuntime.LogWireForward(logger, type, endpoint.Name);");
+        sb.AppendLine("                var transport = ConduitRuntime.ResolveTransport(serviceProvider, endpoint);");
+        sb.AppendLine("                var result = await transport.SendRequestAsync(");
+        sb.AppendLine("                    new DispatchEnvelope(type, payload), cancellationToken);");
+        EmitDispatchCompleted(sb, "                ");
+        sb.AppendLine("                return result;");
+        sb.AppendLine("            }");
         sb.AppendLine();
-        sb.AppendLine("        return type switch");
-        sb.AppendLine("        {");
+        sb.AppendLine("            object? __result = type switch");
+        sb.AppendLine("            {");
 
         foreach (var cmd in commands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
-            sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
-            sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
-            sb.AppendLine($"                serviceProvider,");
-            sb.AppendLine($"                conduitOptions,");
-            sb.AppendLine($"                cancellationToken),");
+            sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
+            sb.AppendLine($"                    JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    serviceProvider,");
+            sb.AppendLine($"                    conduitOptions,");
+            sb.AppendLine($"                    cancellationToken),");
         }
 
         foreach (var cmd in voidCommands.Where(c => handledTypes.Contains(c.FullTypeName)))
@@ -522,24 +612,29 @@ public static class MediatorEmitter
             // F&F void commands use ExecuteVoidWire (inline handler) to avoid scope lifetime issues.
             // The background dispatcher path would execute after the DI scope is disposed.
             var method = cmd.IsFireAndForget ? "ExecuteVoidWire" : "ExecuteVoid";
-            sb.AppendLine($"            \"{cmd.FullTypeName}\" => await ConduitDispatch.{method}(");
-            sb.AppendLine($"                JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
-            sb.AppendLine($"                serviceProvider,");
-            sb.AppendLine($"                conduitOptions,");
-            sb.AppendLine($"                cancellationToken),");
+            sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.{method}(");
+            sb.AppendLine($"                    JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    serviceProvider,");
+            sb.AppendLine($"                    conduitOptions,");
+            sb.AppendLine($"                    cancellationToken),");
         }
 
         foreach (var query in queries.Where(q => handledTypes.Contains(q.FullTypeName)))
         {
-            sb.AppendLine($"            \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
-            sb.AppendLine($"                JsonSerializer.Deserialize<{query.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
-            sb.AppendLine($"                serviceProvider,");
-            sb.AppendLine($"                conduitOptions,");
-            sb.AppendLine($"                cancellationToken),");
+            sb.AppendLine($"                \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
+            sb.AppendLine($"                    JsonSerializer.Deserialize<{query.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    serviceProvider,");
+            sb.AppendLine($"                    conduitOptions,");
+            sb.AppendLine($"                    cancellationToken),");
         }
 
-        sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown dispatch type: {type}\")");
-        sb.AppendLine("        };");
+        sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown dispatch type: {type}\")");
+        sb.AppendLine("            };");
+
+        EmitDispatchCompleted(sb, "            ");
+        sb.AppendLine("            return __result;");
+
+        EmitWireContextEnd(sb);
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -551,25 +646,61 @@ public static class MediatorEmitter
         sb.AppendLine("        JsonElement payload,");
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine("        IEvent @event = type switch");
-        sb.AppendLine("        {");
+
+        EmitWireContextStart(sb);
+
+        sb.AppendLine("            IEvent @event = type switch");
+        sb.AppendLine("            {");
 
         foreach (var evt in events)
         {
-            sb.AppendLine($"            \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
         }
 
-        sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
-        sb.AppendLine("        };");
-        sb.AppendLine("        await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
+        sb.AppendLine("            };");
+        sb.AppendLine("            await PublishLocalAsync(@event, cancellationToken);");
+
+        EmitDispatchCompleted(sb, "            ");
+
+        EmitWireContextEnd(sb);
         sb.AppendLine("    }");
         sb.AppendLine();
     }
 
-    private static void EmitContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
+    private static void EmitContextStart(StringBuilder sb, string messageTypeExpr, string messageKind,
+        bool emitPayloadCapture = false, string? requestVarName = null, string? requestTypeName = null,
+        bool isDoNotAudit = false)
     {
+        // Build DispatchOptions from configure callback
+        sb.AppendLine($"        {EmitConstants.DispatchOptions}? __dispatchOptions = null;");
+        sb.AppendLine("        if (configure != null)");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            __dispatchOptions = new {EmitConstants.DispatchOptions}();");
+        sb.AppendLine("            configure(__dispatchOptions);");
+        sb.AppendLine("        }");
+
         sb.AppendLine($"        var previousContext = {EmitConstants.MessageContext}.Current;");
-        sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch();");
+        sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch(__dispatchOptions);");
+
+        // Payload capture for non-DoNotAudit types
+        if (emitPayloadCapture && !isDoNotAudit && requestVarName != null)
+        {
+            if (requestTypeName != null)
+            {
+                // Strongly typed: use typeof(T) for efficient serialization
+                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, typeof({requestTypeName}), ConduitRuntime.JsonOptions));");
+            }
+            else
+            {
+                // Dynamic type (events via PublishAsync): use @event.GetType()
+                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {requestVarName}.GetType(), ConduitRuntime.JsonOptions));");
+            }
+        }
+
+        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow));");
+        sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
+
         sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
@@ -578,9 +709,52 @@ public static class MediatorEmitter
     private static void EmitContextEnd(StringBuilder sb)
     {
         sb.AppendLine("        }");
+        sb.AppendLine("        catch (Exception __ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
+        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(DateTimeOffset.UtcNow, __failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
+        sb.AppendLine("            throw;");
+        sb.AppendLine("        }");
         sb.AppendLine("        finally");
         sb.AppendLine("        {");
         sb.AppendLine($"            {EmitConstants.MessageContext}.RestoreContext(previousContext);");
+        sb.AppendLine("        }");
+    }
+
+    /// <summary>
+    /// Emits DispatchCompleted observation with elapsed time tracking.
+    /// Uses a nested block to avoid variable name conflicts across return paths.
+    /// </summary>
+    private static void EmitDispatchCompleted(StringBuilder sb, string indent)
+    {
+        sb.AppendLine($"{indent}{{ var __elapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
+        sb.AppendLine($"{indent}{EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchCompleted}(DateTimeOffset.UtcNow, __elapsed)); }}");
+    }
+
+    /// <summary>
+    /// Emits the context start block for wire dispatch methods (no DispatchOptions, no payload capture).
+    /// Wire dispatch runs within the transport's context so uses simplified observation setup.
+    /// </summary>
+    private static void EmitWireContextStart(StringBuilder sb)
+    {
+        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(DateTimeOffset.UtcNow));");
+        sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+    }
+
+    /// <summary>
+    /// Emits the context end block for wire dispatch methods (catch + rethrow, no finally/restore).
+    /// Wire dispatch does not own the MessageContext -- the transport's ProcessInboundMessageAsync does.
+    /// </summary>
+    private static void EmitWireContextEnd(StringBuilder sb)
+    {
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch (Exception __ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
+        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(DateTimeOffset.UtcNow, __failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
+        sb.AppendLine("            throw;");
         sb.AppendLine("        }");
     }
 }
