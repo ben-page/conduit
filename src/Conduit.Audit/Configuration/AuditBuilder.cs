@@ -88,8 +88,8 @@ public sealed class LocalStoreBuilder
             _ => new AuditConnectionStringFactory<SqliteConnection>(connectionString));
         this.services.AddSingleton<IAuditStore, DbAuditStore>();
         this.services.AddTransient<IEventListener<AuditBatch>, LocalAuditListener>();
-        this.services.AddHostedService<AuditPurgeService>();
         this.services.AddHostedService<AuditTableInitializer>();
+        this.services.AddHostedService<AuditPurgeService>();
 
         return this;
     }
