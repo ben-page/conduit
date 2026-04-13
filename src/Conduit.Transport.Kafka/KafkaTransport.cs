@@ -86,6 +86,9 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     /// <inheritdoc/>
     protected override string EndpointName => this.options.EndpointName;
 
+    /// <inheritdoc/>
+    protected override string TransportName => "kafka";
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
