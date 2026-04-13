@@ -54,4 +54,14 @@ internal static class EmitConstants
 
     // Resilience types (from Conduit.Resilience — only referenced in generated code)
     internal const string ResilienceBehavior = "Conduit.Resilience.ResilienceBehavior";
+
+    // Observation types
+    internal const string MessageContext_Observe = "Conduit.Runtime.MessageContext.Observe";
+    internal const string DispatchInvoked = "Conduit.Runtime.DispatchInvoked";
+    internal const string DispatchCompleted = "Conduit.Runtime.DispatchCompleted";
+    internal const string DispatchFailed = "Conduit.Runtime.DispatchFailed";
+    internal const string HandlerStarted = "Conduit.Runtime.HandlerStarted";
+    internal const string HandlerCompleted = "Conduit.Runtime.HandlerCompleted";
+    internal const string HandlerFailed = "Conduit.Runtime.HandlerFailed";
+    internal const string DispatchOptions = "Conduit.Runtime.DispatchOptions";
 }

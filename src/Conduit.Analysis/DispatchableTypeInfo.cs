@@ -29,4 +29,7 @@ public sealed class DispatchableTypeInfo
 
     /// <summary>Whether the type has a <c>[FireAndForget]</c> attribute.</summary>
     public bool IsFireAndForget { get; init; }
+
+    /// <summary>Whether the type has a <c>[DoNotAudit]</c> attribute.</summary>
+    public bool IsDoNotAudit { get; init; }
 }
