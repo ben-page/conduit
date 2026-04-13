@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Conduit.Tests" />
+    <InternalsVisibleTo Include="Conduit.Resilience.Tests" />
   </ItemGroup>
 
 </Project>
