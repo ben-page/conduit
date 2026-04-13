@@ -71,4 +71,32 @@ public static class ConduitBuilderExtensions
 
         return builder;
     }
+
+    /// <summary>
+    /// Adds the central audit consumer to the Conduit configuration.
+    /// The consumer listens for <see cref="AuditBatch"/> events and persists them
+    /// to a local store. Also registers the purge service and table initializer.
+    /// </summary>
+    /// <param name="builder">The Conduit builder to configure.</param>
+    /// <param name="configure">Callback to configure the consumer's database and options.</param>
+    /// <returns>The original <paramref name="builder"/> for chaining.</returns>
+    public static ConduitBuilder AddAuditConsumer(
+        this ConduitBuilder builder,
+        Action<AuditConsumerBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var consumerBuilder = new AuditConsumerBuilder(builder.Services);
+        configure(consumerBuilder);
+
+        // Configure options from the consumer builder
+        builder.Services.Configure<AuditOptions>(options =>
+        {
+            options.RetentionPeriod = consumerBuilder.Options.RetentionPeriod;
+            options.PurgeInterval = consumerBuilder.Options.PurgeInterval;
+        });
+
+        return builder;
+    }
 }
