@@ -22,11 +22,11 @@ internal sealed class DispatchGroup
             ? new Dictionary<string, object?>(context.Properties)
             : null;
         this.payload = context.Payload;
-        this.CreatedAt = DateTimeOffset.UtcNow;
+        this.CreatedAt = DateTime.UtcNow;
         this.serviceName = serviceName;
     }
 
-    internal DateTimeOffset CreatedAt { get; }
+    internal DateTime CreatedAt { get; }
 
     internal void Add(MessageObservation observation) => this.observations.Add(observation);
 

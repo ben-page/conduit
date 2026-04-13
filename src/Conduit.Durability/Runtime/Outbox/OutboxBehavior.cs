@@ -52,7 +52,7 @@ public sealed class OutboxBehavior<TRequest, TResult>(
         }
 
         await store.SaveAsync(entries, transaction, cancellationToken);
-        MessageContext.Observe(new OutboxWritten(DateTimeOffset.UtcNow, entries.Count));
+        MessageContext.Observe(new OutboxWritten(entries.Count));
 
         capture.SetWrittenMessages(
             entries.Select((entry, index) => new WrittenOutboxMessage(

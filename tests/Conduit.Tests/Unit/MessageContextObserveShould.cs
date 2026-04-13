@@ -23,7 +23,7 @@ public sealed class MessageContextObserveShould
         MessageContext.StartDispatch();
 
         // Act & Assert — should not throw
-        MessageContext.Observe(new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Type", "Command"));
+        MessageContext.Observe(new DispatchInvoked("Test.Type", "Command"));
     }
 
     [TestMethod]
@@ -35,7 +35,7 @@ public sealed class MessageContextObserveShould
         MessageContext.RestoreContext(null);
 
         // Act
-        MessageContext.Observe(new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Type", "Command"));
+        MessageContext.Observe(new DispatchInvoked("Test.Type", "Command"));
 
         // Assert
         collector.Collected.Should().BeEmpty();
@@ -48,7 +48,7 @@ public sealed class MessageContextObserveShould
         var collector = new ObservationCollector();
         MessageContext.Observer = collector;
         MessageContext.StartDispatch();
-        var observation = new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Type", "Command");
+        var observation = new DispatchInvoked("Test.Type", "Command");
 
         // Act
         MessageContext.Observe(observation);
@@ -67,7 +67,7 @@ public sealed class MessageContextObserveShould
         var context = MessageContext.StartDispatch();
 
         // Act
-        MessageContext.Observe(new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Type", "Command"));
+        MessageContext.Observe(new DispatchInvoked("Test.Type", "Command"));
 
         // Assert
         collector.Collected[0].MessageId.Should().Be(context.MessageId);

@@ -88,7 +88,7 @@ public sealed class DbAuditStore : IAuditStore
     }
 
     /// <inheritdoc/>
-    public async Task PurgeExpiredAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    public async Task PurgeExpiredAsync(DateTime cutoff, CancellationToken cancellationToken)
     {
         using var connection = this.connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
@@ -132,7 +132,7 @@ public sealed class DbAuditStore : IAuditStore
             observationsJson, ConduitRuntime.JsonOptions) ?? [];
 
         var timestampStr = reader.GetString(reader.GetOrdinal("Timestamp"));
-        var timestamp = DateTimeOffset.Parse(timestampStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+        var timestamp = DateTime.Parse(timestampStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
 
         return new DispatchAuditRecord
         {

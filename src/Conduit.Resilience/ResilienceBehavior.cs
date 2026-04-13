@@ -79,7 +79,6 @@ public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TR
                     catch (Exception ex)
                     {
                         MessageContext.Observe(new RetryAttempted(
-                            DateTimeOffset.UtcNow,
                             attempt,
                             ex.Message,
                             ex.GetType().Name,
@@ -111,7 +110,6 @@ public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TR
                     catch (Exception ex)
                     {
                         MessageContext.Observe(new RetryAttempted(
-                            DateTimeOffset.UtcNow,
                             attempt,
                             ex.Message,
                             ex.GetType().Name,

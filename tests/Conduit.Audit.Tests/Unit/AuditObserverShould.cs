@@ -26,9 +26,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 42.0), context);
+            new DispatchCompleted(42.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -48,9 +48,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new DispatchFailed(DateTimeOffset.UtcNow, 10.0, "boom", "InvalidOperationException"), context);
+            new DispatchFailed(10.0, "boom", "InvalidOperationException"), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -70,9 +70,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new HandlerStarted(DateTimeOffset.UtcNow, "TestHandler"), context);
+            new HandlerStarted("TestHandler"), context);
 
         // Assert
         channel.Reader.TryRead(out _).Should().BeFalse();
@@ -89,9 +89,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.PlaceOrder", "Command"), context);
+            new DispatchInvoked("Test.Commands.PlaceOrder", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 5.0), context);
+            new DispatchCompleted(5.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -110,9 +110,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 3.0), context);
+            new DispatchCompleted(3.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -131,13 +131,13 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new HandlerStarted(DateTimeOffset.UtcNow, "DoThingHandler"), context);
+            new HandlerStarted("DoThingHandler"), context);
         observer.OnObservation(
-            new HandlerCompleted(DateTimeOffset.UtcNow, 20.0), context);
+            new HandlerCompleted(20.0), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 25.0), context);
+            new DispatchCompleted(25.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -158,9 +158,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Orders.Commands.PlaceOrder", "Command"), context);
+            new DispatchInvoked("Orders.Commands.PlaceOrder", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 10.0), context);
+            new DispatchCompleted(10.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -178,9 +178,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 1.0), context);
+            new DispatchCompleted(1.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -197,9 +197,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 1.0), context);
+            new DispatchCompleted(1.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
@@ -217,9 +217,9 @@ public sealed class AuditObserverShould
 
         // Act
         observer.OnObservation(
-            new DispatchInvoked(DateTimeOffset.UtcNow, "Test.Commands.DoThing", "Command"), context);
+            new DispatchInvoked("Test.Commands.DoThing", "Command"), context);
         observer.OnObservation(
-            new DispatchCompleted(DateTimeOffset.UtcNow, 1.0), context);
+            new DispatchCompleted(1.0), context);
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();

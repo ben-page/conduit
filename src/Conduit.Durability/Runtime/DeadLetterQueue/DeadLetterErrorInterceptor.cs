@@ -57,7 +57,7 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
 
             await this.store.WriteAsync(entry, cancellationToken);
             ConduitTelemetry.RecordDeadLettered(messageType, sourceEndpoint);
-            MessageContext.Observe(new DeadLettered(DateTimeOffset.UtcNow, exception.Message, sourceEndpoint));
+            MessageContext.Observe(new DeadLettered(exception.Message, sourceEndpoint));
             return true;
         }
 #pragma warning disable CA1031

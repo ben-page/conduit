@@ -75,7 +75,7 @@ public sealed partial class OutboxRelay(
                 await transportDispatcher.SendAsync(envelope, cancellationToken);
 
                 await store.MarkSentAsync(entry.Id, cancellationToken);
-                MessageContext.Observe(new OutboxSent(DateTimeOffset.UtcNow, entry.Id));
+                MessageContext.Observe(new OutboxSent(entry.Id));
             }
 #pragma warning disable CA1031
             catch (Exception ex)
@@ -87,7 +87,7 @@ public sealed partial class OutboxRelay(
                 {
                     LogRetriesExhausted(logger, entry.Id, null);
                     await store.MarkFailedAsync(entry.Id, cancellationToken);
-                    MessageContext.Observe(new OutboxRetryExhausted(DateTimeOffset.UtcNow, entry.Id));
+                    MessageContext.Observe(new OutboxRetryExhausted(entry.Id));
                 }
                 else
                 {

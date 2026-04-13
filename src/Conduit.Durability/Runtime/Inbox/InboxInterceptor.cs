@@ -21,7 +21,7 @@ public sealed class InboxInterceptor(IInboxStore store) : IInboundInterceptor
 
         if (await store.ExistsAsync(messageId, cancellationToken))
         {
-            MessageContext.Observe(new InboxDuplicate(DateTimeOffset.UtcNow));
+            MessageContext.Observe(new InboxDuplicate());
             return false;
         }
 

@@ -147,7 +147,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
-        MessageContext.Observe(new TransportSendStarted(DateTimeOffset.UtcNow, this.TransportName, this.EndpointName));
+        MessageContext.Observe(new TransportSendStarted(this.TransportName, this.EndpointName));
         var sw = Stopwatch.StartNew();
         try
         {
@@ -155,7 +155,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             sw.Stop();
 
             ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
-            MessageContext.Observe(new TransportSendCompleted(DateTimeOffset.UtcNow, sw.Elapsed.TotalMilliseconds));
+            MessageContext.Observe(new TransportSendCompleted(sw.Elapsed.TotalMilliseconds));
 
             var result = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
                 replyData, ConduitRuntime.JsonOptions);
@@ -165,7 +165,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         catch (Exception ex)
         {
             sw.Stop();
-            MessageContext.Observe(new TransportSendFailed(DateTimeOffset.UtcNow, ex.Message, ex.GetType().Name));
+            MessageContext.Observe(new TransportSendFailed(ex.Message, ex.GetType().Name));
             throw;
         }
     }
@@ -188,7 +188,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
-        MessageContext.Observe(new TransportSendStarted(DateTimeOffset.UtcNow, this.TransportName, this.EndpointName));
+        MessageContext.Observe(new TransportSendStarted(this.TransportName, this.EndpointName));
         var sw = Stopwatch.StartNew();
         try
         {
@@ -196,12 +196,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             sw.Stop();
 
             ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
-            MessageContext.Observe(new TransportSendCompleted(DateTimeOffset.UtcNow, sw.Elapsed.TotalMilliseconds));
+            MessageContext.Observe(new TransportSendCompleted(sw.Elapsed.TotalMilliseconds));
         }
         catch (Exception ex)
         {
             sw.Stop();
-            MessageContext.Observe(new TransportSendFailed(DateTimeOffset.UtcNow, ex.Message, ex.GetType().Name));
+            MessageContext.Observe(new TransportSendFailed(ex.Message, ex.GetType().Name));
             throw;
         }
     }

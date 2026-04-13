@@ -33,8 +33,8 @@ public sealed class DispatchAuditRecord
     /// <summary>User-defined properties attached to the dispatch via <see cref="DispatchOptions"/>.</summary>
     public IReadOnlyDictionary<string, object?>? Properties { get; init; }
 
-    /// <summary>When the dispatch started.</summary>
-    public required DateTimeOffset Timestamp { get; init; }
+    /// <summary>When the dispatch started (UTC).</summary>
+    public required DateTime Timestamp { get; init; }
 
     /// <summary>All observations recorded during this dispatch, in chronological order.</summary>
     public required IReadOnlyList<MessageObservation> Observations { get; init; }
