@@ -15,6 +15,7 @@
     <File Path="src/Directory.Build.props" />
     <File Path="src/Directory.Packages.props" />
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
+    <Project Path="src/Conduit.Audit/Conduit.Audit.csproj" />
     <Project Path="src/Conduit.Durability/Conduit.Durability.csproj" />
     <Project Path="src/Conduit.Resilience/Conduit.Resilience.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
@@ -32,6 +33,7 @@
     <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
     <File Path="tests/Directory.Packages.props" />
+    <Project Path="tests/Conduit.Audit.Tests/Conduit.Audit.Tests.csproj" />
     <Project Path="tests/Conduit.Durability.Tests/Conduit.Durability.Tests.csproj" />
     <Project Path="tests/Conduit.Resilience.Tests/Conduit.Resilience.Tests.csproj" />
     <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
