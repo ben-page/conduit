@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Thirteen source projects, twelve test projects, one shared test utility, four sample apps:
+Fourteen source projects, thirteen test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -20,6 +20,7 @@ src/Conduit.Transport.Kafka/             Kafka transport (IConduitTransport + IH
 src/Conduit.Transport.AmazonSqs/         Amazon SQS (+SNS) transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Durability/                 Durable messaging — transactional outbox + inbox (idempotent dedup) — net10.0
+src/Conduit.Audit/                      Audit trail — observation consolidation, batching, local store — net10.0
 ```
 
 **Dependency graph:**
@@ -31,6 +32,7 @@ src/Conduit.Durability/                 Durable messaging — transactional outb
 - `Transport.AmazonSqs` → `Conduit` (core) + AWSSDK.SimpleNotificationService + AWSSDK.SQS
 - `Transport.ActiveMQ` → `Conduit` (core) + AMQPNetLite.Core
 - `Durability` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
+- `Audit` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
 - Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, and Options.
@@ -86,6 +88,7 @@ src/Conduit.Durability/                 Durable messaging — transactional outb
 | `[LocalOnly]` | Type | Prevent event from being broadcast to transports |
 | `[FireAndForget]` | Type | Void commands: local handler runs in background, routed dispatch uses `SendEventAsync` (no reply). Events: local listeners run in background (transport broadcast unchanged — events are already fire-and-forget on the wire). Invalid on `ICommand<TResult>` or `IQuery<TResult>` (CONDUIT003). |
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
+| `[DoNotAudit]` | Type | Suppress payload capture in audit trail (observations still emitted) |
 | `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
 
 ## Build & Test
@@ -121,6 +124,7 @@ Each project has its own `CLAUDE.md` with implementation-level detail. These are
 - [`src/Conduit.SourceGen/CLAUDE.md`](src/Conduit.SourceGen/CLAUDE.md) — Roslyn source generator internals, emitted files, attribute handling
 - [`src/Conduit.TypeGen/CLAUDE.md`](src/Conduit.TypeGen/CLAUDE.md) — MSBuild task, MetadataLoadContext scanning, TypeScript emission
 - [`src/Conduit.Durability/CLAUDE.md`](src/Conduit.Durability/CLAUDE.md) — outbox + inbox implementation, dialects, configuration
+- [`src/Conduit.Audit/CLAUDE.md`](src/Conduit.Audit/CLAUDE.md) — audit observer, consolidation, AuditBatch event, local store
 - [`src/Conduit.Transport.Http/CLAUDE.md`](src/Conduit.Transport.Http/CLAUDE.md)
 - [`src/Conduit.Transport.SignalR/CLAUDE.md`](src/Conduit.Transport.SignalR/CLAUDE.md) — dual-mode server/client transport
 - [`src/Conduit.Transport.AzureServiceBus/CLAUDE.md`](src/Conduit.Transport.AzureServiceBus/CLAUDE.md) — includes emulator test caveats
