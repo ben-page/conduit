@@ -125,7 +125,7 @@ public sealed class MessageContext
     /// Sets the raw JSON payload on this context for audit capture.
     /// Called by the generated mediator after serializing the message.
     /// </summary>
-    internal void SetPayload(JsonElement payload)
+    public void SetPayload(JsonElement payload)
     {
         this.Payload = payload;
     }
