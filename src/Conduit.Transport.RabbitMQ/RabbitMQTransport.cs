@@ -69,6 +69,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     /// <inheritdoc/>
     protected override string EndpointName => this.options.EndpointName;
 
+    /// <inheritdoc/>
+    protected override string TransportName => "rabbitmq";
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------

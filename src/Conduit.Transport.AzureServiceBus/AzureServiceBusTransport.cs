@@ -72,6 +72,9 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     /// <inheritdoc/>
     protected override string EndpointName => this.options.EndpointName;
 
+    /// <inheritdoc/>
+    protected override string TransportName => "asb";
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------

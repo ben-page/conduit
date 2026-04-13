@@ -84,6 +84,9 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     /// <inheritdoc/>
     protected override string EndpointName => this.options.EndpointName;
 
+    /// <inheritdoc/>
+    protected override string TransportName => "sqs";
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------

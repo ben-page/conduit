@@ -81,6 +81,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     protected ILogger Logger { get; }
 
     /// <summary>
+    /// Short identifier for the transport type (e.g. "rabbitmq", "kafka").
+    /// Used in observation records to identify which transport was involved.
+    /// </summary>
+    protected abstract string TransportName { get; }
+
+    /// <summary>
     /// The identifier stored on dead letter entries as the source endpoint, and used to resolve
     /// the transport on replay. Defaults to <see cref="ConduitOptions.ApplicationName"/>.
     /// Concrete transports can override this if they need a different identifier.
@@ -141,16 +147,27 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
+        MessageContext.Observe(new TransportSendStarted(DateTimeOffset.UtcNow, this.TransportName, this.EndpointName));
         var sw = Stopwatch.StartNew();
-        var replyData = await this.PublishRequestAsync(envelope, body, cancellationToken);
-        sw.Stop();
+        try
+        {
+            var replyData = await this.PublishRequestAsync(envelope, body, cancellationToken);
+            sw.Stop();
 
-        ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
+            ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
+            MessageContext.Observe(new TransportSendCompleted(DateTimeOffset.UtcNow, sw.Elapsed.TotalMilliseconds));
 
-        var result = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
-            replyData, ConduitRuntime.JsonOptions);
+            var result = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
+                replyData, ConduitRuntime.JsonOptions);
 
-        return ConduitRuntime.UnwrapReply(result);
+            return ConduitRuntime.UnwrapReply(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            MessageContext.Observe(new TransportSendFailed(DateTimeOffset.UtcNow, ex.Message, ex.GetType().Name));
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -171,11 +188,22 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
+        MessageContext.Observe(new TransportSendStarted(DateTimeOffset.UtcNow, this.TransportName, this.EndpointName));
         var sw = Stopwatch.StartNew();
-        await this.PublishEventAsync(envelope, body, cancellationToken);
-        sw.Stop();
+        try
+        {
+            await this.PublishEventAsync(envelope, body, cancellationToken);
+            sw.Stop();
 
-        ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
+            ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
+            MessageContext.Observe(new TransportSendCompleted(DateTimeOffset.UtcNow, sw.Elapsed.TotalMilliseconds));
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            MessageContext.Observe(new TransportSendFailed(DateTimeOffset.UtcNow, ex.Message, ex.GetType().Name));
+            throw;
+        }
     }
 
     /// <inheritdoc />

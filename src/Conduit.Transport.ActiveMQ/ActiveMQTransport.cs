@@ -71,6 +71,9 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     /// <inheritdoc/>
     protected override string EndpointName => this.options.EndpointName;
 
+    /// <inheritdoc/>
+    protected override string TransportName => "activemq";
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
