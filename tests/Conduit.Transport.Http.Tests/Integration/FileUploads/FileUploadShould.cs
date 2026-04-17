@@ -24,6 +24,7 @@ public class FileUploadShould
         var app = builder.Build();
 
         app.MapConduitPost<UploadBinaryCommand>("/uploads/binary");
+        app.MapConduitPost<UploadConduitFileCommand>("/uploads/document");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -58,6 +59,34 @@ public class FileUploadShould
             store.Image.Should().NotBeNull();
             store.Image!.ToArray().Should().Equal(imageBytes);
             store.Image.MediaType.Should().Be("image/png");
+        }
+    }
+
+    [TestMethod]
+    public async Task PopulateConduitFileFileNameFromContentDisposition()
+    {
+        // Arrange
+        var (app, client, store) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var pdfBytes = new byte[] { 0x25, 0x50, 0x44, 0x46, 0xCA, 0xFE, 0xBA, 0xBE };
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent("Reactor"), "ScreenName");
+
+            var fileContent = new ByteArrayContent(pdfBytes);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+            form.Add(fileContent, "Document", "datasheet.pdf");
+
+            // Act
+            var response = await client.PostAsync("/uploads/document", form);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            store.File.Should().NotBeNull();
+            store.File!.FileName.Should().Be("datasheet.pdf");
+            store.File.Content.MediaType.Should().Be("application/pdf");
+            store.File.Content.ToArray().Should().Equal(pdfBytes);
         }
     }
 }
