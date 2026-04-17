@@ -49,4 +49,18 @@ public class TypeGenInheritanceShould
         valueBlock.Should().NotContain("borderColor");
         valueBlock.Should().Contain("alarmTag");
     }
+
+    [TestMethod]
+    public void EmitMultiLevelInheritanceChain()
+    {
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        result.Should().Contain("export interface LevelA {");
+        result.Should().Contain("export interface LevelB extends LevelA {");
+        result.Should().Contain("export interface LevelC extends LevelB {");
+        result.Should().Contain("export interface LevelD extends LevelB {");
+    }
 }
