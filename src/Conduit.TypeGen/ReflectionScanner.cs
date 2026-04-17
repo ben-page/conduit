@@ -249,10 +249,11 @@ public static class ReflectionScanner
     }
 
     /// <summary>
-    /// Enumerates concrete derived types of <paramref name="baseType"/> across all scanned
-    /// assemblies and appends them to <paramref name="results"/> with their <c>BaseFullTypeName</c>
-    /// set. Skips abstract derived types (they surface independently if themselves
-    /// <c>[ClientVisible]</c>) and types marked <c>[LocalOnly]</c>.
+    /// Enumerates all derived types of <paramref name="baseType"/> across all scanned assemblies
+    /// and appends them to <paramref name="results"/> with their <c>BaseFullTypeName</c> set to
+    /// their immediate parent. Abstract intermediates (e.g. B in A &lt;- B &lt;- C) are included
+    /// so multi-level chains emit <c>C extends B</c>, <c>B extends A</c> rather than collapsing
+    /// all descendants directly under A. Types marked <c>[LocalOnly]</c> are excluded.
     /// </summary>
     private static void AddDerivedTypes(
         Type baseType,
@@ -264,12 +265,12 @@ public static class ReflectionScanner
         {
             foreach (var candidate in assembly.GetExportedTypes())
             {
-                if (candidate.IsAbstract || candidate.IsInterface)
+                if (candidate.IsInterface)
                 {
                     continue;
                 }
 
-                if (!baseType.IsAssignableFrom(candidate))
+                if (!baseType.IsAssignableFrom(candidate) || candidate == baseType)
                 {
                     continue;
                 }
@@ -285,14 +286,19 @@ public static class ReflectionScanner
                     continue;
                 }
 
+                // Link to immediate parent so multi-level chains emit `C extends B`, `B extends A`.
+                var parent = candidate.BaseType;
+                var parentFullName = parent?.FullName;
+                var parentShortName = parent?.Name;
+
                 results.Add(new DispatchableTypeInfo
                 {
                     TypeName = candidate.Name,
                     FullTypeName = candidateFullName,
                     Namespace = candidate.Namespace ?? "",
                     Kind = DispatchableKind.Model,
-                    BaseFullTypeName = baseType.FullName,
-                    BaseTypeName = baseType.Name,
+                    BaseFullTypeName = parentFullName,
+                    BaseTypeName = parentShortName,
                 });
             }
         }
