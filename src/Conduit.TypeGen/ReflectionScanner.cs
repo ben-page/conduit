@@ -15,6 +15,7 @@ public static class ReflectionScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery`1";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string ClientVisibleAttributeFullName = "Conduit.Attributes.ClientVisibleAttribute";
+    private const string LocalOnlyAttributeFullName = "Conduit.Attributes.LocalOnlyAttribute";
 
     /// <summary>
     /// Scans the assembly for all dispatchable types implementing
@@ -106,7 +107,7 @@ public static class ReflectionScanner
                 }
             }
 
-            // Include non-dispatchable types that are [ClientVisible] (DTOs, models)
+            // Include non-dispatchable CONCRETE types that are [ClientVisible] (DTOs, models)
             foreach (var type in assemblyTypes)
             {
                 var fullName = type.FullName ?? type.Name;
@@ -120,6 +121,30 @@ public static class ReflectionScanner
                         Kind = DispatchableKind.Model,
                     });
                 }
+            }
+
+            // Include non-dispatchable ABSTRACT [ClientVisible] types (base classes/records)
+            // and enumerate their concrete derived types in the same assemblies.
+            foreach (var type in assemblyTypes)
+            {
+                var fullName = type.FullName ?? type.Name;
+                if (!clientVisibleFullNames.Contains(fullName) || !type.IsAbstract || type.IsInterface)
+                {
+                    continue;
+                }
+
+                if (seen.Add(fullName))
+                {
+                    results.Add(new DispatchableTypeInfo
+                    {
+                        TypeName = type.Name,
+                        FullTypeName = fullName,
+                        Namespace = type.Namespace ?? "",
+                        Kind = DispatchableKind.Model,
+                    });
+                }
+
+                AddDerivedTypes(type, assemblies, results, seen);
             }
         }
 
@@ -221,6 +246,56 @@ public static class ReflectionScanner
         var baseName = (genericDef.FullName ?? genericDef.Name).Split('`')[0];
         var args = string.Join(", ", type.GetGenericArguments().Select(FormatFullTypeName));
         return $"{baseName}<{args}>";
+    }
+
+    /// <summary>
+    /// Enumerates concrete derived types of <paramref name="baseType"/> across all scanned
+    /// assemblies and appends them to <paramref name="results"/> with their <c>BaseFullTypeName</c>
+    /// set. Skips abstract derived types (they surface independently if themselves
+    /// <c>[ClientVisible]</c>) and types marked <c>[LocalOnly]</c>.
+    /// </summary>
+    private static void AddDerivedTypes(
+        Type baseType,
+        IReadOnlyList<Assembly> assemblies,
+        List<DispatchableTypeInfo> results,
+        HashSet<string> seen)
+    {
+        foreach (var assembly in assemblies)
+        {
+            foreach (var candidate in assembly.GetExportedTypes())
+            {
+                if (candidate.IsAbstract || candidate.IsInterface)
+                {
+                    continue;
+                }
+
+                if (!baseType.IsAssignableFrom(candidate))
+                {
+                    continue;
+                }
+
+                if (HasAttributeByFullName(candidate, LocalOnlyAttributeFullName))
+                {
+                    continue;
+                }
+
+                var candidateFullName = candidate.FullName ?? candidate.Name;
+                if (!seen.Add(candidateFullName))
+                {
+                    continue;
+                }
+
+                results.Add(new DispatchableTypeInfo
+                {
+                    TypeName = candidate.Name,
+                    FullTypeName = candidateFullName,
+                    Namespace = candidate.Namespace ?? "",
+                    Kind = DispatchableKind.Model,
+                    BaseFullTypeName = baseType.FullName,
+                    BaseTypeName = baseType.Name,
+                });
+            }
+        }
     }
 
     /// <summary>
