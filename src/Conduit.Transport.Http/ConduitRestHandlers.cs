@@ -1,5 +1,6 @@
 using Conduit.Exceptions;
 using Conduit.Messages;
+using Conduit.Transport.Http.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -47,13 +48,20 @@ public static class ConduitRestHandlers
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
-        where TCommand : ICommand<TResult>
+        where TCommand : class, ICommand<TResult>
     {
+        // Validate once at mapping time so misuse fails at startup rather than first request.
+        FilePropertyMetadata.Validate(typeof(TCommand));
+
         return endpoints.MapMethods(pattern, [method],
-            async (TCommand command, IMediator mediator, CancellationToken cancellationToken) =>
+            async (HttpRequest request, IMediator mediator, CancellationToken cancellationToken) =>
             {
                 try
                 {
+                    var command = IsMultipart(request)
+                        ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
+                        : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
+
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -91,13 +99,19 @@ public static class ConduitRestHandlers
         IEndpointRouteBuilder endpoints,
         string pattern,
         string method)
-        where TCommand : ICommand
+        where TCommand : class, ICommand
     {
+        FilePropertyMetadata.Validate(typeof(TCommand));
+
         return endpoints.MapMethods(pattern, [method],
-            async (TCommand command, IMediator mediator, CancellationToken cancellationToken) =>
+            async (HttpRequest request, IMediator mediator, CancellationToken cancellationToken) =>
             {
                 try
                 {
+                    var command = IsMultipart(request)
+                        ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
+                        : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
+
                     await mediator.ExecuteAsync(command, cancellationToken);
                     return Results.NoContent();
                 }
@@ -129,6 +143,10 @@ public static class ConduitRestHandlers
                 }
             });
     }
+
+    private static bool IsMultipart(HttpRequest request) =>
+        request.ContentType is not null
+        && request.ContentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase);
 
     private static IResult ToProblem(ConduitException ex)
     {
