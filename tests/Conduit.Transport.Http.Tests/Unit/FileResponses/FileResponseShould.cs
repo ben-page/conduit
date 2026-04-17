@@ -23,6 +23,7 @@ public class FileResponseShould
         app.MapConduitGet<GetPngImageQuery>("/files/png/{Name}");
         app.MapConduitGet<GetOctetStreamQuery>("/files/octet/{Name}");
         app.MapConduitGet<GetExportFileQuery>("/files/export/{Range}");
+        app.MapConduitGet<GetMissingFileQuery>("/files/missing/{Name}");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -90,6 +91,22 @@ public class FileResponseShould
 
             var body = await response.Content.ReadAsStringAsync();
             body.Should().Be(GetExportFileHandler.Csv);
+        }
+    }
+
+    [TestMethod]
+    public async Task ReturnNotFoundWhenNullableFileQueryReturnsNull()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await client.GetAsync("/files/missing/nothing");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         }
     }
 }
