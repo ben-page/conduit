@@ -33,7 +33,7 @@ public static class ConduitRestHandlers
                 try
                 {
                     var result = await mediator.FetchAsync(query, cancellationToken);
-                    return Results.Ok(result);
+                    return ToHttpResult(result);
                 }
                 catch (ConduitException ex)
                 {
@@ -137,4 +137,22 @@ public static class ConduitRestHandlers
             statusCode: ex.Code.HttpStatusCode,
             title: ex.Code.Value);
     }
+
+    /// <summary>
+    /// Maps a handler result to an <see cref="IResult"/>. <see cref="BinaryData"/>
+    /// and <see cref="ConduitFile"/> produce file responses; <c>null</c> produces 404;
+    /// anything else flows through <see cref="Results.Ok"/> as JSON.
+    /// </summary>
+    private static IResult ToHttpResult(object? result) => result switch
+    {
+        null => Results.NotFound(),
+        BinaryData bd => Results.File(
+            bd.ToArray(),
+            bd.MediaType ?? "application/octet-stream"),
+        ConduitFile cf => Results.File(
+            cf.Content.ToArray(),
+            cf.Content.MediaType ?? "application/octet-stream",
+            cf.FileName),
+        _ => Results.Ok(result),
+    };
 }
