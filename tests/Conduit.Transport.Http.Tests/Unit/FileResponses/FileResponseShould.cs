@@ -22,6 +22,7 @@ public class FileResponseShould
 
         app.MapConduitGet<GetPngImageQuery>("/files/png/{Name}");
         app.MapConduitGet<GetOctetStreamQuery>("/files/octet/{Name}");
+        app.MapConduitGet<GetExportFileQuery>("/files/export/{Range}");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -66,6 +67,29 @@ public class FileResponseShould
             response.Content.Headers.ContentType!.MediaType.Should().Be("application/octet-stream");
             var body = await response.Content.ReadAsByteArrayAsync();
             body.Should().Equal(GetOctetStreamHandler.Bytes);
+        }
+    }
+
+    [TestMethod]
+    public async Task EmitContentDispositionWhenConduitFileHasFileName()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await client.GetAsync("/files/export/Q1");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.Content.Headers.ContentType!.MediaType.Should().Be("text/csv");
+            response.Content.Headers.ContentDisposition.Should().NotBeNull();
+            response.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment");
+            response.Content.Headers.ContentDisposition.FileName.Should().Be(GetExportFileHandler.FileName);
+
+            var body = await response.Content.ReadAsStringAsync();
+            body.Should().Be(GetExportFileHandler.Csv);
         }
     }
 }
