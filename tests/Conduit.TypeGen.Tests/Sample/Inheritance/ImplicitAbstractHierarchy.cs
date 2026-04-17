@@ -1,6 +1,10 @@
 using Conduit.Attributes;
 
-namespace Conduit.TypeGen.Tests.Sample.Inheritance;
+// Fixtures live in a separate namespace so they are not filtered out by
+// TypeCollector's Conduit.* namespace exclusion (which covers framework types).
+// This mirrors GtlHmi's real scenario: domain types in a non-Conduit namespace
+// cannot annotate with [ClientVisible] but are reached via a [ClientVisible] root.
+namespace SampleDomain.Layouts;
 
 // Abstract base is NOT [ClientVisible]. It's reached only via RoomLayout.Fixtures.
 public abstract record FixtureBase

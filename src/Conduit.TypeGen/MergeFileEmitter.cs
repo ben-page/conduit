@@ -52,9 +52,9 @@ public static class MergeFileEmitter
                 .ToList();
 
             var referencedTypes = TypeCollector.CollectReferencedTypes(rootNames, resultTypes, assemblies);
-            foreach (var refType in referencedTypes)
+            foreach (var collected in referencedTypes)
             {
-                EmitInterface(sb, refType.Name, refType);
+                EmitInterface(sb, collected.Type.Name, collected.Type, collected.BaseTypeName);
                 sb.AppendLine();
             }
         }
