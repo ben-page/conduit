@@ -28,6 +28,7 @@ public class FileResponseShould
         app.MapConduitGet<GetMissingFileQuery>("/files/missing/{Name}");
         app.MapConduitGet<GetItemQuery>("/api/items/{id}");
         app.MapConduitPost<CreateItemCommand>("/api/items");
+        app.MapConduitPost<GenerateThumbnailCommand>("/files/thumbnail");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -111,6 +112,25 @@ public class FileResponseShould
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    [TestMethod]
+    public async Task ReturnFileFromCommandBodyPost()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await client.PostAsJsonAsync("/files/thumbnail", new { SourceId = "abc" });
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
+            var body = await response.Content.ReadAsByteArrayAsync();
+            body.Should().Equal(GetPngImageHandler.PngBytes);
         }
     }
 
