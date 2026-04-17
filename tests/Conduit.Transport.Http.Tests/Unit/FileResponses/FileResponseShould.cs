@@ -21,6 +21,7 @@ public class FileResponseShould
         var app = builder.Build();
 
         app.MapConduitGet<GetPngImageQuery>("/files/png/{Name}");
+        app.MapConduitGet<GetOctetStreamQuery>("/files/octet/{Name}");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -46,6 +47,25 @@ public class FileResponseShould
             response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
             var body = await response.Content.ReadAsByteArrayAsync();
             body.Should().Equal(GetPngImageHandler.PngBytes);
+        }
+    }
+
+    [TestMethod]
+    public async Task FallBackToOctetStreamWhenBinaryDataMediaTypeIsNull()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await client.GetAsync("/files/octet/blob");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.Content.Headers.ContentType!.MediaType.Should().Be("application/octet-stream");
+            var body = await response.Content.ReadAsByteArrayAsync();
+            body.Should().Equal(GetOctetStreamHandler.Bytes);
         }
     }
 }
