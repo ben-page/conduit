@@ -36,7 +36,7 @@ public static class MergeFileEmitter
             var resolvedType = assemblies != null
                 ? TypeCollector.ResolveType(assemblies, typeInfo.FullTypeName)
                 : null;
-            EmitInterface(sb, typeInfo.TypeName, resolvedType);
+            EmitInterface(sb, typeInfo.TypeName, resolvedType, typeInfo.BaseTypeName);
             sb.AppendLine();
         }
 
@@ -156,13 +156,21 @@ public static class MergeFileEmitter
         return -1;
     }
 
-    private static void EmitInterface(StringBuilder sb, string typeName, Type? type)
+    private static void EmitInterface(StringBuilder sb, string typeName, Type? type, string? baseTypeName = null)
     {
-        sb.Append(CultureInfo.InvariantCulture, $"export interface {typeName} {{").AppendLine();
+        var extendsClause = string.IsNullOrEmpty(baseTypeName)
+            ? string.Empty
+            : $" extends {baseTypeName}";
+
+        sb.Append(CultureInfo.InvariantCulture, $"export interface {typeName}{extendsClause} {{").AppendLine();
 
         if (type != null)
         {
-            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            var bindingFlags = string.IsNullOrEmpty(baseTypeName)
+                ? BindingFlags.Public | BindingFlags.Instance
+                : BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            var properties = type.GetProperties(bindingFlags);
             foreach (var property in properties)
             {
                 var tsType = TypeMapper.MapType(property.PropertyType);
