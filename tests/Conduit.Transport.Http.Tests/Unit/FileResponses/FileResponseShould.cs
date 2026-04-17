@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
@@ -17,6 +18,7 @@ public class FileResponseShould
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddConduit();
         builder.Services.AddConduitSignalR();
+        builder.Services.AddSingleton<ItemStore>();
 
         var app = builder.Build();
 
@@ -24,6 +26,8 @@ public class FileResponseShould
         app.MapConduitGet<GetOctetStreamQuery>("/files/octet/{Name}");
         app.MapConduitGet<GetExportFileQuery>("/files/export/{Range}");
         app.MapConduitGet<GetMissingFileQuery>("/files/missing/{Name}");
+        app.MapConduitGet<GetItemQuery>("/api/items/{id}");
+        app.MapConduitPost<CreateItemCommand>("/api/items");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -107,6 +111,28 @@ public class FileResponseShould
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    [TestMethod]
+    public async Task ReturnJsonForPlainDtoQuery()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var createResponse = await client.PostAsJsonAsync("/api/items", new { Name = "Regression" });
+            var id = await createResponse.Content.ReadFromJsonAsync<Guid>();
+
+            // Act
+            var response = await client.GetAsync($"/api/items/{id}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
+            var name = await response.Content.ReadFromJsonAsync<string>();
+            name.Should().Be("Regression");
         }
     }
 }
