@@ -1,0 +1,51 @@
+using System.Net;
+using AwesomeAssertions;
+using Conduit.Transport.Http.Tests.Support;
+using Conduit.Transport.SignalR;
+using Conduit.Generated;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+namespace Conduit.Transport.Http.Tests.Unit.FileResponses;
+
+[TestClass]
+public class FileResponseShould
+{
+    private static (WebApplication App, HttpClient Client) CreateTestHost()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.Services.AddConduit();
+        builder.Services.AddConduitSignalR();
+
+        var app = builder.Build();
+
+        app.MapConduitGet<GetPngImageQuery>("/files/png/{Name}");
+
+        app.Urls.Add("http://127.0.0.1:0");
+        app.Start();
+
+        var address = app.Urls.First();
+        var client = new HttpClient { BaseAddress = new Uri(address) };
+        return (app, client);
+    }
+
+    [TestMethod]
+    public async Task ReturnBinaryDataWithDeclaredMediaType()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await client.GetAsync("/files/png/logo");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
+            var body = await response.Content.ReadAsByteArrayAsync();
+            body.Should().Equal(GetPngImageHandler.PngBytes);
+        }
+    }
+}
