@@ -96,4 +96,20 @@ public class TypeGenInheritanceShould
         result.Should().Contain("export interface IconWidget extends WidgetBase {");
         result.Should().Contain("  icon: string;");
     }
+
+    [TestMethod]
+    public void FlatEmitSubtypeWhenBaseNotClientVisible()
+    {
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        result.Should().Contain("export interface AnnotatedDerived {");
+        result.Should().NotContain("AnnotatedDerived extends");
+        result.Should().Contain("  inheritedField: string;");
+        result.Should().Contain("  ownField: number;");
+
+        result.Should().NotContain("export interface UnannotatedBase");
+    }
 }
