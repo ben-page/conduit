@@ -78,4 +78,22 @@ public class TypeGenInheritanceShould
         result.Should().NotContain("InternalAuditEvent");
         result.Should().NotContain("secretToken");
     }
+
+    [TestMethod]
+    public void EmitBaseArrayPropertyAndAllSubtypes()
+    {
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        result.Should().Contain("export interface WidgetContainer {");
+        result.Should().Contain("  widgets: WidgetBase[];");
+
+        result.Should().Contain("export interface WidgetBase {");
+        result.Should().Contain("export interface TextWidget extends WidgetBase {");
+        result.Should().Contain("  text: string;");
+        result.Should().Contain("export interface IconWidget extends WidgetBase {");
+        result.Should().Contain("  icon: string;");
+    }
 }
