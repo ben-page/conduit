@@ -113,12 +113,15 @@ public static class ReflectionScanner
                 var fullName = type.FullName ?? type.Name;
                 if (clientVisibleFullNames.Contains(fullName) && !type.IsAbstract && !type.IsInterface && seen.Add(fullName))
                 {
+                    var (baseFullName, baseName) = FindEmittedImmediateParent(type, clientVisibleFullNames);
                     results.Add(new DispatchableTypeInfo
                     {
                         TypeName = type.Name,
                         FullTypeName = fullName,
                         Namespace = type.Namespace ?? "",
                         Kind = DispatchableKind.Model,
+                        BaseFullTypeName = baseFullName,
+                        BaseTypeName = baseName,
                     });
                 }
             }
@@ -302,6 +305,34 @@ public static class ReflectionScanner
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Walks the base-type chain of <paramref name="type"/> to find an emitted
+    /// ancestor. If any ancestor is in <paramref name="clientVisibleFullNames"/>,
+    /// returns the immediate parent's type-name pair so the emitted TypeScript
+    /// subtype carries an <c>extends</c> clause. Returns <c>(null, null)</c>
+    /// when no ancestor is emitted — preserving flat-fallback for types whose
+    /// base chain is not client-visible.
+    /// </summary>
+    private static (string? BaseFullTypeName, string? BaseTypeName) FindEmittedImmediateParent(
+        Type type,
+        HashSet<string> clientVisibleFullNames)
+    {
+        var ancestor = type.BaseType;
+        while (ancestor is not null && ancestor != typeof(object))
+        {
+            var ancestorFullName = ancestor.FullName ?? ancestor.Name;
+            if (clientVisibleFullNames.Contains(ancestorFullName))
+            {
+                var parent = type.BaseType!;
+                return (parent.FullName ?? parent.Name, parent.Name);
+            }
+
+            ancestor = ancestor.BaseType;
+        }
+
+        return (null, null);
     }
 
     /// <summary>

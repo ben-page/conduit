@@ -112,4 +112,30 @@ public class TypeGenInheritanceShould
 
         result.Should().NotContain("export interface UnannotatedBase");
     }
+
+    [TestMethod]
+    public void LinkConcreteClientVisibleSubtypesToAbstractBase()
+    {
+        // Arrange — subtypes carry [ClientVisible] themselves AND inherit from
+        // an abstract [ClientVisible] base. They should still emit with `extends`,
+        // not flat with duplicated base fields.
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        // Act
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        // Assert — both subtypes extend NotifyBase
+        result.Should().Contain("export interface EmailNotify extends NotifyBase {");
+        result.Should().Contain("  toAddress: string;");
+        result.Should().Contain("export interface SmsNotify extends NotifyBase {");
+        result.Should().Contain("  phoneNumber: string;");
+
+        // Assert — inherited field (MessageId) does NOT appear in subtypes
+        var emailStart = result.IndexOf("export interface EmailNotify extends", StringComparison.Ordinal);
+        var emailEnd = result.IndexOf('}', emailStart);
+        var emailBlock = result[emailStart..emailEnd];
+        emailBlock.Should().NotContain("messageId");
+        emailBlock.Should().Contain("toAddress");
+    }
 }
