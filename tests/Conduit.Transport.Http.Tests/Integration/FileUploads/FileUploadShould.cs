@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
@@ -59,6 +60,32 @@ public class FileUploadShould
             store.Image.Should().NotBeNull();
             store.Image!.ToArray().Should().Equal(imageBytes);
             store.Image.MediaType.Should().Be("image/png");
+        }
+    }
+
+    [TestMethod]
+    public async Task BindBinaryDataFromJsonBodyWhenNotMultipart()
+    {
+        // Arrange
+        var (app, client, store) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            var imageBytes = new byte[] { 0x01, 0x02, 0x03, 0x04 };
+            var payload = new
+            {
+                ScreenName = "Reactor",
+                Image = Convert.ToBase64String(imageBytes)
+            };
+
+            // Act
+            var response = await client.PostAsJsonAsync("/uploads/binary", payload);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            store.ScreenName.Should().Be("Reactor");
+            store.Image.Should().NotBeNull();
+            store.Image!.ToArray().Should().Equal(imageBytes);
         }
     }
 
