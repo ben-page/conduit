@@ -63,4 +63,19 @@ public class TypeGenInheritanceShould
         result.Should().Contain("export interface LevelC extends LevelB {");
         result.Should().Contain("export interface LevelD extends LevelB {");
     }
+
+    [TestMethod]
+    public void ExcludeLocalOnlyDerivedTypes()
+    {
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        result.Should().Contain("export interface PublicAuditEvent extends AuditEventBase {");
+        result.Should().Contain("  userId: string;");
+
+        result.Should().NotContain("InternalAuditEvent");
+        result.Should().NotContain("secretToken");
+    }
 }
