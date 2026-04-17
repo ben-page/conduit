@@ -55,7 +55,7 @@ public static class ConduitRestHandlers
                 try
                 {
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
-                    return Results.Ok(result);
+                    return ToHttpResult(result);
                 }
                 catch (ConduitException ex)
                 {
@@ -77,7 +77,7 @@ public static class ConduitRestHandlers
                 try
                 {
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
-                    return Results.Ok(result);
+                    return ToHttpResult(result);
                 }
                 catch (ConduitException ex)
                 {
