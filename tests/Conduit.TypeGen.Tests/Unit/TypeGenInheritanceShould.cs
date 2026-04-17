@@ -138,4 +138,30 @@ public class TypeGenInheritanceShould
         emailBlock.Should().NotContain("messageId");
         emailBlock.Should().Contain("toAddress");
     }
+
+    [TestMethod]
+    public void EmitAbstractBaseReachedViaPropertyGraphWithDerivedSubtypes()
+    {
+        // Arrange — FixtureBase has no [ClientVisible]; reached only via RoomLayout.Fixtures
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        // Act
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        // Assert — abstract base emitted with its own fields
+        result.Should().Contain("export interface FixtureBase {");
+        result.Should().Contain("  id: string;");
+        result.Should().Contain("  x: number;");
+        result.Should().Contain("  y: number;");
+
+        // Assert — concrete subtypes emitted with `extends` and only their own fields
+        result.Should().Contain("export interface DoorFixture extends FixtureBase {");
+        result.Should().Contain("  isOpen: boolean;");
+        result.Should().Contain("export interface WindowFixture extends FixtureBase {");
+        result.Should().Contain("  transparency: number;");
+
+        // Assert — property type on RoomLayout references the abstract base
+        result.Should().Contain("  fixtures: FixtureBase[];");
+    }
 }
