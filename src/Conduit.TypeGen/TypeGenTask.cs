@@ -76,13 +76,16 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
             var outputDir = Path.GetFullPath(this.OutputDirectory);
             Directory.CreateDirectory(outputDir);
 
+            // Normalize to LF so Windows and Linux builds produce identical
+            // content — avoids phantom working-tree diffs on consumers whose
+            // .gitattributes normalize committed TS to LF.
             File.WriteAllText(
                 Path.Combine(outputDir, "conduit.ts"),
-                BaseFileEmitter.Emit(transports, this.BasePath, this.HubPath));
+                BaseFileEmitter.Emit(transports, this.BasePath, this.HubPath).ReplaceLineEndings("\n"));
 
             File.WriteAllText(
                 Path.Combine(outputDir, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(types, assemblies, includeSignalR));
+                MergeFileEmitter.Emit(types, assemblies, includeSignalR).ReplaceLineEndings("\n"));
 
             this.Log.LogMessage(MessageImportance.Normal,
                 $"Conduit TypeGen: generated 2 files ({types.Count} types)");
