@@ -64,8 +64,9 @@ public sealed class ConduitBackgroundDispatcher : BackgroundService
     /// <inheritdoc />
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        // Signal no more items will be written
-        this.workChannel.Writer.Complete();
+        // Signal no more items will be written. TryComplete is idempotent —
+        // StopAsync may be called more than once (e.g. test host teardown).
+        this.workChannel.Writer.TryComplete();
 
         // Let the base drain remaining items with the cancellation token
         await base.StopAsync(cancellationToken);
