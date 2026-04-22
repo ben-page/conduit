@@ -75,8 +75,8 @@ public static class BaseFileEmitter
     private static void EmitTransportInterface(StringBuilder sb)
     {
         sb.AppendLine("export interface ConduitTransport {");
-        sb.AppendLine("  sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>>;");
-        sb.AppendLine("  sendEvent(type: string, data: unknown): Promise<void>;");
+        sb.AppendLine("  sendRequest<TResult>(type: string, payload: unknown, headers?: Record<string, string>): Promise<DispatchResult<TResult>>;");
+        sb.AppendLine("  sendEvent(type: string, data: unknown, headers?: Record<string, string>): Promise<void>;");
         sb.AppendLine("  subscribe(eventName: string, handler: (data: unknown) => void): Subscription;");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -91,10 +91,10 @@ public static class BaseFileEmitter
         sb.AppendLine("export class HttpTransport implements ConduitTransport {");
         sb.AppendLine("  constructor(private baseUrl: string, private basePath: string = '" + basePath + "') {}");
         sb.AppendLine();
-        sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>> {");
+        sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown, headers?: Record<string, string>): Promise<DispatchResult<TResult>> {");
         sb.AppendLine("    const response = await fetch(this.baseUrl + this.basePath + '/dispatch', {");
         sb.AppendLine("      method: 'POST',");
-        sb.AppendLine("      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type },");
+        sb.AppendLine("      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type, ...(headers ?? {}) },");
         sb.AppendLine("      body: JSON.stringify(payload),");
         sb.AppendLine("    });");
         sb.AppendLine("    if (!response.ok) {");
@@ -105,10 +105,10 @@ public static class BaseFileEmitter
         sb.AppendLine("    return await response.json() as DispatchResult<TResult>;");
         sb.AppendLine("  }");
         sb.AppendLine();
-        sb.AppendLine("  async sendEvent(type: string, data: unknown): Promise<void> {");
+        sb.AppendLine("  async sendEvent(type: string, data: unknown, headers?: Record<string, string>): Promise<void> {");
         sb.AppendLine("    const response = await fetch(this.baseUrl + this.basePath + '/publish', {");
         sb.AppendLine("      method: 'POST',");
-        sb.AppendLine("      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type },");
+        sb.AppendLine("      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type, ...(headers ?? {}) },");
         sb.AppendLine("      body: JSON.stringify(data),");
         sb.AppendLine("    });");
         sb.AppendLine("    if (!response.ok) {");
@@ -143,12 +143,12 @@ public static class BaseFileEmitter
         sb.AppendLine("    await this.connection.stop();");
         sb.AppendLine("  }");
         sb.AppendLine();
-        sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>> {");
-        sb.AppendLine("    return await this.connection.invoke<DispatchResult<TResult>>('Dispatch', type, payload, null);");
+        sb.AppendLine("  async sendRequest<TResult>(type: string, payload: unknown, headers?: Record<string, string>): Promise<DispatchResult<TResult>> {");
+        sb.AppendLine("    return await this.connection.invoke<DispatchResult<TResult>>('Dispatch', type, payload, null, headers ?? null);");
         sb.AppendLine("  }");
         sb.AppendLine();
-        sb.AppendLine("  async sendEvent(type: string, data: unknown): Promise<void> {");
-        sb.AppendLine("    await this.connection.invoke('Publish', type, data, null);");
+        sb.AppendLine("  async sendEvent(type: string, data: unknown, headers?: Record<string, string>): Promise<void> {");
+        sb.AppendLine("    await this.connection.invoke('Publish', type, data, null, headers ?? null);");
         sb.AppendLine("  }");
         sb.AppendLine();
         sb.AppendLine("  subscribe(eventName: string, handler: (data: unknown) => void): Subscription {");
