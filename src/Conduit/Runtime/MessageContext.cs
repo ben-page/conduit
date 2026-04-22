@@ -58,21 +58,34 @@ public sealed class MessageContext
 
     /// <summary>
     /// Creates a new context for a local dispatch. If a current context exists,
-    /// inherits <see cref="ConversationId"/> and sets <see cref="CausationId"/>
-    /// to the current <see cref="MessageId"/>. Called by the generated mediator.
+    /// inherits <see cref="ConversationId"/>, sets <see cref="CausationId"/> to
+    /// the current <see cref="MessageId"/>, and inherits <see cref="Properties"/>
+    /// unless <paramref name="options"/> provides its own. Called by the generated mediator.
     /// </summary>
     public static MessageContext StartDispatch(DispatchOptions? options = null)
     {
         var parent = Current;
         var messageId = Guid.NewGuid().ToString("N");
 
+        IReadOnlyDictionary<string, object?> properties;
+        if (options?.Properties is { Count: > 0 } explicitProps)
+        {
+            properties = new Dictionary<string, object?>(explicitProps);
+        }
+        else if (parent?.Properties is { Count: > 0 } parentProps)
+        {
+            properties = parentProps;
+        }
+        else
+        {
+            properties = EmptyProperties;
+        }
+
         var context = new MessageContext(
             messageId: messageId,
             causationId: parent?.MessageId,
             conversationId: parent?.ConversationId ?? messageId,
-            properties: options?.Properties is { Count: > 0 }
-                ? new Dictionary<string, object?>(options.Properties)
-                : EmptyProperties);
+            properties: properties);
 
         CurrentContext.Value = context;
         return context;
@@ -80,13 +93,15 @@ public sealed class MessageContext
 
     /// <summary>
     /// Creates a context from inbound transport values for cross-service propagation.
-    /// All three values are required — the sending service provides them via broker
-    /// message properties or HTTP headers.
+    /// The three correlation values are required — the sending service provides them via
+    /// broker message properties or HTTP headers. Additional <paramref name="properties"/>
+    /// are made available to pipeline behaviors via <see cref="Properties"/>.
     /// </summary>
     public static MessageContext StartDispatchFromTransport(
         string messageId,
         string? causationId,
-        string conversationId)
+        string conversationId,
+        IReadOnlyDictionary<string, object?>? properties = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
@@ -95,7 +110,7 @@ public sealed class MessageContext
             messageId: messageId,
             causationId: causationId,
             conversationId: conversationId,
-            properties: EmptyProperties);
+            properties: properties ?? EmptyProperties);
 
         CurrentContext.Value = context;
         return context;
