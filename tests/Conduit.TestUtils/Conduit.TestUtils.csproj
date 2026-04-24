@@ -5,6 +5,10 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Shared test utility library, not a test project. Override the
+         IsTestProject=true inherited from tests/Directory.Build.props so
+         `dotnet test` doesn't launch a testhost for it. -->
+    <IsTestProject>false</IsTestProject>
   </PropertyGroup>
 
   <ItemGroup>
