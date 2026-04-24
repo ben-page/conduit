@@ -315,9 +315,11 @@ Procfile          text
 # Auto detect text files and perform LF normalization
 *          text=auto
 
-*.cs       text diff=csharp
-*.cshtml   text diff=html
-*.csx      text diff=csharp
+*.cs       text eol=crlf diff=csharp
+*.cshtml   text eol=crlf diff=html
+*.csx      text eol=crlf diff=csharp
+*.vb       text eol=crlf
+*.razor    text eol=crlf
 *.sln      text eol=crlf
 *.csproj   text eol=crlf
 
