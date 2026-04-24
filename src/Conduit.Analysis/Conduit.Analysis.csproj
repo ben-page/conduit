@@ -4,6 +4,10 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <!-- Shared build-time type model used by Conduit.SourceGen (Roslyn generator)
+         and Conduit.TypeGen (MSBuild task). Consumers never reference it
+         directly; it ships bundled inside SourceGen and TypeGen packages. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

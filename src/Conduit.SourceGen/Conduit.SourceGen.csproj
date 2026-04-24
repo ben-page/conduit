@@ -7,15 +7,27 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsRoslynComponent>true</IsRoslynComponent>
     <NoWarn>RS2008</NoWarn>
+    <!-- Pack as a Roslyn source generator (analyzers/ layout), not as a regular
+         library. The DLL is registered with Roslyn via NuGet convention. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="PolySharp" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" />
+    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Ship the generator DLL and its Conduit.Analysis dependency under
+       analyzers/dotnet/cs/ so Roslyn loads them as one generator unit. -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\Conduit.SourceGen.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)\Conduit.Analysis.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 
 </Project>
