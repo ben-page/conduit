@@ -4,15 +4,36 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Pack as an MSBuild task package: task DLL + non-MSBuild deps under
+         tasks/, targets under build/. Dependencies are bundled rather than
+         declared as nupkg dependencies because the task runs in the MSBuild
+         process and its deps must sit next to the task DLL. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- NU5100: we intentionally ship the task DLL outside lib/ (it's an
+         MSBuild task, not a runtime reference). -->
+    <NoWarn>$(NoWarn);NU5100</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Build.Utilities.Core" />
-    <PackageReference Include="System.Reflection.MetadataLoadContext" />
+    <!-- Microsoft.Build.* is provided by the hosting MSBuild process — we
+         compile against it but don't ship its runtime assets in the package. -->
+    <PackageReference Include="Microsoft.Build.Utilities.Core" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Reflection.MetadataLoadContext" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" />
+    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Bundle everything the task needs at runtime into tasks/net10.0/. -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\Conduit.TypeGen.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
+    <None Include="$(OutputPath)\Conduit.Analysis.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
+    <None Include="$(OutputPath)\System.Reflection.MetadataLoadContext.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
+    <None Include="Conduit.TypeGen.targets" Pack="true" PackagePath="build" Visible="false" />
   </ItemGroup>
 
 </Project>
