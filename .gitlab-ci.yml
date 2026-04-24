@@ -1,0 +1,142 @@
+image: mcr.microsoft.com/dotnet/sdk:10.0
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_PACKAGES: "${CI_PROJECT_DIR}/.nuget/packages"
+
+cache:
+  key:
+    files:
+      - src/Directory.Packages.props
+      - tests/Directory.Packages.props
+  paths:
+    - .nuget/packages/
+
+stages:
+  - build
+  - test
+  - package
+  - publish
+  - release
+
+build:
+  stage: build
+  # The browser-client sample (samples/browser-client/Conduit.Sample.Notes)
+  # runs `npm install` + `vite build` as part of its MSBuild graph. Vite 8
+  # requires Node 20+, so we install it from NodeSource rather than the
+  # older Node that Debian bookworm ships. Pack/publish stages don't need
+  # Node (they run with --no-build).
+  before_script:
+    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    - apt-get install -y nodejs
+  script:
+    - dotnet restore
+    - dotnet build --no-restore --configuration Release
+  artifacts:
+    paths:
+      # bin/ for test + pack (with --no-build); obj/ for pack's NuGet assets
+      # file (project.assets.json) and restore cache. `dotnet pack --no-build`
+      # refuses without both.
+      - src/**/bin/Release/
+      - src/**/obj/
+      - tests/**/bin/Release/
+      - tests/**/obj/
+    expire_in: 1 day
+
+test:
+  stage: test
+  needs:
+    - build
+  # Broker transport tests (ASB, RabbitMQ, Kafka, SQS, ActiveMQ) require
+  # container runtimes that aren't available on the free shared-runner tier,
+  # so they're excluded here. The in-process HTTP and SignalR transport tests
+  # still run. Revisit when we move to a self-hosted runner with podman/docker.
+  script:
+    - dotnet test --no-build --configuration Release
+        --filter "FullyQualifiedName!~Conduit.Transport.ActiveMQ.Tests&FullyQualifiedName!~Conduit.Transport.AmazonSqs.Tests&FullyQualifiedName!~Conduit.Transport.AzureServiceBus.Tests&FullyQualifiedName!~Conduit.Transport.Kafka.Tests&FullyQualifiedName!~Conduit.Transport.RabbitMQ.Tests"
+        --logger "junit;LogFilePath=test-results.xml"
+        --results-directory ./test-results
+  artifacts:
+    when: always
+    reports:
+      junit: tests/**/test-results.xml
+    paths:
+      - test-results/
+    expire_in: 1 week
+
+pack:
+  stage: package
+  needs:
+    # Both: test gates release (don't publish red), build supplies bin/obj
+    # needed by `--no-build`. `needs` doesn't transitively inherit artifacts.
+    - build
+    - test
+  rules:
+    # Only pack on `vMAJOR.MINOR.PATCH` tags; pre-release suffixes (`-rc1`,
+    # `-alpha.2`) are accepted on the tail end so v1.0.0-rc1 also packs.
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/
+  script:
+    # Strip the leading `v` so package versions match SemVer (the GitLab NuGet
+    # registry rejects non-SemVer versions).
+    - export CONDUIT_VERSION="${CI_COMMIT_TAG#v}"
+    - echo "Packing Conduit $CONDUIT_VERSION"
+    # Pack every project under src/. All src projects inherit
+    # IsPackable=true from src/Directory.Build.props. Packing per-project
+    # rather than solution-level avoids picking up samples/, which also
+    # inherit IsPackable=true from samples/Directory.Build.props.
+    - |
+      for proj in src/*/*.csproj; do
+        dotnet pack "$proj" \
+          --configuration Release \
+          --no-build \
+          --output ./artifacts \
+          -p:Version="$CONDUIT_VERSION"
+      done
+  artifacts:
+    paths:
+      - artifacts/*.nupkg
+    expire_in: 30 days
+
+publish:
+  stage: publish
+  needs:
+    - pack
+  # `manual` means the job appears green-eligible in the pipeline view but
+  # does not execute until someone clicks it. Keeps releases deliberate:
+  # tagging produces a packaged, tested candidate; publishing it is a
+  # separate human decision. Irreversible — NuGet packages can never be
+  # overwritten at the same version.
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/
+      when: manual
+  script:
+    # Register the project's own NuGet registry as a push source. CI_JOB_TOKEN
+    # is injected by GitLab and has permission to push packages to this
+    # project's registry — no long-lived secret needed.
+    - dotnet nuget add source "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/nuget/index.json"
+        --name gitlab
+        --username gitlab-ci-token
+        --password "$CI_JOB_TOKEN"
+        --store-password-in-clear-text
+    - dotnet nuget push "artifacts/*.nupkg" --source gitlab
+
+release:
+  stage: release
+  # Uses GitLab's release-cli image — no .NET needed here.
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - publish
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/
+  script:
+    - echo "Creating GitLab Release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "Conduit $CI_COMMIT_TAG"
+    description: "See [README.md](README.md) for details."
+    assets:
+      links:
+        - name: "Conduit NuGet packages"
+          url: "$CI_SERVER_URL/$CI_PROJECT_PATH/-/packages"
+          link_type: package
