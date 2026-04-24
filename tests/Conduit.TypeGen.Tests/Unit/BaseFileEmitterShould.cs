@@ -36,8 +36,8 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("export interface ConduitTransport");
-        result.Should().Contain("sendRequest<TResult>(type: string, payload: unknown): Promise<DispatchResult<TResult>>;");
-        result.Should().Contain("sendEvent(type: string, data: unknown): Promise<void>;");
+        result.Should().Contain("sendRequest<TResult>(type: string, payload: unknown, headers?: Record<string, string>): Promise<DispatchResult<TResult>>;");
+        result.Should().Contain("sendEvent(type: string, data: unknown, headers?: Record<string, string>): Promise<void>;");
         result.Should().Contain("subscribe(eventName: string, handler: (data: unknown) => void): Subscription;");
     }
 
