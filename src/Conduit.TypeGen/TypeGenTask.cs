@@ -160,25 +160,39 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
     private static IEnumerable<string> GetAssemblyPaths(string assemblyDir, string runtimeDir)
     {
-        // Include all DLLs from the application output directory
+        // Dedupe by simple assembly name so the PathAssemblyResolver never sees
+        // two files for the same assembly. On Linux test runs the SDK copies
+        // framework DLLs (e.g. Microsoft.Extensions.Hosting.Abstractions.dll)
+        // into the app output directory AND they live in the runtime dir, and
+        // MetadataLoadContext refuses to load the same assembly twice.
+        // Priority: app output (consumer's version wins) > runtime > ASP.NET.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var dll in Directory.GetFiles(assemblyDir, "*.dll"))
         {
-            yield return dll;
+            if (seen.Add(Path.GetFileNameWithoutExtension(dll)))
+            {
+                yield return dll;
+            }
         }
 
-        // Include shared framework assemblies from the runtime directory
         foreach (var dll in Directory.GetFiles(runtimeDir, "*.dll"))
         {
-            yield return dll;
+            if (seen.Add(Path.GetFileNameWithoutExtension(dll)))
+            {
+                yield return dll;
+            }
         }
 
-        // Include ASP.NET Core shared framework if available
         var aspNetDir = FindAspNetCoreSharedFramework(runtimeDir);
         if (aspNetDir != null)
         {
             foreach (var dll in Directory.GetFiles(aspNetDir, "*.dll"))
             {
-                yield return dll;
+                if (seen.Add(Path.GetFileNameWithoutExtension(dll)))
+                {
+                    yield return dll;
+                }
             }
         }
     }
