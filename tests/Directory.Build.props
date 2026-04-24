@@ -8,4 +8,11 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
+  <!-- JUnit XML logger so every test project emits test-results.xml that
+       GitLab can surface in the MR UI via `reports: junit:`. Declared once
+       here; no per-project PackageReference needed. -->
+  <ItemGroup>
+    <PackageReference Include="JunitXml.TestLogger" />
+  </ItemGroup>
+
 </Project>
