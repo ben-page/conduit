@@ -52,8 +52,9 @@ public class SignalRInterceptorShould
 
         // Act
         Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext, noHeaders);
 
         // Assert
         result.Should().NotBeNull();
@@ -70,8 +71,9 @@ public class SignalRInterceptorShould
 
         // Act
         Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.DeleteItemCommand", payload, noContext);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.DeleteItemCommand", payload, noContext, noHeaders);
 
         // Assert
         result.Should().NotBeNull();
