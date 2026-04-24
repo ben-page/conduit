@@ -13,14 +13,29 @@ public sealed class TracingIntegrationShould : IDisposable
     private ActivityListener? listener;
     private readonly List<Activity> capturedActivities = [];
 
+    // Root activity started in TestInitialize so every dispatch activity
+    // (a child) inherits its TraceId. Without this, other tests running
+    // concurrently under [Parallelize(MethodLevel)] leak their dispatch
+    // activities into this test's capture list via the global listener.
+    private Activity? testRoot;
+
     [TestInitialize]
     public void Setup()
     {
+        this.testRoot = new Activity("TracingIntegrationShould.Scope").Start();
+
+        var rootTraceId = this.testRoot.TraceId;
         this.listener = new ActivityListener
         {
             ShouldListenTo = static source => source.Name == "Conduit",
             Sample = SampleAllData,
-            ActivityStarted = this.capturedActivities.Add,
+            ActivityStarted = activity =>
+            {
+                if (activity.TraceId == rootTraceId)
+                {
+                    this.capturedActivities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(this.listener);
     }
@@ -34,12 +49,15 @@ public sealed class TracingIntegrationShould : IDisposable
     {
         this.listener?.Dispose();
         this.listener = null;
+        this.testRoot?.Dispose();
+        this.testRoot = null;
         this.capturedActivities.Clear();
     }
 
     public void Dispose()
     {
         this.listener?.Dispose();
+        this.testRoot?.Dispose();
     }
 
     [TestMethod]
