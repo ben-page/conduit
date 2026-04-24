@@ -45,8 +45,9 @@ public class ConduitHubShould
 
         // Act
         Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext, noHeaders);
 
         // Assert
         result.Should().NotBeNull();
@@ -64,8 +65,9 @@ public class ConduitHubShould
 
         // Act
         Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
         var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.GetItemQuery", payload, noContext);
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.GetItemQuery", payload, noContext, noHeaders);
 
         // Assert
         result.Should().NotBeNull();
@@ -85,8 +87,9 @@ public class ConduitHubShould
 
         // Act
         Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
         await connection.InvokeAsync(
-            "Publish", "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload, noContext);
+            "Publish", "Conduit.Transport.SignalR.Tests.Support.ItemCreatedEvent", payload, noContext, noHeaders);
 
         // Assert
         await spy.WaitForCountAsync(1);
@@ -104,11 +107,13 @@ public class ConduitHubShould
 
         // Act — publish an event whose listener throws
         Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
         var act = () => connection.InvokeAsync(
             "Publish",
             "Conduit.Transport.SignalR.Tests.Support.ExplodingEvent",
             payload,
-            noContext);
+            noContext,
+            noHeaders);
 
         // Assert — exception propagates to the caller
         await act.Should().ThrowAsync<Exception>();

@@ -50,8 +50,12 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
 
         await this.EnsureConnectedAsync(cancellationToken);
 
+        // The hub's Dispatch signature is (type, payload, context?, headers?).
+        // SignalR rejects arity mismatches on the wire, so we always send
+        // four args even when we have no headers to forward.
+        Dictionary<string, string>? noHeaders = null;
         var result = await this.hubConnection.InvokeAsync<DispatchResult<JsonElement?>>(
-            "Dispatch", envelope.Type, envelope.Payload, BuildContext(), cancellationToken);
+            "Dispatch", envelope.Type, envelope.Payload, BuildContext(), noHeaders, cancellationToken);
 
         return ConduitRuntime.UnwrapReply(result);
     }
@@ -70,7 +74,9 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         if (this.hubConnection is not null)
         {
             await this.EnsureConnectedAsync(cancellationToken);
-            await this.hubConnection.InvokeAsync("Publish", envelope.Type, envelope.Payload, BuildContext(), cancellationToken);
+            Dictionary<string, string>? noHeaders = null;
+            await this.hubConnection.InvokeAsync(
+                "Publish", envelope.Type, envelope.Payload, BuildContext(), noHeaders, cancellationToken);
             return;
         }
 
@@ -87,8 +93,9 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         if (this.hubConnection is not null)
         {
             await this.EnsureConnectedAsync(cancellationToken);
+            Dictionary<string, string>? noHeaders = null;
             await this.hubConnection.InvokeAsync<DispatchResult<JsonElement?>>(
-                "Dispatch", envelope.Type, envelope.Payload, BuildContext(), cancellationToken);
+                "Dispatch", envelope.Type, envelope.Payload, BuildContext(), noHeaders, cancellationToken);
             return;
         }
 
