@@ -5,9 +5,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Pack as an MSBuild task package: task DLL + non-MSBuild deps under
-         tasks/, targets under build/. Dependencies are bundled rather than
-         declared as nupkg dependencies because the task runs in the MSBuild
-         process and its deps must sit next to the task DLL. -->
+         tasks/, targets under build/. SuppressDependenciesWhenPacking keeps
+         these dependencies out of the published nuspec so NuGet consumers
+         don't pull MSBuild/MetadataLoadContext transitively — the host
+         MSBuild process already provides Microsoft.Build.*, and
+         MetadataLoadContext is bundled into tasks/ alongside the task DLL.
+         Project-reference consumers (e.g. Conduit.TypeGen.Tests) still see
+         these via normal MSBuild project flow. -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <DevelopmentDependency>true</DevelopmentDependency>
@@ -18,14 +22,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Microsoft.Build.* is provided by the hosting MSBuild process — we
-         compile against it but don't ship its runtime assets in the package. -->
-    <PackageReference Include="Microsoft.Build.Utilities.Core" PrivateAssets="all" ExcludeAssets="runtime" />
-    <PackageReference Include="System.Reflection.MetadataLoadContext" PrivateAssets="all" />
+    <!-- ExcludeAssets="runtime" keeps Microsoft.Build.Utilities.Core.dll out
+         of TypeGen's bin/ output so it doesn't get bundled into the package
+         and doesn't conflict with the version the host MSBuild loads. -->
+    <PackageReference Include="Microsoft.Build.Utilities.Core" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Reflection.MetadataLoadContext" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" />
   </ItemGroup>
 
   <!-- Bundle everything the task needs at runtime into tasks/net10.0/. -->
