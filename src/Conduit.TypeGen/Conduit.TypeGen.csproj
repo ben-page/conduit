@@ -22,10 +22,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- ExcludeAssets="runtime" keeps Microsoft.Build.Utilities.Core.dll out
-         of TypeGen's bin/ output so it doesn't get bundled into the package
-         and doesn't conflict with the version the host MSBuild loads. -->
-    <PackageReference Include="Microsoft.Build.Utilities.Core" ExcludeAssets="runtime" />
+    <!-- Microsoft.Build.* is provided by the hosting MSBuild process at task
+         execution time. We let runtime assets flow normally so test projects
+         that consume TypeGen via ProjectReference can load the framework
+         types — the published nupkg uses explicit None Includes (not globs),
+         so Microsoft.Build.* doesn't end up packaged regardless. -->
+    <PackageReference Include="Microsoft.Build.Utilities.Core" />
     <PackageReference Include="System.Reflection.MetadataLoadContext" />
   </ItemGroup>
 
