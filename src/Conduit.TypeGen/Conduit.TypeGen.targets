@@ -4,17 +4,27 @@
     <ConduitTransports Condition="'$(ConduitTransports)' == ''">Http;SignalR</ConduitTransports>
     <ConduitBasePath Condition="'$(ConduitBasePath)' == ''">/api/conduit</ConduitBasePath>
     <ConduitHubPath Condition="'$(ConduitHubPath)' == ''">/conduit</ConduitHubPath>
-    <!-- Consumers can point TypeGen at a different assembly (e.g. a referenced
-         project that actually contains the [ClientVisible] types). Defaults to
-         this project's own build output. -->
-    <ConduitTypeGenAssemblyPath Condition="'$(ConduitTypeGenAssemblyPath)' == ''">$(TargetPath)</ConduitTypeGenAssemblyPath>
   </PropertyGroup>
 
+  <!-- NuGet package layout: task DLL lives under tasks/net10.0/ next to the
+       targets file's parent. -->
   <UsingTask TaskName="Conduit.TypeGen.TypeGenTask"
-             AssemblyFile="$(MSBuildThisFileDirectory)..\tasks\net10.0\Conduit.TypeGen.dll" />
+             AssemblyFile="$(MSBuildThisFileDirectory)..\tasks\net10.0\Conduit.TypeGen.dll"
+             Condition="'$(ConduitTypeGenTaskAssembly)' == ''" />
+
+  <!-- Project-reference layout (in-repo samples + tests): consumer sets
+       ConduitTypeGenTaskAssembly to the built DLL path. -->
+  <UsingTask TaskName="Conduit.TypeGen.TypeGenTask"
+             AssemblyFile="$(ConduitTypeGenTaskAssembly)"
+             Condition="'$(ConduitTypeGenTaskAssembly)' != ''" />
 
   <Target Name="ConduitTypeGen" AfterTargets="Build"
           Condition="'$(ConduitTypeGenEnabled)' == 'true'">
+    <!-- Defaulted inside the target so $(TargetPath) is fully resolved (it's
+         populated by SDK targets during build, not at evaluation time). -->
+    <PropertyGroup>
+      <ConduitTypeGenAssemblyPath Condition="'$(ConduitTypeGenAssemblyPath)' == ''">$(TargetPath)</ConduitTypeGenAssemblyPath>
+    </PropertyGroup>
     <TypeGenTask
       AssemblyPath="$(ConduitTypeGenAssemblyPath)"
       OutputDirectory="$(ConduitTypeGenOutput)"
