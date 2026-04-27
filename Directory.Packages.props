@@ -1,0 +1,37 @@
+<Project>
+  <ItemGroup>
+    <PackageVersion Include="AMQPNetLite.Core" Version="2.4.11" />
+    <PackageVersion Include="AwesomeAssertions" Version="9.4.0" />
+    <PackageVersion Include="AWSSDK.SimpleNotificationService" Version="3.7.500" />
+    <PackageVersion Include="AWSSDK.SQS" Version="3.7.400.107" />
+    <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
+    <PackageVersion Include="Confluent.Kafka" Version="2.8.0" />
+    <PackageVersion Include="JunitXml.TestLogger" Version="6.1.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="18.4.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.12.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Resilience" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.5.2" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.1.0" />
+    <PackageVersion Include="MSTest.TestAdapter" Version="4.1.0" />
+    <PackageVersion Include="MSTest.TestFramework" Version="4.1.0" />
+    <PackageVersion Include="MSTest" Version="4.1.0" />
+    <PackageVersion Include="PolySharp" Version="1.15.0" />
+    <PackageVersion Include="RabbitMQ.Client" Version="7.2.1" />
+    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.5" />
+    <PackageVersion Include="System.IO.Hashing" Version="10.0.5" />
+    <PackageVersion Include="System.Memory.Data" Version="10.0.5" />
+    <PackageVersion Include="System.Reflection.MetadataLoadContext" Version="10.0.5" />
+    <PackageVersion Include="Testcontainers.Kafka" Version="4.11.0" />
+    <PackageVersion Include="Testcontainers.RabbitMq" Version="4.11.0" />
+    <PackageVersion Include="Testcontainers.ServiceBus" Version="4.11.0" />
+    <PackageVersion Include="Testcontainers" Version="4.11.0" />
+  </ItemGroup>
+</Project>
