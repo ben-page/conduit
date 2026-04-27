@@ -1,4 +1,4 @@
-using Conduit.Attributes;
+﻿using Conduit.Attributes;
 using Conduit.Generated;
 using Conduit.Transport.Http;
 using Conduit.Transport.SignalR;
@@ -26,8 +26,8 @@ public partial class Program
             conduit.AddEndpoint("inventory", endpoint =>
             {
                 endpoint.UseSignalR(new Uri(inventoryHubUrl));
-                endpoint.RouteNamespace<Conduit.Sample.Inventory.Commands.ReserveInventoryCommand>();
-                endpoint.RouteNamespace<Conduit.Sample.Inventory.Queries.CheckStockQuery>();
+                endpoint.RouteNamespace<Inventory.Commands.ReserveInventoryCommand>();
+                endpoint.RouteNamespace<Inventory.Queries.CheckStockQuery>();
             });
         });
 
