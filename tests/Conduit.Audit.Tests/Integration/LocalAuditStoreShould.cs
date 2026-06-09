@@ -142,6 +142,42 @@ public sealed class LocalAuditStoreShould
     }
 
     [TestMethod]
+    public async Task RoundTripTimestampAsUtc()
+    {
+        // Arrange
+        var dbName = $"test_utc_{Guid.NewGuid():N}";
+        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
+        using var keepAlive = new SqliteConnection(connectionString);
+        await keepAlive.OpenAsync();
+        var factory = new TestConnectionFactory(connectionString);
+        var dialect = new SqliteAuditDialect();
+        var store = new DbAuditStore(factory, dialect);
+
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        var timestamp = new DateTime(2026, 6, 8, 13, 14, 15, 678, DateTimeKind.Utc).AddTicks(9012);
+        var record = new DispatchAuditRecord
+        {
+            MessageId = "msg-utc",
+            ConversationId = "conv-utc",
+            MessageType = "Test.Commands.UtcCommand",
+            MessageKind = "Command",
+            ServiceName = "TestService",
+            Timestamp = timestamp,
+            Observations = [new DispatchInvoked("Test.Commands.UtcCommand", "Command")],
+        };
+
+        // Act
+        await store.SaveBatchAsync([record], CancellationToken.None);
+        var retrieved = await store.GetByMessageIdAsync("msg-utc", CancellationToken.None);
+
+        // Assert
+        retrieved.Should().NotBeNull();
+        retrieved!.Timestamp.Kind.Should().Be(DateTimeKind.Utc);
+        retrieved.Timestamp.Should().Be(timestamp);
+    }
+
+    [TestMethod]
     public async Task ReturnNullForNonExistentMessageId()
     {
         // Arrange

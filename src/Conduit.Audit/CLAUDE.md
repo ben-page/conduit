@@ -6,7 +6,7 @@ Operational audit trail for Conduit dispatch pipelines. Captures observations em
 
 - `Configuration/` — `AuditBuilder`, `AuditConsumerBuilder`, `LocalStoreBuilder`, `AuditOptions`
 - `Runtime/` — `AuditObserver`, `DispatchGroup`, `AuditBatchPublisher`, `AuditBatch`, `DispatchAuditRecord`, `LocalAuditListener`, `AuditPurgeService`, `AuditObserverInitializer`, `AuditTableInitializer`
-- `Persistence/` — `IAuditStore`, `DbAuditStore`, `IAuditDialect`, `SqliteAuditDialect`, `IAuditConnectionFactory`, `AuditConnectionStringFactory<T>`
+- `Persistence/` — `IAuditStore`, `DbAuditStore`, `IAuditDialect` (+ `SqliteAuditDialect`, `SqlServerAuditDialect`, `PostgresAuditDialect`, `MySqlAuditDialect`), `IAuditConnectionFactory`, `AuditConnectionStringFactory<T>`
 
 ## Key types
 
@@ -61,8 +61,10 @@ conduit.AddAuditConsumer(consumer =>
 
 - `IAuditStore` — interface: `SaveBatchAsync`, `GetByMessageIdAsync`, `PurgeExpiredAsync`, `EnsureTableExistsAsync`
 - `DbAuditStore` — ADO.NET implementation, delegates SQL to `IAuditDialect`. Database-agnostic.
-- `IAuditDialect` — SQL generation interface. One implementation per database engine.
-- `SqliteAuditDialect` — built-in SQLite dialect. Table: `conduit_audit` with indexes on `MessageId`, `ConversationId`, `(MessageType, Timestamp)`, and `Timestamp`.
+- `IAuditDialect` — SQL generation interface. One implementation per database engine. Same engine coverage as `Conduit.Durability`: SQLite, SQL Server, PostgreSQL, MySQL. Table: `conduit_audit` with indexes on message id, conversation id, `(message type, timestamp)`, and timestamp.
+  - `SqliteAuditDialect` (built-in, `Microsoft.Data.Sqlite`), `SqlServerAuditDialect`, `PostgresAuditDialect`, `MySqlAuditDialect`. Only SQLite is referenced by the project; the other engines use the generic `UseXxx<TConnection>(connectionString)` builder pattern (`TConnection : DbConnection`), so the consumer brings the provider package (Microsoft.Data.SqlClient / Npgsql / MySqlConnector). Postgres uses snake_case columns aliased back to the PascalCase names the store reads by ordinal.
+- **UTC timestamps everywhere**: the store reads and writes UTC. `IAuditDialect.TimestampDbType` lets each engine pick its native datetime mapping — `DbType.DateTime2` for the relational engines (→ `DATETIME2` / `DATETIME(6)` / SQLite text), and `DbType.Object` for Postgres so Npgsql infers `timestamptz` from the `DateTimeKind.Utc` value (an explicit `DateTime2` would resolve to `timestamp without time zone` and throw). On read, `DbAuditStore` stamps the value `Utc` (`timestamptz` already returns Utc; the relational engines return Unspecified).
+- Builder wiring (dialect + connection factory + store + listener + table initializer + purge) is shared by `LocalStoreBuilder` and `AuditConsumerBuilder` via the internal `AuditStoreRegistration` helper, so every engine is registered identically. Dialect SQL is unit-tested at the string level in `AuditDialectsShould` (no container integration, matching the durability bar).
 
 ## Zero-cost when not opted in
 

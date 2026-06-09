@@ -1,3 +1,5 @@
+using System.Data;
+
 namespace Conduit.Audit.Persistence;
 
 /// <summary>
@@ -5,6 +7,9 @@ namespace Conduit.Audit.Persistence;
 /// </summary>
 public sealed class SqliteAuditDialect : IAuditDialect
 {
+    /// <inheritdoc/>
+    public DbType TimestampDbType => DbType.DateTime2;
+
     /// <inheritdoc/>
     public string CreateAuditTableSql => """
         CREATE TABLE IF NOT EXISTS conduit_audit (
