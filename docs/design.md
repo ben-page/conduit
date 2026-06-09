@@ -1134,7 +1134,7 @@ Both scanners find types implementing `ICommand`, `ICommand<T>`, `IQuery<T>`, `I
 
 `Conduit.TypeGen` MSBuild target specifies `Inputs` (the compiled assembly DLL) and `Outputs` (the generated `.ts` files). MSBuild skips the task when outputs are newer than inputs. This means TypeGen only re-runs when the assembly actually changes, not on every build.
 
-`Conduit.SourceGen` uses Roslyn's incremental generator API (`IncrementalGeneratorInitializationContext`). Handler/listener discovery uses `SyntaxProvider` (truly incremental — only re-runs for changed source files). Dispatchable type discovery uses `CompilationProvider` with a `GlobalNamespace` walk, which re-runs on any source change. This is a known trade-off: cross-assembly type discovery requires the full compilation, which prevents fully incremental caching for that pass.
+`Conduit.SourceGen` uses Roslyn's incremental generator API (`IncrementalGeneratorInitializationContext`). Both dispatchable-type discovery AND handler/listener discovery use `CompilationProvider` with a `GlobalNamespace` walk (`RoslynScanner.Scan` / `RoslynScanner.ScanHandlers`), so handlers and listeners declared in **referenced assemblies** are discovered — not just those in the compilation under test. This lets one composition-root assembly compose handlers from many module assemblies (see `docs/modular-monolith.md`). The trade-off: the walk re-runs on any source change rather than caching per changed file. Referenced-assembly handlers must be accessible (public) to the generating assembly; an inaccessible one raises `CONDUIT004`. A handler/listener marked `[NotAutoRegistered]` is skipped (e.g. framework components wired via their own `Add*` extension, like `LocalAuditListener`).
 
 ## Fallback Behavior
 
