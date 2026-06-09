@@ -1,6 +1,6 @@
+using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Text.Json;
 using Conduit.Audit.Runtime;
 using Conduit.Runtime;
@@ -58,7 +58,7 @@ public sealed class DbAuditStore : IAuditStore
             AddParameter(command, "@Properties", record.Properties is not null
                 ? JsonSerializer.Serialize(record.Properties, ConduitRuntime.JsonOptions)
                 : DBNull.Value);
-            AddParameter(command, "@Timestamp", record.Timestamp.ToString("O", CultureInfo.InvariantCulture));
+            this.AddTimestampParameter(command, "@Timestamp", record.Timestamp);
             AddParameter(command, "@Observations",
                 JsonSerializer.Serialize(record.Observations, ConduitRuntime.JsonOptions));
 
@@ -95,7 +95,7 @@ public sealed class DbAuditStore : IAuditStore
 
         using var command = connection.CreateCommand();
         command.CommandText = this.dialect.DeleteExpiredSql;
-        AddParameter(command, "@Cutoff", cutoff.ToString("O", CultureInfo.InvariantCulture));
+        this.AddTimestampParameter(command, "@Cutoff", cutoff);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -131,8 +131,10 @@ public sealed class DbAuditStore : IAuditStore
         var observations = JsonSerializer.Deserialize<List<MessageObservation>>(
             observationsJson, ConduitRuntime.JsonOptions) ?? [];
 
-        var timestampStr = reader.GetString(reader.GetOrdinal("Timestamp"));
-        var timestamp = DateTime.Parse(timestampStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+        // All engines store UTC; the value is read back as a native datetime and stamped Utc.
+        // (timestamptz on Postgres already returns Utc; the relational engines return Unspecified.)
+        var timestamp = DateTime.SpecifyKind(
+            reader.GetDateTime(reader.GetOrdinal("Timestamp")), DateTimeKind.Utc);
 
         return new DispatchAuditRecord
         {
@@ -154,6 +156,26 @@ public sealed class DbAuditStore : IAuditStore
         var parameter = command.CreateParameter();
         parameter.ParameterName = name;
         parameter.Value = value;
+        command.Parameters.Add(parameter);
+    }
+
+    /// <summary>
+    /// Binds a UTC timestamp parameter. Always normalizes the value to UTC, then applies the
+    /// dialect's <see cref="IAuditDialect.TimestampDbType"/> so each engine maps it to its native
+    /// datetime type (relational engines use <see cref="DbType.DateTime2"/>; Postgres uses
+    /// <see cref="DbType.Object"/> so Npgsql infers <c>timestamptz</c> from the <see cref="DateTimeKind.Utc"/> value).
+    /// </summary>
+    private void AddTimestampParameter(DbCommand command, string name, DateTime value)
+    {
+        // Local values are converted; Utc and Unspecified are treated as already-UTC (the record contract).
+        var utc = value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.DbType = this.dialect.TimestampDbType;
+        parameter.Value = utc;
         command.Parameters.Add(parameter);
     }
 }

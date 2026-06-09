@@ -1,7 +1,4 @@
-using Conduit.Audit.Persistence;
-using Conduit.Audit.Runtime;
-using Conduit.Handlers;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Audit.Configuration;
@@ -82,15 +79,46 @@ public sealed class LocalStoreBuilder
     public LocalStoreBuilder UseSqlite(string connectionString)
     {
         ArgumentNullException.ThrowIfNull(connectionString);
+        AuditStoreRegistration.AddSqlite(this.services, connectionString);
+        return this;
+    }
 
-        this.services.AddSingleton<IAuditDialect, SqliteAuditDialect>();
-        this.services.AddSingleton<IAuditConnectionFactory>(
-            _ => new AuditConnectionStringFactory<SqliteConnection>(connectionString));
-        this.services.AddSingleton<IAuditStore, DbAuditStore>();
-        this.services.AddTransient<IEventListener<AuditBatch>, LocalAuditListener>();
-        this.services.AddHostedService<AuditTableInitializer>();
-        this.services.AddHostedService<AuditPurgeService>();
+    /// <summary>
+    /// Use SQL Server as the local audit persistence store. Requires Microsoft.Data.SqlClient.
+    /// </summary>
+    /// <typeparam name="TConnection">The SQL Server connection type (e.g. <c>SqlConnection</c>).</typeparam>
+    /// <param name="connectionString">The SQL Server connection string.</param>
+    public LocalStoreBuilder UseSqlServer<TConnection>(string connectionString)
+        where TConnection : DbConnection, new()
+    {
+        ArgumentNullException.ThrowIfNull(connectionString);
+        AuditStoreRegistration.AddSqlServer<TConnection>(this.services, connectionString);
+        return this;
+    }
 
+    /// <summary>
+    /// Use PostgreSQL as the local audit persistence store. Requires Npgsql.
+    /// </summary>
+    /// <typeparam name="TConnection">The PostgreSQL connection type (e.g. <c>NpgsqlConnection</c>).</typeparam>
+    /// <param name="connectionString">The PostgreSQL connection string.</param>
+    public LocalStoreBuilder UsePostgres<TConnection>(string connectionString)
+        where TConnection : DbConnection, new()
+    {
+        ArgumentNullException.ThrowIfNull(connectionString);
+        AuditStoreRegistration.AddPostgres<TConnection>(this.services, connectionString);
+        return this;
+    }
+
+    /// <summary>
+    /// Use MySQL as the local audit persistence store. Requires MySqlConnector.
+    /// </summary>
+    /// <typeparam name="TConnection">The MySQL connection type (e.g. <c>MySqlConnection</c>).</typeparam>
+    /// <param name="connectionString">The MySQL connection string.</param>
+    public LocalStoreBuilder UseMySql<TConnection>(string connectionString)
+        where TConnection : DbConnection, new()
+    {
+        ArgumentNullException.ThrowIfNull(connectionString);
+        AuditStoreRegistration.AddMySql<TConnection>(this.services, connectionString);
         return this;
     }
 }
