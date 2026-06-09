@@ -73,6 +73,86 @@ public static class RoslynScanner
         return results.AsReadOnly();
     }
 
+    /// <summary>
+    /// Scans the compilation (including referenced assemblies) for command/query handlers and
+    /// event listeners, mirroring the interface matches used at dispatch time. Handlers that are
+    /// not accessible to the generating assembly are excluded; the message types whose only handler
+    /// is inaccessible are reported in <see cref="HandlerScanResult.InaccessibleHandlerMessageTypes"/>.
+    /// </summary>
+    /// <param name="compilation">The Roslyn compilation to scan.</param>
+    /// <returns>The discovered handlers, listener groups, and inaccessible-handler message types.</returns>
+    public static HandlerScanResult ScanHandlers(Compilation compilation)
+    {
+        if (compilation is null)
+        {
+            throw new ArgumentNullException(nameof(compilation));
+        }
+
+        var handlers = new List<HandlerInfo>();
+        var listenerGroups = new Dictionary<string, List<string>>();
+        var inaccessible = new List<string>();
+
+        foreach (var typeSymbol in GetAllNamedTypes(compilation))
+        {
+            if (typeSymbol.IsAbstract || typeSymbol.TypeKind != TypeKind.Class)
+            {
+                continue;
+            }
+
+            foreach (var iface in typeSymbol.AllInterfaces)
+            {
+                var ifaceOriginal = iface.OriginalDefinition.ToDisplayString();
+
+                var messageType = ifaceOriginal switch
+                {
+                    "Conduit.Handlers.ICommandHandler<TCommand, TResult>" when iface.TypeArguments.Length == 2 => iface.TypeArguments[0].ToDisplayString(),
+                    "Conduit.Handlers.ICommandHandler<TCommand>" when iface.TypeArguments.Length == 1 => iface.TypeArguments[0].ToDisplayString(),
+                    "Conduit.Handlers.IQueryHandler<TQuery, TResult>" when iface.TypeArguments.Length == 2 => iface.TypeArguments[0].ToDisplayString(),
+                    _ => null,
+                };
+
+                if (messageType != null)
+                {
+                    if (!compilation.IsSymbolAccessibleWithin(typeSymbol, compilation.Assembly))
+                    {
+                        inaccessible.Add(messageType);
+                        continue;
+                    }
+
+                    handlers.Add(new HandlerInfo
+                    {
+                        MessageFullTypeName = messageType,
+                        HandlerFullTypeName = typeSymbol.ToDisplayString(),
+                    });
+                }
+                else if (ifaceOriginal == "Conduit.Handlers.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
+                {
+                    if (!compilation.IsSymbolAccessibleWithin(typeSymbol, compilation.Assembly))
+                    {
+                        continue; // listeners are optional; an inaccessible one is simply not wired
+                    }
+
+                    var eventFullName = iface.TypeArguments[0].ToDisplayString();
+                    if (!listenerGroups.TryGetValue(eventFullName, out var listeners))
+                    {
+                        listeners = new List<string>();
+                        listenerGroups[eventFullName] = listeners;
+                    }
+
+                    listeners.Add(typeSymbol.ToDisplayString());
+                }
+            }
+        }
+
+        var groups = new Dictionary<string, IReadOnlyList<string>>();
+        foreach (var kvp in listenerGroups)
+        {
+            groups[kvp.Key] = kvp.Value.AsReadOnly();
+        }
+
+        return new HandlerScanResult(handlers.AsReadOnly(), groups, inaccessible.AsReadOnly());
+    }
+
     private static DispatchableKind? DetermineKind(INamedTypeSymbol typeSymbol)
     {
         foreach (var iface in typeSymbol.AllInterfaces)
