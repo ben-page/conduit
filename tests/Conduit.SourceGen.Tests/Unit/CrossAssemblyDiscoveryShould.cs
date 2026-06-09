@@ -40,6 +40,42 @@ namespace ModuleA
     }
 
     [TestMethod]
+    public void ExcludeListenerMarkedNotAutoRegisteredFromGeneratedRegistration()
+    {
+        const string src = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Conduit.Messages;
+using Conduit.Handlers;
+using Conduit.Attributes;
+namespace ModuleC
+{
+    public sealed record AlphaEvent(int V) : IEvent;
+    public sealed record BetaEvent(int V) : IEvent;
+
+    // Wired explicitly via an Add* extension — must NOT be auto-registered by the generator.
+    [NotAutoRegistered]
+    public sealed class ExcludedListener : IEventListener<AlphaEvent>
+    {
+        public Task HandleAsync(AlphaEvent e, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    // Ordinary listener — MUST be auto-registered.
+    public sealed class IncludedListener : IEventListener<BetaEvent>
+    {
+        public Task HandleAsync(BetaEvent e, CancellationToken ct) => Task.CompletedTask;
+    }
+}";
+        var moduleRef = CompileReference("ModuleC", src);
+        var (trees, _) = RunGenerator("namespace Host { internal sealed class M {} }", moduleRef);
+
+        var registration = FindGeneratedSource(trees, "ConduitRegistration");
+        registration.Should().NotBeNull();
+        registration!.Should().Contain("ModuleC.IncludedListener");      // ordinary listener auto-registered
+        registration!.Should().NotContain("ModuleC.ExcludedListener");   // excluded listener NOT auto-registered
+    }
+
+    [TestMethod]
     public void ReportDiagnosticForInaccessibleReferencedHandler()
     {
         const string src = @"
