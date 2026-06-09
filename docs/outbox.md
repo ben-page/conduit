@@ -102,23 +102,24 @@ OutboxRelay (background service — safety net)
 
 ## Setup
 
-Add the `Conduit.Outbox` package and configure inside `AddConduit`:
+Add the `Conduit.Durability` package and configure inside `AddConduit`. The database is configured once on the durability builder, then `AddOutbox()` enables the outbox on it:
 
 ```xml
-<PackageReference Include="Conduit.Outbox" />
+<PackageReference Include="Conduit.Durability" />
 ```
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
-    conduit.AddOutbox(outbox =>
+    conduit.AddDurability(durability =>
     {
-        outbox.UseSqlite("Data Source=myapp.db");
+        durability.UseSqlite("Data Source=myapp.db");
+        durability.AddOutbox();
     });
 });
 ```
 
-The `AddOutbox` call registers:
+The `AddOutbox()` call registers:
 - `OutboxCapture` as both `IOutboundInterceptor` and `IOutboxFlusher` (scoped)
 - `OutboxBehavior<,>` as a pipeline behavior
 - `OutboxRelay` as a background service
@@ -126,12 +127,12 @@ The `AddOutbox` call registers:
 
 ## Providing a transaction
 
-The outbox behavior writes entries using the transaction returned by `IOutboxConnectionFactory.GetCurrentTransaction()`. If no transaction is active, the behavior skips persistence (pass-through mode — no crash protection).
+The outbox behavior writes entries using the transaction returned by `IDurabilityConnectionFactory.GetCurrentTransaction()`. If no transaction is active, the behavior skips persistence (pass-through mode — no crash protection).
 
-The built-in `ConnectionStringFactory` (registered by `UseSqlite()` etc.) always returns `null` from `GetCurrentTransaction()` — it only provides connections for the relay. To get transactional outbox writes, register your own `IOutboxConnectionFactory` that tracks the handler's active transaction:
+The built-in connection factory (registered by `UseSqlite()` etc.) always returns `null` from `GetCurrentTransaction()` — it only provides connections for the relay. To get transactional outbox writes, register your own `IDurabilityConnectionFactory` that tracks the handler's active transaction:
 
 ```csharp
-public class AppOutboxConnectionFactory(AppDbContext dbContext) : IOutboxConnectionFactory
+public class AppDurabilityConnectionFactory(AppDbContext dbContext) : IDurabilityConnectionFactory
 {
     public Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
     {
@@ -145,10 +146,10 @@ public class AppOutboxConnectionFactory(AppDbContext dbContext) : IOutboxConnect
 }
 ```
 
-Register it to replace the built-in factory:
+Register it after `AddConduit` so it overrides the built-in factory:
 
 ```csharp
-builder.Services.AddScoped<IOutboxConnectionFactory, AppOutboxConnectionFactory>();
+builder.Services.AddScoped<IDurabilityConnectionFactory, AppDurabilityConnectionFactory>();
 ```
 
 ## Database dialects
@@ -162,20 +163,25 @@ Each `Use*` method registers the appropriate SQL dialect and connection factory:
 | `UsePostgres<TConnection>(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` |
 | `UseMySql<TConnection>(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` |
 
-SQL Server, PostgreSQL, and MySQL require you to pass the ADO.NET connection type as a generic parameter since Conduit doesn't take a dependency on those provider packages:
+These `Use*` methods are on the durability builder (the database is shared by the outbox, inbox, and dead letter queue). SQL Server, PostgreSQL, and MySQL require you to pass the ADO.NET connection type as a generic parameter, since Conduit doesn't take a dependency on those provider packages:
 
 ```csharp
-// SQL Server (requires Microsoft.Data.SqlClient reference)
-outbox.UseSqlServer<SqlConnection>("Server=.;Database=MyApp;...");
+conduit.AddDurability(durability =>
+{
+    // SQL Server (requires Microsoft.Data.SqlClient reference)
+    durability.UseSqlServer<SqlConnection>("Server=.;Database=MyApp;...");
 
-// PostgreSQL (requires Npgsql reference)
-outbox.UsePostgres<NpgsqlConnection>("Host=localhost;Database=MyApp;...");
+    // PostgreSQL (requires Npgsql reference)
+    durability.UsePostgres<NpgsqlConnection>("Host=localhost;Database=MyApp;...");
 
-// MySQL (requires MySqlConnector reference)
-outbox.UseMySql<MySqlConnection>("Server=localhost;Database=MyApp;...");
+    // MySQL (requires MySqlConnector reference)
+    durability.UseMySql<MySqlConnection>("Server=localhost;Database=MyApp;...");
+
+    durability.AddOutbox();
+});
 ```
 
-The outbox table (`conduit_outbox`) is created automatically on startup. Disable with `outbox.WithAutoCreateTable(false)` if you manage schemas through migrations.
+The outbox table (`conduit_outbox`) is created automatically on startup. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations.
 
 ## Custom stores
 
@@ -184,32 +190,31 @@ For non-relational databases (Cosmos DB, MongoDB, DynamoDB), implement `IOutboxS
 ```csharp
 public class CosmosOutboxStore : IOutboxStore
 {
-    // Implement SaveAsync, ClaimPendingAsync, MarkSentAsync,
-    // IncrementRetryAsync, MarkFailedAsync, DeleteCompletedAsync,
-    // EnsureTableExistsAsync
+    // Implement SaveAsync, ClaimPendingAsync, ClaimByMessageIdsAsync, MarkSentAsync,
+    // IncrementRetryAsync, MarkFailedAsync, DeleteCompletedAsync, EnsureTableExistsAsync
 }
 ```
 
-Register it:
+Register it as `IOutboxStore` after `AddConduit` so it overrides the built-in `DbConnectionOutboxStore`:
 
 ```csharp
-conduit.AddOutbox(outbox =>
-{
-    outbox.UseStore<CosmosOutboxStore>();
-});
+builder.Services.AddScoped<IOutboxStore, CosmosOutboxStore>();
 ```
 
 ## Relay configuration
 
 ```csharp
-conduit.AddOutbox(outbox =>
+conduit.AddDurability(durability =>
 {
-    outbox.UseSqlite("Data Source=myapp.db");
-    outbox.WithRelayInterval(TimeSpan.FromSeconds(5));    // polling interval (default: 5s)
-    outbox.WithGracePeriod(TimeSpan.FromSeconds(10));     // ignore entries newer than this (default: 10s)
-    outbox.WithBatchSize(100);                             // entries per sweep (default: 100)
-    outbox.WithMaxRetries(10);                             // before marking failed (default: 10)
-    outbox.WithAutoCreateTable(true);                      // create table on startup (default: true)
+    durability.UseSqlite("Data Source=myapp.db");
+    durability.AddOutbox(outbox =>
+    {
+        outbox.RelayInterval = TimeSpan.FromSeconds(5);    // polling interval (default: 5s)
+        outbox.GracePeriod = TimeSpan.FromSeconds(10);     // ignore entries newer than this (default: 10s)
+        outbox.BatchSize = 100;                            // entries per sweep (default: 100)
+        outbox.MaxRetries = 10;                            // before marking failed (default: 10)
+        outbox.AutoCreateTable = true;                     // create table on startup (default: true)
+    });
 });
 ```
 
@@ -294,7 +299,7 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 ## Limitations
 
-**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again. Consumers must handle duplicates. A future inbox feature will provide application-level deduplication.
+**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again. Consumers must handle duplicates. The inbox — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication.
 
 **No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions, Kafka partitions) or handle ordering at the consumer.
 

@@ -87,7 +87,7 @@ Conduit supports two dead letter store implementations. You choose one based on 
 
 ### Conduit database store
 
-A database-backed store using the same patterns as the outbox and inbox — `IDeadLetterStore` with `IDeadLetterDialect` implementations for SQL Server, PostgreSQL, SQLite, and MySQL.
+A database-backed store using the same patterns as the outbox and inbox — `IDeadLetterStore` backed by the shared `IDurabilityDialect` (one per engine: SQLite, SQL Server, PostgreSQL, MySQL).
 
 - Works with **every transport**, including HTTP and SignalR
 - Full query and filter support (type, exception, date range, pagination)
@@ -126,12 +126,15 @@ If you're running a single broker transport and prefer keeping everything in the
 ```csharp
 services.AddConduit(conduit =>
 {
-    conduit.AddDeadLetterQueue(dlq =>
-        dlq.UseConnection(() => new SqlConnection(connectionString))
-           .UseSqlServer()
-    );
+    conduit.AddDurability(durability =>
+    {
+        durability.UseSqlServer<SqlConnection>(connectionString);
+        durability.AddDeadLetterQueue();
+    });
 });
 ```
+
+The DLQ shares the durability database and dialect — configure the database once on the builder, then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them).
 
 ### Broker-native store
 
@@ -155,23 +158,25 @@ The topology manager creates the necessary DLQ resources during startup. No manu
 
 ### Database dialects
 
-Same pattern as the outbox:
+Same pattern as the outbox — the dialect is the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the database method on the durability builder:
 
-| Database | Dialect | Method |
-|---|---|---|
-| SQL Server | `SqlServerDeadLetterDialect` | `.UseSqlServer()` |
-| PostgreSQL | `PostgreSqlDeadLetterDialect` | `.UsePostgreSql()` |
-| SQLite | `SqliteDeadLetterDialect` | `.UseSqLite()` |
-| MySQL | `MySqlDeadLetterDialect` | `.UseMySql()` |
+| Database | Method |
+|---|---|
+| SQLite | `durability.UseSqlite(connectionString)` |
+| SQL Server | `durability.UseSqlServer<SqlConnection>(connectionString)` |
+| PostgreSQL | `durability.UsePostgres<NpgsqlConnection>(connectionString)` |
+| MySQL | `durability.UseMySql<MySqlConnection>(connectionString)` |
+
+SQL Server, PostgreSQL, and MySQL take the ADO.NET connection type as a generic parameter (Conduit doesn't reference those provider packages).
 
 ## Replay
 
 ### Single message
 
 ```csharp
-var manager = serviceProvider.GetRequiredService<IDeadLetterManager>();
+var deadLetters = serviceProvider.GetRequiredService<IDeadLetters>();
 
-var result = await manager.ReplayAsync(deadLetterId, cancellationToken);
+var result = await deadLetters.ReplayAsync(deadLetterId, cancellationToken);
 
 if (result.Success)
 {
@@ -187,13 +192,13 @@ else
 
 ```csharp
 // Replay specific messages
-var results = await manager.ReplayAsync(
+var results = await deadLetters.ReplayAsync(
     new[] { id1, id2, id3 },
     cancellationToken
 );
 
 // Replay all messages of a type
-var results = await manager.ReplayByTypeAsync(
+var results = await deadLetters.ReplayByTypeAsync(
     "Orders.Commands.CreateOrder",
     cancellationToken
 );
@@ -220,9 +225,9 @@ If the original message partially succeeded before failing (handler did some wor
 ## Browsing and filtering
 
 ```csharp
-var manager = serviceProvider.GetRequiredService<IDeadLetterManager>();
+var deadLetters = serviceProvider.GetRequiredService<IDeadLetters>();
 
-var page = await manager.QueryAsync(new DeadLetterFilter
+var page = await deadLetters.QueryAsync(new DeadLetterFilter
 {
     MessageType = "Orders.Commands.CreateOrder",
     Since = DateTimeOffset.UtcNow.AddHours(-24),
@@ -237,7 +242,7 @@ foreach (var entry in page.Entries)
 // Next page
 if (page.NextPageToken is not null)
 {
-    var nextPage = await manager.QueryAsync(new DeadLetterFilter
+    var nextPage = await deadLetters.QueryAsync(new DeadLetterFilter
     {
         PageToken = page.NextPageToken,
         PageSize = 25
@@ -305,7 +310,7 @@ For broker-native stores, metadata is stored in transport-native properties — 
 
 Kafka does not support broker-native DLQ for Conduit's replay API. Kafka topics are append-only logs with sequential offsets — you cannot randomly access, selectively remove, or non-destructively peek individual messages.
 
-Kafka users should use the **database store**. The existing DLQ topic (created by the Kafka topology manager) remains available for users who want to consume it with their own Kafka tooling, but the Conduit `IDeadLetterManager` API requires the database store for Kafka.
+Kafka users should use the **database store**. The existing DLQ topic (created by the Kafka topology manager) remains available for users who want to consume it with their own Kafka tooling, but the Conduit `IDeadLetters` API requires the database store for Kafka.
 
 **Redeliver:** Produces to the main topic with message type as key. All consumer groups see the message; inbox prevents duplicate processing by non-target services.
 
@@ -324,4 +329,4 @@ HTTP and SignalR have no broker-native DLQ concept. Use the **database store**.
 - **Broker-native filtering is limited.** The database store supports full query filtering. Broker-native stores offer best-effort filtering — results may include messages that don't match all filter criteria.
 - **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects. There is no caller waiting for the response. The response is returned in the `ReplayResult` for logging but is not delivered anywhere.
 - **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and replayed messages carry a new `MessageId`.
-- **No auto-replay.** Replay is always triggered explicitly via `IDeadLetterManager`. Automatic retry-from-DLQ (with backoff) is a potential future feature.
+- **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.
