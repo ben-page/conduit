@@ -23,6 +23,20 @@ public sealed class AuditListenerBuilder
         this.Services = services;
     }
 
+    /// <summary>How long stored audit records are retained before the purge removes them. Default 90 days.</summary>
+    public TimeSpan RetentionPeriod
+    {
+        get => this.Options.RetentionPeriod;
+        set => this.Options.RetentionPeriod = value;
+    }
+
+    /// <summary>How often the purge runs to remove expired records. Default 24 hours.</summary>
+    public TimeSpan PurgeInterval
+    {
+        get => this.Options.PurgeInterval;
+        set => this.Options.PurgeInterval = value;
+    }
+
     /// <summary>
     /// Use SQLite as the audit persistence store.
     /// </summary>
