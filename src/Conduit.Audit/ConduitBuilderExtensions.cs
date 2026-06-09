@@ -38,8 +38,6 @@ public static class ConduitBuilderExtensions
             options.StaleGroupTimeout = auditBuilder.Options.StaleGroupTimeout;
             options.ChannelCapacity = auditBuilder.Options.ChannelCapacity;
             options.BackpressureMode = auditBuilder.Options.BackpressureMode;
-            options.RetentionPeriod = auditBuilder.Options.RetentionPeriod;
-            options.PurgeInterval = auditBuilder.Options.PurgeInterval;
             options.MetricsAggregationInterval = auditBuilder.Options.MetricsAggregationInterval;
         });
 
@@ -73,28 +71,30 @@ public static class ConduitBuilderExtensions
     }
 
     /// <summary>
-    /// Adds the central audit consumer to the Conduit configuration.
-    /// The consumer listens for <see cref="AuditBatch"/> events and persists them
-    /// to a local store. Also registers the purge service and table initializer.
+    /// Adds an audit listener to the Conduit configuration. The listener consumes
+    /// <see cref="AuditBatch"/> events and persists them, owning the store, table initializer,
+    /// and retention purge. The events may be published in this process (pair with
+    /// <see cref="AddAudit"/>) or arrive over a transport from other services (a central collector);
+    /// either way the listener handles them identically.
     /// </summary>
     /// <param name="builder">The Conduit builder to configure.</param>
-    /// <param name="configure">Callback to configure the consumer's database and options.</param>
+    /// <param name="configure">Callback to configure the listener's database and retention.</param>
     /// <returns>The original <paramref name="builder"/> for chaining.</returns>
-    public static ConduitBuilder AddAuditConsumer(
+    public static ConduitBuilder AddAuditListener(
         this ConduitBuilder builder,
-        Action<AuditConsumerBuilder> configure)
+        Action<AuditListenerBuilder> configure)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
-        var consumerBuilder = new AuditConsumerBuilder(builder.Services);
-        configure(consumerBuilder);
+        var listenerBuilder = new AuditListenerBuilder(builder.Services);
+        configure(listenerBuilder);
 
-        // Configure options from the consumer builder
+        // Retention/purge are owned by the listener (it registers the purge service).
         builder.Services.Configure<AuditOptions>(options =>
         {
-            options.RetentionPeriod = consumerBuilder.Options.RetentionPeriod;
-            options.PurgeInterval = consumerBuilder.Options.PurgeInterval;
+            options.RetentionPeriod = listenerBuilder.Options.RetentionPeriod;
+            options.PurgeInterval = listenerBuilder.Options.PurgeInterval;
         });
 
         return builder;
