@@ -1,9 +1,7 @@
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using Conduit.Analysis;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Conduit.SourceGen;
 
@@ -17,28 +15,13 @@ public sealed class ConduitGenerator : IIncrementalGenerator
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Collect all type declarations
-        var typeDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (node, _) => node is TypeDeclarationSyntax,
-                transform: static (ctx, cancellationToken) => ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, cancellationToken) as INamedTypeSymbol)
-            .Where(static symbol => symbol != null)
-            .Select(static (symbol, _) => symbol!);
-
-        // Combine with compilation
-        var compilationAndTypes = context.CompilationProvider
-            .Combine(typeDeclarations.Collect());
-
-        context.RegisterSourceOutput(compilationAndTypes, static (spc, source) =>
-        {
-            var (compilation, typeSymbols) = source;
-            Execute(compilation, typeSymbols, spc);
-        });
+        // Handlers and listeners are discovered from the whole compilation (including referenced
+        // assemblies) via RoslynScanner, so the source output depends on the compilation alone.
+        context.RegisterSourceOutput(context.CompilationProvider, static (spc, compilation) => Execute(compilation, spc));
     }
 
     private static void Execute(
         Compilation compilation,
-        ImmutableArray<INamedTypeSymbol> typeSymbols,
         SourceProductionContext context)
     {
         var dispatchableTypes = RoslynScanner.Scan(compilation);
@@ -48,61 +31,9 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             return;
         }
 
-        // Find handlers and listeners
-        var handlers = new List<HandlerInfo>();
-        var listenerGroups = new Dictionary<string, List<string>>();
-
-        foreach (var typeSymbol in typeSymbols)
-        {
-            if (typeSymbol.IsAbstract || typeSymbol.TypeKind != TypeKind.Class)
-            {
-                continue;
-            }
-
-            foreach (var iface in typeSymbol.AllInterfaces)
-            {
-                var ifaceOriginal = iface.OriginalDefinition.ToDisplayString();
-
-                if (ifaceOriginal == "Conduit.Handlers.ICommandHandler<TCommand, TResult>" && iface.TypeArguments.Length == 2)
-                {
-                    var commandFullName = iface.TypeArguments[0].ToDisplayString();
-                    handlers.Add(new HandlerInfo
-                    {
-                        MessageFullTypeName = commandFullName,
-                        HandlerFullTypeName = typeSymbol.ToDisplayString(),
-                    });
-                }
-                else if (ifaceOriginal == "Conduit.Handlers.ICommandHandler<TCommand>" && iface.TypeArguments.Length == 1)
-                {
-                    var commandFullName = iface.TypeArguments[0].ToDisplayString();
-                    handlers.Add(new HandlerInfo
-                    {
-                        MessageFullTypeName = commandFullName,
-                        HandlerFullTypeName = typeSymbol.ToDisplayString(),
-                    });
-                }
-                else if (ifaceOriginal == "Conduit.Handlers.IQueryHandler<TQuery, TResult>" && iface.TypeArguments.Length == 2)
-                {
-                    var queryFullName = iface.TypeArguments[0].ToDisplayString();
-                    handlers.Add(new HandlerInfo
-                    {
-                        MessageFullTypeName = queryFullName,
-                        HandlerFullTypeName = typeSymbol.ToDisplayString(),
-                    });
-                }
-                else if (ifaceOriginal == "Conduit.Handlers.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
-                {
-                    var eventFullName = iface.TypeArguments[0].ToDisplayString();
-                    if (!listenerGroups.TryGetValue(eventFullName, out var listeners))
-                    {
-                        listeners = new List<string>();
-                        listenerGroups[eventFullName] = listeners;
-                    }
-
-                    listeners.Add(typeSymbol.ToDisplayString());
-                }
-            }
-        }
+        // Find handlers and listeners across the whole compilation (including referenced assemblies)
+        var scan = RoslynScanner.ScanHandlers(compilation);
+        var handlers = scan.Handlers;
 
         // Emit diagnostics
         var remotePatterns = GetRemoteContractPatterns(compilation);
@@ -113,10 +44,10 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         context.AddSource("ConduitDispatch.g.cs", dispatchSource);
 
         // Generate mediator (build groups first — shared with registration)
-        var groups = listenerGroups.Select(kvp => new ListenerGroup
+        var groups = scan.ListenerGroups.Select(kvp => new ListenerGroup
         {
             EventFullTypeName = kvp.Key,
-            ListenerFullTypeNames = kvp.Value.AsReadOnly(),
+            ListenerFullTypeNames = kvp.Value,
             IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
         }).ToList();
 
