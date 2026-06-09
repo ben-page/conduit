@@ -37,7 +37,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
         // Emit diagnostics
         var remotePatterns = GetRemoteContractPatterns(compilation);
-        EmitDiagnostics(context, dispatchableTypes, handlers, remotePatterns);
+        EmitDiagnostics(context, dispatchableTypes, handlers, scan.InaccessibleHandlerMessageTypes, remotePatterns);
 
         // Generate dispatch methods
         var dispatchSource = DispatchEmitter.Emit(dispatchableTypes, handlers);
@@ -110,6 +110,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         SourceProductionContext context,
         IReadOnlyList<DispatchableTypeInfo> types,
         IReadOnlyList<HandlerInfo> handlers,
+        IReadOnlyList<string> inaccessibleHandlerMessageTypes,
         List<string> remotePatterns)
     {
         foreach (var type in types)
@@ -150,6 +151,22 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         // Also check events for invalid [FireAndForget] (events are skipped above)
         // Events ARE valid for [FireAndForget], so no diagnostic needed — this loop only
         // catches commands/queries. Events with [FireAndForget] are fine.
+
+        // Report message types whose only handler lives in a referenced assembly but is not
+        // accessible to the generating assembly (e.g. internal). A type that also has an
+        // accessible handler is not reported.
+        foreach (var messageType in inaccessibleHandlerMessageTypes)
+        {
+            if (handlers.Any(h => h.MessageFullTypeName == messageType))
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.HandlerNotAccessible,
+                Location.None,
+                messageType));
+        }
     }
 
     private static string GetExpectedHandlerInterface(DispatchableTypeInfo type)

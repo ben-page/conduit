@@ -38,4 +38,26 @@ namespace ModuleA
         mediator!.Should().Contain("ModuleA.DoThingCommand");              // dispatch branch emitted
         diagnostics.Should().NotContain(d => d.Id == "CONDUIT001");        // NOT reported as "no handler"
     }
+
+    [TestMethod]
+    public void ReportDiagnosticForInaccessibleReferencedHandler()
+    {
+        const string src = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Conduit.Messages;
+using Conduit.Handlers;
+namespace ModuleB
+{
+    public sealed record HiddenCommand(int V) : ICommand<int>;
+    internal sealed class HiddenHandler : ICommandHandler<HiddenCommand, int>   // INTERNAL -> not referenceable by host
+    {
+        public Task<int> HandleAsync(HiddenCommand c, CancellationToken ct) => Task.FromResult(c.V);
+    }
+}";
+        var moduleRef = CompileReference("ModuleB", src);
+        var (_, diagnostics) = RunGenerator("namespace Host { internal sealed class M {} }", moduleRef);
+
+        diagnostics.Should().Contain(d => d.Id == "CONDUIT004"); // HandlerNotAccessible
+    }
 }
