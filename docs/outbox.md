@@ -299,7 +299,7 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 ## Limitations
 
-**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again. Consumers must handle duplicates. The inbox — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication.
+**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again. Consumers must handle duplicates. The [inbox](inbox.md) — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication.
 
 **No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions, Kafka partitions) or handle ordering at the consumer.
 
