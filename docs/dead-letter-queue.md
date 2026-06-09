@@ -7,13 +7,7 @@
   - [Browse](#browse)
   - [Replay](#replay)
   - [Discard](#discard)
-- [Two modes](#two-modes)
-  - [Conduit database store](#conduit-database-store)
-  - [Broker-native store](#broker-native-store)
-  - [Choosing a mode](#choosing-a-mode)
 - [Setup](#setup)
-  - [Database store](#database-store)
-  - [Broker-native store](#broker-native-store-1)
   - [Database dialects](#database-dialects)
 - [Replay](#replay-1)
   - [Single message](#single-message)
@@ -22,13 +16,8 @@
   - [Interaction with inbox](#interaction-with-inbox)
 - [Browsing and filtering](#browsing-and-filtering)
 - [Metadata](#metadata)
-- [Transport details](#transport-details)
-  - [Azure Service Bus](#azure-service-bus)
-  - [RabbitMQ](#rabbitmq)
-  - [Amazon SQS](#amazon-sqs)
-  - [ActiveMQ Artemis](#activemq-artemis)
-  - [Kafka](#kafka)
-  - [HTTP and SignalR](#http-and-signalr)
+- [Replay by transport](#replay-by-transport)
+- [Why database-backed only (for now)](#why-database-backed-only-for-now)
 - [Limitations](#limitations)
 
 ## Why use a dead letter queue?
@@ -55,21 +44,21 @@ You may not need it when:
 
 ## How it works
 
-The dead letter queue has four operations: **capture**, **browse**, **replay**, and **discard**.
+The dead letter queue has four operations: **capture**, **browse**, **replay**, and **discard**. It is backed by a database (the same database the outbox and inbox use). See [Why database-backed only](#why-database-backed-only-for-now) for the reasoning.
 
 ### Capture
 
-When a message fails during inbound handling and retries are exhausted, the transport captures the message into the dead letter store with full metadata — the message body, type, exception details, and MessageContext. The original message is then acknowledged on the broker. It's no longer the broker's concern — Conduit owns the failure now.
+When a message fails during inbound handling (after any `Conduit.Resilience` retries), the transport writes it to the dead letter store with full metadata — the message body, type, exception details, and MessageContext — then acknowledges the original on the broker. It's no longer the broker's concern; Conduit owns the failure now.
 
 ```
 Message arrives → Handler fails → Write to dead letter store → Acknowledge on broker
 ```
 
-If the dead letter store write fails (database down, broker DLQ unavailable), the message is abandoned back to the broker for redelivery. No silent message loss.
+If the dead letter store write fails (database down), the message is abandoned back to the broker for redelivery instead. If the dead letter queue is not enabled at all, the transport simply abandons the message and the broker redelivers per its own configuration. No silent message loss.
 
 ### Browse
 
-Dead-lettered messages are browsable — non-destructive peek with optional filtering. The database store supports filtering by message type, exception type, and date range. Broker-native stores support browsing with best-effort filtering (varies by broker).
+Dead-lettered messages are browsable — a non-destructive query over the store with optional filtering by message type, exception type, and date range, plus pagination.
 
 ### Replay
 
@@ -81,47 +70,9 @@ Replay mints a new `MessageId` and carries the original as `OriginalMessageId` f
 
 Discard removes a message from the dead letter store without replaying. Use this for messages that are permanently invalid — malformed data, obsolete operations, or messages for handlers that no longer exist.
 
-## Two modes
-
-Conduit supports two dead letter store implementations. You choose one based on your infrastructure and preferences — the same way you choose between broker-native deduplication and the Conduit inbox.
-
-### Conduit database store
-
-A database-backed store using the same patterns as the outbox and inbox — `IDeadLetterStore` backed by the shared `IDurabilityDialect` (one per engine: SQLite, SQL Server, PostgreSQL, MySQL).
-
-- Works with **every transport**, including HTTP and SignalR
-- Full query and filter support (type, exception, date range, pagination)
-- Replay via Conduit API
-- Requires a database
-
-### Broker-native store
-
-Each broker transport can configure its native dead letter mechanism. Conduit's topology manager creates the DLQ resources automatically — you don't need to manually configure dead-letter exchanges, redrive policies, or DLA addresses.
-
-- **Azure Service Bus** — built-in `/$DeadLetterQueue` sub-queue on every queue
-- **RabbitMQ** — dead-letter exchange + DLQ queue, bound to app queue via `x-dead-letter-exchange`
-- **Amazon SQS** — DLQ queue with redrive policy on the source queue
-- **ActiveMQ Artemis** — dead-letter address (DLA) configured via management API
-
-Kafka does not support broker-native DLQ for Conduit's replay API. See [Kafka](#kafka) for details.
-
-### Choosing a mode
-
-| Consideration | Database store | Broker-native store |
-|---|---|---|
-| Transport support | All 7 transports | ASB, RabbitMQ, SQS, ActiveMQ |
-| Query/filter | Full SQL filtering | Best-effort (varies by broker) |
-| Replay | Via Conduit API | Via Conduit API |
-| Infrastructure | Requires a database | Uses existing broker |
-| Operational tooling | Query the database | Broker management UI + Conduit API |
-
-If you're already using the outbox or inbox, you have a database — the DLQ store reuses the same connection and dialect configuration.
-
-If you're running a single broker transport and prefer keeping everything in the broker, the broker-native store avoids the database dependency.
-
 ## Setup
 
-### Database store
+The dead letter queue is part of `Conduit.Durability`. Configure the database once on the durability builder, then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them):
 
 ```csharp
 services.AddConduit(conduit =>
@@ -134,31 +85,11 @@ services.AddConduit(conduit =>
 });
 ```
 
-The DLQ shares the durability database and dialect — configure the database once on the builder, then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them).
-
-### Broker-native store
-
-Enable per-transport in the transport options:
-
-```csharp
-services.AddConduit(conduit =>
-{
-    conduit.AddEndpoint("orders", endpoint =>
-    {
-        endpoint.UseRabbitMQ(connectionString, options =>
-        {
-            options.DeadLetterQueue.Enabled = true;
-            options.DeadLetterQueue.MaxDeliveryCount = 5;
-        });
-    });
-});
-```
-
-The topology manager creates the necessary DLQ resources during startup. No manual broker configuration needed.
+The dead letter table (`conduit_dead_letters`) is created automatically on startup. Disable with `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)` if you manage schemas through migrations.
 
 ### Database dialects
 
-Same pattern as the outbox — the dialect is the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the database method on the durability builder:
+The dialect is the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the database method on the durability builder:
 
 | Database | Method |
 |---|---|
@@ -170,6 +101,8 @@ Same pattern as the outbox — the dialect is the shared `IDurabilityDialect` (o
 SQL Server, PostgreSQL, and MySQL take the ADO.NET connection type as a generic parameter (Conduit doesn't reference those provider packages).
 
 ## Replay
+
+Inject `IDeadLetters` to browse, replay, and discard.
 
 ### Single message
 
@@ -250,7 +183,7 @@ if (page.NextPageToken is not null)
 }
 ```
 
-The database store supports all filter fields. Broker-native stores apply what they can — ASB can filter by message type (via `Subject`), others do best-effort client-side filtering over peek results.
+`DeadLetterFilter` supports `MessageType`, `ExceptionType`, `Since`, `Until`, `PageSize` (default 25), and `PageToken`. All filters are applied in SQL.
 
 ## Metadata
 
@@ -270,63 +203,38 @@ Every dead-lettered message carries:
 | `AttemptCount` | Number of times this message has been dead-lettered |
 | `DeadLetteredAt` | Timestamp when the message was captured |
 
-For broker-native stores, metadata is stored in transport-native properties — ASB application properties, RabbitMQ headers, SQS message attributes, ActiveMQ application properties.
+## Replay by transport
 
-## Transport details
+Replay re-publishes through the source transport's `RedeliverAsync`, which targets the service's inbound queue directly so any available instance picks the message up.
 
-### Azure Service Bus
+| Transport | Redeliver mechanism |
+|---|---|
+| **Azure Service Bus** | Sends directly to the app queue (bypasses the topic). |
+| **RabbitMQ** | Publishes to the app queue via the default exchange (routing key = queue name). |
+| **Amazon SQS** | `SendMessage` directly to the app queue URL. |
+| **ActiveMQ Artemis** | Sends directly to the app's anycast/multicast address. |
+| **Kafka** | Produces to the main topic with message type as key. All consumer groups see it; the inbox prevents duplicate processing by non-target services. |
+| **HTTP** | POST to the dispatch/publish endpoint. |
+| **SignalR** | Invokes the hub's `Dispatch`/`Publish` method. |
 
-**Broker-native DLQ:** Uses the built-in `/$DeadLetterQueue` sub-queue on each app queue. Topology manager sets `MaxDeliveryCount` on queue creation. Conduit enriches the dead-letter call with `DeadLetterReason` and `DeadLetterErrorDescription`.
+## Why database-backed only (for now)
 
-**Browse:** Native `PeekMessagesAsync` — truly non-destructive, supports sequence number pagination.
+The DLQ has a single backing store: the Conduit database. We evaluated also wrapping each broker's *native* dead letter facility (ASB `/$DeadLetterQueue`, RabbitMQ dead-letter exchanges, SQS redrive, ActiveMQ DLA) as an alternative store, and decided against it **for now**. The deciding factors:
 
-**Redeliver:** Sends directly to the app queue (bypasses topic).
+- **Non-uniform, fragile browsing.** Non-destructive browse needs a different mechanism per broker — ASB `PeekMessagesAsync` (clean), RabbitMQ via the Management HTTP API or `basic.get` + `nack(requeue)`, SQS via `ReceiveMessage` with `VisibilityTimeout=0`, ActiveMQ via a management `browse`. Several only offer approximate pagination.
+- **Best-effort filtering.** Only a SQL store can apply arbitrary filters server-side. Broker-native browsing filters client-side over peeked pages.
+- **No reliable counts.** Most brokers can't return a total count without consuming the queue.
+- **Racy removal/replay.** Pulling one specific message out of a broker DLQ (receive-by-handle/sequence + ack) isn't transactional and races with concurrent browsers.
+- **Kafka can't participate** — append-only, offset-addressed logs are incompatible with random-access browse/remove/replay.
+- **It duplicates the database store unevenly.** The database store already works with every transport (including HTTP and SignalR) and gives full query, filter, count, and replay. Broker-native would add per-transport topology and three operations (write/query/remove) × four brokers for a strictly worse, inconsistent browse experience.
 
-### RabbitMQ
+This isn't a permanent exclusion — broker-native capture could be added later as an additive per-transport option if a strong use case appears (e.g. avoiding a database dependency entirely). Today the cost/inconsistency isn't worth it.
 
-**Broker-native DLQ:** Topology manager creates a dead-letter exchange and DLQ queue per app, and sets `x-dead-letter-exchange` on the app queue. Conduit publishes directly to the DLQ with metadata headers (enhanced mode — same approach as Wolverine), then acks the original.
-
-**Browse:** Management HTTP API with `ack_requeue_true`, or `basic.get` + `basic.nack(requeue: true)`.
-
-**Redeliver:** Publishes directly to the app queue via the default exchange (routing key = queue name).
-
-### Amazon SQS
-
-**Broker-native DLQ:** Topology manager creates a DLQ queue and sets a redrive policy (`deadLetterTargetArn` + `maxReceiveCount`) on the source queue. Conduit publishes directly to the DLQ with message attributes (enhanced mode), then deletes the original.
-
-**Browse:** `ReceiveMessage` with `VisibilityTimeout=0` — message stays visible to others.
-
-**Redeliver:** `SendMessage` directly to the app queue URL.
-
-### ActiveMQ Artemis
-
-**Broker-native DLQ:** Topology manager configures dead-letter address (DLA) per address via the management API. Conduit enriches application properties before releasing with `deliveryFailed=true`.
-
-**Browse:** Artemis management `browse` operation — truly non-destructive.
-
-**Redeliver:** Sends directly to the app's anycast/multicast address.
-
-### Kafka
-
-Kafka does not support broker-native DLQ for Conduit's replay API. Kafka topics are append-only logs with sequential offsets — you cannot randomly access, selectively remove, or non-destructively peek individual messages.
-
-Kafka users should use the **database store**. The existing DLQ topic (created by the Kafka topology manager) remains available for users who want to consume it with their own Kafka tooling, but the Conduit `IDeadLetters` API requires the database store for Kafka.
-
-**Redeliver:** Produces to the main topic with message type as key. All consumer groups see the message; inbox prevents duplicate processing by non-target services.
-
-### HTTP and SignalR
-
-HTTP and SignalR have no broker-native DLQ concept. Use the **database store**.
-
-**Redeliver (HTTP):** POST to the dispatch/publish endpoint.
-
-**Redeliver (SignalR):** Invokes the hub's `Dispatch`/`Publish` method.
+Note that the broker's own DLQ still functions as an infrastructure safety net: if you don't enable Conduit's DLQ, failed messages are abandoned and the broker redelivers (and dead-letters) per its own configuration — Conduit just doesn't browse or replay through it.
 
 ## Limitations
 
-- **One mode per transport.** Choose database store or broker-native — not both on the same transport. The broker's own DLQ mechanism (if it has one) still functions as a safety net for infrastructure failures (process crashes, database unavailability), but Conduit's replay API operates against whichever store you configured.
-- **Kafka requires database store** for the replay API. Sequential offset semantics are incompatible with random-access browse and replay.
-- **Broker-native filtering is limited.** The database store supports full query filtering. Broker-native stores offer best-effort filtering — results may include messages that don't match all filter criteria.
-- **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects. There is no caller waiting for the response. The response is returned in the `ReplayResult` for logging but is not delivered anywhere.
+- **Requires a database.** The DLQ shares the durability database. A stateless service with no database can't use it (use broker-native redelivery/DLQ at the infrastructure level instead).
+- **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response. The response is returned in `ReplayResult` for logging but is not delivered anywhere.
 - **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and replayed messages carry a new `MessageId`.
 - **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.
