@@ -18,11 +18,12 @@ public static class RoslynScanner
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
     private const string FireAndForgetAttributeName = "Conduit.Attributes.FireAndForgetAttribute";
     private const string DoNotAuditAttributeName = "Conduit.Attributes.DoNotAuditAttribute";
+    private const string NotAutoRegisteredAttributeName = "Conduit.Attributes.NotAutoRegisteredAttribute";
 
     /// <summary>
     /// Scans the compilation for all dispatchable types implementing
     /// <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c>.
-    /// Types marked with <c>[NotDispatchable]</c> are excluded.
+    /// Types inaccessible to the generated code (private/protected, or nested in such) are excluded.
     /// </summary>
     /// <param name="compilation">The Roslyn compilation to scan.</param>
     /// <returns>The discovered dispatchable types.</returns>
@@ -95,6 +96,14 @@ public static class RoslynScanner
         foreach (var typeSymbol in GetAllNamedTypes(compilation))
         {
             if (typeSymbol.IsAbstract || typeSymbol.TypeKind != TypeKind.Class)
+            {
+                continue;
+            }
+
+            // Components wired explicitly via a feature's Add* extension (e.g. LocalAuditListener)
+            // opt out of auto-registration. The message itself is unaffected — only this
+            // handler/listener's auto DI registration is suppressed.
+            if (HasAttribute(typeSymbol, NotAutoRegisteredAttributeName))
             {
                 continue;
             }

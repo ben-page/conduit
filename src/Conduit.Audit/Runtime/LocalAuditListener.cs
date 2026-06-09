@@ -1,3 +1,4 @@
+using Conduit.Attributes;
 using Conduit.Audit.Persistence;
 using Conduit.Handlers;
 
@@ -8,6 +9,12 @@ namespace Conduit.Audit.Runtime;
 /// Registered by <c>AddAuditListener</c>, whether the batches are published in this process
 /// or arrive over a transport from other services.
 /// </summary>
+/// <remarks>
+/// Marked <see cref="NotAutoRegisteredAttribute"/> so the source generator does not auto-register it
+/// across referenced assemblies — it depends on <see cref="IAuditStore"/>, which only
+/// <c>AddAuditListener</c> registers alongside it.
+/// </remarks>
+[NotAutoRegistered]
 public sealed class LocalAuditListener(IAuditStore store) : IEventListener<AuditBatch>
 {
     /// <inheritdoc/>
