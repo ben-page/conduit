@@ -24,6 +24,8 @@ builder.Services.AddConduit(conduit =>
 | `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
 | `AddOutbox(configure)` | Enable the transactional outbox for reliable fire-and-forget delivery. See [Outbox](outbox.md). | `conduit.AddOutbox(o => o.UseSqlite("Data Source=app.db"))` |
+| `AddAudit(configure)` | Capture dispatch lifecycle observations and emit `AuditBatch` events. See [Audit Trail](audit.md). | `conduit.AddAudit(a => a.ServiceName = "orders")` |
+| `AddAuditListener(configure)` | Consume `AuditBatch` events (local or over a transport) and persist them. See [Audit Trail](audit.md). | `conduit.AddAuditListener(l => l.UseSqlite("Data Source=audit.db"))` |
 
 ## ConduitBuilder properties
 
