@@ -27,10 +27,11 @@ public static class EndpointRouteBuilderExtensions
         endpoints.MapPost(basePath + "/dispatch", async (
             HttpRequest httpRequest,
             IWireMediator mediator,
+            IEnumerable<IDispatchContextEnricher> enrichers,
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            StartMessageContext(httpRequest);
+            StartMessageContext(httpRequest, enrichers);
 
             var result = await mediator.HandleWireRequestAsync(envelope, cancellationToken);
 
@@ -45,10 +46,11 @@ public static class EndpointRouteBuilderExtensions
         endpoints.MapPost(basePath + "/publish", async (
             HttpRequest httpRequest,
             IWireMediator mediator,
+            IEnumerable<IDispatchContextEnricher> enrichers,
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            StartMessageContext(httpRequest);
+            StartMessageContext(httpRequest, enrichers);
 
             await mediator.HandleWireEventAsync(envelope, cancellationToken);
             return Results.Ok();
@@ -72,8 +74,14 @@ public static class EndpointRouteBuilderExtensions
         return new DispatchEnvelope(type, payload);
     }
 
-    private static void StartMessageContext(HttpRequest httpRequest)
+    private static void StartMessageContext(
+        HttpRequest httpRequest, IEnumerable<IDispatchContextEnricher> enrichers)
     {
+        // The HTTP wire transport carries no client-supplied properties; enrichers contribute
+        // server-trusted values from the authenticated principal. Their writes are authoritative.
+        var properties = DispatchContextEnrichment.Apply(
+            enrichers, httpRequest.HttpContext.User, clientProperties: null);
+
         var messageId = httpRequest.Headers["X-Conduit-Message-Id"].ToString();
         var conversationId = httpRequest.Headers["X-Conduit-Conversation-Id"].ToString();
 
@@ -83,7 +91,16 @@ public static class EndpointRouteBuilderExtensions
             MessageContext.StartDispatchFromTransport(
                 messageId,
                 string.IsNullOrWhiteSpace(causationId) ? null : causationId,
-                conversationId);
+                conversationId,
+                properties);
+            return;
+        }
+
+        // No correlation headers: mint fresh IDs so enriched properties still reach the mediator.
+        if (properties is not null)
+        {
+            var mid = Guid.NewGuid().ToString("N");
+            MessageContext.StartDispatchFromTransport(mid, causationId: null, conversationId: mid, properties);
         }
     }
 }

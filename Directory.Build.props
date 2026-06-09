@@ -10,6 +10,8 @@
     <IsPublishable>true</IsPublishable>
     <DebugType>embedded</DebugType>
     <EmbedAllSources>true</EmbedAllSources>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <EnableMSTestRunner>true</EnableMSTestRunner>
   </PropertyGroup>
 
   <PropertyGroup>
