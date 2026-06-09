@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,7 +49,7 @@ public sealed class AuditRetryObservationsShould
         var behavior = new ResilienceBehavior<string, string>(pipelineProvider);
 
         // Act
-        var result = await behavior.HandleAsync("test", async () =>
+        var result = await behavior.HandleAsync("test", () =>
         {
             callCount++;
             if (callCount <= 2)
@@ -57,7 +57,7 @@ public sealed class AuditRetryObservationsShould
                 throw new TimeoutException("timeout");
             }
 
-            return "success";
+            return Task.FromResult("success");
         }, CancellationToken.None);
 
         // Assert

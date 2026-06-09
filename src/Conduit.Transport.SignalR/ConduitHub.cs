@@ -9,8 +9,12 @@ namespace Conduit.Transport.SignalR;
 /// and delegates to <see cref="IWireMediator"/> for processing.
 /// Browser clients omit the context parameter (null) — the server mints a fresh
 /// <see cref="MessageContext"/>. C# clients pass context for cross-service propagation.
+/// Registered <see cref="IDispatchContextEnricher"/> instances contribute server-trusted
+/// properties (e.g. the authenticated user id) over the client-supplied headers.
 /// </summary>
-public class ConduitHub(IWireMediator mediator) : Hub
+public class ConduitHub(
+    IWireMediator mediator,
+    IEnumerable<IDispatchContextEnricher> enrichers) : Hub
 {
     /// <summary>
     /// Dispatches a command or query received from a SignalR client.
@@ -26,7 +30,7 @@ public class ConduitHub(IWireMediator mediator) : Hub
         Dictionary<string, string>? context = null,
         Dictionary<string, string>? headers = null)
     {
-        StartMessageContext(context, headers);
+        this.StartMessageContext(context, headers);
 
         return await mediator.HandleWireRequestAsync(
             new DispatchEnvelope(type, payload),
@@ -47,18 +51,20 @@ public class ConduitHub(IWireMediator mediator) : Hub
         Dictionary<string, string>? context = null,
         Dictionary<string, string>? headers = null)
     {
-        StartMessageContext(context, headers);
+        this.StartMessageContext(context, headers);
 
         await mediator.HandleWireEventAsync(
             new DispatchEnvelope(type, payload),
             this.Context.ConnectionAborted);
     }
 
-    private static void StartMessageContext(
+    private void StartMessageContext(
         Dictionary<string, string>? context,
         Dictionary<string, string>? headers)
     {
-        var properties = ToProperties(headers);
+        // Seed from client headers, then let server-side enrichers overwrite spoofable values.
+        var properties = DispatchContextEnrichment.Apply(
+            enrichers, this.Context.User, ToProperties(headers));
 
         if (context is not null
             && context.TryGetValue("MessageId", out var messageId)
@@ -71,7 +77,7 @@ public class ConduitHub(IWireMediator mediator) : Hub
             return;
         }
 
-        // Headers present without correlation: mint fresh IDs so Properties reach the generated mediator.
+        // Properties present without correlation: mint fresh IDs so they reach the generated mediator.
         if (properties is not null)
         {
             var mid = Guid.NewGuid().ToString("N");
