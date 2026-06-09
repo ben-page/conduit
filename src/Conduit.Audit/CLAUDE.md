@@ -28,8 +28,8 @@ Two orthogonal entry points on `ConduitBuilder` — **`AddAudit`** captures, **`
 ```csharp
 conduit.AddAudit(audit =>
 {
-    audit.Options.ServiceName = "OrderService";
-    audit.Options.BatchSize = 50;
+    audit.ServiceName = "OrderService";
+    audit.BatchSize = 50;
 });
 ```
 
@@ -38,6 +38,7 @@ conduit.AddAudit(audit =>
 conduit.AddAuditListener(listener =>
 {
     listener.UseSqlite("Data Source=audit.db");
+    listener.RetentionPeriod = TimeSpan.FromDays(30);
 });
 ```
 
@@ -46,7 +47,7 @@ Deployment roles:
 - **Single service, stores own audit**: `AddAudit()` + `AddAuditListener(l => l.UseSqlite(...))`.
 - **Central collector** (persists `AuditBatch` from many services): `AddAuditListener(l => l.UsePostgres<NpgsqlConnection>(...))` alone.
 
-`AuditBuilder` also exposes `Suppress<T>()` (skip all recording for a type) and `SuppressPayload<T>()` (record observations but omit body). Persistence is purely event-driven via `LocalAuditListener`, which is why local and distributed storage share one entry point.
+`AuditBuilder` exposes public properties for capture tuning (`ServiceName`, `BatchSize`, `FlushInterval`, `ChannelCapacity`, `BackpressureMode`, `StaleGroupTimeout`) plus `Suppress<T>()` (skip all recording for a type) and `SuppressPayload<T>()` (record observations but omit body). `AuditListenerBuilder` exposes `RetentionPeriod` and `PurgeInterval`. Both builders' properties delegate to an internal `AuditOptions`, which the `AddAudit`/`AddAuditListener` extensions copy into `IOptions<AuditOptions>`. Persistence is purely event-driven via `LocalAuditListener`, which is why local and distributed storage share one entry point.
 
 ## Observation flow
 
@@ -59,7 +60,7 @@ Deployment roles:
 
 ## Recursion suppression
 
-`AuditBatch` is marked `[DoNotAudit]`. The source generator checks this attribute and omits `Observe()` calls from the dispatch path for `[DoNotAudit]` types. Additionally, `AuditObserver` explicitly skips `DispatchInvoked` observations where `MessageType` matches `AuditBatch`, as a runtime safety net.
+Recursion (auditing the `AuditBatch` publish itself) is prevented by `AuditObserver`, which explicitly skips `DispatchInvoked` observations where `MessageType` matches `AuditBatch`. `AuditBatch` is also marked `[DoNotAudit]`, but note that `[DoNotAudit]` only suppresses **payload capture** in the generated code (`MediatorEmitter` gates the `SetPayload` call on `!isDoNotAudit`) — `Observe()` calls are still emitted for `[DoNotAudit]` types. So the observer's type filter, not the attribute, is what actually breaks the recursion.
 
 ## Persistence
 

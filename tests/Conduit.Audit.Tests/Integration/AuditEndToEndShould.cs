@@ -33,8 +33,8 @@ public sealed class AuditEndToEndShould
             {
                 conduit.AddAudit(audit =>
                 {
-                    audit.Options.BatchSize = 1;
-                    audit.Options.ServiceName = "TestService";
+                    audit.BatchSize = 1;
+                    audit.ServiceName = "TestService";
                 });
                 conduit.AddAuditListener(listener =>
                 {
