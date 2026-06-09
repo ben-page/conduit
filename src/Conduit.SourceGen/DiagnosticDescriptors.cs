@@ -24,4 +24,10 @@ public static class DiagnosticDescriptors
         "CONDUIT003", "Invalid [FireAndForget] usage",
         "[FireAndForget] on {0} is not supported — only void commands (ICommand) and events (IEvent) can be fire-and-forget. Commands with results and queries require a response.",
         "Conduit", DiagnosticSeverity.Warning, true);
+
+    /// <summary>CONDUIT004: A handler exists in a referenced assembly but is not accessible to the generating assembly.</summary>
+    public static readonly DiagnosticDescriptor HandlerNotAccessible = new(
+        "CONDUIT004", "Handler not accessible",
+        "Handler for {0} exists but is not accessible to the generating assembly. Make it public to be auto-registered.",
+        "Conduit", DiagnosticSeverity.Warning, true);
 }
