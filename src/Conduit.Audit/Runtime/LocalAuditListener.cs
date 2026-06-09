@@ -4,9 +4,9 @@ using Conduit.Handlers;
 namespace Conduit.Audit.Runtime;
 
 /// <summary>
-/// Event listener that persists <see cref="AuditBatch"/> records to the local <see cref="IAuditStore"/>.
-/// Registered when the host is configured as an audit consumer via <c>AddAuditConsumer</c>
-/// or when a local store is attached via <c>UseLocalStore</c>.
+/// Event listener that persists <see cref="AuditBatch"/> records to the <see cref="IAuditStore"/>.
+/// Registered by <c>AddAuditListener</c>, whether the batches are published in this process
+/// or arrive over a transport from other services.
 /// </summary>
 public sealed class LocalAuditListener(IAuditStore store) : IEventListener<AuditBatch>
 {

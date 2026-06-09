@@ -1,11 +1,11 @@
-using System.Data.Common;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Audit.Configuration;
 
 /// <summary>
-/// Fluent builder for configuring the audit trail subsystem.
-/// Exposes <see cref="AuditOptions"/> for tuning, plus per-type suppression methods.
+/// Fluent builder for configuring the audit capture side (the observer that emits
+/// <see cref="Runtime.AuditBatch"/> events). Exposes <see cref="AuditOptions"/> for tuning, plus
+/// per-type suppression methods. To persist audit records, pair this with <c>AddAuditListener</c>.
 /// </summary>
 public sealed class AuditBuilder
 {
@@ -13,7 +13,6 @@ public sealed class AuditBuilder
     internal AuditOptions Options { get; } = new();
     internal HashSet<Type> SuppressedTypes { get; } = [];
     internal HashSet<Type> SuppressedPayloadTypes { get; } = [];
-    internal bool LocalStoreConfigured { get; private set; }
 
     internal AuditBuilder(IServiceCollection services)
     {
@@ -38,87 +37,6 @@ public sealed class AuditBuilder
     public AuditBuilder SuppressPayload<T>()
     {
         this.SuppressedPayloadTypes.Add(typeof(T));
-        return this;
-    }
-
-    /// <summary>
-    /// Configures a local audit store for in-process persistence of audit records.
-    /// Registers the store, listener, purge service, and table initializer.
-    /// </summary>
-    /// <param name="configure">Callback to configure the local store (e.g. <c>UseSqlite</c>).</param>
-    /// <returns>This builder for chaining.</returns>
-    public AuditBuilder UseLocalStore(Action<LocalStoreBuilder> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-
-        var localStoreBuilder = new LocalStoreBuilder(this.Services);
-        configure(localStoreBuilder);
-        this.LocalStoreConfigured = true;
-
-        return this;
-    }
-}
-
-/// <summary>
-/// Fluent builder for configuring the local audit persistence store.
-/// Used within <see cref="AuditBuilder.UseLocalStore"/> to select a database engine.
-/// </summary>
-public sealed class LocalStoreBuilder
-{
-    private readonly IServiceCollection services;
-
-    internal LocalStoreBuilder(IServiceCollection services)
-    {
-        this.services = services;
-    }
-
-    /// <summary>
-    /// Use SQLite as the local audit persistence store.
-    /// </summary>
-    /// <param name="connectionString">The SQLite connection string (e.g. "Data Source=audit.db").</param>
-    public LocalStoreBuilder UseSqlite(string connectionString)
-    {
-        ArgumentNullException.ThrowIfNull(connectionString);
-        AuditStoreRegistration.AddSqlite(this.services, connectionString);
-        return this;
-    }
-
-    /// <summary>
-    /// Use SQL Server as the local audit persistence store. Requires Microsoft.Data.SqlClient.
-    /// </summary>
-    /// <typeparam name="TConnection">The SQL Server connection type (e.g. <c>SqlConnection</c>).</typeparam>
-    /// <param name="connectionString">The SQL Server connection string.</param>
-    public LocalStoreBuilder UseSqlServer<TConnection>(string connectionString)
-        where TConnection : DbConnection, new()
-    {
-        ArgumentNullException.ThrowIfNull(connectionString);
-        AuditStoreRegistration.AddSqlServer<TConnection>(this.services, connectionString);
-        return this;
-    }
-
-    /// <summary>
-    /// Use PostgreSQL as the local audit persistence store. Requires Npgsql.
-    /// </summary>
-    /// <typeparam name="TConnection">The PostgreSQL connection type (e.g. <c>NpgsqlConnection</c>).</typeparam>
-    /// <param name="connectionString">The PostgreSQL connection string.</param>
-    public LocalStoreBuilder UsePostgres<TConnection>(string connectionString)
-        where TConnection : DbConnection, new()
-    {
-        ArgumentNullException.ThrowIfNull(connectionString);
-        AuditStoreRegistration.AddPostgres<TConnection>(this.services, connectionString);
-        return this;
-    }
-
-    /// <summary>
-    /// Use MySQL as the local audit persistence store. Requires MySqlConnector.
-    /// </summary>
-    /// <typeparam name="TConnection">The MySQL connection type (e.g. <c>MySqlConnection</c>).</typeparam>
-    /// <param name="connectionString">The MySQL connection string.</param>
-    public LocalStoreBuilder UseMySql<TConnection>(string connectionString)
-        where TConnection : DbConnection, new()
-    {
-        ArgumentNullException.ThrowIfNull(connectionString);
-        AuditStoreRegistration.AddMySql<TConnection>(this.services, connectionString);
         return this;
     }
 }

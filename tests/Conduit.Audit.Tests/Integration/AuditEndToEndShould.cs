@@ -35,10 +35,10 @@ public sealed class AuditEndToEndShould
                 {
                     audit.Options.BatchSize = 1;
                     audit.Options.ServiceName = "TestService";
-                    audit.UseLocalStore(store =>
-                    {
-                        store.UseSqlite(connectionString);
-                    });
+                });
+                conduit.AddAuditListener(listener =>
+                {
+                    listener.UseSqlite(connectionString);
                 });
             });
         });
