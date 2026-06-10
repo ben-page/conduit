@@ -165,6 +165,16 @@ Browser --SignalR--> ConduitHub.Publish()
 
 This prevents echo loops. If an inbound event were re-broadcast, it would bounce between services indefinitely. The generated mediator uses a private `PublishLocalAsync` method for wire-inbound events that skips broadcast entirely.
 
+## Ephemeral resource cleanup
+
+RabbitMQ, Azure Service Bus, and ActiveMQ auto-delete ephemeral resources via native broker TTLs.
+Kafka and SQS have no equivalent, so the transport libraries expose `KafkaTopologyReaper.ReapByPrefixAsync`
+and `AmazonSqsTopologyReaper.ReapByPrefixAsync` — best-effort cleanup that deletes resources whose names
+start with a given prefix. Conduit's own test suites use this (once per test project, scoped to a stable
+per-project prefix) so a shared or live broker doesn't accumulate test resources. Applications that name
+resources under a known prefix can run the same cleanup. Developer-mode resources are not auto-reaped for
+Kafka/SQS — run those brokers in a container locally, or call the reaper yourself.
+
 ---
 
 Previous: [Core Concepts](../core-concepts.md) | [Home](../../README.md) | Next: [SignalR](signalr.md)

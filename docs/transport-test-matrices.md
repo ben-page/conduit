@@ -109,7 +109,9 @@ Test class: `{Transport}TopologyModeShould`
 | 7.1 | `CreateDurableResourcesInProductionMode` | A + B with `TopologyMode.Production` | Host starts successfully, resources created |
 | 7.2 | `CreateEphemeralResourcesInDeveloperMode` | A + B with `TopologyMode.Developer` | Host starts, resources have auto-delete/TTL flags |
 | 7.3 | `IsolateTestModeRuns` | Two independent test runs with `TopologyMode.Test` | Different prefixes, no cross-contamination |
-| 7.4 | `CleanupStaleResources` *(Kafka, SQS only)* | Single host, developer mode | Background cleanup removes resources after TTL |
+| 7.4 | *(Kafka, SQS only — separate test class, not a method in `{Transport}TopologyModeShould`)* | Single host, test mode | On startup of each test project, the project reaps every broker resource under its own stable `test-{hash8(assembly)}-` prefix. **Kafka:** `KafkaTopologyReaperShould.ReapTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup` (`[AssemblyInitialize]`). **SQS:** `AmazonSqsTopologyReaperShould.ReapQueuesAndTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup`. **RabbitMQ/ASB/ActiveMQ:** N/A — native auto-delete/TTL covers cleanup. |
+
+**7.4 scope.** Cleanup is per test project, once at assembly initialize, scoped to resources the project created (a stable `test-{hash8(assembly)}-` prefix via `Conduit.TestUtils.TestTopologyPrefix`). A project only deletes its own resources, so concurrent projects/hosts never interfere. The transport libraries expose `ReapByPrefixAsync` so applications can run their own prefix-scoped cleanup too.
 
 ### Category 8: Dead-Letter Capture
 
@@ -124,9 +126,9 @@ Test class: `{Transport}DeadLetterShould`
 
 ### Totals (verified 2026-06-09)
 
-Each transport's `Integration/` directory contains a baseline of **32 `[TestMethod]` behavior tests** (the same shared matrix across all five broker transports: RabbitMQ, Kafka, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. Kafka adds **1 transport-specific behavior test** (`HonorPoolConcurrencyWithParallelExecution`, see the Kafka note in Category 6) for **33** in its `Integration/` directory.
+Each transport's `Integration/` directory contains a baseline of **32 `[TestMethod]` behavior tests** (the same shared matrix across all five broker transports: RabbitMQ, Kafka, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. Kafka adds **1 transport-specific behavior test** (`HonorPoolConcurrencyWithParallelExecution`, see the Kafka note in Category 6) for **33** in its `Integration/` directory. Kafka and SQS each add **1 reaper test** (`KafkaTopologyReaperShould` / `AmazonSqsTopologyReaperShould`) in a separate test class, bringing their totals to **34** and **33** respectively.
 
-Behavior-test methods across the five transports: 32 × 5 + 1 (Kafka pool concurrency) = **161 `[TestMethod]` integration tests**.
+Behavior-test methods across the five transports: 32 (RabbitMQ) + 34 (Kafka) + 32 (ASB) + 33 (SQS) + 32 (ActiveMQ) = **163 `[TestMethod]` integration tests**.
 
 ---
 
