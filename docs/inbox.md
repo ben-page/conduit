@@ -71,7 +71,7 @@ builder.Services.AddConduit(conduit =>
 
 ## Database dialects
 
-The inbox uses the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
+The inbox uses the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, and audit alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
 
 | Engine package | Method |
 |---|---|
