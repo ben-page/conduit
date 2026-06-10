@@ -70,5 +70,52 @@ public class TypeMapperShould
         result.Should().Contain("'C'");
     }
 
+    [TestMethod]
+    public void MapArrayOfAtomicTypeWithoutParens() =>
+        TypeMapper.MapType(typeof(string[])).Should().Be("string[]");
+
+    [TestMethod]
+    public void MapCollectionOfAtomicTypeWithoutParens() =>
+        TypeMapper.MapType(typeof(IReadOnlyCollection<int>)).Should().Be("number[]");
+
+    [TestMethod]
+    public void MapArrayOfEnumParenthesizesUnion()
+    {
+        // Bug: was emitting  'A' | 'B' | 'C'[]  which binds [] only to 'C'
+        // Should emit  ('A' | 'B' | 'C')[]
+        var result = TypeMapper.MapType(typeof(TestEnum[]));
+        result.Should().Be("('A' | 'B' | 'C')[]");
+    }
+
+    [TestMethod]
+    public void MapCollectionOfEnumParenthesizesUnion()
+    {
+        // Bug: was emitting  'A' | 'B' | 'C'[]  which binds [] only to 'C'
+        // Should emit  ('A' | 'B' | 'C')[]
+        var result = TypeMapper.MapType(typeof(IReadOnlyCollection<TestEnum>));
+        result.Should().Be("('A' | 'B' | 'C')[]");
+    }
+
+    [TestMethod]
+    public void MapListOfEnumParenthesizesUnion()
+    {
+        var result = TypeMapper.MapType(typeof(List<TestEnum>));
+        result.Should().Be("('A' | 'B' | 'C')[]");
+    }
+
+    [TestMethod]
+    public void EndToEnd_CollectionOfEnumPropertyEmitsParenthesizedUnionArray()
+    {
+        // Arrange
+        var assembly = typeof(TypeMapperShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        // Act
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        // Assert — permissions: ('Read' | 'Write' | 'Admin')[]  NOT  'Read' | 'Write' | 'Admin'[]
+        result.Should().Contain("  permissions: ('Read' | 'Write' | 'Admin')[];");
+    }
+
     private enum TestEnum { A, B, C }
 }

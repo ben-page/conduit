@@ -9,3 +9,8 @@ public record TestOrphanCommand(string Data) : ICommand;
 
 [ClientVisible]
 public record TestItemDto(Guid Id, string Name);
+
+public enum TestAccessLevel { Read, Write, Admin }
+
+[ClientVisible]
+public record TestCurrentUserDto(string UserId, IReadOnlyCollection<TestAccessLevel> Permissions);
