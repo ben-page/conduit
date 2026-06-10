@@ -172,7 +172,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
         // Start default app queue consumer
         this.pollingTasks.Add(this.PollQueueAsync(
-            this.appQueueAddress!, this.options.DefaultMaxConcurrency, this.pollingCts.Token));
+            this.appQueueAddress!, this.options.DefaultConcurrency, this.pollingCts.Token));
 
         // Start pool queue consumers
         foreach (var pool in this.options.Pools)
@@ -180,7 +180,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
             if (this.poolQueueAddresses.TryGetValue(pool.Name, out var poolQueueAddress))
             {
                 this.pollingTasks.Add(this.PollQueueAsync(
-                    poolQueueAddress, pool.MaxConcurrency, this.pollingCts.Token));
+                    poolQueueAddress, pool.Concurrency, this.pollingCts.Token));
             }
         }
 
@@ -604,14 +604,11 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 StringValue = context.MessageId,
             };
 
-            if (context.CausationId is not null)
+            attributes["CausationId"] = new SqsMessageAttributeValue
             {
-                attributes["CausationId"] = new SqsMessageAttributeValue
-                {
-                    DataType = "String",
-                    StringValue = context.CausationId,
-                };
-            }
+                DataType = "String",
+                StringValue = context.CausationId,
+            };
 
             attributes["ConversationId"] = new SqsMessageAttributeValue
             {

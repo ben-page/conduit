@@ -171,7 +171,7 @@ internal sealed class RabbitMQTopologyManager
                         noWait: false,
                         cancellationToken: cancellationToken);
 
-                    poolCommandQueryQueues.Add((sharedPoolQueueName, pool.PrefetchCount));
+                    poolCommandQueryQueues.Add((sharedPoolQueueName, (ushort)pool.Concurrency));
                 }
                 else
                 {
@@ -201,7 +201,7 @@ internal sealed class RabbitMQTopologyManager
 
             if (hasPoolEvents)
             {
-                poolEventQueues.Add((poolEventQueueName, pool.PrefetchCount));
+                poolEventQueues.Add((poolEventQueueName, (ushort)pool.Concurrency));
             }
         }
 

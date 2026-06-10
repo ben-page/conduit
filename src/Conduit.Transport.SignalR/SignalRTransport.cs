@@ -116,12 +116,8 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         {
             ["MessageId"] = context.MessageId,
             ["ConversationId"] = context.ConversationId,
+            ["CausationId"] = context.CausationId,
         };
-
-        if (context.CausationId is not null)
-        {
-            dict["CausationId"] = context.CausationId;
-        }
 
         return dict;
     }

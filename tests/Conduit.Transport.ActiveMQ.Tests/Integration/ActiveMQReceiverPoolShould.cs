@@ -27,7 +27,7 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
-        int poolPrefetchCount,
+        int poolConcurrency,
         string? topologyPrefix = null)
     {
         return await TestHost.StartAsync(builder =>
@@ -46,11 +46,10 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseActiveMQ(ConnectionString!, options =>
                     {
-                        options.Pools.Add(new ActiveMQReceiverPoolOptions
+                        options.AddPool(poolName, pool =>
                         {
-                            Name = poolName,
-                            PrefetchCount = poolPrefetchCount,
-                            MessageTypes = { SlowCommandTypeName },
+                            pool.Concurrency = poolConcurrency;
+                            pool.Handle(SlowCommandTypeName);
                         });
                     }));
             });
@@ -113,7 +112,7 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
         var handlerName = UniqueAppName("pool");
         var senderName = UniqueAppName("sender");
 
-        // Slow pool with prefetch=1, default pool uses DefaultPrefetchCount
+        // Slow pool with Concurrency=1 (prefetch), default pool uses DefaultConcurrency
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
         var prefix = handlerHost.TopologyPrefix!;
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
@@ -121,7 +120,7 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        // Act — send a slow command (pool queue, prefetch=1) and a fast command concurrently
+        // Act — send a slow command (pool queue, Concurrency=1) and a fast command concurrently
         var slowTask = mediator.ExecuteAsync(new SlowCommand("slow", 2000));
         var fastResult = await mediator.ExecuteAsync(new TestCommand("fast"));
 

@@ -27,7 +27,7 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
-        ushort poolPrefetchCount,
+        int poolConcurrency,
         string? topologyPrefix = null)
     {
         return await TestHost.StartAsync(builder =>
@@ -46,11 +46,10 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseRabbitMQ(ConnectionString!, options =>
                     {
-                        options.Pools.Add(new ReceiverPoolOptions
+                        options.AddPool(poolName, pool =>
                         {
-                            Name = poolName,
-                            PrefetchCount = poolPrefetchCount,
-                            MessageTypes = { SlowCommandTypeName },
+                            pool.Concurrency = poolConcurrency;
+                            pool.Handle(SlowCommandTypeName);
                         });
                     }));
             });
@@ -113,7 +112,7 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
         var handlerName = UniqueAppName("pool");
         var senderName = UniqueAppName("sender");
 
-        // Slow pool with prefetch=1, default pool uses DefaultPrefetchCount
+        // Slow pool with Concurrency=1 (prefetch), default pool uses DefaultConcurrency
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
         var prefix = handlerHost.TopologyPrefix!;
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");

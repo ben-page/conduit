@@ -27,7 +27,7 @@ public class SqsReceiverPoolShould : SqsTestBase
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
-        int poolMaxConcurrency,
+        int poolConcurrency,
         string? topologyPrefix = null)
     {
         var address = ServiceAddress;
@@ -49,11 +49,10 @@ public class SqsReceiverPoolShould : SqsTestBase
                     endpoint.UseAmazonSqs(options =>
                     {
                         options.ServiceUri = new Uri(address!);
-                        options.Pools.Add(new AmazonSqsReceiverPoolOptions
+                        options.AddPool(poolName, pool =>
                         {
-                            Name = poolName,
-                            MaxConcurrency = poolMaxConcurrency,
-                            MessageTypes = { SlowCommandTypeName },
+                            pool.Concurrency = poolConcurrency;
+                            pool.Handle(SlowCommandTypeName);
                         });
                     }));
             });
@@ -116,7 +115,7 @@ public class SqsReceiverPoolShould : SqsTestBase
         var handlerName = UniqueAppName("pool");
         var senderName = UniqueAppName("sender");
 
-        // Slow pool with maxConcurrency=1, default pool uses DefaultMaxConcurrency
+        // Slow pool with Concurrency=1, default pool uses DefaultConcurrency
         await using var handlerHost = await CreateHostWithPoolAsync(handlerName, "slow", 1);
         var prefix = handlerHost.TopologyPrefix!;
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
@@ -124,7 +123,7 @@ public class SqsReceiverPoolShould : SqsTestBase
         var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
         var mediator = senderHost.GetRequiredService<IMediator>();
 
-        // Act -- send a slow command (pool queue, maxConcurrency=1) and a fast command concurrently
+        // Act -- send a slow command (pool queue, Concurrency=1) and a fast command concurrently
         var slowTask = mediator.ExecuteAsync(new SlowCommand("slow", 2000));
         var fastResult = await mediator.ExecuteAsync(new TestCommand("fast"));
 

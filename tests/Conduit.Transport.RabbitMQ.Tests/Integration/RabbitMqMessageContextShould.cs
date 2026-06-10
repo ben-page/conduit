@@ -37,6 +37,7 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var snapshot = handlerSpy.Invocations.OfType<MessageContextSnapshot>().First();
         snapshot.MessageId.Should().NotBeNullOrEmpty();
         snapshot.CausationId.Should().NotBeNullOrEmpty();
+        snapshot.CausationId.Should().Be(snapshot.MessageId);
         snapshot.ConversationId.Should().NotBeNullOrEmpty();
     }
 
@@ -62,6 +63,7 @@ public class RabbitMqMessageContextShould : RabbitMqTestBase
         var snapshot = handlerSpy.Invocations.OfType<MessageContextSnapshot>().First();
         snapshot.MessageId.Should().NotBeNullOrEmpty();
         snapshot.CausationId.Should().NotBeNullOrEmpty();
+        snapshot.CausationId.Should().Be(snapshot.MessageId);
         snapshot.ConversationId.Should().NotBeNullOrEmpty();
     }
 

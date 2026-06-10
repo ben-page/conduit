@@ -373,11 +373,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         {
             message.MessageId = context.MessageId;
             message.CorrelationId = context.ConversationId;
-
-            if (context.CausationId is not null)
-            {
-                message.ApplicationProperties["CausationId"] = context.CausationId;
-            }
+            message.ApplicationProperties["CausationId"] = context.CausationId;
         }
 
         if (pendingTraceHeaders is not null)

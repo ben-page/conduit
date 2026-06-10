@@ -1,5 +1,6 @@
 using Conduit.Configuration;
 using Conduit.Durability;
+using Conduit.Persistence.Sqlite;
 using Conduit.Generated;
 using Conduit.TestUtils;
 using Conduit.Transport.Kafka;
@@ -179,9 +180,9 @@ public abstract class KafkaTestBase
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseKafka(BootstrapServers!));
 
+                conduit.UseSqlite(connectionString);
                 conduit.AddDurability(durability =>
                 {
-                    durability.UseSqlite(connectionString);
                     durability.AddDeadLetterQueue();
                 });
             });
