@@ -7,7 +7,8 @@ namespace Conduit;
 /// <summary>
 /// Central entry point for dispatching commands, queries, and events.
 /// Implemented by the source-generated <c>ConduitMediator</c> class.
-/// Application code injects this interface. Registered as scoped in DI.
+/// Application code injects this interface. Registered as transient in DI
+/// (stateless — handlers are resolved from <see cref="System.IServiceProvider"/> per call).
 /// </summary>
 public interface IMediator
 {

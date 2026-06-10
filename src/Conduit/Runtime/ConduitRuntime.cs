@@ -217,7 +217,14 @@ public static class ConduitRuntime
                 }
             }
 
-            MessageContext.StartDispatch();
+            // Transports establish the wire correlation context via StartDispatchFromTransport
+            // before calling in. Only mint a fresh context when no caller pre-established one,
+            // otherwise the transport-supplied MessageId/CausationId would be discarded.
+            if (previousContext is null)
+            {
+                MessageContext.StartDispatch();
+            }
+
             var envelope = createEnvelope();
             var result = await dispatch(envelope.Type, envelope.Payload, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -276,7 +283,14 @@ public static class ConduitRuntime
                 }
             }
 
-            MessageContext.StartDispatch();
+            // Transports establish the wire correlation context via StartDispatchFromTransport
+            // before calling in. Only mint a fresh context when no caller pre-established one,
+            // otherwise the transport-supplied MessageId/CausationId would be discarded.
+            if (previousContext is null)
+            {
+                MessageContext.StartDispatch();
+            }
+
             var envelope = createEnvelope();
             await dispatch(envelope.Type, envelope.Payload, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
