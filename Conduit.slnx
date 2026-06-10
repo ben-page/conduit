@@ -17,6 +17,11 @@
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
     <Project Path="src/Conduit.Audit/Conduit.Audit.csproj" />
     <Project Path="src/Conduit.Durability/Conduit.Durability.csproj" />
+    <Project Path="src/Conduit.Persistence/Conduit.Persistence.csproj" />
+    <Project Path="src/Conduit.Persistence.MySql/Conduit.Persistence.MySql.csproj" />
+    <Project Path="src/Conduit.Persistence.Postgres/Conduit.Persistence.Postgres.csproj" />
+    <Project Path="src/Conduit.Persistence.SqlServer/Conduit.Persistence.SqlServer.csproj" />
+    <Project Path="src/Conduit.Persistence.Sqlite/Conduit.Persistence.Sqlite.csproj" />
     <Project Path="src/Conduit.Resilience/Conduit.Resilience.csproj" />
     <Project Path="src/Conduit.SourceGen/Conduit.SourceGen.csproj" />
     <Project Path="src/Conduit.Transport.ActiveMQ/Conduit.Transport.ActiveMQ.csproj" />
@@ -35,6 +40,7 @@
     <File Path="tests/Directory.Packages.props" />
     <Project Path="tests/Conduit.Audit.Tests/Conduit.Audit.Tests.csproj" />
     <Project Path="tests/Conduit.Durability.Tests/Conduit.Durability.Tests.csproj" />
+    <Project Path="tests/Conduit.Persistence.IntegrationTests/Conduit.Persistence.IntegrationTests.csproj" />
     <Project Path="tests/Conduit.Resilience.Tests/Conduit.Resilience.Tests.csproj" />
     <Project Path="tests/Conduit.SourceGen.Tests/Conduit.SourceGen.Tests.csproj" />
     <Project Path="tests/Conduit.Tests/Conduit.Tests.csproj" />
