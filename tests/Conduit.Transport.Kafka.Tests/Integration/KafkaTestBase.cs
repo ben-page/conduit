@@ -76,6 +76,22 @@ public abstract class KafkaTestBase
         }
     }
 
+    /// <summary>
+    /// Reaps Kafka resources created by THIS test project in prior runs (everything under the
+    /// project's stable <c>test-{hash}-</c> prefix). Called once per project from AssemblySetup.
+    /// </summary>
+    internal static async Task ReapProjectResourcesAsync()
+    {
+        if (!isAvailable || BootstrapServers is null)
+        {
+            return;
+        }
+
+        await KafkaTopologyReaper.ReapByPrefixAsync(
+            BootstrapServers,
+            TestTopologyPrefix.ProjectPrefix(typeof(KafkaTestBase).Assembly));
+    }
+
     [TestInitialize]
     public void TestInitialize()
     {
@@ -102,11 +118,8 @@ public abstract class KafkaTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-
-                if (topologyPrefix is not null)
-                {
-                    conduit.TopologyPrefix = topologyPrefix;
-                }
+                conduit.TopologyPrefix = topologyPrefix
+                    ?? TestTopologyPrefix.NewForTest(typeof(KafkaTestBase).Assembly);
 
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseKafka(BootstrapServers!));
@@ -171,11 +184,8 @@ public abstract class KafkaTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-
-                if (topologyPrefix is not null)
-                {
-                    conduit.TopologyPrefix = topologyPrefix;
-                }
+                conduit.TopologyPrefix = topologyPrefix
+                    ?? TestTopologyPrefix.NewForTest(typeof(KafkaTestBase).Assembly);
 
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseKafka(BootstrapServers!));

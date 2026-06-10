@@ -7,6 +7,7 @@ public static class AssemblySetup
     public static async Task Initialize(TestContext context)
     {
         await KafkaTestBase.InitializeContainer();
+        await KafkaTestBase.ReapProjectResourcesAsync();
     }
 
     [AssemblyCleanup]
