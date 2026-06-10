@@ -83,6 +83,23 @@ public abstract class SqsTestBase
         }
     }
 
+    /// <summary>
+    /// Reaps SQS/SNS resources created by THIS test project in prior runs (everything under the
+    /// project's stable <c>test-{hash}-</c> prefix). Called once per project from AssemblySetup.
+    /// </summary>
+    internal static async Task ReapProjectResourcesAsync()
+    {
+        if (!isAvailable || ServiceAddress is null)
+        {
+            return;
+        }
+
+        var options = new AmazonSqsOptions { ServiceUri = new Uri(ServiceAddress) };
+        await AmazonSqsTopologyReaper.ReapByPrefixAsync(
+            options,
+            TestTopologyPrefix.ProjectPrefix(typeof(SqsTestBase).Assembly));
+    }
+
     [TestInitialize]
     public void TestInitialize()
     {
@@ -111,11 +128,8 @@ public abstract class SqsTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-
-                if (topologyPrefix is not null)
-                {
-                    conduit.TopologyPrefix = topologyPrefix;
-                }
+                conduit.TopologyPrefix = topologyPrefix
+                    ?? TestTopologyPrefix.NewForTest(typeof(SqsTestBase).Assembly);
 
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
@@ -188,11 +202,8 @@ public abstract class SqsTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-
-                if (topologyPrefix is not null)
-                {
-                    conduit.TopologyPrefix = topologyPrefix;
-                }
+                conduit.TopologyPrefix = topologyPrefix
+                    ?? TestTopologyPrefix.NewForTest(typeof(SqsTestBase).Assembly);
 
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>

@@ -4,7 +4,11 @@ namespace Conduit.Transport.AmazonSqs.Tests.Integration;
 public static class AssemblySetup
 {
     [AssemblyInitialize]
-    public static Task Initialize(TestContext context) => SqsTestBase.InitializeContainer();
+    public static async Task Initialize(TestContext context)
+    {
+        await SqsTestBase.InitializeContainer();
+        await SqsTestBase.ReapProjectResourcesAsync();
+    }
 
     [AssemblyCleanup]
     public static Task Cleanup() => SqsTestBase.CleanupContainer();
