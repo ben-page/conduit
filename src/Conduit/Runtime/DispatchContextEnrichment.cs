@@ -49,6 +49,11 @@ public static class DispatchContextEnrichment
             enricher.Enrich(user, merged);
         }
 
-        return merged.Count == 0 ? clientProperties : merged;
+        // Once enrichers have run, the merged bag is authoritative — including removals. We must NOT
+        // fall back to the original clientProperties when merged ends up empty: an enricher may have
+        // deliberately removed a client-supplied key (e.g. stripping a spoofed UserId it could not
+        // re-derive from the principal), and returning clientProperties would resurrect exactly that
+        // value, defeating the anti-spoof contract. Empty means "nothing trusted to carry" -> null.
+        return merged.Count == 0 ? null : merged;
     }
 }

@@ -102,6 +102,38 @@ public class DispatchContextEnrichmentShould
     }
 
     [TestMethod]
+    public void NotResurrectClientValueAnEnricherRemoved()
+    {
+        // Arrange — anti-spoofing: an enricher strips a client-supplied key it cannot re-derive
+        // (e.g. a non-integer subject). The removed value must NOT come back via a clientProperties
+        // fallback, even when that leaves the merged bag empty.
+        var client = new Dictionary<string, object?> { ["UserId"] = "client-spoofed" };
+        var enricher = new DelegateEnricher((user, props) => props.Remove("UserId"));
+
+        // Act
+        var result = DispatchContextEnrichment.Apply([enricher], user: null, client);
+
+        // Assert — the spoofed value is gone, not resurrected.
+        (result is null || !result.ContainsKey("UserId")).Should().BeTrue();
+    }
+
+    [TestMethod]
+    public void PreserveOtherClientPropertiesWhenAnEnricherRemovesOneKey()
+    {
+        // Arrange — removal of one key must not drop unrelated client headers.
+        var client = new Dictionary<string, object?> { ["UserId"] = "spoofed", ["TenantCode"] = "acme" };
+        var enricher = new DelegateEnricher((user, props) => props.Remove("UserId"));
+
+        // Act
+        var result = DispatchContextEnrichment.Apply([enricher], user: null, client);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.ContainsKey("UserId").Should().BeFalse();
+        result["TenantCode"].Should().Be("acme");
+    }
+
+    [TestMethod]
     public void PreserveClientPropertiesEnricherDidNotTouch()
     {
         // Arrange
