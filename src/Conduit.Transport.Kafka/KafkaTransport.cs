@@ -32,7 +32,6 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     private CancellationTokenSource? consumerCts;
     private readonly List<Task> consumerTasks = [];
     private Task? replyConsumerTask;
-    private Task? cleanupTask;
 
     private string? sharedTopicName;
     private string? replyTopicName;
@@ -167,12 +166,6 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         LogStartingConsumers(this.Logger, totalInstances, groupSpecs.Count, null);
 
         this.StartReplyConsumer();
-
-        // Start cleanup task for ephemeral topology modes
-        if (this.ConduitOptions.TopologyMode != TopologyMode.Production)
-        {
-            this.cleanupTask = Task.Run(() => this.CleanupLoopAsync(this.consumerCts.Token), this.consumerCts.Token);
-        }
 
         return Task.CompletedTask;
     }
@@ -312,11 +305,6 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         if (this.replyConsumerTask is not null)
         {
             tasks.Add(this.replyConsumerTask);
-        }
-
-        if (this.cleanupTask is not null)
-        {
-            tasks.Add(this.cleanupTask);
         }
 
         if (tasks.Count > 0)
@@ -707,37 +695,6 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     // -----------------------------------------------------------------------
     // Private helpers — Cleanup and dead-letter
     // -----------------------------------------------------------------------
-
-    private async Task CleanupLoopAsync(CancellationToken cancellationToken)
-    {
-        // Kafka has no native auto-delete topics. This background task periodically
-        // checks and deletes stale topics for Developer/Test modes.
-        var cleanupInterval = this.ConduitOptions.TopologyMode switch
-        {
-            TopologyMode.Developer => TimeSpan.FromHours(1),
-            TopologyMode.Test => TimeSpan.FromMinutes(1),
-            TopologyMode.Production or _ => TimeSpan.FromHours(1),
-        };
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await Task.Delay(cleanupInterval, cancellationToken);
-
-                // Cleanup is handled by Kafka's retention.ms setting on the topics
-                // (configured in KafkaTopologyManager). The background task here is
-                // available for deleting the topics themselves if needed, but typically
-                // retention handles message cleanup while topics persist.
-                // For Test mode, we could delete topics after the TTL, but the retention
-                // policy already ensures messages expire.
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal shutdown
-        }
-    }
 
     private async Task PublishToDeadLetterAsync(KafkaInboundMessage message)
     {
