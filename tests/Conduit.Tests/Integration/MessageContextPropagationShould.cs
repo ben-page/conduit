@@ -45,7 +45,7 @@ public class MessageContextPropagationShould
         CapturedContext.Last.Should().NotBeNull();
         CapturedContext.Last!.MessageId.Should().NotBeNullOrEmpty();
         CapturedContext.Last.ConversationId.Should().Be(CapturedContext.Last.MessageId);
-        CapturedContext.Last.CausationId.Should().BeNull();
+        CapturedContext.Last.CausationId.Should().Be(CapturedContext.Last.MessageId);
     }
 
     [TestMethod]
@@ -88,8 +88,8 @@ public class MessageContextPropagationShould
         eventTwo!.ConversationId.Should().Be(conversationId);
         deeplyNested!.ConversationId.Should().Be(conversationId);
 
-        // TopLevelCommand is the root — no parent, ConversationId = MessageId
-        topLevel.CausationId.Should().BeNull();
+        // TopLevelCommand is the root — self-causates: CausationId == MessageId == ConversationId
+        topLevel.CausationId.Should().Be(topLevel.MessageId);
         topLevel.ConversationId.Should().Be(topLevel.MessageId);
 
         // Both events were caused by the TopLevelCommand

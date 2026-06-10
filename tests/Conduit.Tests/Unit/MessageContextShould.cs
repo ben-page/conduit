@@ -30,14 +30,14 @@ public class MessageContextShould
     }
 
     [TestMethod]
-    public void SetConversationIdToMessageIdForFirstDispatch()
+    public void SelfCausateForFirstDispatch()
     {
         // Act
         var context = MessageContext.StartDispatch();
 
-        // Assert
+        // Assert — a head/origin message self-causates: CausationId == MessageId == ConversationId
         context.ConversationId.Should().Be(context.MessageId);
-        context.CausationId.Should().BeNull();
+        context.CausationId.Should().Be(context.MessageId);
     }
 
     [TestMethod]
@@ -85,6 +85,21 @@ public class MessageContextShould
         // Assert
         context.MessageId.Should().Be("msg-123");
         context.CausationId.Should().Be("cause-456");
+        context.ConversationId.Should().Be("conv-789");
+    }
+
+    [TestMethod]
+    public void DefaultTransportCausationToMessageIdWhenWireOmitsIt()
+    {
+        // Act — a producer that omitted the causation header (non-Conduit sender)
+        var context = MessageContext.StartDispatchFromTransport(
+            messageId: "msg-123",
+            causationId: null,
+            conversationId: "conv-789");
+
+        // Assert — self-causation default keeps CausationId non-null
+        context.MessageId.Should().Be("msg-123");
+        context.CausationId.Should().Be("msg-123");
         context.ConversationId.Should().Be("conv-789");
     }
 

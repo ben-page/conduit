@@ -4,7 +4,9 @@ namespace Conduit.Runtime;
 
 /// <summary>
 /// Tracks message causation through dispatch chains via <see cref="AsyncLocal{T}"/>.
-/// Each dispatch gets a unique <see cref="MessageId"/>. Nested dispatches inherit
+/// Each dispatch gets a unique <see cref="MessageId"/>. A head/origin message self-causates
+/// (<see cref="CausationId"/> == <see cref="MessageId"/> == <see cref="ConversationId"/>);
+/// <see cref="CausationId"/> is never null. Nested dispatches inherit
 /// <see cref="ConversationId"/> and set <see cref="CausationId"/> to the parent's MessageId.
 /// Access via <see cref="Current"/>.
 /// </summary>
@@ -29,8 +31,11 @@ public sealed class MessageContext
     /// <summary>Unique ID for this specific message dispatch.</summary>
     public string MessageId { get; }
 
-    /// <summary>MessageId of the message that caused this one. Null for the first message in a chain.</summary>
-    public string? CausationId { get; }
+    /// <summary>
+    /// MessageId of the message that caused this one. A head/origin message self-causates,
+    /// so this equals <see cref="MessageId"/> for the first message in a chain. Never null.
+    /// </summary>
+    public string CausationId { get; }
 
     /// <summary>Shared across all messages in a causal chain — the MessageId of the first message.</summary>
     public string ConversationId { get; }
@@ -47,7 +52,7 @@ public sealed class MessageContext
     /// </summary>
     internal JsonElement? Payload { get; private set; }
 
-    private MessageContext(string messageId, string? causationId, string conversationId,
+    private MessageContext(string messageId, string causationId, string conversationId,
         IReadOnlyDictionary<string, object?> properties)
     {
         this.MessageId = messageId;
@@ -60,7 +65,9 @@ public sealed class MessageContext
     /// Creates a new context for a local dispatch. If a current context exists,
     /// inherits <see cref="ConversationId"/>, sets <see cref="CausationId"/> to
     /// the current <see cref="MessageId"/>, and inherits <see cref="Properties"/>
-    /// unless <paramref name="options"/> provides its own. Called by the generated mediator.
+    /// unless <paramref name="options"/> provides its own. A head/origin dispatch
+    /// (no current context) self-causates: <see cref="CausationId"/> equals its own
+    /// <see cref="MessageId"/>. Called by the generated mediator.
     /// </summary>
     public static MessageContext StartDispatch(DispatchOptions? options = null)
     {
@@ -83,7 +90,7 @@ public sealed class MessageContext
 
         var context = new MessageContext(
             messageId: messageId,
-            causationId: parent?.MessageId,
+            causationId: parent?.MessageId ?? messageId,
             conversationId: parent?.ConversationId ?? messageId,
             properties: properties);
 
@@ -93,9 +100,12 @@ public sealed class MessageContext
 
     /// <summary>
     /// Creates a context from inbound transport values for cross-service propagation.
-    /// The three correlation values are required — the sending service provides them via
-    /// broker message properties or HTTP headers. Additional <paramref name="properties"/>
-    /// are made available to pipeline behaviors via <see cref="Properties"/>.
+    /// <paramref name="messageId"/> and <paramref name="conversationId"/> are required — the
+    /// sending service provides them via broker message properties or HTTP headers. When the
+    /// wire omits <paramref name="causationId"/> (e.g. a non-Conduit producer), it defaults to
+    /// <paramref name="messageId"/> (self-causation) so <see cref="CausationId"/> is never null.
+    /// Additional <paramref name="properties"/> are made available to pipeline behaviors via
+    /// <see cref="Properties"/>.
     /// </summary>
     public static MessageContext StartDispatchFromTransport(
         string messageId,
@@ -108,7 +118,7 @@ public sealed class MessageContext
 
         var context = new MessageContext(
             messageId: messageId,
-            causationId: causationId,
+            causationId: causationId ?? messageId,
             conversationId: conversationId,
             properties: properties ?? EmptyProperties);
 
