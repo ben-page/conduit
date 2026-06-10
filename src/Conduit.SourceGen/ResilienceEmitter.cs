@@ -46,7 +46,8 @@ public static class ResilienceEmitter
                 continue; // Skip non-dispatchable types
             }
 
-            sb.AppendLine($"            Type t when t == typeof({type.FullTypeName}) => \"{type.FullTypeName}\",");
+            // typeof needs the C# ('.') form; the returned discriminator is the metadata ('+') form.
+            sb.AppendLine($"            Type t when t == typeof({EmitConstants.ToCSharpTypeRef(type.FullTypeName)}) => \"{type.FullTypeName}\",");
         }
 
         sb.AppendLine("            _ => null,");

@@ -76,8 +76,9 @@ public static class RestEmitter
 
         foreach (var query in queries)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({query.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{query.FullTypeName}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
@@ -100,20 +101,23 @@ public static class RestEmitter
 
         foreach (var query in queries)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({query.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{query.FullTypeName}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({cmd.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapCommandRoute<{cmd.FullTypeName}, {cmd.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapCommandRoute<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({cmd.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandRoute<{cmd.FullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandRoute<{typeRef}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
@@ -136,20 +140,23 @@ public static class RestEmitter
 
         foreach (var query in queries)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({query.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{query.FullTypeName}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({cmd.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapCommandBody<{cmd.FullTypeName}, {cmd.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapCommandBody<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({cmd.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandBody<{cmd.FullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandBody<{typeRef}>(endpoints, pattern, \"{httpMethod}\");");
         }
 
         sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
@@ -171,24 +178,27 @@ public static class RestEmitter
 
         foreach (var query in queries)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({query.FullTypeName}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{query.FullTypeName}, {query.ResultFullTypeName}>(endpoints, pattern, method);");
+            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, method);");
         }
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({cmd.FullTypeName}))");
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
             sb.AppendLine($"            return useBody");
-            sb.AppendLine($"                ? {EmitConstants.ConduitRestHandlersShort}.MapCommandBody<{cmd.FullTypeName}, {cmd.ResultFullTypeName}>(endpoints, pattern, method)");
-            sb.AppendLine($"                : {EmitConstants.ConduitRestHandlersShort}.MapCommandRoute<{cmd.FullTypeName}, {cmd.ResultFullTypeName}>(endpoints, pattern, method);");
+            sb.AppendLine($"                ? {EmitConstants.ConduitRestHandlersShort}.MapCommandBody<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, method)");
+            sb.AppendLine($"                : {EmitConstants.ConduitRestHandlersShort}.MapCommandRoute<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, method);");
         }
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"        if (typeof(T) == typeof({cmd.FullTypeName}))");
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
             sb.AppendLine($"            return useBody");
-            sb.AppendLine($"                ? {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandBody<{cmd.FullTypeName}>(endpoints, pattern, method)");
-            sb.AppendLine($"                : {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandRoute<{cmd.FullTypeName}>(endpoints, pattern, method);");
+            sb.AppendLine($"                ? {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandBody<{typeRef}>(endpoints, pattern, method)");
+            sb.AppendLine($"                : {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandRoute<{typeRef}>(endpoints, pattern, method);");
         }
 
         sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");

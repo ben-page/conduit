@@ -56,4 +56,17 @@ public class ReflectionScannerShould
         var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestOrphanCommand");
         type.Should().NotBeNull();
     }
+
+    [TestMethod]
+    public void EmitFullTypeNameMatchingRuntimeTypeFullName()
+    {
+        // Parity contract: ReflectionScanner emits FullTypeName == Type.FullName. This is the
+        // canonical wire discriminator and ConduitTypeRegistry key. RoslynScanner (source
+        // generator) is verified against the same Type.FullName form in
+        // Conduit.SourceGen.Tests, so both scanners agree — including the '+' separator that
+        // Type.FullName uses for nested types.
+        var type = ScannedTypes.FirstOrDefault(t => t.TypeName == "TestCreateCommand");
+        type.Should().NotBeNull();
+        type.FullTypeName.Should().Be(typeof(Sample.TestCreateCommand).FullName);
+    }
 }

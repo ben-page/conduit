@@ -60,7 +60,7 @@ public static class RoslynScanner
             results.Add(new DispatchableTypeInfo
             {
                 TypeName = typeSymbol.Name,
-                FullTypeName = typeSymbol.ToDisplayString(),
+                FullTypeName = GetMetadataFullName(typeSymbol),
                 Namespace = typeSymbol.ContainingNamespace.ToDisplayString(),
                 Kind = kind.Value,
                 ResultTypeName = resultTypeName,
@@ -112,11 +112,13 @@ public static class RoslynScanner
             {
                 var ifaceOriginal = iface.OriginalDefinition.ToDisplayString();
 
+                // Message-type names are join keys against DispatchableTypeInfo.FullTypeName, so they
+                // must use the same metadata ('+') form for nested types.
                 var messageType = ifaceOriginal switch
                 {
-                    "Conduit.Handlers.ICommandHandler<TCommand, TResult>" when iface.TypeArguments.Length == 2 => iface.TypeArguments[0].ToDisplayString(),
-                    "Conduit.Handlers.ICommandHandler<TCommand>" when iface.TypeArguments.Length == 1 => iface.TypeArguments[0].ToDisplayString(),
-                    "Conduit.Handlers.IQueryHandler<TQuery, TResult>" when iface.TypeArguments.Length == 2 => iface.TypeArguments[0].ToDisplayString(),
+                    "Conduit.Handlers.ICommandHandler<TCommand, TResult>" when iface.TypeArguments.Length == 2 => MetadataNameOf(iface.TypeArguments[0]),
+                    "Conduit.Handlers.ICommandHandler<TCommand>" when iface.TypeArguments.Length == 1 => MetadataNameOf(iface.TypeArguments[0]),
+                    "Conduit.Handlers.IQueryHandler<TQuery, TResult>" when iface.TypeArguments.Length == 2 => MetadataNameOf(iface.TypeArguments[0]),
                     _ => null,
                 };
 
@@ -141,7 +143,7 @@ public static class RoslynScanner
                         continue; // listeners are optional; an inaccessible one is simply not wired
                     }
 
-                    var eventFullName = iface.TypeArguments[0].ToDisplayString();
+                    var eventFullName = MetadataNameOf(iface.TypeArguments[0]);
                     if (!listenerGroups.TryGetValue(eventFullName, out var listeners))
                     {
                         listeners = new List<string>();
@@ -263,6 +265,49 @@ public static class RoslynScanner
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Builds the metadata-style full name of a type, matching <see cref="System.Type.FullName"/>:
+    /// nested types are joined to their containing type with a '+' (e.g. <c>Ns.Outer+Inner</c>),
+    /// not the '.' that <c>ISymbol.ToDisplayString()</c> emits. This is the canonical wire
+    /// discriminator and <c>ConduitTypeRegistry</c> key — it must agree with the runtime
+    /// <c>Type.FullName</c> and <c>Conduit.TypeGen.ReflectionScanner</c> for the same type.
+    /// </summary>
+    /// <summary>
+    /// Returns the metadata-style full name for any type symbol, delegating to
+    /// <see cref="GetMetadataFullName(INamedTypeSymbol)"/> for named types (so nested types use the
+    /// '+' separator) and falling back to <c>ISymbol.ToDisplayString()</c> otherwise.
+    /// </summary>
+    private static string MetadataNameOf(ITypeSymbol typeSymbol)
+    {
+        return typeSymbol is INamedTypeSymbol named
+            ? GetMetadataFullName(named)
+            : typeSymbol.ToDisplayString();
+    }
+
+    private static string GetMetadataFullName(INamedTypeSymbol typeSymbol)
+    {
+        // Walk the containing-type chain from the innermost type outward, then reverse so the
+        // outermost container leads. Joining with '+' mirrors CLR metadata naming.
+        var typeChain = new List<string>();
+        var current = typeSymbol;
+        while (current is not null)
+        {
+            typeChain.Add(current.Name);
+            current = current.ContainingType;
+        }
+
+        typeChain.Reverse();
+        var nestedName = string.Join("+", typeChain);
+
+        var ns = typeSymbol.ContainingNamespace;
+        if (ns is null || ns.IsGlobalNamespace)
+        {
+            return nestedName;
+        }
+
+        return ns.ToDisplayString() + "." + nestedName;
     }
 
     private static bool HasAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)

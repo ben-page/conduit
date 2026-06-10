@@ -130,4 +130,58 @@ public record CreateOrder(string CustomerId) : ICommand<System.Guid>;
 
         types[0].ResultFullTypeName.Should().Be("System.Guid");
     }
+
+    // A real nested dispatchable type whose runtime Type.FullName ("App.Container+NestedCommand")
+    // is the canonical wire discriminator / registry key. The scanner must emit the same form.
+    private sealed class Container
+    {
+        public sealed record NestedCommand(string Data) : ICommand;
+    }
+
+    [TestMethod]
+    public void EmitMetadataStyleFullNameForNestedTypes()
+    {
+        // The runtime registry (ConduitTypeRegistry) keys on Type.FullName, and the wire
+        // discriminator must match it. Type.FullName uses '+' between a nested type and its
+        // container, e.g. "Ns.Outer+Inner".
+        var source = @"
+using Conduit.Messages;
+
+namespace App;
+public class Container
+{
+    public record NestedCommand(string Data) : ICommand;
+}
+";
+        var compilation = CreateCompilation(source);
+        var types = RoslynScanner.Scan(compilation);
+
+        types.Should().HaveCount(1);
+        types[0].TypeName.Should().Be("NestedCommand");
+        types[0].FullTypeName.Should().Be("App.Container+NestedCommand");
+    }
+
+    [TestMethod]
+    public void MatchRuntimeTypeFullNameForNestedTypes()
+    {
+        // Parity contract: the scanner's FullTypeName must equal the runtime Type.FullName,
+        // which is what ConduitTypeRegistry and ReflectionScanner both use.
+        var source = @"
+using Conduit.Messages;
+
+namespace App;
+public class Container
+{
+    public record NestedCommand(string Data) : ICommand;
+}
+";
+        var compilation = CreateCompilation(source);
+        var types = RoslynScanner.Scan(compilation);
+
+        // The locally-declared Container.NestedCommand proves the runtime form: Type.FullName
+        // separates a nested type from its container with '+'. The scanner must match it.
+        typeof(Container.NestedCommand).FullName.Should()
+            .EndWith("Container+NestedCommand");
+        types[0].FullTypeName.Should().EndWith("Container+NestedCommand");
+    }
 }
