@@ -1,6 +1,6 @@
 ﻿using AwesomeAssertions;
 using Conduit.Configuration;
-using Conduit.Durability.Persistence;
+using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
@@ -95,6 +95,45 @@ public class OutboxBehaviorShould
     }
 
     [TestMethod]
+    public async Task GiveEachCapturedMessageItsOwnMessageIdCausedByTheTriggeringMessage()
+    {
+        // Arrange — a handler emits two outbound messages within one dispatch.
+        var capture = CreateCapture();
+        var store = new StubOutboxStore();
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        capture.Intercept(new DispatchEnvelope("Orders.OrderCreated", JsonSerializer.SerializeToElement(new { OrderId = 1 })));
+        capture.Intercept(new DispatchEnvelope("Orders.OrderShipped", JsonSerializer.SerializeToElement(new { OrderId = 1 })));
+
+        var behavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Establish the triggering message's context (the message currently being handled).
+        var previous = MessageContext.Current;
+        MessageContext.StartDispatchFromTransport("trigger-msg-id", null, "conv-99");
+        try
+        {
+            // Act
+            await behavior.HandleAsync("request", () => Task.FromResult("response"), CancellationToken.None);
+        }
+        finally
+        {
+            MessageContext.RestoreContext(previous);
+        }
+
+        // Assert — two entries, each with its OWN distinct MessageId...
+        store.SavedEntries.Should().HaveCount(2);
+        store.SavedEntries.Select(e => e.MessageId).Distinct().Should().HaveCount(2);
+        store.SavedEntries.Should().AllSatisfy(e => e.MessageId.Should().NotBe("trigger-msg-id"));
+
+        // ...and the triggering message recorded as the cause of each, with conversation preserved.
+        store.SavedEntries.Should().AllSatisfy(e =>
+        {
+            e.CausationId.Should().Be("trigger-msg-id");
+            e.ConversationId.Should().Be("conv-99");
+        });
+    }
+
+    [TestMethod]
     public async Task SetWrittenMessagesOnCaptureAfterSave()
     {
         // Arrange
@@ -123,7 +162,7 @@ public class OutboxBehaviorShould
     }
 }
 
-file sealed class StubTransactionFactory(bool hasTransaction) : IDurabilityConnectionFactory
+file sealed class StubTransactionFactory(bool hasTransaction) : IConduitConnectionFactory
 {
     public Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
         => throw new NotImplementedException();

@@ -1,7 +1,8 @@
 ﻿using AwesomeAssertions;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Tests.Support;
+using Conduit.TestUtils;
 
 namespace Conduit.Durability.Tests.Unit;
 

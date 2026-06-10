@@ -1,8 +1,9 @@
 using AwesomeAssertions;
 using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.DeadLetterQueue;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Tests.Support;
+using Conduit.TestUtils;
 
 namespace Conduit.Durability.Tests.Unit;
 

@@ -1,11 +1,11 @@
 ﻿using System.Data.Common;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence;
 
 namespace Conduit.Durability.Persistence.Outbox;
 
 /// <summary>
 /// Persistence interface for the outbox. Built-in implementation uses
-/// raw ADO.NET with <see cref="IDurabilityDialect"/>. Consumers can provide
+/// raw ADO.NET with <see cref="ISqlDialect"/>. Consumers can provide
 /// their own implementation for non-relational databases.
 /// </summary>
 public interface IOutboxStore

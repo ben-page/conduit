@@ -1,32 +1,73 @@
-using System.Data;
 using System.Data.Common;
-using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.Json;
 using Conduit.Audit.Runtime;
+using Conduit.Persistence;
 using Conduit.Runtime;
 
 namespace Conduit.Audit.Persistence;
 
 /// <summary>
-/// ADO.NET audit store implementation. Delegates all SQL to <see cref="IAuditDialect"/>,
-/// making it compatible with any relational database that provides a <see cref="DbConnection"/>.
+/// ADO.NET audit store. Extends <see cref="DbStoreBase"/> for the disposal-correct
+/// connection-per-method pattern, resolving the engine from DI via
+/// <see cref="IConduitConnectionFactory"/> + <see cref="ISqlDialect"/>. SQL identifiers are
+/// module-owned (see <see cref="AuditTableSchema"/>); engine-specific idioms (DDL type names) come
+/// from the dialect. Timestamps are written as round-trippable ISO 8601 text and parsed back on read,
+/// matching the durability stores — engine-agnostic, no native-datetime binding required.
 /// </summary>
-// CA2100: All SQL in this class comes from IAuditDialect — a trusted internal interface, never user input.
-[SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
-    Justification = "All SQL originates from IAuditDialect, which is internal infrastructure, never user-supplied input.")]
-public sealed class DbAuditStore : IAuditStore
+public sealed class DbAuditStore : DbStoreBase, IAuditStore
 {
-    private readonly IAuditConnectionFactory connectionFactory;
-    private readonly IAuditDialect dialect;
+    private const string CausationIdColumnReader = AuditTableSchema.CausationIdColumn;
+
+    private readonly string insertSql;
+    private readonly string selectByMessageIdSql;
+    private readonly string deleteExpiredSql;
+
+    /// <summary>Initializes a new instance of <see cref="DbAuditStore"/>.</summary>
+    /// <param name="connectionFactory">The connection factory used to open per-method connections.</param>
+    /// <param name="dialect">The engine dialect supplying DDL type names.</param>
+    public DbAuditStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+        : base(connectionFactory)
+    {
+        ArgumentNullException.ThrowIfNull(dialect);
+
+        this.CreateTableSql = dialect.BuildCreateTableIfNotExistsSql(
+            AuditTableSchema.TableName,
+            $"""
+                {AuditTableSchema.IdColumn} {dialect.BigIntAutoIncrementPrimaryKey},
+                {AuditTableSchema.MessageIdColumn} {dialect.TextType} NOT NULL,
+                {AuditTableSchema.ConversationIdColumn} {dialect.TextType} NOT NULL,
+                {AuditTableSchema.CausationIdColumn} {dialect.NullableTextType},
+                {AuditTableSchema.MessageTypeColumn} {dialect.TextType} NOT NULL,
+                {AuditTableSchema.MessageKindColumn} {dialect.TextType} NOT NULL,
+                {AuditTableSchema.ServiceNameColumn} {dialect.TextType} NOT NULL,
+                {AuditTableSchema.PayloadColumn} {dialect.NullableTextType},
+                {AuditTableSchema.PropertiesColumn} {dialect.NullableTextType},
+                {AuditTableSchema.TimestampColumn} {dialect.TimestampType} NOT NULL,
+                {AuditTableSchema.ObservationsColumn} {dialect.TextType} NOT NULL
+            """);
+
+        this.insertSql = $"""
+            INSERT INTO {AuditTableSchema.TableName} ({AuditTableSchema.MessageIdColumn}, {AuditTableSchema.ConversationIdColumn}, {AuditTableSchema.CausationIdColumn}, {AuditTableSchema.MessageTypeColumn}, {AuditTableSchema.MessageKindColumn}, {AuditTableSchema.ServiceNameColumn}, {AuditTableSchema.PayloadColumn}, {AuditTableSchema.PropertiesColumn}, {AuditTableSchema.TimestampColumn}, {AuditTableSchema.ObservationsColumn})
+            VALUES (@MessageId, @ConversationId, @CausationId, @MessageType, @MessageKind, @ServiceName, @Payload, @Properties, @Timestamp, @Observations)
+            """;
+
+        this.selectByMessageIdSql = $"""
+            SELECT {AuditTableSchema.MessageIdColumn}, {AuditTableSchema.ConversationIdColumn}, {AuditTableSchema.CausationIdColumn}, {AuditTableSchema.MessageTypeColumn}, {AuditTableSchema.MessageKindColumn}, {AuditTableSchema.ServiceNameColumn}, {AuditTableSchema.PayloadColumn}, {AuditTableSchema.PropertiesColumn}, {AuditTableSchema.TimestampColumn}, {AuditTableSchema.ObservationsColumn}
+            FROM {AuditTableSchema.TableName}
+            WHERE {AuditTableSchema.MessageIdColumn} = @MessageId
+            """;
+
+        this.deleteExpiredSql =
+            $"DELETE FROM {AuditTableSchema.TableName} WHERE {AuditTableSchema.TimestampColumn} < @Cutoff";
+    }
 
     /// <summary>
-    /// Initializes a new instance of <see cref="DbAuditStore"/>.
+    /// The composed CREATE TABLE SQL for this store's engine. Exposed for tests to assert the audit
+    /// DDL is built correctly from the engine dialect's type vocabulary (the functional round-trip
+    /// against SQLite covers the rest of the composed CRUD).
     /// </summary>
-    public DbAuditStore(IAuditConnectionFactory connectionFactory, IAuditDialect dialect)
-    {
-        this.connectionFactory = connectionFactory;
-        this.dialect = dialect;
-    }
+    internal string CreateTableSql { get; }
 
     /// <inheritdoc/>
     public async Task SaveBatchAsync(IReadOnlyList<DispatchAuditRecord> records, CancellationToken cancellationToken)
@@ -38,31 +79,29 @@ public sealed class DbAuditStore : IAuditStore
             return;
         }
 
-        using var connection = this.connectionFactory.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
-
         foreach (var record in records)
         {
-            using var command = connection.CreateCommand();
-            command.CommandText = this.dialect.InsertAuditRecordSql;
-
-            AddParameter(command, "@MessageId", record.MessageId);
-            AddParameter(command, "@ConversationId", record.ConversationId);
-            AddParameter(command, "@CausationId", (object?)record.CausationId ?? DBNull.Value);
-            AddParameter(command, "@MessageType", record.MessageType);
-            AddParameter(command, "@MessageKind", record.MessageKind);
-            AddParameter(command, "@ServiceName", record.ServiceName);
-            AddParameter(command, "@Payload", record.Payload.HasValue
-                ? record.Payload.Value.GetRawText()
-                : DBNull.Value);
-            AddParameter(command, "@Properties", record.Properties is not null
-                ? JsonSerializer.Serialize(record.Properties, ConduitRuntime.JsonOptions)
-                : DBNull.Value);
-            this.AddTimestampParameter(command, "@Timestamp", record.Timestamp);
-            AddParameter(command, "@Observations",
-                JsonSerializer.Serialize(record.Observations, ConduitRuntime.JsonOptions));
-
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            await this.ExecuteNonQueryAsync(
+                this.insertSql,
+                command =>
+                {
+                    DbParameterHelper.Add(command, "@MessageId", record.MessageId);
+                    DbParameterHelper.Add(command, "@ConversationId", record.ConversationId);
+                    DbParameterHelper.Add(command, "@CausationId", (object?)record.CausationId ?? DBNull.Value);
+                    DbParameterHelper.Add(command, "@MessageType", record.MessageType);
+                    DbParameterHelper.Add(command, "@MessageKind", record.MessageKind);
+                    DbParameterHelper.Add(command, "@ServiceName", record.ServiceName);
+                    DbParameterHelper.Add(command, "@Payload", record.Payload.HasValue
+                        ? record.Payload.Value.GetRawText()
+                        : DBNull.Value);
+                    DbParameterHelper.Add(command, "@Properties", record.Properties is not null
+                        ? JsonSerializer.Serialize(record.Properties, ConduitRuntime.JsonOptions)
+                        : DBNull.Value);
+                    DbParameterHelper.Add(command, "@Timestamp", FormatTimestamp(record.Timestamp));
+                    DbParameterHelper.Add(command, "@Observations",
+                        JsonSerializer.Serialize(record.Observations, ConduitRuntime.JsonOptions));
+                },
+                cancellationToken);
         }
     }
 
@@ -71,111 +110,77 @@ public sealed class DbAuditStore : IAuditStore
     {
         ArgumentNullException.ThrowIfNull(messageId);
 
-        using var connection = this.connectionFactory.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
+        var records = await this.ExecuteReaderAsync(
+            this.selectByMessageIdSql,
+            command => DbParameterHelper.Add(command, "@MessageId", messageId),
+            ReadRecord,
+            cancellationToken);
 
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.SelectByMessageIdSql;
-        AddParameter(command, "@MessageId", messageId);
-
-        using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return null;
-        }
-
-        return ReadRecord(reader);
+        return records.Count > 0 ? records[0] : null;
     }
 
     /// <inheritdoc/>
-    public async Task PurgeExpiredAsync(DateTime cutoff, CancellationToken cancellationToken)
-    {
-        using var connection = this.connectionFactory.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
-
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.DeleteExpiredSql;
-        this.AddTimestampParameter(command, "@Cutoff", cutoff);
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task PurgeExpiredAsync(DateTime cutoff, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            this.deleteExpiredSql,
+            command => DbParameterHelper.Add(command, "@Cutoff", FormatTimestamp(cutoff)),
+            cancellationToken);
 
     /// <inheritdoc/>
-    public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-    {
-        using var connection = this.connectionFactory.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(this.CreateTableSql, configureParameters: null, cancellationToken);
 
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.CreateAuditTableSql;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+    /// <summary>
+    /// Formats a timestamp as round-trippable UTC ISO 8601 text. Local values are converted to UTC;
+    /// Utc and Unspecified are treated as already-UTC (the <see cref="DispatchAuditRecord"/> contract).
+    /// </summary>
+    private static string FormatTimestamp(DateTime value)
+    {
+        var utc = value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
+        return utc.ToString("O", CultureInfo.InvariantCulture);
     }
 
     private static DispatchAuditRecord ReadRecord(DbDataReader reader)
     {
-        var causationIdOrdinal = reader.GetOrdinal("CausationId");
+        var causationIdOrdinal = reader.GetOrdinal(CausationIdColumnReader);
         var causationId = reader.IsDBNull(causationIdOrdinal) ? null : reader.GetString(causationIdOrdinal);
 
-        var payloadOrdinal = reader.GetOrdinal("Payload");
+        var payloadOrdinal = reader.GetOrdinal(AuditTableSchema.PayloadColumn);
         JsonElement? payload = reader.IsDBNull(payloadOrdinal)
             ? null
             : JsonSerializer.Deserialize<JsonElement>(reader.GetString(payloadOrdinal), ConduitRuntime.JsonOptions);
 
-        var propertiesOrdinal = reader.GetOrdinal("Properties");
+        var propertiesOrdinal = reader.GetOrdinal(AuditTableSchema.PropertiesColumn);
         IReadOnlyDictionary<string, object?>? properties = reader.IsDBNull(propertiesOrdinal)
             ? null
             : JsonSerializer.Deserialize<Dictionary<string, object?>>(
                 reader.GetString(propertiesOrdinal), ConduitRuntime.JsonOptions);
 
-        var observationsJson = reader.GetString(reader.GetOrdinal("Observations"));
+        var observationsJson = reader.GetString(reader.GetOrdinal(AuditTableSchema.ObservationsColumn));
         var observations = JsonSerializer.Deserialize<List<MessageObservation>>(
             observationsJson, ConduitRuntime.JsonOptions) ?? [];
 
-        // All engines store UTC; the value is read back as a native datetime and stamped Utc.
-        // (timestamptz on Postgres already returns Utc; the relational engines return Unspecified.)
-        var timestamp = DateTime.SpecifyKind(
-            reader.GetDateTime(reader.GetOrdinal("Timestamp")), DateTimeKind.Utc);
+        // Timestamps are stored as round-trippable UTC ISO 8601 text; parse back as UTC.
+        var timestamp = DateTime.Parse(
+            reader.GetString(reader.GetOrdinal(AuditTableSchema.TimestampColumn)),
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind);
 
         return new DispatchAuditRecord
         {
-            MessageId = reader.GetString(reader.GetOrdinal("MessageId")),
-            ConversationId = reader.GetString(reader.GetOrdinal("ConversationId")),
+            MessageId = reader.GetString(reader.GetOrdinal(AuditTableSchema.MessageIdColumn)),
+            ConversationId = reader.GetString(reader.GetOrdinal(AuditTableSchema.ConversationIdColumn)),
             CausationId = causationId,
-            MessageType = reader.GetString(reader.GetOrdinal("MessageType")),
-            MessageKind = reader.GetString(reader.GetOrdinal("MessageKind")),
-            ServiceName = reader.GetString(reader.GetOrdinal("ServiceName")),
+            MessageType = reader.GetString(reader.GetOrdinal(AuditTableSchema.MessageTypeColumn)),
+            MessageKind = reader.GetString(reader.GetOrdinal(AuditTableSchema.MessageKindColumn)),
+            ServiceName = reader.GetString(reader.GetOrdinal(AuditTableSchema.ServiceNameColumn)),
             Payload = payload,
             Properties = properties,
             Timestamp = timestamp,
             Observations = observations,
         };
-    }
-
-    private static void AddParameter(DbCommand command, string name, object value)
-    {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
-    }
-
-    /// <summary>
-    /// Binds a UTC timestamp parameter. Always normalizes the value to UTC, then applies the
-    /// dialect's <see cref="IAuditDialect.TimestampDbType"/> so each engine maps it to its native
-    /// datetime type (relational engines use <see cref="DbType.DateTime2"/>; Postgres uses
-    /// <see cref="DbType.Object"/> so Npgsql infers <c>timestamptz</c> from the <see cref="DateTimeKind.Utc"/> value).
-    /// </summary>
-    private void AddTimestampParameter(DbCommand command, string name, DateTime value)
-    {
-        // Local values are converted; Utc and Unspecified are treated as already-UTC (the record contract).
-        var utc = value.Kind == DateTimeKind.Local
-            ? value.ToUniversalTime()
-            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
-
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.DbType = this.dialect.TimestampDbType;
-        parameter.Value = utc;
-        command.Parameters.Add(parameter);
     }
 }

@@ -1,7 +1,8 @@
 ﻿using AwesomeAssertions;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Tests.Support;
+using Conduit.TestUtils;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -85,7 +86,10 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         first.CausationId.Should().BeNull();
         first.Type.Should().Be("Orders.Commands.CreateOrder");
         first.Payload.Should().Be("""{"orderId":"abc"}""");
-        first.Status.Should().Be(OutboxEntryStatus.Pending);
+
+        // Claiming a pending entry atomically transitions it to Claiming — that exclusive
+        // transition is what prevents two workers from dispatching the same row.
+        first.Status.Should().Be(OutboxEntryStatus.Claiming);
         first.RetryCount.Should().Be(0);
 
         var second = claimed.Single(e => e.MessageId == "msg-2");
@@ -216,11 +220,12 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         // Act
         await this.store.IncrementRetryAsync(entryId, CancellationToken.None);
 
-        // Assert — still claimable (status stays Pending), retry count incremented
+        // Assert — IncrementRetry releases the claim back to Pending, so the entry is claimable
+        // again; re-claiming it transitions it to Claiming with the incremented retry count.
         var claimedAgain = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         claimedAgain.Should().HaveCount(1);
         claimedAgain[0].RetryCount.Should().Be(1);
-        claimedAgain[0].Status.Should().Be(OutboxEntryStatus.Pending);
+        claimedAgain[0].Status.Should().Be(OutboxEntryStatus.Claiming);
     }
 
     [TestMethod]

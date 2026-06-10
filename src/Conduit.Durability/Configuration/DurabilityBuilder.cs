@@ -1,8 +1,5 @@
-﻿using System.Data.Common;
 using Conduit.Durability.DeadLetterQueue;
-using Conduit.Durability.Persistence;
 using Conduit.Durability.Persistence.DeadLetterQueue;
-using Conduit.Durability.Persistence.Dialects;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.DeadLetterQueue;
@@ -17,59 +14,17 @@ namespace Conduit.Durability.Configuration;
 
 /// <summary>
 /// Fluent builder for configuring durable messaging (outbox, inbox, dead letter queue).
-/// Database is configured once and shared by all features.
+/// The persistence engine is configured separately on the <see cref="Conduit.Configuration.ConduitBuilder"/>
+/// (e.g. <c>conduit.UseSqlite(...)</c>) and shared by all features via DI
+/// (<c>IConduitConnectionFactory</c> + <c>ISqlDialect</c>).
 /// </summary>
 public sealed class DurabilityBuilder
 {
     internal IServiceCollection Services { get; }
-    internal bool DatabaseConfigured { get; set; }
 
     internal DurabilityBuilder(IServiceCollection services)
     {
         this.Services = services;
-    }
-
-    /// <summary>Use SQLite for durability tables.</summary>
-    public DurabilityBuilder UseSqlite(string connectionString)
-    {
-        this.Services.AddSingleton<IDurabilityDialect, SqliteDialect>();
-        this.Services.AddScoped<IDurabilityConnectionFactory>(
-            _ => new ConnectionStringFactory<Microsoft.Data.Sqlite.SqliteConnection>(connectionString));
-        this.DatabaseConfigured = true;
-        return this;
-    }
-
-    /// <summary>Use SQL Server for durability tables. Requires Microsoft.Data.SqlClient.</summary>
-    public DurabilityBuilder UseSqlServer<TConnection>(string connectionString)
-        where TConnection : DbConnection, new()
-    {
-        this.Services.AddSingleton<IDurabilityDialect, SqlServerDialect>();
-        this.Services.AddScoped<IDurabilityConnectionFactory>(
-            _ => new ConnectionStringFactory<TConnection>(connectionString));
-        this.DatabaseConfigured = true;
-        return this;
-    }
-
-    /// <summary>Use PostgreSQL for durability tables. Requires Npgsql.</summary>
-    public DurabilityBuilder UsePostgres<TConnection>(string connectionString)
-        where TConnection : DbConnection, new()
-    {
-        this.Services.AddSingleton<IDurabilityDialect, PostgresDialect>();
-        this.Services.AddScoped<IDurabilityConnectionFactory>(
-            _ => new ConnectionStringFactory<TConnection>(connectionString));
-        this.DatabaseConfigured = true;
-        return this;
-    }
-
-    /// <summary>Use MySQL for durability tables. Requires MySqlConnector.</summary>
-    public DurabilityBuilder UseMySql<TConnection>(string connectionString)
-        where TConnection : DbConnection, new()
-    {
-        this.Services.AddSingleton<IDurabilityDialect, MySqlDialect>();
-        this.Services.AddScoped<IDurabilityConnectionFactory>(
-            _ => new ConnectionStringFactory<TConnection>(connectionString));
-        this.DatabaseConfigured = true;
-        return this;
     }
 
     /// <summary>Adds the transactional outbox.</summary>

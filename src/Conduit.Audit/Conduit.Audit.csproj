@@ -11,13 +11,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\Conduit.Persistence\Conduit.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

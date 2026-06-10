@@ -16,7 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Persistence\Conduit.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

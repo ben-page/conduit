@@ -5,9 +5,9 @@ using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
-using Conduit.Durability.Persistence;
+using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence.Sqlite;
 
 namespace Conduit.Durability.Tests.Integration;
 
@@ -29,15 +29,15 @@ public class OutboxEndToEndShould
         {
             builder.Services.AddConduit(conduit =>
             {
+                conduit.UseSqlite("Data Source=:memory:");
                 conduit.AddDurability(durability =>
                 {
-                    durability.UseSqlite("Data Source=:memory:");
                     durability.AddOutbox(options => options.AutoCreateTable = false);
                 });
             });
 
             // Override the connection factory with our shared in-memory connection
-            builder.Services.AddSingleton<IDurabilityConnectionFactory>(connectionFactory);
+            builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
         });
 
         var mediator = host.GetRequiredService<IMediator>();
@@ -90,15 +90,15 @@ public class OutboxEndToEndShould
         {
             builder.Services.AddConduit(conduit =>
             {
+                conduit.UseSqlite("Data Source=:memory:");
                 conduit.AddDurability(durability =>
                 {
-                    durability.UseSqlite("Data Source=:memory:");
                     durability.AddOutbox(options => options.AutoCreateTable = false);
                 });
             });
 
             // Override the connection factory with our shared in-memory connection
-            builder.Services.AddSingleton<IDurabilityConnectionFactory>(connectionFactory);
+            builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
 
             // Register a spy transport so FlushAsync can send through it
             builder.Services.AddSingleton<IConduitTransport>(spyTransport);

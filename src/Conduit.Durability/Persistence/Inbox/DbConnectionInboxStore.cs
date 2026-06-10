@@ -1,65 +1,76 @@
-﻿using System.Data.Common;
-using System.Diagnostics.CodeAnalysis;
-using Conduit.Durability.Persistence.Dialects;
+using System.Globalization;
+using Conduit.Persistence;
 
 namespace Conduit.Durability.Persistence.Inbox;
 
 /// <summary>
-/// ADO.NET-based inbox store using dialect-specific SQL.
+/// ADO.NET inbox store. SQL identifiers are module-owned; engine-specific idioms
+/// (insert-or-ignore, type names) come from <see cref="ISqlDialect"/>.
 /// </summary>
-// CA2100: All SQL in this class comes from IDurabilityDialect — a trusted internal interface, never user input.
-[SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
-    Justification = "All SQL originates from IDurabilityDialect, which is internal infrastructure, never user-supplied input.")]
-public sealed class DbConnectionInboxStore(
-    IDurabilityConnectionFactory connectionFactory,
-    IDurabilityDialect dialect) : IInboxStore
+public sealed class DbConnectionInboxStore : DbStoreBase, IInboxStore
 {
+    private const string DeleteExpiredSql = "DELETE FROM conduit_inbox WHERE ProcessedAt < @Cutoff";
+
+    private readonly string createTableSql;
+    private readonly string insertSql;
+    private readonly string existsSql;
+
+    /// <summary>Initializes a new instance of <see cref="DbConnectionInboxStore"/>.</summary>
+    public DbConnectionInboxStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+        : base(connectionFactory)
+    {
+        ArgumentNullException.ThrowIfNull(dialect);
+
+        this.createTableSql = dialect.BuildCreateTableIfNotExistsSql(
+            "conduit_inbox",
+            $"""
+                MessageId {dialect.KeyTextType} PRIMARY KEY,
+                ProcessedAt {dialect.TimestampType} NOT NULL
+            """);
+        this.insertSql = dialect.BuildInsertOrIgnoreSql(
+            "conduit_inbox",
+            ["MessageId", "ProcessedAt"],
+            "MessageId");
+        this.existsSql = dialect.BuildExistsSql("conduit_inbox", "MessageId");
+    }
+
     /// <inheritdoc/>
     public async Task<bool> ExistsAsync(string messageId, CancellationToken cancellationToken)
     {
-        var connection = await connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = dialect.InboxExistsSql;
-        AddParameter(command, "@MessageId", messageId);
-        var result = await command.ExecuteScalarAsync(cancellationToken);
+        var result = await this.ExecuteScalarAsync(
+            this.existsSql,
+            command => DbParameterHelper.Add(command, "@MessageId", messageId),
+            cancellationToken);
         return result is not null;
     }
 
     /// <inheritdoc/>
-    public async Task RecordAsync(string messageId, CancellationToken cancellationToken)
+    public async Task<bool> RecordAsync(string messageId, CancellationToken cancellationToken)
     {
-        var connection = await connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = dialect.InboxInsertSql;
-        AddParameter(command, "@MessageId", messageId);
-        AddParameter(command, "@ProcessedAt", DateTime.UtcNow.ToString("O"));
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        // Insert-or-ignore semantics mean rows-affected is 1 for a newly recorded message and
+        // 0 when the row already existed. This is the atomic dedup decision — no separate read.
+        var rowsAffected = await this.ExecuteNonQueryAsync(
+            this.insertSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@MessageId", messageId);
+                DbParameterHelper.Add(command, "@ProcessedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            },
+            cancellationToken);
+        return rowsAffected > 0;
     }
 
     /// <inheritdoc/>
-    public async Task DeleteExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
-    {
-        var connection = await connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = dialect.InboxDeleteExpiredSql;
-        AddParameter(command, "@Cutoff", (DateTime.UtcNow - retentionPeriod).ToString("O"));
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task DeleteExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            DeleteExpiredSql,
+            command => DbParameterHelper.Add(
+                command,
+                "@Cutoff",
+                (DateTime.UtcNow - retentionPeriod).ToString("O", CultureInfo.InvariantCulture)),
+            cancellationToken);
 
     /// <inheritdoc/>
-    public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-    {
-        var connection = await connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = dialect.InboxCreateTableSql;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static void AddParameter(DbCommand command, string name, object value)
-    {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
-    }
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
 }

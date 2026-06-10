@@ -90,10 +90,12 @@ file class InMemoryInboxStore : IInboxStore
     public Task<bool> ExistsAsync(string messageId, CancellationToken cancellationToken)
         => Task.FromResult(this.messages.Contains(messageId));
 
-    public Task RecordAsync(string messageId, CancellationToken cancellationToken)
+    public Task<bool> RecordAsync(string messageId, CancellationToken cancellationToken)
     {
-        this.messages.Add(messageId);
-        return Task.CompletedTask;
+        // HashSet.Add returns true only when the element is newly added — the same
+        // newly-inserted semantics the real store reports via rows-affected.
+        var newlyAdded = this.messages.Add(messageId);
+        return Task.FromResult(newlyAdded);
     }
 
     public Task DeleteExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)

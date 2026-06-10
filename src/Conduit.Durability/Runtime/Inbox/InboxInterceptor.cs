@@ -19,13 +19,16 @@ public sealed class InboxInterceptor(IInboxStore store) : IInboundInterceptor
             return true;
         }
 
-        if (await store.ExistsAsync(messageId, cancellationToken))
+        // Single atomic operation: the insert-or-ignore both records the message and tells us
+        // whether it was newly seen. This closes the check-then-act window where two concurrent
+        // redeliveries of the same MessageId could both pass an ExistsAsync check and run twice.
+        var newlyRecorded = await store.RecordAsync(messageId, cancellationToken);
+        if (!newlyRecorded)
         {
             MessageContext.Observe(new InboxDuplicate());
             return false;
         }
 
-        await store.RecordAsync(messageId, cancellationToken);
         return true;
     }
 }

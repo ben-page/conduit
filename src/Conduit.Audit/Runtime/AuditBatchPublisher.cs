@@ -19,6 +19,16 @@ public sealed class AuditBatchPublisher(
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Drain published records and periodically sweep stale (never-terminated) dispatch groups
+        // out of the observer concurrently. The sweep keeps activeGroups from leaking when a
+        // dispatch crashes mid-handler and never emits a terminal observation.
+        var drainTask = this.DrainLoopAsync(stoppingToken);
+        var sweepTask = this.SweepLoopAsync(stoppingToken);
+        await Task.WhenAll(drainTask, sweepTask);
+    }
+
+    private async Task DrainLoopAsync(CancellationToken stoppingToken)
+    {
         while (await channel.WaitToReadAsync(stoppingToken))
         {
             var batch = this.DrainBatch();
@@ -34,6 +44,30 @@ public sealed class AuditBatchPublisher(
                 SourceHost: Environment.MachineName,
                 BatchTimestamp: DateTime.UtcNow,
                 Records: batch), stoppingToken);
+        }
+    }
+
+    private async Task SweepLoopAsync(CancellationToken stoppingToken)
+    {
+        var observer = serviceProvider.GetRequiredService<AuditObserver>();
+        var staleTimeout = options.Value.StaleGroupTimeout;
+
+        // Sweep at the stale-group cadence, capped so very long timeouts still get periodic checks.
+        var sweepInterval = staleTimeout < TimeSpan.FromMinutes(1)
+            ? staleTimeout
+            : TimeSpan.FromMinutes(1);
+        using var timer = new PeriodicTimer(sweepInterval);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                observer.EvictStaleGroups(DateTime.UtcNow, staleTimeout);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown — expected.
         }
     }
 

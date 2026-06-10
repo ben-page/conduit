@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS9057</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.MsSql" />
+    <PackageReference Include="Testcontainers.MySql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Persistence\Conduit.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Persistence.Postgres\Conduit.Persistence.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Persistence.SqlServer\Conduit.Persistence.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Persistence.MySql\Conduit.Persistence.MySql.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Durability\Conduit.Durability.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Audit\Conduit.Audit.csproj" />
+    <ProjectReference Include="..\Conduit.TestUtils\Conduit.TestUtils.csproj" />
+  </ItemGroup>
+</Project>
