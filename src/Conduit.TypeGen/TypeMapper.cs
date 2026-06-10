@@ -67,7 +67,7 @@ public static class TypeMapper
         if (type.IsArray)
         {
             var elementType = type.GetElementType()!;
-            return $"{MapType(elementType)}[]";
+            return $"{ToArrayType(MapType(elementType))}";
         }
 
         // Handle generic types
@@ -80,7 +80,7 @@ public static class TypeMapper
             if (CollectionFullNames.Contains(genericFullName))
             {
                 var elementType = type.GetGenericArguments()[0];
-                return $"{MapType(elementType)}[]";
+                return $"{ToArrayType(MapType(elementType))}";
             }
 
             // Dictionary<string, T> → Record<string, T>
@@ -182,14 +182,14 @@ public static class TypeMapper
             var elementTs = MapFullTypeName(innerContent);
             if (elementTs is not null)
             {
-                return $"{elementTs}[]";
+                return ToArrayType(elementTs);
             }
 
             // Try resolving the element type via reflection
             var elementType = TypeScriptEmitter.FindType(innerContent);
             if (elementType is not null)
             {
-                return $"{MapType(elementType)}[]";
+                return ToArrayType(MapType(elementType));
             }
 
             // Last resort: use the short name of the element type
@@ -203,6 +203,26 @@ public static class TypeMapper
     {
         var lastDot = fullTypeName.LastIndexOf('.');
         return lastDot >= 0 ? fullTypeName[(lastDot + 1)..] : fullTypeName;
+    }
+
+    /// <summary>
+    /// Wraps a TypeScript element type in parentheses when necessary before appending <c>[]</c>.
+    /// Composite types such as union types (e.g. <c>'A' | 'B' | 'C'</c>) must be parenthesized
+    /// so that the array subscript applies to the whole type rather than only the last member.
+    /// Atomic types (e.g. <c>string</c>, <c>number</c>, <c>MyDto</c>) are left unparenthesized.
+    /// </summary>
+    /// <param name="elementTs">The TypeScript type string for the array element.</param>
+    /// <returns>The array type string with correct precedence.</returns>
+    private static string ToArrayType(string elementTs)
+    {
+        // A type that contains " | " is a union and must be parenthesized before "[]"
+        // so that "[]" binds to the whole union rather than only the last alternative.
+        if (elementTs.Contains(" | ", StringComparison.Ordinal))
+        {
+            return $"({elementTs})[]";
+        }
+
+        return $"{elementTs}[]";
     }
 
     private static readonly HashSet<string> CollectionShortNames =
