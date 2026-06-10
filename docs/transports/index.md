@@ -12,19 +12,33 @@
 
 Transports move messages between processes. A handler in one service can handle commands sent from another service, and events published on a server can reach browser clients or downstream services automatically.
 
-Conduit ships four transports in two categories.
+Conduit ships seven transports in two categories.
 
 **Point-to-point transports** connect two services directly:
 
-- **SignalR** provides persistent bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect.
-- **HTTP** maps commands and queries to RESTful endpoints or an envelope dispatch endpoint. Request/response only. No server-to-client push.
+- **SignalR** provides persistent bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect. See [SignalR](signalr.md).
+- **HTTP** maps commands and queries to RESTful endpoints or an envelope dispatch endpoint. Request/response only. No server-to-client push. See [HTTP](http.md).
 
-**Durable messaging transports** use a broker for reliable communication:
+**Durable messaging (broker) transports** use a message broker for reliable communication. All five
+share the same `BrokerTransportBase<TMessage>` template (inbound dispatch orchestration, reply
+queues, topology naming via `TopologyNaming`/`SystemName`) and differ only in broker-specific
+primitives, so they follow identical Conduit patterns. Each has a dedicated `IConduitTransport` and
+an `IHostedService` consumer:
 
-- **Azure Service Bus** provides queues, topics, and subscriptions with persistence, retry, and dead-lettering.
-- **RabbitMQ** provides exchanges, queues, and bindings with similar durability using the AMQP protocol.
+| Transport | Broker / protocol | Guide |
+|---|---|---|
+| **Azure Service Bus** | Azure.Messaging.ServiceBus (queues, topics, subscriptions) | [azure-service-bus.md](azure-service-bus.md) |
+| **RabbitMQ** | RabbitMQ.Client (AMQP exchanges, queues, bindings) | [rabbitmq.md](rabbitmq.md) |
+| **Kafka** | Confluent.Kafka (topics, partitions) | [`src/Conduit.Transport.Kafka/CLAUDE.md`](../../src/Conduit.Transport.Kafka/CLAUDE.md) |
+| **Amazon SQS** | AWSSDK SQS (+ SNS for fan-out) | [`src/Conduit.Transport.AmazonSqs/CLAUDE.md`](../../src/Conduit.Transport.AmazonSqs/CLAUDE.md) |
+| **ActiveMQ** | AMQPNetLite.Core (ActiveMQ Artemis) | [`src/Conduit.Transport.ActiveMQ/CLAUDE.md`](../../src/Conduit.Transport.ActiveMQ/CLAUDE.md) |
 
-Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a service bus queue.
+Kafka, Amazon SQS, and ActiveMQ do not yet have dedicated prose guides; their per-project
+`CLAUDE.md` files document configuration and broker-specific behavior. They are configured the same
+way as the documented broker transports — `endpoint.UseKafka(...)`, `endpoint.UseAmazonSqs(...)`,
+`endpoint.UseActiveMQ(...)`.
+
+Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a broker queue.
 
 ## Routing
 

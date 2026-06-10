@@ -35,13 +35,13 @@ builder.Services.AddConduit(conduit =>
 ```csharp
 endpoint.UseRabbitMQ(connectionString, options =>
 {
-    options.DefaultPrefetchCount = 10;       // default: 10
+    options.DefaultConcurrency = 10;       // default: 10
 });
 ```
 
 | Property | Default | Description |
 |---|---|---|
-| `DefaultPrefetchCount` | `10` | Prefetch count for the default consumer channel |
+| `DefaultConcurrency` | `10` | Default consumer concurrency. For RabbitMQ this maps to the consumer channel prefetch count (`BasicQos`). |
 
 Exchange and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
 
@@ -131,17 +131,17 @@ For concurrency isolation, configure named receiver pools:
 ```csharp
 endpoint.UseRabbitMQ(connectionString, options =>
 {
-    options.DefaultPrefetchCount = 20;
+    options.DefaultConcurrency = 20;
 
     options.AddPool("imports", pool =>
     {
-        pool.PrefetchCount = 2;
+        pool.Concurrency = 2;
         pool.Handle("Catalog.Commands.BulkImportCommand");
     });
 });
 ```
 
-This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with prefetch 2. Everything else uses the default queue at prefetch 20.
+This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with prefetch 2 (`pool.Concurrency` maps to the consumer prefetch count for RabbitMQ). Everything else uses the default queue at prefetch 20.
 
 Prefetch count controls how many unacknowledged messages RabbitMQ delivers to a consumer at once. Lower values limit throughput but prevent a slow consumer from buffering too many messages.
 

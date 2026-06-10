@@ -72,14 +72,14 @@ Discard removes a message from the dead letter store without replaying. Use this
 
 ## Setup
 
-The dead letter queue is part of `Conduit.Durability`. Configure the database once on the durability builder, then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them):
+The dead letter queue is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, inbox, and audit), then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them):
 
 ```csharp
 services.AddConduit(conduit =>
 {
+    conduit.UseSqlServer(connectionString);
     conduit.AddDurability(durability =>
     {
-        durability.UseSqlServer<SqlConnection>(connectionString);
         durability.AddDeadLetterQueue();
     });
 });
@@ -89,16 +89,16 @@ The dead letter table (`conduit_dead_letters`) is created automatically on start
 
 ### Database dialects
 
-The dialect is the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the database method on the durability builder:
+The dialect is the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
 
-| Database | Method |
+| Engine package | Method |
 |---|---|
-| SQLite | `durability.UseSqlite(connectionString)` |
-| SQL Server | `durability.UseSqlServer<SqlConnection>(connectionString)` |
-| PostgreSQL | `durability.UsePostgres<NpgsqlConnection>(connectionString)` |
-| MySQL | `durability.UseMySql<MySqlConnection>(connectionString)` |
+| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
+| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
+| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
+| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
 
-SQL Server, PostgreSQL, and MySQL take the ADO.NET connection type as a generic parameter (Conduit doesn't reference those provider packages).
+The engine package carries the provider reference, so no generic connection-type parameter is needed.
 
 ## Replay
 

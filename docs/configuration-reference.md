@@ -23,9 +23,9 @@ builder.Services.AddConduit(conduit =>
 | `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport and routes | `conduit.AddEndpoint("orders", e => { e.UseHttp(httpClient); e.RouteNamespace<CreateOrder>(); })` |
 | `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
-| `AddDurability(configure)` | Configure durable messaging: set the shared database once, then nest `AddOutbox()` / `AddInbox()` / `AddDeadLetterQueue()`. See [Outbox](outbox.md), [Inbox](inbox.md), and [Dead Letter Queue](dead-letter-queue.md). | `conduit.AddDurability(d => { d.UseSqlite("Data Source=app.db"); d.AddOutbox(); })` |
+| `AddDurability(configure)` | Configure durable messaging by nesting `AddOutbox()` / `AddInbox()` / `AddDeadLetterQueue()`. The persistence engine is set once on the `ConduitBuilder` (via `conduit.UseSqlite(...)` etc.) and shared with audit. See [Outbox](outbox.md), [Inbox](inbox.md), and [Dead Letter Queue](dead-letter-queue.md). | `conduit.UseSqlite("Data Source=app.db"); conduit.AddDurability(d => d.AddOutbox());` |
 | `AddAudit(configure)` | Capture dispatch lifecycle observations and emit `AuditBatch` events. See [Audit Trail](audit.md). | `conduit.AddAudit(a => a.ServiceName = "orders")` |
-| `AddAuditListener(configure)` | Consume `AuditBatch` events (local or over a transport) and persist them. See [Audit Trail](audit.md). | `conduit.AddAuditListener(l => l.UseSqlite("Data Source=audit.db"))` |
+| `AddAuditListener(configure?)` | Consume `AuditBatch` events (local or over a transport) and persist them. Set the persistence engine separately via `conduit.UseSqlite(...)` (shared with durability). See [Audit Trail](audit.md). | `conduit.UseSqlite("Data Source=audit.db"); conduit.AddAuditListener();` |
 
 ## ConduitBuilder properties
 

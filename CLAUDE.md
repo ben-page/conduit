@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Fourteen source projects, thirteen test projects, one shared test utility, four sample apps:
+Nineteen source projects, thirteen test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -19,8 +19,15 @@ src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport +
 src/Conduit.Transport.Kafka/             Kafka transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.AmazonSqs/         Amazon SQS (+SNS) transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTransport + IHostedService) — net10.0
-src/Conduit.Durability/                 Durable messaging — transactional outbox + inbox (idempotent dedup) — net10.0
+src/Conduit.Durability/                 Durable messaging — transactional outbox + inbox (idempotent dedup) + dead-letter queue — net10.0
 src/Conduit.Audit/                      Audit trail — observation consolidation, batching, local store — net10.0
+src/Conduit.Resilience/                 Resilience pipeline behavior — Polly v8 retry/circuit-breaker over dispatch — net10.0
+
+src/Conduit.Persistence/                Engine-agnostic relational persistence abstraction (ISqlDialect, IConduitConnectionFactory, DbStoreBase) — net10.0
+src/Conduit.Persistence.Sqlite/         SQLite engine: SqliteConduitConnectionFactory, SqliteDialect, UseSqlite — net10.0
+src/Conduit.Persistence.Postgres/       PostgreSQL engine: PostgresConduitConnectionFactory, PostgresDialect, UsePostgres — net10.0
+src/Conduit.Persistence.SqlServer/      SQL Server engine: SqlServerConduitConnectionFactory, SqlServerDialect, UseSqlServer — net10.0
+src/Conduit.Persistence.MySql/          MySQL engine: MySqlConduitConnectionFactory, MySqlDialect, UseMySql — net10.0
 ```
 
 **Dependency graph:**
@@ -31,8 +38,14 @@ src/Conduit.Audit/                      Audit trail — observation consolidatio
 - `Transport.Kafka` → `Conduit` (core) + Confluent.Kafka
 - `Transport.AmazonSqs` → `Conduit` (core) + AWSSDK.SimpleNotificationService + AWSSDK.SQS
 - `Transport.ActiveMQ` → `Conduit` (core) + AMQPNetLite.Core
-- `Durability` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
-- `Audit` → `Conduit` (core) + Microsoft.Data.Sqlite (built-in dialect)
+- `Durability` → `Conduit` (core) + `Conduit.Persistence` (no direct DB-driver dependency; engine resolved from DI)
+- `Audit` → `Conduit` (core) + `Conduit.Persistence` (no direct DB-driver dependency; engine resolved from DI, shared with Durability)
+- `Resilience` → `Conduit` (core) + Polly (via Microsoft.Extensions.Resilience)
+- `Persistence` → `Conduit` (core) + DI/Hosting abstractions (no DB driver)
+- `Persistence.Sqlite` → `Persistence` + Microsoft.Data.Sqlite
+- `Persistence.Postgres` → `Persistence` + Npgsql
+- `Persistence.SqlServer` → `Persistence` + Microsoft.Data.SqlClient
+- `Persistence.MySql` → `Persistence` + MySqlConnector
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
 - Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, and Options.
@@ -73,8 +86,9 @@ src/Conduit.Audit/                      Audit trail — observation consolidatio
 - **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `ErrorCode.ToHttpStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization.
 - **TypeScript generation**: Types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This includes both dispatchable types and non-dispatchable DTOs/models. TypeGen emits a self-contained runtime (`conduit.ts`) with transports and a per-project file (`conduit.generated.ts`) with `ConduitClient` — no npm package needed. `ConduitClient` is a thin dispatch client (not a mediator) with `execute`/`fetch`/`publish`/`on` methods.
-- **MessageContext**: AsyncLocal-backed context tracking `MessageId`, `CausationId`, `ConversationId` through dispatch chains. Set automatically by the generated mediator. Nested dispatches inherit `ConversationId` and set `CausationId` to the parent's `MessageId`. Access via `MessageContext.Current`. `StartDispatch()` for local dispatch, `StartDispatchFromTransport(messageId, causationId, conversationId)` for inbound wire messages.
+- **MessageContext**: AsyncLocal-backed context tracking `MessageId`, `CausationId`, `ConversationId` through dispatch chains. Set automatically by the generated mediator. A head/origin dispatch self-causates: `CausationId == MessageId == ConversationId`. `CausationId` is a non-nullable `string` and is never null. Nested dispatches inherit `ConversationId` and set `CausationId` to the parent's `MessageId`. Access via `MessageContext.Current`. `StartDispatch()` for local dispatch, `StartDispatchFromTransport(messageId, causationId, conversationId)` for inbound wire messages — a wire message that omits `causationId` defaults it to `messageId` (self-causation).
 - **BrokerTransportBase<TMessage>**: Template method base class for all 5 broker transports. Owns `IHostedService` lifecycle, inbound dispatch orchestration (`ProcessInboundMessageAsync`), outbound serialization. Transports implement ~15 abstract members for broker-specific primitives.
+- **Unified broker options** (`Conduit.Runtime`): all 5 broker options classes inherit `BrokerTransportOptions`, which owns the default concurrency knob (`DefaultConcurrency`), the `Pools` collection, and `AddPool(...)`. Named pools use a single shared `ReceiverPoolOptions` (`Name`, `Concurrency`, `MessageTypes` via `Handle(fullTypeName)`). `Concurrency` is one `int` interpreted per broker: prefetch count for RabbitMQ/ActiveMQ (cast to `ushort` for RabbitMQ at the consumption site), max-concurrent-calls for Azure Service Bus, polling parallelism for Amazon SQS, consume parallelism for Kafka. Each transport's options class adds only broker-specific extras (connection settings, region/credentials, `ProducerConfig`/`ConsumerConfig`, `AdminConnectionString`, `ResponseTimeout`, `EndpointName`, etc.).
 - **TopologyPrefix**: `ConduitOptions.TopologyPrefix` is a single settable property that auto-resolves on first access: Developer mode defaults to `Environment.UserName`, Test mode generates a random 13-char prefix, Production mode resolves to null. Can be explicitly set for multi-host integration tests (all hosts share the same prefix).
 - **Configurable ResponseTimeout**: Each broker transport options class has a `ResponseTimeout` property (default 60s). Configurable per-transport.
 - **ProducerOnly mode**: `ConduitOptions.ProducerOnly` makes a broker transport host only publish messages. Skips inbound topology (subscriptions, bindings) and consumers. Reply queues for request/response still created via `EnsureOutboundTopologyAsync`. Use for API hosts that route commands to workers, or test sender hosts.
@@ -89,13 +103,14 @@ src/Conduit.Audit/                      Audit trail — observation consolidatio
 | `[FireAndForget]` | Type | Void commands: local handler runs in background, routed dispatch uses `SendEventAsync` (no reply). Events: local listeners run in background (transport broadcast unchanged — events are already fire-and-forget on the wire). Invalid on `ICommand<TResult>` or `IQuery<TResult>` (CONDUIT003). |
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
 | `[DoNotAudit]` | Type | Suppress payload capture in audit trail (observations still emitted) |
+| `[NotAutoRegistered]` | Type | Exclude a handler/listener from source-gen auto-registration (for components wired explicitly via a feature's `Add*` extension, e.g. `LocalAuditListener` via `AddAuditListener`). The type stays dispatchable when registered manually. |
 | `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
 
 ## Build & Test
 
 ```bash
 dotnet build          # builds everything including sample apps
-dotnet test           # runs all tests across 11 test projects
+dotnet test           # runs all tests across 13 test projects
 ```
 
 Solution file is `Conduit.slnx` (.NET 10 format).
@@ -113,7 +128,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `ContainerHelper`, `MessageContextSnapshot`)
 - Broker transport tests use per-transport abstract base classes (`RabbitMqTestBase`, `AsbTestBase`, etc.) that own container lifecycle (static), factory methods, and `[TestInitialize]` availability guard. `AssemblySetup` delegates to base class static init/cleanup methods.
 - All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent and disposes the underlying host via `IAsyncDisposable.DisposeAsync` (not sync `Dispose()`) — broker transports implement `IAsyncDisposable` only, and sync disposal deadlocks AmqpNetLite's link close in ActiveMQ.
-- Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
+- Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (behavior tests + universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
 ## Project-Specific Notes
 
@@ -123,8 +138,10 @@ Each project has its own `CLAUDE.md` with implementation-level detail. These are
 - [`src/Conduit.Analysis/CLAUDE.md`](src/Conduit.Analysis/CLAUDE.md) — shared type model (netstandard2.0)
 - [`src/Conduit.SourceGen/CLAUDE.md`](src/Conduit.SourceGen/CLAUDE.md) — Roslyn source generator internals, emitted files, attribute handling
 - [`src/Conduit.TypeGen/CLAUDE.md`](src/Conduit.TypeGen/CLAUDE.md) — MSBuild task, MetadataLoadContext scanning, TypeScript emission
-- [`src/Conduit.Durability/CLAUDE.md`](src/Conduit.Durability/CLAUDE.md) — outbox + inbox implementation, dialects, configuration
+- [`src/Conduit.Persistence/CLAUDE.md`](src/Conduit.Persistence/CLAUDE.md) — engine-agnostic relational persistence abstraction (`ISqlDialect`, connection factories, `DbStoreBase`) + the four engine packages (Sqlite/Postgres/SqlServer/MySql)
+- [`src/Conduit.Durability/CLAUDE.md`](src/Conduit.Durability/CLAUDE.md) — outbox + inbox + dead-letter queue implementation, dialects, configuration
 - [`src/Conduit.Audit/CLAUDE.md`](src/Conduit.Audit/CLAUDE.md) — audit observer, consolidation, AuditBatch event, local store
+- [`src/Conduit.Resilience/CLAUDE.md`](src/Conduit.Resilience/CLAUDE.md) — Polly v8 resilience pipeline behavior, named pipelines, predicates, context enrichment
 - [`src/Conduit.Transport.Http/CLAUDE.md`](src/Conduit.Transport.Http/CLAUDE.md)
 - [`src/Conduit.Transport.SignalR/CLAUDE.md`](src/Conduit.Transport.SignalR/CLAUDE.md) — dual-mode server/client transport
 - [`src/Conduit.Transport.AzureServiceBus/CLAUDE.md`](src/Conduit.Transport.AzureServiceBus/CLAUDE.md) — includes emulator test caveats
@@ -132,6 +149,28 @@ Each project has its own `CLAUDE.md` with implementation-level detail. These are
 - [`src/Conduit.Transport.Kafka/CLAUDE.md`](src/Conduit.Transport.Kafka/CLAUDE.md)
 - [`src/Conduit.Transport.AmazonSqs/CLAUDE.md`](src/Conduit.Transport.AmazonSqs/CLAUDE.md)
 - [`src/Conduit.Transport.ActiveMQ/CLAUDE.md`](src/Conduit.Transport.ActiveMQ/CLAUDE.md)
+
+### User & conceptual docs
+
+Prose guides under `docs/` for understanding the system without reading source. Start here when
+onboarding or answering "how does X work" questions:
+
+- [`docs/dispatch-flows.md`](docs/dispatch-flows.md) — end-to-end traces (local dispatch, event broadcast, wire-inbound) with real type/method names
+- [`docs/glossary.md`](docs/glossary.md) — domain vocabulary (endpoint, route, topology, gate, interceptor, envelope, MessageContext, reply queue, ...)
+- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT004 source-generator diagnostics and how to resolve/suppress them
+- [`docs/getting-started.md`](docs/getting-started.md) — first-run walkthrough
+- [`docs/core-concepts.md`](docs/core-concepts.md) — messages, handlers, mediator, the mental model
+- [`docs/configuration-reference.md`](docs/configuration-reference.md) — `ConduitOptions` / builder reference
+- [`docs/pipeline-behaviors.md`](docs/pipeline-behaviors.md) — `IPipelineBehavior<,>` ordering and usage
+- [`docs/error-handling.md`](docs/error-handling.md) — `ConduitException`, `ErrorCode`, Problem Details
+- [`docs/modular-monolith.md`](docs/modular-monolith.md) — handler composition across modules in one process
+- [`docs/audit.md`](docs/audit.md) — audit trail / observer subsystem
+- [`docs/outbox.md`](docs/outbox.md) — transactional outbox (`IOutboundInterceptor`)
+- [`docs/inbox.md`](docs/inbox.md) — idempotent inbox dedup (`InboxInterceptor` gate)
+- [`docs/dead-letter-queue.md`](docs/dead-letter-queue.md) — DLQ capture and replay
+- [`docs/security.md`](docs/security.md) — access control, `TypeFilterInterceptor`, auth model
+- [`docs/faq.md`](docs/faq.md) — frequently asked questions
+- [`docs/transports/index.md`](docs/transports/index.md) — transport overview and routing; per-transport guides alongside it
 
 ## Sample Apps
 

@@ -1,5 +1,9 @@
 # Conduit — Mediator Library Design
 
+> **Historical document — original design spec.** This is the pre-implementation design that captures Conduit's *original* intent and rationale. It has drifted from the shipped library: it omits projects that now exist (`Conduit.Durability`, `Conduit.Audit`, `Conduit.Resilience`, the broker transports), frames Rebus-style messaging as "future" (broker transports are now first-class), and describes an Angular frontend (the real browser sample is Vite + TypeScript). It is retained for context and is **not** maintained as current reference.
+>
+> For the shipped reality, see the root [`CLAUDE.md`](../CLAUDE.md) (architecture, design decisions, project index), the per-project `CLAUDE.md` files under `src/`, and the guides in [`docs/`](.).
+
 ## Overview
 
 Conduit is a lightweight mediator library for .NET that provides in-process command/query/event dispatch with source-generated routing, ASP.NET Core HTTP and SignalR transports, and TypeScript codegen for Angular frontends.
@@ -258,10 +262,10 @@ Extended mediator interface for inbound wire dispatch. Transport packages (HTTP,
 
 ### Message Context
 
-`MessageContext` tracks causation through dispatch chains via `AsyncLocal`. Every dispatch gets a unique `MessageId`. Nested dispatches inherit `ConversationId` (the root message's ID) and set `CausationId` to the parent's `MessageId`.
+`MessageContext` tracks causation through dispatch chains via `AsyncLocal`. Every dispatch gets a unique `MessageId`. A head/origin message self-causates: `CausationId == MessageId == ConversationId`. `CausationId` is never null (it is a non-nullable `string`). Nested dispatches inherit `ConversationId` (the root message's ID) and set `CausationId` to the parent's `MessageId`.
 
 ```
-CreateOrderCommand    (MessageId=A, CausationId=null, ConversationId=A)
+CreateOrderCommand    (MessageId=A, CausationId=A, ConversationId=A)   ← head self-causates
   ├─ OrderCreatedEvent  (MessageId=B, CausationId=A, ConversationId=A)
   └─ AuditLogEvent      (MessageId=C, CausationId=A, ConversationId=A)
        └─ NotifyCommand  (MessageId=D, CausationId=C, ConversationId=A)

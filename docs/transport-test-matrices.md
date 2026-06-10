@@ -83,7 +83,7 @@ Test class: `{Transport}MessageContextShould`
 
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|
-| 5.1 | `PropagateMessageContextForCommand` | A sends `ContextCaptureCommand`, B captures | MessageId, CausationId, ConversationId all non-null |
+| 5.1 | `PropagateMessageContextForCommand` | A sends `ContextCaptureCommand`, B captures | MessageId, CausationId, ConversationId all non-null; head self-causates (CausationId == MessageId) |
 | 5.2 | `PropagateMessageContextForQuery` | A sends `ContextCaptureQuery`, B captures | Same |
 | 5.3 | `PropagateMessageContextForEvent` | A publishes `ContextCaptureEvent`, B captures | Same |
 | 5.4 | `PreserveConversationIdInNestedDispatch` | A sends `NestingCommand`, B handles + dispatches locally | ConversationId consistent, CausationId chains |
@@ -98,6 +98,8 @@ Test class: `{Transport}ReceiverPoolShould`
 | 6.2 | `RouteUnassignedTypesToDefaultPool` | A sends `TestCommand` (not in pool), B has pool configured | Default consumer handles it |
 | 6.3 | `IsolatePoolConcurrency` | A sends slow + fast concurrently, B has 2 pools | Fast pool completes while slow is processing |
 
+**Kafka note (pools fully implemented):** Kafka realizes pools as **dedicated consumer groups** (the prefetch/concurrent-call model of the queue-based transports maps to *N consumer instances per `group.id`* on Kafka — see `src/Conduit.Transport.Kafka/CLAUDE.md`). Its `KafkaReceiverPoolShould` strengthens the shared matrix so the assertions fail against a single-sequential-consumer implementation: `IsolatePoolConcurrency` blocks the pool handler for 8s and asserts the default-group command completes well before it (timing margin, not just "both eventually handled"), and an extra Kafka-specific test `HonorPoolConcurrencyWithParallelExecution` fires 8 same-type commands at a pool with `Concurrency=4` and asserts a `ConcurrencyProbe` observes overlapping handler execution (peak > 1), which a single sequential consumer can never produce.
+
 ### Category 7: Topology Modes
 
 Test class: `{Transport}TopologyModeShould`
@@ -109,9 +111,22 @@ Test class: `{Transport}TopologyModeShould`
 | 7.3 | `IsolateTestModeRuns` | Two independent test runs with `TopologyMode.Test` | Different prefixes, no cross-contamination |
 | 7.4 | `CleanupStaleResources` *(Kafka, SQS only)* | Single host, developer mode | Background cleanup removes resources after TTL |
 
-### Totals
+### Category 8: Dead-Letter Capture
 
-30 test scenarios per transport (29 for transports without 7.4).
+Test class: `{Transport}DeadLetterShould`
+
+| # | Test Method | Assert |
+|---|---|---|
+| 8.1 | `CaptureFailedEventToDeadLetterStore` | A failed inbound event is written to the dead-letter store |
+| 8.2 | `CaptureFailedRequestToDeadLetterStore` | A failed inbound request/command is written to the dead-letter store |
+| 8.3 | `AcknowledgeFailedMessageAfterCapture` | After capture, the broker message is acknowledged (not redelivered) |
+| 8.4 | `ReplayDeadLetteredMessageBackToBroker` | A dead-lettered message can be replayed back through the transport |
+
+### Totals (verified 2026-06-09)
+
+Each transport's `Integration/` directory contains a baseline of **32 `[TestMethod]` behavior tests** (the same shared matrix across all five broker transports: RabbitMQ, Kafka, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. Kafka adds **1 transport-specific behavior test** (`HonorPoolConcurrencyWithParallelExecution`, see the Kafka note in Category 6) for **33** in its `Integration/` directory.
+
+Behavior-test methods across the five transports: 32 × 5 + 1 (Kafka pool concurrency) = **161 `[TestMethod]` integration tests**.
 
 ---
 
@@ -198,9 +213,19 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.11 | `UseAmqpFilterOnQueues` | Queue filter expression: `AMQPSubject = '{FullTypeName}'` |
 | TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | Native `auto-delete-delay` in milliseconds per topology mode |
 
-### Totals
+### Totals (verified 2026-06-09)
 
-16 universal tests + 12 transport-specific tests = 92 total test cases across 5 transports.
+The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-4 (3). Each transport adds a varying number of transport-specific (TM-S) tests, so the actual `Unit/TopologyManagerShould.cs` `[TestMethod]` count differs per transport:
+
+| Transport | Unit topology `[TestMethod]` count |
+|---|---|
+| RabbitMQ | 23 |
+| Kafka | 17 |
+| Azure Service Bus | 25 |
+| Amazon SQS | 17 |
+| ActiveMQ | 23 |
+
+(The TM-S.x rows in this document are illustrative; the per-transport tables have grown past the original 12 transport-specific cases. The 16 universal tests are the required floor every new transport must implement.)
 
 ---
 
@@ -208,7 +233,7 @@ These tests validate broker-specific topology features that don't apply to all t
 
 When adding a new broker transport, create a test project and implement:
 
-1. **All 30 transport behavior tests** (Matrix 1) — copy the test class structure from an existing transport, adjust the fixture
+1. **All transport behavior tests** (Matrix 1 — 32 `[TestMethod]` tests per existing transport, categories 1–8) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
 
@@ -229,6 +254,7 @@ tests/Conduit.Transport.{Name}.Tests/
         {Name}MessageContextShould.cs
         {Name}ReceiverPoolShould.cs
         {Name}TopologyModeShould.cs
+        {Name}DeadLetterShould.cs
     Unit/
         TopologyManagerShould.cs
 ```

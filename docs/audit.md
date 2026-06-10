@@ -74,13 +74,14 @@ Compose them according to where you want audit captured and where you want it st
 conduit.AddAudit();
 
 // 2. Single service — captures and stores its own audit in one process.
+conduit.UseSqlite("Data Source=audit.db");   // engine on the ConduitBuilder
 conduit.AddAudit();
-conduit.AddAuditListener(listener => listener.UseSqlite("Data Source=audit.db"));
+conduit.AddAuditListener();
 
 // 3. Central collector — does not capture its own traffic; persists AuditBatch
 //    events arriving over a transport from many services.
-conduit.AddAuditListener(listener =>
-    listener.UsePostgres<NpgsqlConnection>("Host=localhost;Database=Audit;..."));
+conduit.UsePostgres("Host=localhost;Database=Audit;...");
+conduit.AddAuditListener();
 ```
 
 ## Setup
@@ -94,45 +95,44 @@ Add the `Conduit.Audit` package and configure inside `AddConduit`:
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
+    conduit.UseSqlite("Data Source=audit.db");   // persistence engine, shared with durability
+
     conduit.AddAudit(audit =>
     {
         audit.ServiceName = "OrderService";
     });
 
-    conduit.AddAuditListener(listener =>
-    {
-        listener.UseSqlite("Data Source=audit.db");
-    });
+    conduit.AddAuditListener();
 });
 ```
 
-## Database dialects
+## Database engines
 
-`AddAuditListener` supports the same four engines as the durability subsystem. Each `Use*` method registers the matching SQL dialect and connection factory:
+Audit shares the persistence engine with the durability subsystem — there is one engine registration on the `ConduitBuilder`, not on the audit listener. Register the engine with the matching `Conduit.Persistence.*` package's `UseXxx` extension; audit and durability both resolve it from DI:
 
-| Method | Database | Timestamp column |
+| Engine package | Method | Timestamp column |
 |---|---|---|
-| `UseSqlite(connectionString)` | SQLite | ISO-8601 text |
-| `UseSqlServer<TConnection>(connectionString)` | SQL Server | `DATETIME2` |
-| `UsePostgres<TConnection>(connectionString)` | PostgreSQL | `timestamptz` |
-| `UseMySql<TConnection>(connectionString)` | MySQL 8.0+ | `DATETIME(6)` |
-
-SQL Server, PostgreSQL, and MySQL require you to pass the ADO.NET connection type as a generic parameter, since `Conduit.Audit` doesn't take a dependency on those provider packages:
+| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` | ISO-8601 text |
+| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` | `DATETIME2` |
+| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` | `TIMESTAMPTZ` |
+| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` | `DATETIME(6)` |
 
 ```csharp
-// SQL Server (requires Microsoft.Data.SqlClient reference)
-listener.UseSqlServer<SqlConnection>("Server=.;Database=Audit;...");
+// SQL Server (Conduit.Persistence.SqlServer package)
+conduit.UseSqlServer("Server=.;Database=Audit;...");
 
-// PostgreSQL (requires Npgsql reference)
-listener.UsePostgres<NpgsqlConnection>("Host=localhost;Database=Audit;...");
+// PostgreSQL (Conduit.Persistence.Postgres package)
+conduit.UsePostgres("Host=localhost;Database=Audit;...");
 
-// MySQL (requires MySqlConnector reference)
-listener.UseMySql<MySqlConnection>("Server=localhost;Database=Audit;...");
+// MySQL (Conduit.Persistence.MySql package)
+conduit.UseMySql("Server=localhost;Database=Audit;...");
 ```
 
-The audit table (`conduit_audit`) is created automatically on startup, with indexes on message id, conversation id, `(message type, timestamp)`, and timestamp.
+If `AddAuditListener` is called but no engine is registered, the host fails fast at startup with a message pointing at `conduit.UseSqlite(...)`.
 
-**Timestamps are stored and read as UTC** on every engine. Postgres uses `timestamptz` (which Npgsql returns as a `Kind=Utc` `DateTime`); the other engines store the UTC value and the store stamps it `Utc` on read.
+The audit table (`conduit_audit`) is created automatically on startup.
+
+**Timestamps are stored and read as UTC** on every engine: the store writes round-trippable ISO 8601 UTC text and parses it back stamped `Kind=Utc`, matching the durability stores — no per-engine datetime binding required.
 
 ## Capture tuning
 
@@ -157,9 +157,9 @@ By default the buffer drops the oldest record under sustained overload, trading 
 Retention is owned by the listener, since it registers the purge service:
 
 ```csharp
+conduit.UseSqlite("Data Source=audit.db");
 conduit.AddAuditListener(listener =>
 {
-    listener.UseSqlite("Data Source=audit.db");
     listener.RetentionPeriod = TimeSpan.FromDays(30);    // default: 90 days
     listener.PurgeInterval = TimeSpan.FromHours(24);     // how often the purge runs (default: 24h)
 });
