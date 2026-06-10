@@ -55,6 +55,17 @@ internal static class EmitConstants
     // Resilience types (from Conduit.Resilience — only referenced in generated code)
     internal const string ResilienceBehavior = "Conduit.Resilience.ResilienceBehavior";
 
+    /// <summary>
+    /// Converts a metadata-style full type name (nested types joined with '+', matching
+    /// <see cref="System.Type.FullName"/>) into a C# type reference (nested types joined with '.').
+    /// <see cref="Conduit.Analysis.DispatchableTypeInfo.FullTypeName"/> and the handler/event
+    /// message-type keys hold the metadata form — the canonical wire discriminator and
+    /// <c>ConduitTypeRegistry</c> key — so emitters must call this whenever they write the name into
+    /// a C# syntax position (a type declaration, generic argument, or <c>typeof(...)</c>).
+    /// </summary>
+    internal static string ToCSharpTypeRef(string metadataFullName)
+        => metadataFullName.Replace('+', '.');
+
     // Observation types
     internal const string MessageContext_Observe = "Conduit.Runtime.MessageContext.Observe";
     internal const string DispatchInvoked = "Conduit.Runtime.DispatchInvoked";

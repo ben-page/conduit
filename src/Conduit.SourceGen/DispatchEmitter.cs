@@ -88,7 +88,7 @@ public static class DispatchEmitter
         HandlerInfo handler)
     {
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Execute(");
-        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        {EmitConstants.ToCSharpTypeRef(type.FullTypeName)} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
@@ -104,8 +104,9 @@ public static class DispatchEmitter
         DispatchableTypeInfo type,
         HandlerInfo handler)
     {
+        var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
         sb.AppendLine($"    public static async Task Execute(");
-        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        {typeRef} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
@@ -116,7 +117,7 @@ public static class DispatchEmitter
         sb.AppendLine();
 
         sb.AppendLine($"    public static async Task<object?> ExecuteVoid(");
-        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        {typeRef} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
@@ -133,7 +134,7 @@ public static class DispatchEmitter
         HandlerInfo handler)
     {
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Fetch(");
-        sb.AppendLine($"        {type.FullTypeName} query,");
+        sb.AppendLine($"        {EmitConstants.ToCSharpTypeRef(type.FullTypeName)} query,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
@@ -149,19 +150,20 @@ public static class DispatchEmitter
         DispatchableTypeInfo type,
         HandlerInfo _)
     {
+        var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
         var handlerInterface =
-            $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}>";
+            $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{typeRef}>";
 
         // Execute method: runs pipeline in caller context, enqueues handler to background dispatcher
         sb.AppendLine($"    public static Task Execute(");
-        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        {typeRef} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
         sb.AppendLine();
-        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, object>(conduitOptions, serviceProvider);");
+        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
         sb.AppendLine($"        var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
         sb.AppendLine();
         sb.AppendLine($"        // The handler call enqueues to the background dispatcher instead of executing inline.");
@@ -182,7 +184,7 @@ public static class DispatchEmitter
 
         // ExecuteVoid wrapper (for wire dispatch compatibility — local callers use background dispatch)
         sb.AppendLine($"    public static async Task<object?> ExecuteVoid(");
-        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        {typeRef} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
@@ -197,14 +199,14 @@ public static class DispatchEmitter
         // must run inline within the DI scope. Using the background dispatcher here would cause
         // the handler to execute after the scope is disposed.
         sb.AppendLine($"    public static async Task<object?> ExecuteVoidWire(");
-        sb.AppendLine($"        {type.FullTypeName} command,");
+        sb.AppendLine($"        {typeRef} command,");
         sb.AppendLine($"        IServiceProvider serviceProvider,");
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
         sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
-        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, object>(conduitOptions, serviceProvider);");
+        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
         sb.AppendLine($"        Func<Task<object>> handlerCall = () => {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync(command, cancellationToken));");
         sb.AppendLine($"        await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors(command, behaviors, handlerCall, cancellationToken);");
         sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
@@ -220,20 +222,21 @@ public static class DispatchEmitter
     {
         var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
         var resultType = isVoid ? "object" : type.ResultFullTypeName;
+        var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
 
         var handlerInterface = type.Kind switch
         {
             DispatchableKind.Command =>
-                $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}, {type.ResultFullTypeName}>",
+                $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{typeRef}, {type.ResultFullTypeName}>",
             DispatchableKind.VoidCommand =>
-                $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}>",
+                $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{typeRef}>",
             DispatchableKind.Query =>
-                $"{EmitConstants.NamespaceHandlers}.IQueryHandler<{type.FullTypeName}, {type.ResultFullTypeName}>",
+                $"{EmitConstants.NamespaceHandlers}.IQueryHandler<{typeRef}, {type.ResultFullTypeName}>",
             DispatchableKind.Event or DispatchableKind.Model or _ => handler.HandlerFullTypeName,
         };
 
         sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
-        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{type.FullTypeName}, {resultType}>(conduitOptions, serviceProvider);");
+        sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, {resultType}>(conduitOptions, serviceProvider);");
         sb.AppendLine();
 
         if (isVoid)

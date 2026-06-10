@@ -47,4 +47,49 @@ namespace App.Events
         registrationSource.Should().Contain("AddTransient<Conduit.Handlers.ICommandHandler<App.Commands.CreateOrder, System.Guid>, App.Commands.CreateOrderHandler>()");
         registrationSource.Should().Contain("AddTransient<Conduit.Handlers.IEventListener<App.Events.OrderCreated>, App.Events.OrderCreatedListener>()");
     }
+
+    [TestMethod]
+    public void EmitNestedTypeAsCSharpTypeRefInRegistrationButMetadataNameOnWire()
+    {
+        // A nested message type: registry typeof()/handler interfaces must use the C# ('.') form;
+        // the wire discriminator must use the metadata ('+') form (= runtime Type.FullName).
+        var source = @"
+using Conduit.Handlers;
+using Conduit.Messages;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace App
+{
+    public class Outer
+    {
+        public record CreateThing(string Data) : ICommand;
+    }
+
+    public class CreateThingHandler : ICommandHandler<Outer.CreateThing>
+    {
+        public Task HandleAsync(Outer.CreateThing command, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+}
+";
+        var (trees, diagnostics) = RunGenerator(source);
+
+        diagnostics.Should().NotContain(d => d.Id == "CONDUIT001");
+
+        var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
+        registrationSource.Should().NotBeNull();
+        // C# syntax positions use the dotted form (the '+' form would not compile).
+        registrationSource.Should().Contain("typeof(App.Outer.CreateThing)");
+        registrationSource.Should().Contain("Conduit.Handlers.ICommandHandler<App.Outer.CreateThing>");
+        registrationSource.Should().NotContain("App.Outer+CreateThing");
+
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        mediatorSource.Should().NotBeNull();
+        // The wire discriminator string literal uses the metadata ('+') form.
+        mediatorSource.Should().Contain("\"App.Outer+CreateThing\"");
+        // The deserialize generic argument uses the C# ('.') form.
+        mediatorSource.Should().Contain("Deserialize<App.Outer.CreateThing>");
+    }
 }

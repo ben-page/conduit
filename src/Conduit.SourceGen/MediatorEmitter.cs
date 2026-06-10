@@ -71,22 +71,26 @@ public static class MediatorEmitter
         {
             var hasHandler = handledTypes.Contains(cmd.FullTypeName);
 
+            // FullTypeName is the metadata ('+') wire discriminator; typeRef is its C# form for
+            // type/generic/typeof positions (nested types join with '.').
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
+
             // Thin delegating overload (no configure parameter)
             sb.AppendLine($"    public async Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
-            sb.AppendLine($"        {cmd.FullTypeName} command,");
+            sb.AppendLine($"        {typeRef} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine($"        => await ExecuteAsync(command, null, cancellationToken);");
             sb.AppendLine();
 
             // Full implementation with DispatchOptions
             sb.AppendLine($"    public async Task<{cmd.ResultFullTypeName}> ExecuteAsync(");
-            sb.AppendLine($"        {cmd.FullTypeName} command,");
+            sb.AppendLine($"        {typeRef} command,");
             sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
             EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command",
                 emitPayloadCapture: true, requestVarName: "command",
-                requestTypeName: cmd.FullTypeName, isDoNotAudit: cmd.IsDoNotAudit);
+                requestTypeName: typeRef, isDoNotAudit: cmd.IsDoNotAudit);
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
@@ -125,23 +129,24 @@ public static class MediatorEmitter
         foreach (var cmd in voidCommands)
         {
             var hasHandler = handledTypes.Contains(cmd.FullTypeName);
+            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
 
             // Thin delegating overload (no configure parameter)
             sb.AppendLine($"    public async Task ExecuteAsync(");
-            sb.AppendLine($"        {cmd.FullTypeName} command,");
+            sb.AppendLine($"        {typeRef} command,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine($"        => await ExecuteAsync(command, null, cancellationToken);");
             sb.AppendLine();
 
             // Full implementation with DispatchOptions
             sb.AppendLine($"    public async Task ExecuteAsync(");
-            sb.AppendLine($"        {cmd.FullTypeName} command,");
+            sb.AppendLine($"        {typeRef} command,");
             sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
             EmitContextStart(sb, $"\"{cmd.FullTypeName}\"", "command",
                 emitPayloadCapture: true, requestVarName: "command",
-                requestTypeName: cmd.FullTypeName, isDoNotAudit: cmd.IsDoNotAudit);
+                requestTypeName: typeRef, isDoNotAudit: cmd.IsDoNotAudit);
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{cmd.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
@@ -202,23 +207,24 @@ public static class MediatorEmitter
         foreach (var query in queries)
         {
             var hasHandler = handledTypes.Contains(query.FullTypeName);
+            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
 
             // Thin delegating overload (no configure parameter)
             sb.AppendLine($"    public async Task<{query.ResultFullTypeName}> FetchAsync(");
-            sb.AppendLine($"        {query.FullTypeName} query,");
+            sb.AppendLine($"        {typeRef} query,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine($"        => await FetchAsync(query, null, cancellationToken);");
             sb.AppendLine();
 
             // Full implementation with DispatchOptions
             sb.AppendLine($"    public async Task<{query.ResultFullTypeName}> FetchAsync(");
-            sb.AppendLine($"        {query.FullTypeName} query,");
+            sb.AppendLine($"        {typeRef} query,");
             sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
             sb.AppendLine($"        CancellationToken cancellationToken = default)");
             sb.AppendLine("    {");
             EmitContextStart(sb, $"\"{query.FullTypeName}\"", "query",
                 emitPayloadCapture: true, requestVarName: "query",
-                requestTypeName: query.FullTypeName, isDoNotAudit: query.IsDoNotAudit);
+                requestTypeName: typeRef, isDoNotAudit: query.IsDoNotAudit);
             sb.AppendLine($"            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, \"{query.FullTypeName}\");");
             sb.AppendLine("            if (endpoint != null)");
             sb.AppendLine("            {");
@@ -307,7 +313,7 @@ public static class MediatorEmitter
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"            {cmd.FullTypeName} cmd => ConduitRuntime.CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync(cmd, configure, cancellationToken)),");
+            sb.AppendLine($"            {EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)} cmd => ConduitRuntime.CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync(cmd, configure, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -334,7 +340,7 @@ public static class MediatorEmitter
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"            {cmd.FullTypeName} cmd => ExecuteAsync(cmd, configure, cancellationToken),");
+            sb.AppendLine($"            {EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)} cmd => ExecuteAsync(cmd, configure, cancellationToken),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -361,7 +367,7 @@ public static class MediatorEmitter
 
         foreach (var q in queries)
         {
-            sb.AppendLine($"            {q.FullTypeName} qry => ConduitRuntime.CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync(qry, configure, cancellationToken)),");
+            sb.AppendLine($"            {EmitConstants.ToCSharpTypeRef(q.FullTypeName)} qry => ConduitRuntime.CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync(qry, configure, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {query.GetType().Name}\")");
@@ -374,10 +380,11 @@ public static class MediatorEmitter
         IReadOnlyList<ListenerGroup> listenerGroups,
         List<DispatchableTypeInfo> events)
     {
+        // These are used in C# type-pattern positions, so use the C# ('.') form for nested types.
         var localOnlyTypes = new HashSet<string>(
-            events.Where(e => e.IsLocalOnly).Select(e => e.FullTypeName));
+            events.Where(e => e.IsLocalOnly).Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
         var fireAndForgetTypes = new HashSet<string>(
-            events.Where(e => e.IsFireAndForget).Select(e => e.FullTypeName));
+            events.Where(e => e.IsFireAndForget).Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
 
         // Thin delegating overload (no configure parameter)
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
@@ -488,13 +495,14 @@ public static class MediatorEmitter
 
         foreach (var group in listenerGroups)
         {
-            sb.AppendLine($"            case {group.EventFullTypeName} e:");
+            var eventTypeRef = EmitConstants.ToCSharpTypeRef(group.EventFullTypeName);
+            sb.AppendLine($"            case {eventTypeRef} e:");
             sb.AppendLine($"            {{");
 
             // Build the innermost delegate: resolve all listeners by interface, iterate with try/catch
             sb.AppendLine($"                Func<Task<object>> listenerChain = async () =>");
             sb.AppendLine($"                {{");
-            sb.AppendLine($"                    var listeners = serviceProvider.GetServices<{EmitConstants.NamespaceHandlers}.IEventListener<{group.EventFullTypeName}>>();");
+            sb.AppendLine($"                    var listeners = serviceProvider.GetServices<{EmitConstants.NamespaceHandlers}.IEventListener<{eventTypeRef}>>();");
             sb.AppendLine($"                    foreach (var listener in listeners)");
             sb.AppendLine($"                    {{");
             // Per-listener observations: HandlerStarted
@@ -522,7 +530,7 @@ public static class MediatorEmitter
             sb.AppendLine();
 
             // Wrap with unified pipeline behaviors via ConduitRuntime
-            sb.AppendLine($"                var behaviors = ConduitRuntime.ResolvePipelines<{group.EventFullTypeName}, object>(conduitOptions, serviceProvider);");
+            sb.AppendLine($"                var behaviors = ConduitRuntime.ResolvePipelines<{eventTypeRef}, object>(conduitOptions, serviceProvider);");
             sb.AppendLine($"                await ConduitRuntime.ExecuteWithBehaviors(e, behaviors, listenerChain, cancellationToken);");
 
             sb.AppendLine("                break;");
@@ -601,7 +609,7 @@ public static class MediatorEmitter
         foreach (var cmd in commands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
-            sb.AppendLine($"                    JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -613,7 +621,7 @@ public static class MediatorEmitter
             // The background dispatcher path would execute after the DI scope is disposed.
             var method = cmd.IsFireAndForget ? "ExecuteVoidWire" : "ExecuteVoid";
             sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.{method}(");
-            sb.AppendLine($"                    JsonSerializer.Deserialize<{cmd.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -622,7 +630,7 @@ public static class MediatorEmitter
         foreach (var query in queries.Where(q => handledTypes.Contains(q.FullTypeName)))
         {
             sb.AppendLine($"                \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
-            sb.AppendLine($"                    JsonSerializer.Deserialize<{query.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(query.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -654,7 +662,7 @@ public static class MediatorEmitter
 
         foreach (var evt in events)
         {
-            sb.AppendLine($"                \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{evt.FullTypeName}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(evt.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
         }
 
         sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");

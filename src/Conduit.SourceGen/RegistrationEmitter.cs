@@ -67,14 +67,15 @@ public static class RegistrationEmitter
                 continue;
             }
 
+            var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
             var interfaceType = type.Kind switch
             {
                 DispatchableKind.Command =>
-                    $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}, {type.ResultFullTypeName}>",
+                    $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{typeRef}, {type.ResultFullTypeName}>",
                 DispatchableKind.VoidCommand =>
-                    $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{type.FullTypeName}>",
+                    $"{EmitConstants.NamespaceHandlers}.ICommandHandler<{typeRef}>",
                 DispatchableKind.Query =>
-                    $"{EmitConstants.NamespaceHandlers}.IQueryHandler<{type.FullTypeName}, {type.ResultFullTypeName}>",
+                    $"{EmitConstants.NamespaceHandlers}.IQueryHandler<{typeRef}, {type.ResultFullTypeName}>",
                 DispatchableKind.Event or DispatchableKind.Model or _ => null,
             };
 
@@ -86,9 +87,10 @@ public static class RegistrationEmitter
 
         foreach (var group in listenerGroups)
         {
+            var eventTypeRef = EmitConstants.ToCSharpTypeRef(group.EventFullTypeName);
             foreach (var listener in group.ListenerFullTypeNames)
             {
-                sb.AppendLine($"        services.AddTransient<{EmitConstants.NamespaceHandlers}.IEventListener<{group.EventFullTypeName}>, {listener}>();");
+                sb.AppendLine($"        services.AddTransient<{EmitConstants.NamespaceHandlers}.IEventListener<{eventTypeRef}>, {listener}>();");
             }
         }
 
@@ -127,7 +129,7 @@ public static class RegistrationEmitter
                 sb.Append(", ");
             }
 
-            sb.Append($"typeof({eventTypeNames[i]})");
+            sb.Append($"typeof({EmitConstants.ToCSharpTypeRef(eventTypeNames[i])})");
         }
 
         sb.AppendLine("],");
@@ -141,7 +143,7 @@ public static class RegistrationEmitter
                 sb.Append(", ");
             }
 
-            sb.Append($"typeof({commandTypeNames[i]})");
+            sb.Append($"typeof({EmitConstants.ToCSharpTypeRef(commandTypeNames[i])})");
         }
 
         sb.AppendLine("],");
@@ -155,7 +157,7 @@ public static class RegistrationEmitter
                 sb.Append(", ");
             }
 
-            sb.Append($"typeof({queryTypeNames[i]})");
+            sb.Append($"typeof({EmitConstants.ToCSharpTypeRef(queryTypeNames[i])})");
         }
 
         sb.AppendLine("]));");
