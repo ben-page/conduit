@@ -2,23 +2,31 @@
 
 Operational audit trail for Conduit dispatch pipelines. Captures observations emitted by the generated mediator, consolidates them into per-dispatch records, and publishes them as `AuditBatch` events for local persistence or cross-service aggregation.
 
+## Persistence engine (Conduit.Persistence)
+
+Audit shares the relational-persistence abstraction in **`Conduit.Persistence`** with Durability. Audit depends on `Conduit.Persistence` only — it has **no** direct database-driver dependency (the `Microsoft.Data.Sqlite` PackageReference was removed). The engine is resolved from DI: `IConduitConnectionFactory` (connections) + `ISqlDialect` (engine type vocabulary). See `src/Conduit.Persistence/CLAUDE.md`.
+
+- Register the engine on the **`ConduitBuilder`**, not the listener builder: `conduit.UseSqlite(connectionString)` (from `Conduit.Persistence.Sqlite`) — or `UsePostgres` / `UseSqlServer` / `UseMySql` — alongside `conduit.AddAuditListener(...)`. The engine is shared with Durability when both are configured (call `UseXxx` once).
+- `DbAuditStore` extends `DbStoreBase`; `AuditTableInitializer` extends `TableInitializerBase`; `AuditPurgeService` extends `PeriodicCleanupServiceBase`.
+- The audit dialects (`IAuditDialect` + `SqliteAuditDialect`/`SqlServerAuditDialect`/`PostgresAuditDialect`/`MySqlAuditDialect`), `IAuditConnectionFactory`, and `AuditConnectionStringFactory<T>` were **deleted** — their work moved into the shared `ISqlDialect`/`IConduitConnectionFactory` plus the module's own `AuditTableSchema` constants.
+
 ## Directory layout
 
 - `Configuration/` — `AuditBuilder` (capture side), `AuditListenerBuilder` (persistence side), `AuditOptions`
 - `Runtime/` — `AuditObserver`, `DispatchGroup`, `AuditBatchPublisher`, `AuditBatch`, `DispatchAuditRecord`, `LocalAuditListener`, `AuditPurgeService`, `AuditObserverInitializer`, `AuditTableInitializer`
-- `Persistence/` — `IAuditStore`, `DbAuditStore`, `IAuditDialect` (+ `SqliteAuditDialect`, `SqlServerAuditDialect`, `PostgresAuditDialect`, `MySqlAuditDialect`), `IAuditConnectionFactory`, `AuditConnectionStringFactory<T>`
+- `Persistence/` — `IAuditStore`, `DbAuditStore`, `AuditTableSchema` (module-owned table + column identifiers)
 
 ## Key types
 
-- `AuditObserver` — `IConduitObserver` implementation. Receives `MessageObservation` callbacks from `MessageContext.Observe()`. Groups observations by `MessageId` in a `ConcurrentDictionary<string, DispatchGroup>`. Seals the group on `DispatchCompleted`/`DispatchFailed` and writes the resulting `DispatchAuditRecord` to a bounded channel. Filters out `AuditBatch` type observations to prevent infinite recursion.
-- `DispatchGroup` — internal type that accumulates observations for a single dispatch. Captures `MessageContext` snapshot (message ID, conversation ID, causation ID, properties, payload) at creation time. `Seal()` produces a `DispatchAuditRecord`.
-- `AuditBatchPublisher` — `BackgroundService` that drains `DispatchAuditRecord` instances from the channel and publishes them as `AuditBatch` events via `IMediator.PublishAsync`. Creates a new DI scope per batch for correct handler lifetime. Batch size controlled by `AuditOptions.BatchSize`.
+- `AuditObserver` — `IConduitObserver` implementation. Receives `MessageObservation` callbacks from `MessageContext.Observe()`. Groups observations by `MessageId` in a `ConcurrentDictionary<string, DispatchGroup>`. Seals the group on `DispatchCompleted`/`DispatchFailed` and writes the resulting `DispatchAuditRecord` to a bounded channel. Filters out `AuditBatch` type observations to prevent infinite recursion. Also honours per-type suppression: it takes two `IReadOnlySet<string>` of full type names — **suppressed types** (no group is ever created, so nothing is recorded) and **suppressed-payload types** (group is recorded but the body is nulled out via `DispatchGroup.SuppressPayload()`). `EvictStaleGroups(now, staleTimeout)` removes groups whose `CreatedAt` is older than `staleTimeout` relative to `now`; `now` is a parameter for deterministic testing. Evicted groups are sealed as failed (a synthetic `DispatchFailed` is appended via `DispatchGroup.MarkIncomplete`) and flushed to the channel rather than dropped, preserving the partial trail.
+- `DispatchGroup` — internal type that accumulates observations for a single dispatch. Captures `MessageContext` snapshot (message ID, conversation ID, causation ID, properties, payload) at creation time. `Seal()` produces a `DispatchAuditRecord`. `SuppressPayload()` nulls the captured body (for `SuppressPayload<T>()` types). `MarkIncomplete(staleTimeout)` appends a synthetic `DispatchFailed` for stale-group eviction. `CreatedAt` is the eviction reference time.
+- `AuditBatchPublisher` — `BackgroundService` that drains `DispatchAuditRecord` instances from the channel and publishes them as `AuditBatch` events via `IMediator.PublishAsync`. Creates a new DI scope per batch for correct handler lifetime. Batch size controlled by `AuditOptions.BatchSize`. Also runs a concurrent `PeriodicTimer` sweep loop that calls `AuditObserver.EvictStaleGroups` to evict incomplete dispatch groups (sweep cadence = `min(StaleGroupTimeout, 1 minute)`). This is the single owner of stale-group eviction.
 - `AuditBatch` — `IEvent` record containing `SourceService`, `SourceHost`, `BatchTimestamp`, and `Records`. Marked `[DoNotAudit]` to prevent the audit infrastructure from auditing its own events.
 - `DispatchAuditRecord` — the consolidated audit record for a single dispatch: message context fields, type info, raw JSON payload, properties, timestamp, and the full observation list.
-- `LocalAuditListener` — `IEventListener<AuditBatch>` that persists records to `IAuditStore`. Registered by `AddAuditListener`, whether batches are published in-process or arrive over a transport.
-- `AuditPurgeService` — `BackgroundService` that periodically deletes expired records based on `AuditOptions.RetentionPeriod`.
+- `LocalAuditListener` — `IEventListener<AuditBatch>` (transient) that persists records to `IAuditStore`. Registered by `AddAuditListener`, whether batches are published in-process or arrive over a transport. Resolved per-publish inside the dispatch scope, so it can consume the **Scoped** `IAuditStore`.
+- `AuditPurgeService` — extends `PeriodicCleanupServiceBase`. Periodically deletes expired records based on `AuditOptions.RetentionPeriod`. The base class runs each tick inside a fresh `IServiceScopeFactory` scope and the purge resolves `IAuditStore` from that scoped provider in `CleanupAsync` — it does **not** inject the store into the constructor. This avoids a captive-dependency bug: the store is now Scoped, so a singleton `BackgroundService` injecting it directly would throw "Cannot consume scoped service from singleton" at startup under `ValidateScopes`.
 - `AuditObserverInitializer` — `IHostedService` that wires `AuditObserver` to `MessageContext.Observer` at startup and clears it at shutdown.
-- `AuditTableInitializer` — `IHostedService` that calls `IAuditStore.EnsureTableExistsAsync` at startup.
+- `AuditTableInitializer` — extends `TableInitializerBase`. Creates the audit table at startup (scoped) and **fails fast** in `ValidateConfiguration` if `AddAuditListener` was called but no persistence engine (`IConduitConnectionFactory`/`ISqlDialect`) is registered, pointing at `conduit.UseSqlite(...)`.
 
 ## Configuration
 
@@ -33,21 +41,23 @@ conduit.AddAudit(audit =>
 });
 ```
 
-**`AddAuditListener()`** — registers the `IEventListener<AuditBatch>`, store, table initializer, and retention purge. The events it consumes may be published in-process (paired with `AddAudit`) or arrive over a transport from other services — it handles both identically. It owns retention (`RetentionPeriod`/`PurgeInterval`):
+**`AddAuditListener()`** — registers the `IEventListener<AuditBatch>`, store, table initializer, and retention purge. The events it consumes may be published in-process (paired with `AddAudit`) or arrive over a transport from other services — it handles both identically. It owns retention (`RetentionPeriod`/`PurgeInterval`). The persistence engine is configured separately on the `ConduitBuilder` (`conduit.UseSqlite(...)`) and shared with Durability via DI — `AuditListenerBuilder` no longer has `UseSqlite/UsePostgres/UseSqlServer/UseMySql`:
 ```csharp
+conduit.UseSqlite("Data Source=audit.db");          // engine on the ConduitBuilder, shared with durability
 conduit.AddAuditListener(listener =>
 {
-    listener.UseSqlite("Data Source=audit.db");
     listener.RetentionPeriod = TimeSpan.FromDays(30);
 });
 ```
 
 Deployment roles:
 - **Producer only** (ships audit to a collector): `AddAudit()` alone.
-- **Single service, stores own audit**: `AddAudit()` + `AddAuditListener(l => l.UseSqlite(...))`.
-- **Central collector** (persists `AuditBatch` from many services): `AddAuditListener(l => l.UsePostgres<NpgsqlConnection>(...))` alone.
+- **Single service, stores own audit**: `conduit.UseSqlite(...)` + `AddAudit()` + `AddAuditListener(...)`.
+- **Central collector** (persists `AuditBatch` from many services): `conduit.UsePostgres(...)` + `AddAuditListener(...)` alone (no `AddAudit`).
 
-`AuditBuilder` exposes public properties for capture tuning (`ServiceName`, `BatchSize`, `FlushInterval`, `ChannelCapacity`, `BackpressureMode`, `StaleGroupTimeout`) plus `Suppress<T>()` (skip all recording for a type) and `SuppressPayload<T>()` (record observations but omit body). `AuditListenerBuilder` exposes `RetentionPeriod` and `PurgeInterval`. Both builders' properties delegate to an internal `AuditOptions`, which the `AddAudit`/`AddAuditListener` extensions copy into `IOptions<AuditOptions>`. Persistence is purely event-driven via `LocalAuditListener`, which is why local and distributed storage share one entry point.
+`AuditBuilder` exposes public properties for capture tuning (`ServiceName`, `BatchSize`, `FlushInterval`, `ChannelCapacity`, `BackpressureMode`, `StaleGroupTimeout`) plus `Suppress<T>()` (skip all recording for a type) and `SuppressPayload<T>()` (record observations but omit body). Both suppression methods are wired: `AddAudit` resolves their `Type` sets to full-type-name sets and passes them to `AuditObserver`. `StaleGroupTimeout` is wired into the `AuditBatchPublisher` sweep. `AuditListenerBuilder` exposes `RetentionPeriod` and `PurgeInterval`.
+
+**Still-dead config (no feature reads these as of this writing):** `AuditOptions.FlushInterval` / `AuditBuilder.FlushInterval` — there is no flush timer; `AuditBatchPublisher` only flushes when `BatchSize` records accumulate or the channel signals readable, never on a time interval. `AuditOptions.MetricsAggregationInterval` — no metrics aggregation feature exists at all. Both are surfaced through the builder and copied into `IOptions<AuditOptions>` but are never consumed. Pending a design decision (implement vs remove). Both builders' properties delegate to an internal `AuditOptions`, which the `AddAudit`/`AddAuditListener` extensions copy into `IOptions<AuditOptions>`. Persistence is purely event-driven via `LocalAuditListener`, which is why local and distributed storage share one entry point.
 
 ## Observation flow
 
@@ -64,12 +74,11 @@ Recursion (auditing the `AuditBatch` publish itself) is prevented by `AuditObser
 
 ## Persistence
 
-- `IAuditStore` — interface: `SaveBatchAsync`, `GetByMessageIdAsync`, `PurgeExpiredAsync`, `EnsureTableExistsAsync`
-- `DbAuditStore` — ADO.NET implementation, delegates SQL to `IAuditDialect`. Database-agnostic.
-- `IAuditDialect` — SQL generation interface. One implementation per database engine. Same engine coverage as `Conduit.Durability`: SQLite, SQL Server, PostgreSQL, MySQL. Table: `conduit_audit` with indexes on message id, conversation id, `(message type, timestamp)`, and timestamp.
-  - `SqliteAuditDialect` (built-in, `Microsoft.Data.Sqlite`), `SqlServerAuditDialect`, `PostgresAuditDialect`, `MySqlAuditDialect`. Only SQLite is referenced by the project; the other engines use the generic `UseXxx<TConnection>(connectionString)` builder pattern (`TConnection : DbConnection`), so the consumer brings the provider package (Microsoft.Data.SqlClient / Npgsql / MySqlConnector). Postgres uses snake_case columns aliased back to the PascalCase names the store reads by ordinal.
-- **UTC timestamps everywhere**: the store reads and writes UTC. `IAuditDialect.TimestampDbType` lets each engine pick its native datetime mapping — `DbType.DateTime2` for the relational engines (→ `DATETIME2` / `DATETIME(6)` / SQLite text), and `DbType.Object` for Postgres so Npgsql infers `timestamptz` from the `DateTimeKind.Utc` value (an explicit `DateTime2` would resolve to `timestamp without time zone` and throw). On read, `DbAuditStore` stamps the value `Utc` (`timestamptz` already returns Utc; the relational engines return Unspecified).
-- `AuditListenerBuilder` is the single place persistence is wired (dialect + connection factory + store + `LocalAuditListener` + table initializer + purge); its private `Register<TDialect, TConnection>` keeps the four engine methods DRY. Dialect SQL is unit-tested at the string level in `AuditDialectsShould` (no container integration, matching the durability bar).
+- `IAuditStore` — interface: `SaveBatchAsync`, `GetByMessageIdAsync`, `PurgeExpiredAsync`, `EnsureTableExistsAsync`. Registered **Scoped** by `AddAuditListener` (it depends on the Scoped `IConduitConnectionFactory`).
+- `DbAuditStore` — extends `DbStoreBase`; depends on `IConduitConnectionFactory` + `ISqlDialect` (resolved from DI). Composes its CREATE TABLE DDL from the dialect's type-name helpers (`BigIntAutoIncrementPrimaryKey`, `TextType`/`NullableTextType`, `TimestampType`) and its own `AuditTableSchema` identifiers; the insert / select-by-message-id / delete-expired-purge SQL are module-owned constants (identical across engines, like durability's CRUD). Table `conduit_audit`; uniform PascalCase columns across all engines (Postgres folds unquoted identifiers to lower case transparently — no more snake_case aliasing).
+- `AuditTableSchema` — module-owned `static` constants for the table + column names. Mirrors durability's `OutboxTableSchema`.
+- **UTC timestamps via ISO 8601 text**: matching the durability stores, `DbAuditStore` writes timestamps as round-trippable UTC ISO 8601 text (`DateTime.ToString("O")`) and parses them back with `DateTimeStyles.RoundtripKind`, stamping `DateTimeKind.Utc`. This is engine-agnostic — it needs no per-engine `DbType` and no native-datetime binding, so the audit module did **not** require adding an audit-specific timestamp primitive to `ISqlDialect`. (The previous native-`DateTime`-binding approach with `DbType.DateTime2`/`DbType.Object` was the only thing genuinely divergent across audit's old dialects; switching to durability's text approach removed the divergence entirely.) Full tick precision is preserved by the `"O"` round-trip format.
+- **No audit dialects.** The four audit dialect classes + `IAuditDialect` + `IAuditConnectionFactory` + `AuditConnectionStringFactory<T>` were deleted; the engine type vocabulary lives in the shared `ISqlDialect` (covered per-engine by the Durability project's `PostgresDialectShould`/`SqlServerDialectShould`/`MySqlDialectShould`/`SqliteDialectShould`). The audit module's composed CREATE TABLE DDL is asserted per-engine by `AuditStoreSqlShould` (no DB), and the full composed CRUD is covered functionally by `LocalAuditStoreShould` round-tripping against real SQLite. The Singleton→Scoped lifetime safety is proved by `AuditScopeValidationShould` (builds the host under `ValidateScopes`/`ValidateOnBuild` and exercises the purge + dispatch paths).
 
 ## Zero-cost when not opted in
 

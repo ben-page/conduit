@@ -1,29 +1,67 @@
-﻿using System.Data.Common;
-using System.Diagnostics.CodeAnalysis;
+using System.Data.Common;
 using System.Globalization;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence;
 
 namespace Conduit.Durability.Persistence.Outbox;
 
 /// <summary>
-/// ADO.NET outbox store implementation. Delegates all SQL to <see cref="IDurabilityDialect"/>,
-/// making it compatible with any relational database that provides a <see cref="DbConnection"/>.
+/// ADO.NET outbox store. SQL identifiers come from <see cref="OutboxTableSchema"/>; engine-specific
+/// idioms (claim SQL, type names) come from <see cref="ISqlDialect"/>. Compatible with any relational
+/// database that provides an <see cref="ISqlDialect"/> + <see cref="IConduitConnectionFactory"/>.
 /// </summary>
-// CA2100: All SQL in this class comes from IDurabilityDialect — a trusted internal interface, never user input.
-[SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
-    Justification = "All SQL originates from IDurabilityDialect, which is internal infrastructure, never user-supplied input.")]
-public sealed class DbConnectionOutboxStore : IOutboxStore
+public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 {
-    private readonly IDurabilityConnectionFactory connectionFactory;
-    private readonly IDurabilityDialect dialect;
-
     /// <summary>
-    /// Initializes a new instance of <see cref="DbConnectionOutboxStore"/>.
+    /// How long a claimed-but-unresolved entry stays exclusively claimed before it is treated as
+    /// abandoned (e.g. the claiming worker crashed) and becomes re-claimable. This bounds recovery
+    /// so a crash never strands a message, while being long enough that a healthy worker always
+    /// resolves (sends/retries/fails) its claim well within the window.
     /// </summary>
-    public DbConnectionOutboxStore(IDurabilityConnectionFactory connectionFactory, IDurabilityDialect dialect)
+    private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
+
+    private static readonly IOutboxTableSchema Schema = OutboxTableSchema.Default;
+
+    private const string SelectClaimedEntriesSql = """
+        SELECT Id, MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, SentAt, RetryCount
+        FROM conduit_outbox
+        WHERE ClaimToken = @ClaimToken
+        ORDER BY Id
+        """;
+
+    private const string SelectClaimedIdsSql = """
+        SELECT Id, MessageId FROM conduit_outbox
+        WHERE ClaimToken = @ClaimToken
+        ORDER BY Id
+        """;
+
+    private const string InsertEntrySql = """
+        INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount)
+        VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0)
+        """;
+
+    private const string MarkSentSql = "UPDATE conduit_outbox SET Status = 1, SentAt = @SentAt WHERE Id = @Id";
+
+    private const string IncrementRetrySql =
+        "UPDATE conduit_outbox SET RetryCount = RetryCount + 1, Status = 0, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
+
+    private const string MarkFailedSql = "UPDATE conduit_outbox SET Status = 2 WHERE Id = @Id";
+
+    private const string DeleteCompletedSql =
+        "DELETE FROM conduit_outbox WHERE Status IN (1, 2) AND CreatedAt <= @RetentionCutoff";
+
+    private readonly string createTableSql;
+    private readonly string claimPendingSql;
+    private readonly string claimByMessageIdsSql;
+
+    /// <summary>Initializes a new instance of <see cref="DbConnectionOutboxStore"/>.</summary>
+    public DbConnectionOutboxStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+        : base(connectionFactory)
     {
-        this.connectionFactory = connectionFactory;
-        this.dialect = dialect;
+        ArgumentNullException.ThrowIfNull(dialect);
+
+        this.createTableSql = BuildCreateTableSql(dialect);
+        this.claimPendingSql = dialect.BuildClaimPendingSql(Schema);
+        this.claimByMessageIdsSql = dialect.BuildClaimByIdsSql(Schema);
     }
 
     /// <inheritdoc/>
@@ -40,16 +78,20 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
 
         foreach (var entry in entries)
         {
-            using var command = connection.CreateCommand();
-            command.CommandText = this.dialect.OutboxInsertEntrySql;
-            command.Transaction = transaction;
-            AddParameter(command, "@MessageId", entry.MessageId);
-            AddParameter(command, "@ConversationId", entry.ConversationId);
-            AddParameter(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
-            AddParameter(command, "@Type", entry.Type);
-            AddParameter(command, "@Payload", entry.Payload);
-            AddParameter(command, "@CreatedAt", entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            await ExecuteOnConnectionAsync(
+                connection,
+                transaction,
+                InsertEntrySql,
+                command =>
+                {
+                    DbParameterHelper.Add(command, "@MessageId", entry.MessageId);
+                    DbParameterHelper.Add(command, "@ConversationId", entry.ConversationId);
+                    DbParameterHelper.Add(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
+                    DbParameterHelper.Add(command, "@Type", entry.Type);
+                    DbParameterHelper.Add(command, "@Payload", entry.Payload);
+                    DbParameterHelper.Add(command, "@CreatedAt", entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
+                },
+                cancellationToken);
         }
     }
 
@@ -59,80 +101,74 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
         TimeSpan gracePeriod,
         CancellationToken cancellationToken)
     {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-        var graceCutoff = DateTime.UtcNow.Subtract(gracePeriod).ToString("O", CultureInfo.InvariantCulture);
+        var now = DateTime.UtcNow;
+        var graceCutoff = now.Subtract(gracePeriod).ToString("O", CultureInfo.InvariantCulture);
+        var claimCutoff = now.Subtract(ClaimTimeout).ToString("O", CultureInfo.InvariantCulture);
+        var claimedAt = now.ToString("O", CultureInfo.InvariantCulture);
+        var claimToken = Guid.NewGuid().ToString("N");
 
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.OutboxClaimPendingEntriesSql;
-        AddParameter(command, "@GraceCutoff", graceCutoff);
-        AddParameter(command, "@BatchSize", batchSize);
+        // Atomically claim the rows for this worker (Pending or stale-Claiming → Claiming, tagged
+        // with our unique token), then read back exactly the rows we claimed under that token.
+        // The UPDATE is the exclusivity primitive — two concurrent claimers can never tag the same row.
+        await this.ExecuteNonQueryAsync(
+            this.claimPendingSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
+                DbParameterHelper.Add(command, "@GraceCutoff", graceCutoff);
+                DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
+                DbParameterHelper.Add(command, "@BatchSize", batchSize);
+                DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
+                DbParameterHelper.Add(command, "@ClaimingStatus", (int)OutboxEntryStatus.Claiming);
+            },
+            cancellationToken);
 
-        using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var results = new List<OutboxEntry>();
-
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(ReadEntry(reader));
-        }
-
-        return results;
+        return await this.ExecuteReaderAsync(
+            SelectClaimedEntriesSql,
+            command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
+            ReadEntry,
+            cancellationToken);
     }
 
     /// <inheritdoc/>
-    public async Task MarkSentAsync(long entryId, CancellationToken cancellationToken)
-    {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.OutboxMarkSentSql;
-        AddParameter(command, "@Id", entryId);
-        AddParameter(command, "@SentAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    /// <inheritdoc/>
-    public async Task IncrementRetryAsync(long entryId, CancellationToken cancellationToken)
-    {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.OutboxIncrementRetrySql;
-        AddParameter(command, "@Id", entryId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task MarkSentAsync(long entryId, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            MarkSentSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", entryId);
+                DbParameterHelper.Add(command, "@SentAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            },
+            cancellationToken);
 
     /// <inheritdoc/>
-    public async Task MarkFailedAsync(long entryId, CancellationToken cancellationToken)
-    {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.OutboxMarkFailedSql;
-        AddParameter(command, "@Id", entryId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task IncrementRetryAsync(long entryId, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            IncrementRetrySql,
+            command => DbParameterHelper.Add(command, "@Id", entryId),
+            cancellationToken);
 
     /// <inheritdoc/>
-    public async Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
+    public Task MarkFailedAsync(long entryId, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            MarkFailedSql,
+            command => DbParameterHelper.Add(command, "@Id", entryId),
+            cancellationToken);
+
+    /// <inheritdoc/>
+    public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
     {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
         var retentionCutoff = DateTime.UtcNow.Subtract(retentionPeriod).ToString("O", CultureInfo.InvariantCulture);
-
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.OutboxDeleteCompletedSql;
-        AddParameter(command, "@RetentionCutoff", retentionCutoff);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return this.ExecuteNonQueryAsync(
+            DeleteCompletedSql,
+            command => DbParameterHelper.Add(command, "@RetentionCutoff", retentionCutoff),
+            cancellationToken);
     }
 
     /// <inheritdoc/>
-    public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-    {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.OutboxCreateTableSql;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(
@@ -146,7 +182,10 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
             return [];
         }
 
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        var claimCutoff = now.Subtract(ClaimTimeout).ToString("O", CultureInfo.InvariantCulture);
+        var claimedAt = now.ToString("O", CultureInfo.InvariantCulture);
+        var claimToken = Guid.NewGuid().ToString("N");
 
         var paramNames = new string[messageIds.Count];
         for (var i = 0; i < messageIds.Count; i++)
@@ -154,30 +193,60 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
             paramNames[i] = $"@p{i}";
         }
 
-        using var command = connection.CreateCommand();
-        command.CommandText = string.Format(
+        var claimSql = string.Format(
             CultureInfo.InvariantCulture,
-            this.dialect.OutboxClaimByMessageIdsSql,
+            this.claimByMessageIdsSql,
             string.Join(", ", paramNames));
 
-        for (var i = 0; i < messageIds.Count; i++)
-        {
-            AddParameter(command, $"@p{i}", messageIds[i]);
-        }
+        // Atomically claim the matching rows under our token, then read back what we claimed.
+        // The UPDATE guarantees a row is claimed by exactly one worker, so the relay and an
+        // immediate-send flush can never both dispatch the same entry.
+        await this.ExecuteNonQueryAsync(
+            claimSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
+                DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
+                DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
+                DbParameterHelper.Add(command, "@ClaimingStatus", (int)OutboxEntryStatus.Claiming);
 
-        using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var results = new List<ClaimedOutboxEntry>();
+                for (var i = 0; i < messageIds.Count; i++)
+                {
+                    DbParameterHelper.Add(command, $"@p{i}", messageIds[i]);
+                }
+            },
+            cancellationToken);
 
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new ClaimedOutboxEntry
+        return await this.ExecuteReaderAsync(
+            SelectClaimedIdsSql,
+            command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
+            reader => new ClaimedOutboxEntry
             {
                 Id = reader.GetInt64(reader.GetOrdinal("Id")),
                 MessageId = reader.GetString(reader.GetOrdinal("MessageId")),
-            });
-        }
+            },
+            cancellationToken);
+    }
 
-        return results;
+    private static string BuildCreateTableSql(ISqlDialect dialect)
+    {
+        var columns = $"""
+                Id {dialect.BigIntAutoIncrementPrimaryKey},
+                MessageId {dialect.TextType} NOT NULL,
+                ConversationId {dialect.TextType} NOT NULL,
+                CausationId {dialect.NullableTextType},
+                Type {dialect.TextType} NOT NULL,
+                Payload {dialect.TextType} NOT NULL,
+                Status {dialect.SmallIntType} NOT NULL DEFAULT 0,
+                CreatedAt {dialect.TimestampType} NOT NULL,
+                SentAt {dialect.NullableTimestampType},
+                RetryCount {dialect.IntegerType} NOT NULL DEFAULT 0,
+                ClaimedAt {dialect.NullableTimestampType},
+                ClaimToken {dialect.NullableTextType}
+            """;
+
+        return dialect.BuildCreateTableIfNotExistsSql("conduit_outbox", columns);
     }
 
     private static OutboxEntry ReadEntry(DbDataReader reader)
@@ -199,7 +268,12 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
             CausationId = causationId,
             Type = reader.GetString(reader.GetOrdinal("Type")),
             Payload = reader.GetString(reader.GetOrdinal("Payload")),
-            Status = (OutboxEntryStatus)reader.GetInt32(reader.GetOrdinal("Status")),
+            // Status maps to the engine's small-int type, whose native CLR width varies (SQL Server
+            // TINYINT -> byte, Postgres SMALLINT -> short). GetInt32 only succeeds when the native type
+            // is exactly Int32, so convert provider-agnostically.
+            Status = (OutboxEntryStatus)Convert.ToInt32(
+                reader.GetValue(reader.GetOrdinal("Status")),
+                CultureInfo.InvariantCulture),
             CreatedAt = DateTime.Parse(
                 reader.GetString(reader.GetOrdinal("CreatedAt")),
                 CultureInfo.InvariantCulture,
@@ -207,13 +281,5 @@ public sealed class DbConnectionOutboxStore : IOutboxStore
             SentAt = sentAt,
             RetryCount = reader.GetInt32(reader.GetOrdinal("RetryCount")),
         };
-    }
-
-    private static void AddParameter(DbCommand command, string name, object value)
-    {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
     }
 }

@@ -52,13 +52,22 @@ public static class ConduitBuilderExtensions
         builder.Services.AddSingleton(channel.Writer);
         builder.Services.AddSingleton(channel.Reader);
 
+        // Suppression is keyed by Type in the builder; the observer matches on the full type name
+        // carried by DispatchInvoked observations, so resolve to type-name sets up front.
+        var suppressedTypes = auditBuilder.SuppressedTypes
+            .Select(type => type.FullName!)
+            .ToHashSet(StringComparer.Ordinal);
+        var suppressedPayloadTypes = auditBuilder.SuppressedPayloadTypes
+            .Select(type => type.FullName!)
+            .ToHashSet(StringComparer.Ordinal);
+
         // Observer (consolidates observations per dispatch)
         builder.Services.AddSingleton(serviceProvider =>
         {
             var serviceName = auditBuilder.Options.ServiceName
                 ?? serviceProvider.GetService<IHostEnvironment>()?.ApplicationName
                 ?? "unknown";
-            return new AuditObserver(channel.Writer, serviceName);
+            return new AuditObserver(channel.Writer, serviceName, suppressedTypes, suppressedPayloadTypes);
         });
 
         // Wire observer at startup, unwire at shutdown
@@ -78,17 +87,17 @@ public static class ConduitBuilderExtensions
     /// either way the listener handles them identically.
     /// </summary>
     /// <param name="builder">The Conduit builder to configure.</param>
-    /// <param name="configure">Callback to configure the listener's database and retention.</param>
+    /// <param name="configure">Optional callback to tune the listener's retention. The persistence
+    /// engine is configured separately on the builder (e.g. <c>conduit.UseSqlite(...)</c>).</param>
     /// <returns>The original <paramref name="builder"/> for chaining.</returns>
     public static ConduitBuilder AddAuditListener(
         this ConduitBuilder builder,
-        Action<AuditListenerBuilder> configure)
+        Action<AuditListenerBuilder>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(configure);
 
         var listenerBuilder = new AuditListenerBuilder(builder.Services);
-        configure(listenerBuilder);
+        configure?.Invoke(listenerBuilder);
 
         // Retention/purge are owned by the listener (it registers the purge service).
         builder.Services.Configure<AuditOptions>(options =>

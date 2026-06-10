@@ -25,12 +25,6 @@ public static class ConduitBuilderExtensions
         var durabilityBuilder = new DurabilityBuilder(builder.Services);
         configure(durabilityBuilder);
 
-        if (!durabilityBuilder.DatabaseConfigured)
-        {
-            throw new InvalidOperationException(
-                "Durability database not configured. Call UseSqlite(), UseSqlServer<T>(), UsePostgres<T>(), or UseMySql<T>().");
-        }
-
         // Register the outbox pipeline behavior if outbox was added
         // (OutboxRegistration registers the behavior type, but ConduitBuilder owns pipeline ordering)
         if (builder.Services.Any(sd => sd.ServiceType == typeof(OutboxCapture)))

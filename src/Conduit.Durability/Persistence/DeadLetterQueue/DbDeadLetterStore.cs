@@ -1,71 +1,107 @@
+using System.Data;
 using System.Data.Common;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Conduit.Durability.DeadLetterQueue;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence;
 
 namespace Conduit.Durability.Persistence.DeadLetterQueue;
 
 /// <summary>
-/// ADO.NET dead letter store implementation. Delegates all SQL to <see cref="IDurabilityDialect"/>,
-/// making it compatible with any relational database that provides a <see cref="DbConnection"/>.
+/// ADO.NET dead letter store. SQL identifiers are module-owned; engine-specific idioms
+/// (pagination, type names) come from <see cref="ISqlDialect"/>.
 /// </summary>
-// CA2100: All SQL in this class comes from IDurabilityDialect — a trusted internal interface, never user input.
-[SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
-    Justification = "All SQL originates from IDurabilityDialect, which is internal infrastructure, never user-supplied input.")]
-public sealed class DbDeadLetterStore : IDeadLetterStore
+public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
 {
-    private readonly IDurabilityConnectionFactory connectionFactory;
-    private readonly IDurabilityDialect dialect;
+    private const string InsertSql = """
+        INSERT INTO conduit_dead_letters (Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt)
+        VALUES (@Id, @MessageType, @Body, @SourceEndpoint, @ExceptionType, @ExceptionMessage, @MessageId, @CausationId, @ConversationId, @AttemptCount, @DeadLetteredAt)
+        """;
 
-    /// <summary>
-    /// Initializes a new instance of <see cref="DbDeadLetterStore"/>.
-    /// </summary>
-    public DbDeadLetterStore(IDurabilityConnectionFactory connectionFactory, IDurabilityDialect dialect)
+    private const string SelectByIdSql = """
+        SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
+        FROM conduit_dead_letters WHERE Id = @Id
+        """;
+
+    private const string CountSql = """
+        SELECT COUNT(*) FROM conduit_dead_letters
+        WHERE (@MessageType IS NULL OR MessageType = @MessageType)
+          AND (@ExceptionType IS NULL OR ExceptionType = @ExceptionType)
+          AND (@Since IS NULL OR DeadLetteredAt >= @Since)
+          AND (@Until IS NULL OR DeadLetteredAt <= @Until)
+        """;
+
+    private const string DeleteByIdSql = "DELETE FROM conduit_dead_letters WHERE Id = @Id";
+
+    private readonly string createTableSql;
+    private readonly string queryPageSql;
+
+    /// <summary>Initializes a new instance of <see cref="DbDeadLetterStore"/>.</summary>
+    public DbDeadLetterStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+        : base(connectionFactory)
     {
-        this.connectionFactory = connectionFactory;
-        this.dialect = dialect;
+        ArgumentNullException.ThrowIfNull(dialect);
+
+        this.createTableSql = dialect.BuildCreateTableIfNotExistsSql(
+            "conduit_dead_letters",
+            $"""
+                Id {dialect.KeyTextType} NOT NULL PRIMARY KEY,
+                MessageType {dialect.TextType} NOT NULL,
+                Body {dialect.BlobType} NOT NULL,
+                SourceEndpoint {dialect.TextType} NOT NULL,
+                ExceptionType {dialect.NullableTextType},
+                ExceptionMessage {dialect.NullableTextType},
+                MessageId {dialect.NullableTextType},
+                CausationId {dialect.NullableTextType},
+                ConversationId {dialect.NullableTextType},
+                AttemptCount {dialect.IntegerType} NOT NULL DEFAULT 1,
+                DeadLetteredAt {dialect.TimestampType} NOT NULL
+            """);
+
+        this.queryPageSql = $"""
+            SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
+            FROM conduit_dead_letters
+            WHERE (@MessageType IS NULL OR MessageType = @MessageType)
+              AND (@ExceptionType IS NULL OR ExceptionType = @ExceptionType)
+              AND (@Since IS NULL OR DeadLetteredAt >= @Since)
+              AND (@Until IS NULL OR DeadLetteredAt <= @Until)
+            ORDER BY DeadLetteredAt DESC
+            {dialect.PaginationSuffix}
+            """;
     }
 
     /// <inheritdoc/>
-    public async Task WriteAsync(DeadLetterEntry entry, CancellationToken cancellationToken)
+    public Task WriteAsync(DeadLetterEntry entry, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(entry);
 
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.DeadLetterInsertSql;
-
-        AddParameter(command, "@Id", entry.Id.ToString("D"));
-        AddParameter(command, "@MessageType", entry.MessageType);
-        AddParameter(command, "@Body", entry.Body.ToArray());
-        AddParameter(command, "@SourceEndpoint", entry.SourceEndpoint);
-        AddParameter(command, "@ExceptionType", (object?)entry.ExceptionType ?? DBNull.Value);
-        AddParameter(command, "@ExceptionMessage", (object?)entry.ExceptionMessage ?? DBNull.Value);
-        AddParameter(command, "@MessageId", (object?)entry.MessageId ?? DBNull.Value);
-        AddParameter(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
-        AddParameter(command, "@ConversationId", (object?)entry.ConversationId ?? DBNull.Value);
-        AddParameter(command, "@AttemptCount", entry.AttemptCount);
-        AddParameter(command, "@DeadLetteredAt", entry.DeadLetteredAt.ToString("O", CultureInfo.InvariantCulture));
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return this.ExecuteNonQueryAsync(
+            InsertSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", entry.Id.ToString("D"));
+                DbParameterHelper.Add(command, "@MessageType", entry.MessageType);
+                DbParameterHelper.Add(command, "@Body", entry.Body.ToArray());
+                DbParameterHelper.Add(command, "@SourceEndpoint", entry.SourceEndpoint);
+                DbParameterHelper.Add(command, "@ExceptionType", (object?)entry.ExceptionType ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@ExceptionMessage", (object?)entry.ExceptionMessage ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@MessageId", (object?)entry.MessageId ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@ConversationId", (object?)entry.ConversationId ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@AttemptCount", entry.AttemptCount);
+                DbParameterHelper.Add(command, "@DeadLetteredAt", entry.DeadLetteredAt.ToString("O", CultureInfo.InvariantCulture));
+            },
+            cancellationToken);
     }
 
     /// <inheritdoc/>
     public async Task<DeadLetterEntry?> GetAsync(Guid id, CancellationToken cancellationToken)
     {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.DeadLetterSelectByIdSql;
-        AddParameter(command, "@Id", id.ToString("D"));
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return null;
-        }
-
-        return ReadEntry(reader);
+        var entries = await this.ExecuteReaderAsync(
+            SelectByIdSql,
+            command => DbParameterHelper.Add(command, "@Id", id.ToString("D")),
+            ReadEntry,
+            cancellationToken);
+        return entries.Count == 0 ? null : entries[0];
     }
 
     /// <inheritdoc/>
@@ -79,33 +115,22 @@ public sealed class DbDeadLetterStore : IDeadLetterStore
             offset = parsedOffset;
         }
 
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
+        var countResult = await this.ExecuteScalarAsync(
+            CountSql,
+            command => AddFilterParameters(command, filter),
+            cancellationToken);
+        var totalCount = Convert.ToInt32(countResult, CultureInfo.InvariantCulture);
 
-        // Count
-        int totalCount;
-        using (var countCommand = connection.CreateCommand())
-        {
-            countCommand.CommandText = this.dialect.DeadLetterCountSql;
-            AddFilterParameters(countCommand, filter);
-            var countResult = await countCommand.ExecuteScalarAsync(cancellationToken);
-            totalCount = Convert.ToInt32(countResult, CultureInfo.InvariantCulture);
-        }
-
-        // Page
-        var entries = new List<DeadLetterEntry>();
-        using (var pageCommand = connection.CreateCommand())
-        {
-            pageCommand.CommandText = this.dialect.DeadLetterQueryPageSql;
-            AddFilterParameters(pageCommand, filter);
-            AddParameter(pageCommand, "@PageSize", filter.PageSize);
-            AddParameter(pageCommand, "@Offset", offset);
-
-            await using var reader = await pageCommand.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
+        var entries = await this.ExecuteReaderAsync(
+            this.queryPageSql,
+            command =>
             {
-                entries.Add(ReadEntry(reader));
-            }
-        }
+                AddFilterParameters(command, filter);
+                DbParameterHelper.Add(command, "@PageSize", filter.PageSize);
+                DbParameterHelper.Add(command, "@Offset", offset);
+            },
+            ReadEntry,
+            cancellationToken);
 
         var nextOffset = offset + entries.Count;
         var nextPageToken = nextOffset < totalCount
@@ -121,14 +146,11 @@ public sealed class DbDeadLetterStore : IDeadLetterStore
     }
 
     /// <inheritdoc/>
-    public async Task RemoveAsync(Guid id, CancellationToken cancellationToken)
-    {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.DeadLetterDeleteByIdSql;
-        AddParameter(command, "@Id", id.ToString("D"));
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task RemoveAsync(Guid id, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            DeleteByIdSql,
+            command => DbParameterHelper.Add(command, "@Id", id.ToString("D")),
+            cancellationToken);
 
     /// <inheritdoc/>
     public async Task RemoveAsync(IEnumerable<Guid> ids, CancellationToken cancellationToken)
@@ -141,32 +163,32 @@ public sealed class DbDeadLetterStore : IDeadLetterStore
             return;
         }
 
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-
         var paramNames = new string[idList.Count];
         for (var i = 0; i < idList.Count; i++)
         {
             paramNames[i] = $"@p{i}";
-            AddParameter(command, paramNames[i], idList[i].ToString("D"));
         }
 
-        command.CommandText = string.Format(
+        var deleteSql = string.Format(
             CultureInfo.InvariantCulture,
-            this.dialect.DeadLetterDeleteByIdsSql,
+            "DELETE FROM conduit_dead_letters WHERE Id IN ({0})",
             string.Join(", ", paramNames));
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await this.ExecuteNonQueryAsync(
+            deleteSql,
+            command =>
+            {
+                for (var i = 0; i < idList.Count; i++)
+                {
+                    DbParameterHelper.Add(command, paramNames[i], idList[i].ToString("D"));
+                }
+            },
+            cancellationToken);
     }
 
     /// <inheritdoc/>
-    public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-    {
-        var connection = await this.connectionFactory.CreateConnectionAsync(cancellationToken);
-        using var command = connection.CreateCommand();
-        command.CommandText = this.dialect.DeadLetterCreateTableSql;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
 
     private static DeadLetterEntry ReadEntry(DbDataReader reader) => new()
     {
@@ -193,21 +215,17 @@ public sealed class DbDeadLetterStore : IDeadLetterStore
 
     private static void AddFilterParameters(DbCommand command, DeadLetterFilter filter)
     {
-        AddParameter(command, "@MessageType", (object?)filter.MessageType ?? DBNull.Value);
-        AddParameter(command, "@ExceptionType", (object?)filter.ExceptionType ?? DBNull.Value);
-        AddParameter(command, "@Since", filter.Since.HasValue
+        // All four filter values are text (message/exception type names, ISO 8601 timestamps). Bind
+        // them with an explicit string DbType so a null filter still carries a resolvable type — some
+        // providers (Npgsql) cannot infer the type of an untyped DBNull used in an `IS NULL` predicate
+        // and fail with "could not determine data type of parameter".
+        DbParameterHelper.Add(command, "@MessageType", (object?)filter.MessageType ?? DBNull.Value, DbType.String);
+        DbParameterHelper.Add(command, "@ExceptionType", (object?)filter.ExceptionType ?? DBNull.Value, DbType.String);
+        DbParameterHelper.Add(command, "@Since", filter.Since.HasValue
             ? filter.Since.Value.ToString("O", CultureInfo.InvariantCulture)
-            : DBNull.Value);
-        AddParameter(command, "@Until", filter.Until.HasValue
+            : DBNull.Value, DbType.String);
+        DbParameterHelper.Add(command, "@Until", filter.Until.HasValue
             ? filter.Until.Value.ToString("O", CultureInfo.InvariantCulture)
-            : DBNull.Value);
-    }
-
-    private static void AddParameter(DbCommand command, string name, object value)
-    {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
+            : DBNull.Value, DbType.String);
     }
 }

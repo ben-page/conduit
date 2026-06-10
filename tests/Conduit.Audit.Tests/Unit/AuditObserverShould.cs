@@ -225,4 +225,102 @@ public sealed class AuditObserverShould
         channel.Reader.TryRead(out var record).Should().BeTrue();
         record!.Properties.Should().BeNull();
     }
+
+    [TestMethod]
+    public void SkipRecordingForSuppressedType()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var suppressedTypes = new HashSet<string> { "Test.Commands.Secret" };
+        var observer = new AuditObserver(
+            channel.Writer, "TestService", suppressedTypes, new HashSet<string>());
+        var context = MessageContext.StartDispatch();
+
+        // Act
+        observer.OnObservation(
+            new DispatchInvoked("Test.Commands.Secret", "Command"), context);
+        observer.OnObservation(
+            new HandlerStarted("SecretHandler"), context);
+        observer.OnObservation(
+            new DispatchCompleted(1.0), context);
+
+        // Assert
+        channel.Reader.TryRead(out _).Should().BeFalse(
+            "a Suppress<T>()-marked type should produce no audit record");
+    }
+
+    [TestMethod]
+    public void OmitPayloadForSuppressedPayloadType()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var suppressedPayloadTypes = new HashSet<string> { "Test.Commands.Sensitive" };
+        var observer = new AuditObserver(
+            channel.Writer, "TestService", new HashSet<string>(), suppressedPayloadTypes);
+        var context = MessageContext.StartDispatch();
+        context.SetPayload(JsonSerializer.SerializeToElement(new { ssn = "123-45-6789" }));
+
+        // Act
+        observer.OnObservation(
+            new DispatchInvoked("Test.Commands.Sensitive", "Command"), context);
+        observer.OnObservation(
+            new DispatchCompleted(1.0), context);
+
+        // Assert
+        channel.Reader.TryRead(out var record).Should().BeTrue(
+            "a SuppressPayload<T>()-marked type should still produce a record");
+        record!.MessageType.Should().Be("Test.Commands.Sensitive");
+        record.Observations.Should().HaveCount(2);
+        record.Payload.Should().BeNull("the sensitive payload must be omitted from the record");
+    }
+
+    [TestMethod]
+    public void EvictStaleGroupOlderThanTimeout()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(channel.Writer, "TestService");
+        var context = MessageContext.StartDispatch();
+        var staleTimeout = TimeSpan.FromMinutes(5);
+
+        // A dispatch that never emits a terminal observation (crash mid-handler).
+        observer.OnObservation(
+            new DispatchInvoked("Test.Commands.Crashes", "Command"), context);
+        observer.OnObservation(
+            new HandlerStarted("CrashingHandler"), context);
+
+        // No terminal observation arrives. The group leaks unless swept.
+        channel.Reader.TryRead(out _).Should().BeFalse("not yet swept");
+
+        // Act: sweep with a 'now' well past the stale timeout.
+        observer.EvictStaleGroups(DateTime.UtcNow.AddMinutes(10), staleTimeout);
+
+        // Assert: the stale group is flushed (as incomplete) rather than leaked.
+        channel.Reader.TryRead(out var record).Should().BeTrue(
+            "a group with no terminal observation older than StaleGroupTimeout should be evicted");
+        record!.MessageId.Should().Be(context.MessageId);
+        record.MessageType.Should().Be("Test.Commands.Crashes");
+        record.Observations.Should().Contain(observation => observation is DispatchFailed,
+            "an evicted incomplete dispatch should be sealed as failed/incomplete");
+    }
+
+    [TestMethod]
+    public void NotEvictFreshGroupWithinTimeout()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(channel.Writer, "TestService");
+        var context = MessageContext.StartDispatch();
+        var staleTimeout = TimeSpan.FromMinutes(5);
+
+        observer.OnObservation(
+            new DispatchInvoked("Test.Commands.InFlight", "Command"), context);
+
+        // Act: sweep with a 'now' still within the timeout window.
+        observer.EvictStaleGroups(DateTime.UtcNow.AddMinutes(1), staleTimeout);
+
+        // Assert: an in-flight group younger than the timeout is left alone.
+        channel.Reader.TryRead(out _).Should().BeFalse(
+            "a group younger than StaleGroupTimeout must not be evicted");
+    }
 }

@@ -1,10 +1,11 @@
 using AwesomeAssertions;
 using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.DeadLetterQueue;
-using Conduit.Durability.Persistence.Dialects;
+using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Runtime.DeadLetterQueue;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
+using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 

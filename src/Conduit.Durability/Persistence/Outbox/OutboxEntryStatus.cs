@@ -11,4 +11,11 @@ public enum OutboxEntryStatus
     Sent = 1,
     /// <summary>Message failed to send after maximum retries.</summary>
     Failed = 2,
+    /// <summary>
+    /// Message has been atomically claimed by a worker (relay or immediate-send flush) and is
+    /// being dispatched. A claim is exclusive — only the claiming worker will dispatch the row.
+    /// A claim that is not resolved (sent/failed/retried) before the claim timeout is treated as
+    /// abandoned and becomes re-claimable, so a crashed worker never strands a message.
+    /// </summary>
+    Claiming = 3,
 }

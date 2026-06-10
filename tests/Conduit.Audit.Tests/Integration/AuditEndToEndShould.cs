@@ -3,6 +3,7 @@ using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
 using Conduit.Audit.Tests.Support;
 using Conduit.Generated;
+using Conduit.Persistence.Sqlite;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,6 +32,7 @@ public sealed class AuditEndToEndShould
             builder.Services.AddSingleton<MessageIdCapture>();
             builder.Services.AddConduit(conduit =>
             {
+                conduit.UseSqlite(connectionString);
                 conduit.AddAudit(audit =>
                 {
                     audit.BatchSize = 1;
@@ -38,7 +40,6 @@ public sealed class AuditEndToEndShould
                 });
                 conduit.AddAuditListener(listener =>
                 {
-                    listener.UseSqlite(connectionString);
                 });
             });
         });

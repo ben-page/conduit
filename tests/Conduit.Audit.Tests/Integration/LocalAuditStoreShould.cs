@@ -2,11 +2,18 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
+using Conduit.Persistence.Sqlite;
 using Conduit.Runtime;
-using Microsoft.Data.Sqlite;
+using Conduit.TestUtils;
 
 namespace Conduit.Audit.Tests.Integration;
 
+/// <summary>
+/// Functional round-trip tests for <see cref="DbAuditStore"/> against real SQLite. These exercise the
+/// audit module's composed SQL (DDL, insert, select-by-message-id, delete-expired) end to end, which
+/// is where the engine-specific dialect coverage now lives after the audit dialects were folded into
+/// the shared <see cref="Conduit.Persistence.ISqlDialect"/>.
+/// </summary>
 [TestClass]
 public sealed class LocalAuditStoreShould
 {
@@ -14,13 +21,8 @@ public sealed class LocalAuditStoreShould
     public async Task SaveAndRetrieveAuditRecord()
     {
         // Arrange
-        var dbName = $"test_save_{Guid.NewGuid():N}";
-        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
-        using var keepAlive = new SqliteConnection(connectionString);
-        await keepAlive.OpenAsync();
-        var factory = new TestConnectionFactory(connectionString);
-        var dialect = new SqliteAuditDialect();
-        var store = new DbAuditStore(factory, dialect);
+        await using var factory = new StubConnectionFactory();
+        var store = new DbAuditStore(factory, new SqliteDialect());
 
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
@@ -83,13 +85,8 @@ public sealed class LocalAuditStoreShould
     public async Task PurgeExpiredRecords()
     {
         // Arrange
-        var dbName = $"test_purge_{Guid.NewGuid():N}";
-        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
-        using var keepAlive = new SqliteConnection(connectionString);
-        await keepAlive.OpenAsync();
-        var factory = new TestConnectionFactory(connectionString);
-        var dialect = new SqliteAuditDialect();
-        var store = new DbAuditStore(factory, dialect);
+        await using var factory = new StubConnectionFactory();
+        var store = new DbAuditStore(factory, new SqliteDialect());
 
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
@@ -145,13 +142,8 @@ public sealed class LocalAuditStoreShould
     public async Task RoundTripTimestampAsUtc()
     {
         // Arrange
-        var dbName = $"test_utc_{Guid.NewGuid():N}";
-        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
-        using var keepAlive = new SqliteConnection(connectionString);
-        await keepAlive.OpenAsync();
-        var factory = new TestConnectionFactory(connectionString);
-        var dialect = new SqliteAuditDialect();
-        var store = new DbAuditStore(factory, dialect);
+        await using var factory = new StubConnectionFactory();
+        var store = new DbAuditStore(factory, new SqliteDialect());
 
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
@@ -181,13 +173,8 @@ public sealed class LocalAuditStoreShould
     public async Task ReturnNullForNonExistentMessageId()
     {
         // Arrange
-        var dbName = $"test_null_{Guid.NewGuid():N}";
-        var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
-        using var keepAlive = new SqliteConnection(connectionString);
-        await keepAlive.OpenAsync();
-        var factory = new TestConnectionFactory(connectionString);
-        var dialect = new SqliteAuditDialect();
-        var store = new DbAuditStore(factory, dialect);
+        await using var factory = new StubConnectionFactory();
+        var store = new DbAuditStore(factory, new SqliteDialect());
 
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
@@ -196,16 +183,5 @@ public sealed class LocalAuditStoreShould
 
         // Assert
         result.Should().BeNull();
-    }
-
-    /// <summary>
-    /// Test connection factory that creates new connections from a shared-cache connection string.
-    /// The shared-cache in-memory database survives across connections as long as at least one
-    /// connection remains open (the keep-alive connection in each test).
-    /// </summary>
-    private sealed class TestConnectionFactory(string connectionString) : IAuditConnectionFactory
-    {
-        public System.Data.Common.DbConnection CreateConnection() =>
-            new SqliteConnection(connectionString);
     }
 }
