@@ -62,10 +62,7 @@ public class HttpTransport(HttpClient httpClient, string basePath = "/api/condui
         {
             request.Headers.Add("X-Conduit-Message-Id", context.MessageId);
             request.Headers.Add("X-Conduit-Conversation-Id", context.ConversationId);
-            if (context.CausationId is not null)
-            {
-                request.Headers.Add("X-Conduit-Causation-Id", context.CausationId);
-            }
+            request.Headers.Add("X-Conduit-Causation-Id", context.CausationId);
         }
 
         using var response = await httpClient.SendAsync(request, cancellationToken);

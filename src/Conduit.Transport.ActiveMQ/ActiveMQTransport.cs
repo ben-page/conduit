@@ -179,7 +179,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             this.StartConsumer(
                 this.topologyResult.AppEventQueueName,
                 this.topologyResult.MulticastAddress,
-                this.options.DefaultPrefetchCount);
+                this.options.DefaultConcurrency);
         }
 
         // Start shared command/query queue consumers (unicast — competing consumers, default prefetch)
@@ -188,7 +188,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             this.StartConsumer(
                 sharedQueueName,
                 this.topologyResult.AnycastAddress,
-                this.options.DefaultPrefetchCount);
+                this.options.DefaultConcurrency);
         }
 
         // Start pool event queue consumers (multicast, pool-specific prefetch)
@@ -627,10 +627,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         var context = MessageContext.Current;
         if (context is not null)
         {
-            if (context.CausationId is not null)
-            {
-                properties["CausationId"] = context.CausationId;
-            }
+            properties["CausationId"] = context.CausationId;
         }
 
         if (pendingTraceHeaders is not null)

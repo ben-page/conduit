@@ -281,7 +281,7 @@ public class TopologyManagerShould
         rabbitOptions.Pools.Add(new ReceiverPoolOptions
         {
             Name = "bulk",
-            PrefetchCount = 1,
+            Concurrency = 1,
         });
         rabbitOptions.Pools[0].Handle("Orders.Commands.ImportBulk");
         rabbitOptions.Pools[0].Handle("Orders.Events.BulkImported");
@@ -311,7 +311,7 @@ public class TopologyManagerShould
         rabbitOptions.Pools.Add(new ReceiverPoolOptions
         {
             Name = "bulk",
-            PrefetchCount = 1,
+            Concurrency = 1,
         });
         rabbitOptions.Pools[0].Handle("Orders.Events.BulkImported");
 

@@ -189,7 +189,7 @@ internal sealed class ActiveMQTopologyManager
                         anycastAddress, sharedPoolQueueName, "ANYCAST",
                         filterExpression: $"JMSType='{messageType}'");
 
-                    poolCommandQueryQueues.Add((sharedPoolQueueName, pool.PrefetchCount));
+                    poolCommandQueryQueues.Add((sharedPoolQueueName, pool.Concurrency));
                 }
                 else
                 {
@@ -202,7 +202,7 @@ internal sealed class ActiveMQTopologyManager
                         hasPoolEvents = true;
                     }
 
-                    poolEventQueues.Add((poolEventQueueName, pool.PrefetchCount));
+                    poolEventQueues.Add((poolEventQueueName, pool.Concurrency));
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();

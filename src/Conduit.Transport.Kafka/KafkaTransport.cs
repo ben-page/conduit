@@ -22,13 +22,15 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     private readonly string instanceId = Guid.NewGuid().ToString("N")[..12];
 
     private IProducer<string, byte[]>? producer;
-    private IConsumer<string, byte[]>? commandQueryConsumer;
-    private IConsumer<string, byte[]>? eventConsumer;
+
+    // All inbound consumer instances (default groups + pool groups), each running its own
+    // sequential consume loop. Multiple instances share a group.id to scale partition
+    // consumption — Kafka balances partitions across them. Held for graceful Close()/Dispose().
+    private readonly List<IConsumer<string, byte[]>> messageConsumers = [];
     private IConsumer<string, byte[]>? replyConsumer;
 
     private CancellationTokenSource? consumerCts;
-    private Task? commandQueryConsumerTask;
-    private Task? eventConsumerTask;
+    private readonly List<Task> consumerTasks = [];
     private Task? replyConsumerTask;
     private Task? cleanupTask;
 
@@ -53,9 +55,9 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(101, "SendingRequest"),
             "Sending request '{Type}' to Kafka topic");
 
-    private static readonly Action<ILogger, Exception?> LogStartingConsumers =
-        LoggerMessage.Define(LogLevel.Information, new EventId(105, "StartingConsumers"),
-            "Starting Kafka consumers");
+    private static readonly Action<ILogger, int, int, Exception?> LogStartingConsumers =
+        LoggerMessage.Define<int, int>(LogLevel.Information, new EventId(105, "StartingConsumers"),
+            "Starting Kafka consumers: {ConsumerCount} instance(s) across {GroupCount} consumer group(s)");
 
     private static readonly Action<ILogger, Exception?> LogTransportStopping =
         LoggerMessage.Define(LogLevel.Information, new EventId(106, "TransportStopping"),
@@ -136,34 +138,33 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     /// <inheritdoc />
     protected override Task StartConsumersAsync(CancellationToken cancellationToken)
     {
-        LogStartingConsumers(this.Logger, null);
-
         this.consumerCts = new CancellationTokenSource();
         var token = this.consumerCts.Token;
 
-        // Command/query consumer — shared group (unicast).
-        // Only start if this host handles command/query types. A host with no
-        // command/query types in its registry must not join the shared group —
-        // it would steal partitions and discard messages other hosts need.
-        if (this.commandQueryTypeNames.Count > 0)
+        var groupSpecs = this.BuildConsumerGroupSpecs();
+
+        // Concurrency = N consumer instances per consumer group. Each instance runs the same
+        // sequential consume loop; Kafka balances the shared topic's partitions across the
+        // instances in a group and commits offsets per instance. This delivers real parallelism
+        // (bounded by the topic's partition count) and preserves per-partition ordering — no
+        // manual offset tracking. Pools are isolated because each is an independent consumer
+        // group with its own instances; a slow pool handler cannot block another group.
+        foreach (var spec in groupSpecs)
         {
-            var sharedGroupName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 249);
-            this.commandQueryConsumer = this.CreateConsumer(sharedGroupName);
-            this.commandQueryConsumer.Subscribe(this.sharedTopicName);
-            this.commandQueryConsumerTask = Task.Run(
-                () => this.ConsumeLoopAsync(this.commandQueryConsumer, isCommandQueryConsumer: true, token), token);
+            for (var instance = 0; instance < spec.InstanceCount; instance++)
+            {
+                var consumer = this.CreateConsumer(spec.GroupId);
+                consumer.Subscribe(this.sharedTopicName);
+                this.messageConsumers.Add(consumer);
+
+                var ownedTypes = spec.OwnedTypes;
+                this.consumerTasks.Add(Task.Run(
+                    () => this.ConsumeLoopAsync(consumer, ownedTypes, token), token));
+            }
         }
 
-        // Event consumer — per-app group (multicast).
-        // Only start if this host handles event types.
-        if (this.eventTypeNames.Count > 0)
-        {
-            var appGroupName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 249);
-            this.eventConsumer = this.CreateConsumer(appGroupName);
-            this.eventConsumer.Subscribe(this.sharedTopicName);
-            this.eventConsumerTask = Task.Run(
-                () => this.ConsumeLoopAsync(this.eventConsumer, isCommandQueryConsumer: false, token), token);
-        }
+        var totalInstances = this.consumerTasks.Count;
+        LogStartingConsumers(this.Logger, totalInstances, groupSpecs.Count, null);
 
         this.StartReplyConsumer();
 
@@ -175,6 +176,111 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Builds the set of inbound consumer groups for this host. Pools become dedicated consumer
+    /// groups that own only their assigned message types; the default groups own the complement
+    /// (types not claimed by any pool). Command/query types use the shared (unicast) group id so
+    /// exactly one instance across all hosts processes each message; event types use the per-app
+    /// (multicast) group id so every app receives a copy. Each group runs its configured number of
+    /// consumer instances (<see cref="BrokerTransportOptions.DefaultConcurrency"/> for the default
+    /// groups, <see cref="ReceiverPoolOptions.Concurrency"/> for pool groups).
+    /// </summary>
+    private List<ConsumerGroupSpec> BuildConsumerGroupSpecs()
+    {
+        var specs = new List<ConsumerGroupSpec>();
+
+        // Types claimed by any pool — removed from the default groups' owned sets.
+        var pooledTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var pool in this.options.Pools)
+        {
+            foreach (var messageType in pool.MessageTypes)
+            {
+                pooledTypes.Add(messageType);
+            }
+        }
+
+        // Cap instance count at the shared topic's partition count: extra instances would sit
+        // idle (Kafka assigns each partition to exactly one consumer in a group). This is the
+        // inherent parallelism ceiling for a single group.
+        var defaultConcurrency = ClampConcurrency(this.options.DefaultConcurrency);
+
+        // Default command/query group — shared (unicast). Owns command/query types not pooled.
+        // Only start if this host handles command/query types. A host with no command/query types
+        // must not join the shared group — it would steal partitions and discard messages other
+        // hosts need.
+        var defaultCommandQueryTypes = this.commandQueryTypeNames
+            .Where(typeName => !pooledTypes.Contains(typeName))
+            .ToHashSet(StringComparer.Ordinal);
+        if (defaultCommandQueryTypes.Count > 0)
+        {
+            specs.Add(new ConsumerGroupSpec(
+                TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 249),
+                defaultCommandQueryTypes,
+                defaultConcurrency));
+        }
+
+        // Default event group — per-app (multicast). Owns event types not pooled.
+        var defaultEventTypes = this.eventTypeNames
+            .Where(typeName => !pooledTypes.Contains(typeName))
+            .ToHashSet(StringComparer.Ordinal);
+        if (defaultEventTypes.Count > 0)
+        {
+            specs.Add(new ConsumerGroupSpec(
+                TopologyNaming.CreateAppResourceName(this.ConduitOptions, 249),
+                defaultEventTypes,
+                defaultConcurrency));
+        }
+
+        // Pool groups — one dedicated consumer group per pool. Command/query types in a pool use
+        // a shared (unicast) pool group; event types use a per-app (multicast) pool group. This
+        // mirrors the default split while keeping the pool's processing isolated on its own group.
+        foreach (var pool in this.options.Pools)
+        {
+            var poolConcurrency = ClampConcurrency(pool.Concurrency);
+
+            var poolCommandQueryTypes = pool.MessageTypes
+                .Where(this.commandQueryTypeNames.Contains)
+                .ToHashSet(StringComparer.Ordinal);
+            if (poolCommandQueryTypes.Count > 0)
+            {
+                specs.Add(new ConsumerGroupSpec(
+                    TopologyNaming.CreateSharedResourceName(this.ConduitOptions, $"pool-{pool.Name}", 249),
+                    poolCommandQueryTypes,
+                    poolConcurrency));
+            }
+
+            var poolEventTypes = pool.MessageTypes
+                .Where(this.eventTypeNames.Contains)
+                .ToHashSet(StringComparer.Ordinal);
+            if (poolEventTypes.Count > 0)
+            {
+                specs.Add(new ConsumerGroupSpec(
+                    TopologyNaming.CreateAppResourceName(this.ConduitOptions, $"pool-{pool.Name}", 249),
+                    poolEventTypes,
+                    poolConcurrency));
+            }
+        }
+
+        return specs;
+    }
+
+    /// <summary>
+    /// Describes one inbound consumer group: its deterministic group id, the set of message types
+    /// it owns (and exclusively processes — all other types are skipped and committed past), and
+    /// the number of consumer instances to run in the group for concurrency.
+    /// </summary>
+    private sealed record ConsumerGroupSpec(
+        string GroupId,
+        HashSet<string> OwnedTypes,
+        int InstanceCount);
+
+    /// <summary>
+    /// Clamps a requested concurrency to [1, shared-topic-partition-count]. Running more consumer
+    /// instances than partitions yields no extra parallelism — the surplus stay idle.
+    /// </summary>
+    private static int ClampConcurrency(int requested) =>
+        Math.Clamp(requested, 1, KafkaTopologyManager.SharedTopicPartitions);
 
     private void StartReplyConsumer()
     {
@@ -201,16 +307,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         // Wait for in-flight message processing (bounded by ResponseTimeout)
         var timeout = this.options.ResponseTimeout;
-        var tasks = new List<Task>();
-        if (this.commandQueryConsumerTask is not null)
-        {
-            tasks.Add(this.commandQueryConsumerTask);
-        }
-
-        if (this.eventConsumerTask is not null)
-        {
-            tasks.Add(this.eventConsumerTask);
-        }
+        var tasks = new List<Task>(this.consumerTasks);
 
         if (this.replyConsumerTask is not null)
         {
@@ -228,8 +325,11 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         }
 
         // Close consumers gracefully to leave consumer groups (avoids rebalance timeout delay)
-        this.commandQueryConsumer?.Close();
-        this.eventConsumer?.Close();
+        foreach (var consumer in this.messageConsumers)
+        {
+            consumer.Close();
+        }
+
         this.replyConsumer?.Close();
 
         // Cancel pending outbound reply waiters
@@ -245,8 +345,11 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     public override ValueTask DisposeAsync()
     {
         this.consumerCts?.Dispose();
-        this.commandQueryConsumer?.Dispose();
-        this.eventConsumer?.Dispose();
+        foreach (var consumer in this.messageConsumers)
+        {
+            consumer.Dispose();
+        }
+
         this.replyConsumer?.Dispose();
         this.producer?.Dispose();
         return ValueTask.CompletedTask;
@@ -359,7 +462,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
             var message = new Message<string, byte[]>
             {
-                Key = envelope.Type,
+                Key = PartitionKey(),
                 Value = body.ToArray(),
                 Headers = headers,
             };
@@ -395,7 +498,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         var message = new Message<string, byte[]>
         {
-            Key = envelope.Type,
+            Key = PartitionKey(),
             Value = body.ToArray(),
             Headers = headers,
         };
@@ -428,13 +531,24 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         var message = new Message<string, byte[]>
         {
-            Key = envelope.Type,
+            Key = Guid.NewGuid().ToString("N"),
             Value = body.ToArray(),
             Headers = headers,
         };
 
         await this.producer.ProduceAsync(this.sharedTopicName, message, cancellationToken);
     }
+
+    /// <summary>
+    /// Builds the Kafka partition key for an outbound message. Uses the current message id (a
+    /// fresh GUID per dispatch) so messages — including those of the same type — distribute across
+    /// the shared topic's partitions. This lets a consumer group with concurrency &gt; 1 process
+    /// them in parallel. The type discriminator travels in the <c>conduit-type</c> header, not the
+    /// key, so partition routing is independent of message type. There is no cross-message ordering
+    /// contract between distinct dispatches, so distributing the key is safe.
+    /// </summary>
+    private static string PartitionKey() =>
+        MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N");
 
     // -----------------------------------------------------------------------
     // Trace context
@@ -472,13 +586,9 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
     private async Task ConsumeLoopAsync(
         IConsumer<string, byte[]> consumer,
-        bool isCommandQueryConsumer,
+        HashSet<string> ownedTypes,
         CancellationToken cancellationToken)
     {
-        var relevantTypes = isCommandQueryConsumer
-            ? this.commandQueryTypeNames
-            : this.eventTypeNames;
-
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -498,9 +608,10 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
                     continue;
                 }
 
-                // Filter: only process message types relevant to this consumer
+                // Filter: this group exclusively owns a set of message types. Skip (but commit
+                // past) everything else so the owning group — and only that group — processes it.
                 var messageType = GetHeaderString(result.Message.Headers, "conduit-type");
-                if (messageType is null || !relevantTypes.Contains(messageType))
+                if (messageType is null || !ownedTypes.Contains(messageType))
                 {
                     try
                     {
@@ -671,12 +782,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         if (context is not null)
         {
             headers.Add("conduit-message-id", Encoding.UTF8.GetBytes(context.MessageId));
-
-            if (context.CausationId is not null)
-            {
-                headers.Add("conduit-causation-id", Encoding.UTF8.GetBytes(context.CausationId));
-            }
-
+            headers.Add("conduit-causation-id", Encoding.UTF8.GetBytes(context.CausationId));
             headers.Add("conduit-conversation-id", Encoding.UTF8.GetBytes(context.ConversationId));
         }
 

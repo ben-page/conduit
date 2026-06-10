@@ -47,11 +47,10 @@ public class AsbReceiverPoolShould : AsbTestBase
                     endpoint.UseAzureServiceBus(ConnectionString!, options =>
                     {
                         options.AdminConnectionString = AdminConnectionString;
-                        options.Pools.Add(new ReceiverPoolOptions
+                        options.AddPool(poolName, pool =>
                         {
-                            Name = poolName,
-                            Concurrency = poolConcurrency,
-                            MessageTypes = { SlowCommandTypeName },
+                            pool.Concurrency = poolConcurrency;
+                            pool.Handle(SlowCommandTypeName);
                         });
                     }));
             });

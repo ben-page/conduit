@@ -1,3 +1,4 @@
+using Conduit.Runtime;
 using Confluent.Kafka;
 
 namespace Conduit.Transport.Kafka;
@@ -5,7 +6,15 @@ namespace Conduit.Transport.Kafka;
 /// <summary>
 /// Configuration for the Kafka transport. Passed to <c>UseKafka()</c> on the endpoint builder.
 /// </summary>
-public sealed class KafkaOptions
+/// <remarks>
+/// <see cref="BrokerTransportOptions.DefaultConcurrency"/> and
+/// <see cref="ReceiverPoolOptions.Concurrency"/> set the number of consumer instances run in a
+/// consumer group (the default groups and each pool group, respectively). Kafka balances the
+/// shared topic's partitions across those instances, so effective parallelism is bounded by the
+/// topic's partition count. Each pool is a dedicated consumer group that exclusively processes its
+/// assigned message types.
+/// </remarks>
+public sealed class KafkaOptions : BrokerTransportOptions
 {
     /// <summary>
     /// Kafka bootstrap servers connection string (e.g. "localhost:9092").
@@ -18,22 +27,12 @@ public sealed class KafkaOptions
     public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// Default maximum degree of parallelism for message processing. Controls concurrency per consumer.
-    /// </summary>
-    public int DefaultMaxDegreeOfParallelism { get; set; } = 10;
-
-    /// <summary>
     /// The endpoint name this transport is registered under in keyed DI.
     /// Set automatically by <c>UseKafka()</c> from the <c>EndpointBuilder</c> context.
     /// Used by dead letter queue capture to record the source endpoint and by replay to
     /// resolve the correct transport.
     /// </summary>
     public string EndpointName { get; internal set; } = string.Empty;
-
-    /// <summary>
-    /// Named consumer pools with separate consumer groups and concurrency settings.
-    /// </summary>
-    public List<KafkaReceiverPoolOptions> Pools { get; } = [];
 
     /// <summary>
     /// Optional custom producer configuration. Overrides default producer settings derived from
@@ -46,19 +45,4 @@ public sealed class KafkaOptions
     /// <see cref="BootstrapServers"/>.
     /// </summary>
     public ConsumerConfig? ConsumerConfig { get; set; }
-
-    /// <summary>
-    /// Adds a named consumer pool with the specified configuration.
-    /// </summary>
-    /// <param name="name">The pool name (used in consumer group naming).</param>
-    /// <param name="configure">Callback to configure the pool.</param>
-    public void AddPool(string name, Action<KafkaReceiverPoolOptions> configure)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(configure);
-
-        var pool = new KafkaReceiverPoolOptions { Name = name };
-        configure(pool);
-        this.Pools.Add(pool);
-    }
 }

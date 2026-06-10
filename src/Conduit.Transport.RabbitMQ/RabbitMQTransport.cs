@@ -146,12 +146,12 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
         // Start default app queue consumer (events — multicast)
         var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 255);
-        await this.StartConsumerAsync(appQueueName, this.options.DefaultPrefetchCount, cancellationToken);
+        await this.StartConsumerAsync(appQueueName, (ushort)this.options.DefaultConcurrency, cancellationToken);
 
         // Start shared command/query queue consumers (unicast — competing consumers, default prefetch)
         foreach (var sharedQueueName in this.topologyResult!.SharedCommandQueryQueues)
         {
-            await this.StartConsumerAsync(sharedQueueName, this.options.DefaultPrefetchCount, cancellationToken);
+            await this.StartConsumerAsync(sharedQueueName, (ushort)this.options.DefaultConcurrency, cancellationToken);
         }
 
         // Start pool event queue consumers (multicast, pool-specific prefetch)
@@ -498,11 +498,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         var context = MessageContext.Current;
         if (context is not null)
         {
-            if (context.CausationId is not null)
-            {
-                headers["CausationId"] = Encoding.UTF8.GetBytes(context.CausationId);
-            }
-
+            headers["CausationId"] = Encoding.UTF8.GetBytes(context.CausationId);
             headers["ConversationId"] = Encoding.UTF8.GetBytes(context.ConversationId);
         }
 

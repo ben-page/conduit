@@ -1,5 +1,6 @@
 using Amazon;
 using Amazon.Runtime;
+using Conduit.Runtime;
 
 namespace Conduit.Transport.AmazonSqs;
 
@@ -7,7 +8,12 @@ namespace Conduit.Transport.AmazonSqs;
 /// Configuration for the Amazon SQS (+SNS) transport.
 /// Authentication uses the default AWS credential chain (environment, profile, or IAM role).
 /// </summary>
-public sealed class AmazonSqsOptions
+/// <remarks>
+/// <see cref="BrokerTransportOptions.DefaultConcurrency"/> and
+/// <see cref="ReceiverPoolOptions.Concurrency"/> map to the polling parallelism bound
+/// (the per-consumer <c>SemaphoreSlim</c> limit).
+/// </remarks>
+public sealed class AmazonSqsOptions : BrokerTransportOptions
 {
     /// <summary>
     /// AWS region for the SNS/SQS clients. Required unless <see cref="ServiceUri"/> is set.
@@ -35,11 +41,6 @@ public sealed class AmazonSqsOptions
     public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// Maximum concurrent message processing tasks for the default consumer.
-    /// </summary>
-    public int DefaultMaxConcurrency { get; set; } = 10;
-
-    /// <summary>
     /// SQS visibility timeout in seconds. Messages become invisible during processing.
     /// Must be greater than or equal to <see cref="ResponseTimeout"/> total seconds.
     /// Default 60 seconds.
@@ -60,25 +61,4 @@ public sealed class AmazonSqsOptions
     /// resolve the correct transport.
     /// </summary>
     public string EndpointName { get; internal set; } = string.Empty;
-
-    /// <summary>
-    /// Named receiver pools for concurrency isolation.
-    /// Each pool gets its own SQS queue and polling loop.
-    /// </summary>
-    public List<AmazonSqsReceiverPoolOptions> Pools { get; } = [];
-
-    /// <summary>
-    /// Adds a named receiver pool with custom concurrency and message type routing.
-    /// </summary>
-    /// <param name="name">The pool name (used in queue naming).</param>
-    /// <param name="configure">Callback to configure the pool.</param>
-    public void AddPool(string name, Action<AmazonSqsReceiverPoolOptions> configure)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(configure);
-
-        var pool = new AmazonSqsReceiverPoolOptions { Name = name };
-        configure(pool);
-        this.Pools.Add(pool);
-    }
 }

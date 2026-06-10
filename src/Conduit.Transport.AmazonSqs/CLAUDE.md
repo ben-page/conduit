@@ -8,4 +8,5 @@
 - Raw message delivery required on subscriptions (filter policies need it). Startup validates `RawMessageDelivery=true` and `VisibilityTimeoutSeconds >= ResponseTimeout`.
 - SQS queue name limit is 80 characters — `TopologyNaming` hash truncation activates frequently.
 - Topology modes: Production = standard, Developer/Test = tagged resources with background cleanup.
+- Concurrency: options inherit `BrokerTransportOptions` (core). `DefaultConcurrency` and `ReceiverPoolOptions.Concurrency` map to the polling parallelism bound (the per-consumer `SemaphoreSlim` limit).
 - Type discovery via `ConduitTypeRegistry` (source-generated, compile-time verified) — no runtime DI scanning

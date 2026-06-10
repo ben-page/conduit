@@ -1,6 +1,7 @@
 using Azure.Messaging.ServiceBus.Administration;
 using Conduit.Configuration;
 using Conduit.Durability;
+using Conduit.Persistence.Sqlite;
 using Conduit.Generated;
 using Conduit.TestUtils;
 using Conduit.Transport.AzureServiceBus;
@@ -311,9 +312,9 @@ public abstract class AsbTestBase
                     endpoint.UseAzureServiceBus(ConnectionString!, options =>
                         options.AdminConnectionString = AdminConnectionString));
 
+                conduit.UseSqlite(connectionString);
                 conduit.AddDurability(durability =>
                 {
-                    durability.UseSqlite(connectionString);
                     durability.AddDeadLetterQueue();
                 });
             });

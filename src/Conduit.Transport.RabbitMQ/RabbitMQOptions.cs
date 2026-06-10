@@ -1,10 +1,16 @@
+using Conduit.Runtime;
+
 namespace Conduit.Transport.RabbitMQ;
 
 /// <summary>
 /// Configuration for the RabbitMQ transport. Passed to <c>UseRabbitMQ()</c>
 /// on the endpoint builder.
 /// </summary>
-public sealed class RabbitMQOptions
+/// <remarks>
+/// <see cref="BrokerTransportOptions.DefaultConcurrency"/> and
+/// <see cref="ReceiverPoolOptions.Concurrency"/> map to the consumer <c>BasicQos</c> prefetch count.
+/// </remarks>
+public sealed class RabbitMQOptions : BrokerTransportOptions
 {
     /// <summary>
     /// AMQP connection string (e.g. "amqp://guest:guest@localhost:5672/").
@@ -17,50 +23,10 @@ public sealed class RabbitMQOptions
     public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// Default prefetch count for consumer channels. Controls concurrency per consumer.
-    /// </summary>
-    public ushort DefaultPrefetchCount { get; set; } = 10;
-
-    /// <summary>
     /// The endpoint name this transport is registered under in keyed DI.
     /// Set automatically by <c>UseRabbitMQ()</c> from the <c>EndpointBuilder</c> context.
     /// Used by dead letter queue capture to record the source endpoint and by replay to
     /// resolve the correct transport.
     /// </summary>
     public string EndpointName { get; internal set; } = string.Empty;
-
-    /// <summary>
-    /// Named receiver pools with separate consumer channels and prefetch settings.
-    /// </summary>
-    public List<ReceiverPoolOptions> Pools { get; } = [];
-}
-
-/// <summary>
-/// Configuration for a named receiver pool with its own consumer channel and prefetch count.
-/// </summary>
-public sealed class ReceiverPoolOptions
-{
-    /// <summary>
-    /// Unique name for this pool. Used in queue naming: "{app-queue}-{Name}".
-    /// </summary>
-    public required string Name { get; init; }
-
-    /// <summary>
-    /// Prefetch count for this pool's consumer channel.
-    /// </summary>
-    public ushort PrefetchCount { get; set; } = 1;
-
-    /// <summary>
-    /// FullTypeNames of messages routed to this pool's queue.
-    /// </summary>
-    public List<string> MessageTypes { get; } = [];
-
-    /// <summary>
-    /// Adds a message type (by FullTypeName) to this pool.
-    /// </summary>
-    public void Handle(string messageTypeFullName)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(messageTypeFullName);
-        this.MessageTypes.Add(messageTypeFullName);
-    }
 }

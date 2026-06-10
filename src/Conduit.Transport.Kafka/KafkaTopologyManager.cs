@@ -14,6 +14,14 @@ namespace Conduit.Transport.Kafka;
 /// </summary>
 internal sealed class KafkaTopologyManager
 {
+    /// <summary>
+    /// Partition count for the shared topic. This is the hard ceiling on inbound parallelism for
+    /// any single consumer group: Kafka assigns each partition to exactly one consumer instance in
+    /// a group, so running more instances than partitions leaves the surplus idle. Consumer group
+    /// instance counts (DefaultConcurrency / pool Concurrency) are capped against this.
+    /// </summary>
+    internal const int SharedTopicPartitions = 6;
+
     private static readonly Action<ILogger, string, Exception?> LogCreatingTopic =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(200, "CreatingTopic"),
             "Creating Kafka topic '{TopicName}'");
@@ -51,7 +59,7 @@ internal sealed class KafkaTopologyManager
             ? new Dictionary<string, string> { ["retention.ms"] = retentionMs }
             : new Dictionary<string, string>();
 
-        await this.CreateTopicIfNotExistsAsync(adminClient, sharedTopicName, numPartitions: 6, topicConfigs);
+        await this.CreateTopicIfNotExistsAsync(adminClient, sharedTopicName, SharedTopicPartitions, topicConfigs);
         cancellationToken.ThrowIfCancellationRequested();
 
         await this.CreateTopicIfNotExistsAsync(adminClient, replyTopicName, numPartitions: 1, topicConfigs);

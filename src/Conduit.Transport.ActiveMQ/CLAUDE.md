@@ -7,5 +7,5 @@
 - Reply queue: per-instance exclusive temporary queue (destroyed on shutdown)
 - AMQP 1.0 wire mapping: Subject=FullTypeName, MessageId, CorrelationId=ConversationId, ApplicationProperties for CausationId/ReplyTo/ReplyCorrelationId
 - Topology via Artemis management address (`activemq.management`). Topology modes: Production = durable, Developer = auto-delete-delay 4h, Test = auto-delete-delay 5min (native Artemis support).
-- Concurrency via AMQP link credit (prefetch count)
+- Concurrency via AMQP link credit (prefetch count). Options inherit `BrokerTransportOptions` (core): `DefaultConcurrency` and `ReceiverPoolOptions.Concurrency` both map to the receiver link prefetch count.
 - Type discovery via `ConduitTypeRegistry` (source-generated, compile-time verified) — no runtime DI scanning
