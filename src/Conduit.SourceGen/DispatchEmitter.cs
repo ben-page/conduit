@@ -205,9 +205,12 @@ public static class DispatchEmitter
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
-        sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
-        sb.AppendLine($"        Func<Task<object>> handlerCall = () => {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync(command, cancellationToken));");
+        sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
+        sb.AppendLine($"            return {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync(command, cancellationToken));");
+        sb.AppendLine("        };");
         sb.AppendLine($"        await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors(command, behaviors, handlerCall, cancellationToken);");
         sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
         sb.AppendLine("    }");
@@ -235,17 +238,24 @@ public static class DispatchEmitter
             DispatchableKind.Event or DispatchableKind.Model or _ => handler.HandlerFullTypeName,
         };
 
-        sb.AppendLine($"        var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, {resultType}>(conduitOptions, serviceProvider);");
         sb.AppendLine();
 
         if (isVoid)
         {
-            sb.AppendLine($"        Func<Task<object>> handlerCall = () => {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
+            sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
+            sb.AppendLine($"            return {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
+            sb.AppendLine("        };");
         }
         else
         {
-            sb.AppendLine($"        Func<Task<{resultType}>> handlerCall = () => handler.HandleAsync({requestParamName}, cancellationToken);");
+            sb.AppendLine($"        Func<Task<{resultType}>> handlerCall = () =>");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
+            sb.AppendLine($"            return handler.HandleAsync({requestParamName}, cancellationToken);");
+            sb.AppendLine("        };");
         }
 
         sb.AppendLine();
