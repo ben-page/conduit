@@ -1,0 +1,243 @@
+# Dispatch Flows
+
+End-to-end traces of how a message moves through Conduit, using the real type and
+method names from the source-generated mediator (`ConduitMediator`) and the runtime
+helpers in `Conduit.Runtime`. These are the canonical reference for understanding the
+dispatch pipeline without reading every line of the generator and runtime.
+
+Three flows are covered:
+
+- [Local command / query dispatch](#1-local-command--query-dispatch)
+- [Event broadcast](#2-event-broadcast)
+- [Wire-inbound message](#3-wire-inbound-message)
+
+The generated `ConduitMediator` implements `IWireMediator : IMediator` and is registered
+as **transient** — it is stateless and resolves handlers from `IServiceProvider` per call.
+Handlers and listeners are also **transient**. This is what lets `IMediator` be injected
+into singletons such as a `BackgroundService`.
+
+---
+
+## 1. Local command / query dispatch
+
+Caller: `await mediator.ExecuteAsync(command, ct)` (or `FetchAsync(query, ct)` for queries).
+The generated body of `ConduitMediator.ExecuteAsync` runs the following sequence.
+
+```
+IMediator.ExecuteAsync(command)
+  |
+  1. MessageContext.StartDispatch(options)        -- new MessageId; inherits ConversationId,
+  |                                                  sets CausationId = parent.MessageId
+  |                                                  (head/origin self-causates: CausationId = MessageId)
+  |                                                  (payload captured for audit if enabled)
+  2. ConduitRuntime.ResolveRoute(options, "Ns.MyCommand")
+  |        |
+  |        +-- endpoint != null  ->  ROUTED (remote)
+  |        |       ConduitRuntime.ResolveTransport(serviceProvider, endpoint)   -- keyed IConduitTransport
+  |        |       JsonSerializer.SerializeToElement(command)  ->  DispatchEnvelope("Ns.MyCommand", payload)
+  |        |       transport.SendRequestAsync(envelope, ct)    -- request/response over the wire
+  |        |       deserialize reply -> return TResult
+  |        |
+  |        +-- endpoint == null  ->  LOCAL
+  |                ConduitDispatch.Execute(command, serviceProvider, conduitOptions, ct)
+  |                    a. handler = serviceProvider.GetRequiredService<ICommandHandler<MyCommand, TResult>>()
+  |                    b. behaviors = ConduitRuntime.ResolvePipelines<MyCommand, TResult>(options, sp)
+  |                    c. ConduitRuntime.ExecuteWithBehaviors(command, behaviors, handlerCall, ct)
+  |                         -> behavior[0] ( behavior[1] ( ... ( handler.HandleAsync ) ) )
+  3. MessageContext.RestoreContext(previous)       -- in finally
+```
+
+Key facts verified against the code:
+
+- **Routing decision** is `ConduitRuntime.ResolveRoute` (`ConduitRuntime.cs`). It scans
+  `options.Routes`, matching `messageFullTypeName.StartsWith(route.Pattern)`. A match with a
+  missing endpoint throws `InvalidOperationException`. No match returns `null` → local dispatch.
+- **Routed dispatch** for commands with a result and queries uses `transport.SendRequestAsync`.
+  Non-fire-and-forget void commands also use `SendRequestAsync` (to confirm handler execution);
+  `[FireAndForget]` void commands use `SendEventAsync` (no reply). See
+  [fire-and-forget](#fire-and-forget-void-commands) below.
+- **Pipeline ordering** is owned by Conduit, not DI. `ResolvePipelines` constructs closed
+  generics from `options.PipelineTypes` in registration order. `ExecuteWithBehaviors` wraps
+  them so the **first registered behavior is the outermost** (it iterates from the last index
+  inward when building the `next` chain).
+- **No local handler and no route** → the generated code throws
+  `InvalidOperationException("No local handler for Ns.MyCommand and no route matched.")`.
+
+### Fire-and-forget void commands
+
+For a local `[FireAndForget]` void command, `ConduitDispatch.Execute` resolves the pipeline
+behaviors in the **caller** context, then enqueues the handler invocation to the
+`ConduitBackgroundDispatcher` (a `BackgroundService` with an unbounded `Channel<T>`) via
+`dispatcher.Enqueue(...)`, and returns immediately. For a **routed** `[FireAndForget]` command,
+the generated mediator first checks for an `IOutboundInterceptor` (outbox capture); if present
+it calls `interceptor.Intercept(envelope)` *instead of* the transport, otherwise it calls
+`transport.SendEventAsync(envelope, ct)`.
+
+---
+
+## 2. Event broadcast
+
+Caller: `await mediator.PublishAsync(@event, ct)`. Events do **not** route — they broadcast.
+
+```
+IMediator.PublishAsync(@event)
+  |
+  1. MessageContext.StartDispatch(options)
+  2. local delivery:
+  |     try
+  |         await PublishLocalAsync(@event, ct)      -- private; local listeners only
+  |     catch (EventListenerException ex)
+  |         log + swallow                            -- local publish is fire-and-forget
+  3. transport broadcast:
+  |     foreach IConduitTransport in DI:
+  |         transport.SendEventAsync(DispatchEnvelope("Ns.MyEvent", payload), ct)
+  4. MessageContext.RestoreContext(previous)
+```
+
+`PublishLocalAsync` (generated, private) dispatches to every local `IEventListener<MyEvent>`
+with **continue-on-failure** semantics:
+
+```
+PublishLocalAsync(@event)
+  |
+  +-- foreach listener:
+  |       behaviors = ConduitRuntime.ResolvePipelines<MyEvent, object>(options, sp)
+  |       try
+  |           await ConduitRuntime.ExecuteWithBehaviors(@event, behaviors, listenerChain, ct)
+  |       catch (Exception ex)
+  |           ConduitRuntime.LogListenerFailure(...)   -- record, keep going
+  |
+  +-- if any listener threw:
+          throw new Conduit.Exceptions.EventListenerException(...)
+```
+
+Key facts:
+
+- **All listeners run even if some throw.** Failures are collected; `EventListenerException`
+  is thrown only after every listener has been attempted.
+- **`[LocalOnly]` events skip transport broadcast** — the generator omits the broadcast loop at
+  compile time. There is no runtime check.
+- **`[FireAndForget]` events** enqueue the local-listener work to `ConduitBackgroundDispatcher`
+  (`dispatcher.Enqueue(...)` wrapping `PublishLocalAsync`) instead of running it inline. Transport
+  broadcast still proceeds inline (events are already fire-and-forget on the wire).
+- The error handling difference between paths matters: `PublishAsync` (local-origin) swallows
+  `EventListenerException`; the **wire path** (`DispatchEventAsync`, see below) lets it propagate
+  so the transport can retry / dead-letter.
+
+---
+
+## 3. Wire-inbound message
+
+A message arriving from another process passes through the **three-layer middleware model**.
+This trace uses a broker transport (`BrokerTransportBase<TMessage>.ProcessInboundMessageAsync`);
+HTTP (`MapConduitEndpoint`) and SignalR (`ConduitHub`) follow the same `IWireMediator` calls.
+
+```
+transport receives raw message
+  |
+  1. messageType = GetMessageType(message)          -- type discriminator from native property/header
+  |      (empty -> acknowledge + drop, no poison loop)
+  2. (messageId, causationId, conversationId) = ExtractContext(message)
+  |  MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId)
+  |      *** the wire-supplied MessageId/CausationId now flow through to the handler ***
+  3. scope = ServiceProvider.CreateAsyncScope()
+  |  wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>()
+  |  body -> JsonElement payload -> DispatchEnvelope(messageType, payload)
+  4. dispatch by kind:
+  |     IsRequest(message)              -> DispatchRequestAsync           (command/query w/ reply)
+  |     IsFireAndForgetCommand(...)     -> DispatchFireAndForgetCommandAsync (no reply)
+  |     else                            -> DispatchEventAsync             (event)
+  5. MessageContext.RestoreContext(previous)   -- in finally
+```
+
+### The three-layer middleware
+
+Inside `wireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`, the generated mediator
+calls into `ConduitRuntime.HandleWireRequest` / `HandleWireEvent`, which run the layers in order:
+
+**Layer 1 — `IInboundInterceptor` gate (pre-deserialization).** Receives only the
+`string messageType`. Runs *before* the payload is deserialized.
+
+```
+foreach (IInboundInterceptor interceptor in interceptors):
+    if (!await interceptor.ShouldProcessAsync(messageType, ct))
+        return Ok(null)   // discarded silently
+```
+
+- `InboxInterceptor` (dedup) **returns false** to discard an already-seen message. `MessageContext.Current`
+  is available so it can read the transport-supplied `MessageId`.
+- `TypeFilterInterceptor` (access control) **throws** a `ConduitException` to reject a
+  disallowed type; the catch block converts it to a `Fail` result. (It rejects by throwing, not
+  by returning false.)
+
+**Context handling at this layer (recently fixed):** the transport has already called
+`StartDispatchFromTransport`, so `MessageContext.Current` is non-null when `HandleWireRequest`
+runs. `ConduitRuntime` therefore **only mints a fresh context when `previousContext is null`**:
+
+```csharp
+if (previousContext is null)
+{
+    MessageContext.StartDispatch();
+}
+```
+
+This is the fix that lets the wire-supplied `MessageId` / `CausationId` propagate to the handler
+instead of being re-minted (overwritten) on every inbound message.
+
+**Layer 2 — `IPipelineBehavior<TRequest, TResult>` (post-deserialization).** After
+`createEnvelope()` deserializes the payload, dispatch runs the strongly-typed pipeline chain via
+`ResolvePipelines` + `ExecuteWithBehaviors` (same mechanism as local dispatch). Resilience,
+inbox/outbox, and validation behaviors live here.
+
+**Layer 3 — handler.** The resolved `ICommandHandler` / `IQueryHandler` / `IEventListener` runs
+at the center of the chain, inside the DI scope created in step 3.
+
+### Reply path (request/response)
+
+`DispatchRequestAsync` (broker base) builds the reply and sends it point-to-point — replies
+**bypass the topic/exchange** and go straight to the sender's reply queue:
+
+```
+result = await wireMediator.HandleWireRequestAsync(envelope, ct)   -- returns DispatchResult
+  |  handler exceptions are converted to Fail results inside ConduitRuntime
+replyData = serialize(result)                  -- Ok(data) or Fail(code, message)
+await SendReplyAsync(message, replyData)       -- best-effort, point-to-point to reply queue
+if (handler failed): TryCaptureErrorAsync(...) -- DLQ capture; caller still got the error reply
+```
+
+On the outbound side, `BrokerTransportBase.SendRequestAsync` calls `PublishRequestAsync`, awaits
+the reply from the reply queue, deserializes it to `DispatchResult<JsonElement?>`, and unwraps it
+via `ConduitRuntime.UnwrapReply` (which throws `InvalidOperationException` if the reply carries an
+error).
+
+### Event wire path
+
+`DispatchEventAsync` calls `wireMediator.HandleWireEventAsync`, which routes through
+`ConduitRuntime.HandleWireEvent`. Wire-inbound events dispatch to local listeners only (via the
+private `PublishLocalAsync`) — they are **never re-broadcast** to transports, preventing echo
+loops. `HandleWireEvent` lets `EventListenerException` **propagate** so the transport can
+retry / dead-letter; all other exceptions are logged and swallowed.
+
+### Outbound F&F capture (`IOutboundInterceptor`)
+
+When an `IOutboundInterceptor` is registered (the outbox), the generated mediator calls
+`interceptor.Intercept(envelope)` *instead of* sending an outbound fire-and-forget message to the
+transport. The outbox captures the envelope in the same transaction as the business write and
+relays it later.
+
+---
+
+## Source map
+
+| Concern | File |
+|---|---|
+| Route resolution, pipeline resolution/execution, wire entry points | `src/Conduit/Runtime/ConduitRuntime.cs` |
+| Correlation context (`StartDispatch`, `StartDispatchFromTransport`) | `src/Conduit/Runtime/MessageContext.cs` |
+| Routed-vs-broadcast envelope send | `src/Conduit/Runtime/TransportDispatcher.cs` |
+| Broker inbound orchestration + reply path | `src/Conduit/Runtime/BrokerTransportBase.cs` |
+| Background F&F execution | `src/Conduit/Runtime/ConduitBackgroundDispatcher.cs` |
+| Generated `ConduitMediator` body | `src/Conduit.SourceGen/MediatorEmitter.cs` |
+| Generated `ConduitDispatch.Execute` (handler + pipeline wiring) | `src/Conduit.SourceGen/DispatchEmitter.cs` |
+
+See also: [Core Concepts](core-concepts.md), [Pipeline Behaviors](pipeline-behaviors.md),
+[Glossary](glossary.md).

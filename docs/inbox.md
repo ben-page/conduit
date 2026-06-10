@@ -49,18 +49,19 @@ A background `InboxCleanup` service periodically deletes records older than the 
 
 ## Setup
 
-The inbox is part of `Conduit.Durability`. Configure the database once on the durability builder, then call `AddInbox()` (alongside `AddOutbox()` / `AddDeadLetterQueue()` if you use them):
+The inbox is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, DLQ, and audit), then call `AddInbox()` (alongside `AddOutbox()` / `AddDeadLetterQueue()` if you use them):
 
 ```xml
 <PackageReference Include="Conduit.Durability" />
+<PackageReference Include="Conduit.Persistence.Sqlite" />
 ```
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
+    conduit.UseSqlite("Data Source=myapp.db");
     conduit.AddDurability(durability =>
     {
-        durability.UseSqlite("Data Source=myapp.db");
         durability.AddInbox();
     });
 });
@@ -70,25 +71,25 @@ builder.Services.AddConduit(conduit =>
 
 ## Database dialects
 
-The inbox uses the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the database method on the durability builder:
+The inbox uses the shared `IDurabilityDialect` (one per engine, used by the outbox, inbox, and DLQ alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
 
-| Database | Method |
+| Engine package | Method |
 |---|---|
-| SQLite | `durability.UseSqlite(connectionString)` |
-| SQL Server | `durability.UseSqlServer<SqlConnection>(connectionString)` |
-| PostgreSQL | `durability.UsePostgres<NpgsqlConnection>(connectionString)` |
-| MySQL | `durability.UseMySql<MySqlConnection>(connectionString)` |
+| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
+| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
+| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
+| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
 
-SQL Server, PostgreSQL, and MySQL take the ADO.NET connection type as a generic parameter (Conduit doesn't reference those provider packages).
+The engine package carries the provider reference, so no generic connection-type parameter is needed.
 
-The inbox table (`conduit_inbox` — `MessageId` primary key + `ProcessedAt`) is created automatically on startup. The insert uses engine-specific ignore/upsert semantics (SQLite `INSERT OR IGNORE`, PostgreSQL `ON CONFLICT DO NOTHING`, MySQL `INSERT IGNORE`, SQL Server insert-where-not-exists) so concurrent recordings of the same `MessageId` are safe under competing consumers.
+The inbox table (`conduit_inbox` — `MessageId` primary key + `ProcessedAt`) is created automatically on startup. The insert uses engine-specific ignore/upsert semantics (SQLite `INSERT OR IGNORE`, PostgreSQL `ON CONFLICT DO NOTHING`, MySQL `INSERT IGNORE`, SQL Server insert-where-not-exists). This single atomic insert *is* the deduplication decision — the gate records and tests for a duplicate in one operation (the row was newly inserted ⇒ proceed; it already existed ⇒ discard), with no separate existence check. That closes the window where two concurrent redeliveries of the same `MessageId` could otherwise both pass a check and run the handler twice, so duplicate processing is impossible even under competing consumers.
 
 ## Configuration
 
 ```csharp
+conduit.UseSqlite("Data Source=myapp.db");
 conduit.AddDurability(durability =>
 {
-    durability.UseSqlite("Data Source=myapp.db");
     durability.AddInbox(inbox =>
     {
         inbox.RetentionPeriod = TimeSpan.FromMinutes(30);  // how long processed IDs are kept (default: 30m)

@@ -102,18 +102,19 @@ OutboxRelay (background service — safety net)
 
 ## Setup
 
-Add the `Conduit.Durability` package and configure inside `AddConduit`. The database is configured once on the durability builder, then `AddOutbox()` enables the outbox on it:
+Add the `Conduit.Durability` package and configure inside `AddConduit`. The persistence engine is registered once on the `ConduitBuilder` (shared with the inbox, DLQ, and audit), then `AddOutbox()` enables the outbox on it:
 
 ```xml
 <PackageReference Include="Conduit.Durability" />
+<PackageReference Include="Conduit.Persistence.Sqlite" />
 ```
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
+    conduit.UseSqlite("Data Source=myapp.db");
     conduit.AddDurability(durability =>
     {
-        durability.UseSqlite("Data Source=myapp.db");
         durability.AddOutbox();
     });
 });
@@ -127,9 +128,11 @@ The `AddOutbox()` call registers:
 
 ## Providing a transaction
 
-The outbox behavior writes entries using the transaction returned by `IDurabilityConnectionFactory.GetCurrentTransaction()`. If no transaction is active, the behavior skips persistence (pass-through mode — no crash protection).
+A transaction-aware connection factory is **mandatory** for the outbox. The outbox behavior writes entries using the transaction returned by `IDurabilityConnectionFactory.GetCurrentTransaction()` so that the business data and the outbox entry commit atomically.
 
-The built-in connection factory (registered by `UseSqlite()` etc.) always returns `null` from `GetCurrentTransaction()` — it only provides connections for the relay. To get transactional outbox writes, register your own `IDurabilityConnectionFactory` that tracks the handler's active transaction:
+The connection factory supplied by the engine package (registered by `conduit.UseSqlite()`, `conduit.UseSqlServer()`, etc.) is non-transactional: it always returns `null` from `GetCurrentTransaction()` — it only opens fresh connections for the relay and store sweeps and has no visibility into the handler's transaction. If outbox capture ran against it, it would silently persist **nothing** — the outbox would appear configured while protecting nothing.
+
+To prevent that, **enabling `AddOutbox()` while the engine's non-transactional factory is the active `IDurabilityConnectionFactory` fails fast at startup** with an `InvalidOperationException` explaining that a transaction-aware factory is required. Register your own factory that tracks the handler's active transaction:
 
 ```csharp
 public class AppDurabilityConnectionFactory(AppDbContext dbContext) : IDurabilityConnectionFactory
@@ -154,31 +157,30 @@ builder.Services.AddScoped<IDurabilityConnectionFactory, AppDurabilityConnection
 
 ## Database dialects
 
-Each `Use*` method registers the appropriate SQL dialect and connection factory:
+Each `Use*` method registers the appropriate SQL dialect and connection factory. Claiming is **atomic**: a single `UPDATE` transitions pending rows to a `Claiming` status tagged with a per-worker token, so a row can be claimed (and dispatched) by exactly one worker — the relay and the immediate-send flush can never double-send. A claim that is not resolved within 5 minutes (e.g. a crashed worker) becomes re-claimable. The per-engine locking applied inside the claim:
 
 | Method | Database | Claiming mechanism |
 |---|---|---|
-| `UseSqlite(connectionString)` | SQLite | Single-writer (no locking needed) |
-| `UseSqlServer<TConnection>(connectionString)` | SQL Server | `WITH (ROWLOCK, UPDLOCK, READPAST)` |
-| `UsePostgres<TConnection>(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` |
-| `UseMySql<TConnection>(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` |
+| `conduit.UseSqlite(connectionString)` | SQLite | Single-writer (atomic `UPDATE` + read-back by token) |
+| `conduit.UseSqlServer(connectionString)` | SQL Server | `WITH (ROWLOCK, UPDLOCK, READPAST)` in the claim subquery |
+| `conduit.UsePostgres(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` in the claim subquery |
+| `conduit.UseMySql(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 
-These `Use*` methods are on the durability builder (the database is shared by the outbox, inbox, and dead letter queue). SQL Server, PostgreSQL, and MySQL require you to pass the ADO.NET connection type as a generic parameter, since Conduit doesn't take a dependency on those provider packages:
+The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`.
+
+These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, and audit). Each engine ships in its own `Conduit.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
 
 ```csharp
-conduit.AddDurability(durability =>
-{
-    // SQL Server (requires Microsoft.Data.SqlClient reference)
-    durability.UseSqlServer<SqlConnection>("Server=.;Database=MyApp;...");
+// SQL Server (Conduit.Persistence.SqlServer package)
+conduit.UseSqlServer("Server=.;Database=MyApp;...");
 
-    // PostgreSQL (requires Npgsql reference)
-    durability.UsePostgres<NpgsqlConnection>("Host=localhost;Database=MyApp;...");
+// PostgreSQL (Conduit.Persistence.Postgres package)
+conduit.UsePostgres("Host=localhost;Database=MyApp;...");
 
-    // MySQL (requires MySqlConnector reference)
-    durability.UseMySql<MySqlConnection>("Server=localhost;Database=MyApp;...");
+// MySQL (Conduit.Persistence.MySql package)
+conduit.UseMySql("Server=localhost;Database=MyApp;...");
 
-    durability.AddOutbox();
-});
+conduit.AddDurability(durability => durability.AddOutbox());
 ```
 
 The outbox table (`conduit_outbox`) is created automatically on startup. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations.
@@ -204,9 +206,9 @@ builder.Services.AddScoped<IOutboxStore, CosmosOutboxStore>();
 ## Relay configuration
 
 ```csharp
+conduit.UseSqlite("Data Source=myapp.db");
 conduit.AddDurability(durability =>
 {
-    durability.UseSqlite("Data Source=myapp.db");
     durability.AddOutbox(outbox =>
     {
         outbox.RelayInterval = TimeSpan.FromSeconds(5);    // polling interval (default: 5s)
@@ -264,7 +266,7 @@ public class PlaceOrderHandler(
 
 ### Behavior
 
-`FlushAsync` claims the outbox entries written during the current scope using the same row-locking mechanism as the relay (`ClaimByMessageIds` with `SKIP LOCKED` on supported databases). It then sends each entry via the appropriate transport using the in-memory envelope — no database read needed. Successfully sent entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the relay picks it up on its next sweep.
+`FlushAsync` claims the outbox entries written during the current scope using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token). It then sends each entry via the appropriate transport using the in-memory envelope — no database read needed. Successfully sent entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up on its next sweep.
 
 `FlushAsync` is a no-op when nothing was captured during the scope, and safe to call unconditionally. If the relay has already claimed an entry before `FlushAsync` runs, the claim returns nothing and the call completes without sending duplicates.
 
@@ -303,6 +305,6 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 **No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions, Kafka partitions) or handle ordering at the consumer.
 
-**Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — concurrent claiming via `SKIP LOCKED` prevents duplicate sends (except SQLite, which is single-writer).
+**Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker, on every supported engine including SQLite. The relay and the immediate-send `FlushAsync` likewise never double-send the same entry.
 
 **Immediate send is best-effort.** `FlushAsync` attempts to send messages immediately, but the relay is still the safety net. If the process crashes between commit and `FlushAsync`, or if `FlushAsync` itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when immediate send is configured.
