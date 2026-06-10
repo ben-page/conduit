@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Nineteen source projects, thirteen test projects, one shared test utility, four sample apps:
+Nineteen source projects, fourteen test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -110,7 +110,7 @@ src/Conduit.Persistence.MySql/          MySQL engine: MySqlConduitConnectionFact
 
 ```bash
 dotnet build          # builds everything including sample apps
-dotnet test           # runs all tests across 13 test projects
+dotnet test           # runs all tests across 14 test projects
 ```
 
 Solution file is `Conduit.slnx` (.NET 10 format).

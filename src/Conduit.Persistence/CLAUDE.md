@@ -1,6 +1,6 @@
 # Conduit.Persistence
 
-Shared relational-persistence abstraction used by Conduit's storage modules (Durability today; Audit in a later stage). Engine-agnostic — targets `net10.0`, references Conduit core + the DI/Hosting abstractions. The concrete engine lives in a separate package (e.g. `Conduit.Persistence.Sqlite`) and is registered into core's `ConduitBuilder` via a `UseXxx` extension, mirroring how transport packages register via `UseTransport`.
+Shared relational-persistence abstraction used by Conduit's storage modules (Durability and Audit). Engine-agnostic — targets `net10.0`, references Conduit core + the DI/Hosting abstractions. The concrete engine lives in a separate package (e.g. `Conduit.Persistence.Sqlite`) and is registered into core's `ConduitBuilder` via a `UseXxx` extension, mirroring how transport packages register via `UseTransport`.
 
 ## Abstraction surface
 
@@ -41,7 +41,7 @@ Four engine packages ship today, all implementing the **complete** `ISqlDialect`
 
 **Column-naming consistency:** all four dialects compose DDL using the consuming module's hard-coded **PascalCase** identifiers (the module's non-claim SQL constants reference `MessageId`, `Status`, `CreatedAt`, etc., and `OutboxTableSchema` exposes the same). PostgreSQL folds unquoted identifiers to lower case, so its DDL and the module's unquoted queries resolve to the same columns transparently; SQL Server / MySQL column names are case-insensitive. This keeps the four engines agreeing on the single set of column names the module owns.
 
-Per-engine claim SQL is asserted byte-for-byte (no DB connection) by `PostgresDialectShould` / `SqlServerDialectShould` / `MySqlDialectShould` in the Durability test project. Container-backed integration tests come in a later stage.
+Per-engine claim SQL is asserted byte-for-byte (no DB connection) by `PostgresDialectShould` / `SqlServerDialectShould` / `MySqlDialectShould` in the Durability test project. Container-backed integration tests for all three server engines live in `tests/Conduit.Persistence.IntegrationTests/` (real Postgres/SqlServer/MySql via Testcontainers), exercising the stores end-to-end.
 
 ## See also
 

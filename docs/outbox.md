@@ -128,14 +128,14 @@ The `AddOutbox()` call registers:
 
 ## Providing a transaction
 
-A transaction-aware connection factory is **mandatory** for the outbox. The outbox behavior writes entries using the transaction returned by `IDurabilityConnectionFactory.GetCurrentTransaction()` so that the business data and the outbox entry commit atomically.
+A transaction-aware connection factory is **mandatory** for the outbox. The outbox behavior writes entries using the transaction returned by `IConduitConnectionFactory.GetCurrentTransaction()` so that the business data and the outbox entry commit atomically.
 
 The connection factory supplied by the engine package (registered by `conduit.UseSqlite()`, `conduit.UseSqlServer()`, etc.) is non-transactional: it always returns `null` from `GetCurrentTransaction()` — it only opens fresh connections for the relay and store sweeps and has no visibility into the handler's transaction. If outbox capture ran against it, it would silently persist **nothing** — the outbox would appear configured while protecting nothing.
 
-To prevent that, **enabling `AddOutbox()` while the engine's non-transactional factory is the active `IDurabilityConnectionFactory` fails fast at startup** with an `InvalidOperationException` explaining that a transaction-aware factory is required. Register your own factory that tracks the handler's active transaction:
+To prevent that, **enabling `AddOutbox()` while the engine's non-transactional factory is the active `IConduitConnectionFactory` fails fast at startup** with an `InvalidOperationException` explaining that a transaction-aware factory is required. Register your own factory that tracks the handler's active transaction:
 
 ```csharp
-public class AppDurabilityConnectionFactory(AppDbContext dbContext) : IDurabilityConnectionFactory
+public class AppDurabilityConnectionFactory(AppDbContext dbContext) : IConduitConnectionFactory
 {
     public Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
     {
@@ -152,7 +152,7 @@ public class AppDurabilityConnectionFactory(AppDbContext dbContext) : IDurabilit
 Register it after `AddConduit` so it overrides the built-in factory:
 
 ```csharp
-builder.Services.AddScoped<IDurabilityConnectionFactory, AppDurabilityConnectionFactory>();
+builder.Services.AddScoped<IConduitConnectionFactory, AppDurabilityConnectionFactory>();
 ```
 
 ## Database dialects
