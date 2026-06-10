@@ -1,5 +1,6 @@
 using Conduit.Exceptions;
 using Conduit.Messages;
+using Conduit.Runtime;
 using Conduit.Transport.Http.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -29,10 +30,13 @@ public static class ConduitRestHandlers
         where TQuery : IQuery<TResult>
     {
         return endpoints.MapMethods(pattern, [method],
-            async ([AsParameters] TQuery query, IMediator mediator, CancellationToken cancellationToken) =>
+            async ([AsParameters] TQuery query, HttpContext httpContext,
+                IEnumerable<IDispatchContextEnricher> enrichers, IMediator mediator,
+                CancellationToken cancellationToken) =>
             {
                 try
                 {
+                    HttpDispatchContext.Start(httpContext, enrichers);
                     var result = await mediator.FetchAsync(query, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -54,7 +58,8 @@ public static class ConduitRestHandlers
         FilePropertyMetadata.Validate(typeof(TCommand));
 
         return endpoints.MapMethods(pattern, [method],
-            async (HttpRequest request, IMediator mediator, CancellationToken cancellationToken) =>
+            async (HttpRequest request, IEnumerable<IDispatchContextEnricher> enrichers,
+                IMediator mediator, CancellationToken cancellationToken) =>
             {
                 try
                 {
@@ -62,6 +67,7 @@ public static class ConduitRestHandlers
                         ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
                         : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
 
+                    HttpDispatchContext.Start(request.HttpContext, enrichers);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -80,10 +86,13 @@ public static class ConduitRestHandlers
         where TCommand : ICommand<TResult>
     {
         return endpoints.MapMethods(pattern, [method],
-            async ([AsParameters] TCommand command, IMediator mediator, CancellationToken cancellationToken) =>
+            async ([AsParameters] TCommand command, HttpContext httpContext,
+                IEnumerable<IDispatchContextEnricher> enrichers, IMediator mediator,
+                CancellationToken cancellationToken) =>
             {
                 try
                 {
+                    HttpDispatchContext.Start(httpContext, enrichers);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -104,7 +113,8 @@ public static class ConduitRestHandlers
         FilePropertyMetadata.Validate(typeof(TCommand));
 
         return endpoints.MapMethods(pattern, [method],
-            async (HttpRequest request, IMediator mediator, CancellationToken cancellationToken) =>
+            async (HttpRequest request, IEnumerable<IDispatchContextEnricher> enrichers,
+                IMediator mediator, CancellationToken cancellationToken) =>
             {
                 try
                 {
@@ -112,6 +122,7 @@ public static class ConduitRestHandlers
                         ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
                         : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
 
+                    HttpDispatchContext.Start(request.HttpContext, enrichers);
                     await mediator.ExecuteAsync(command, cancellationToken);
                     return Results.NoContent();
                 }
@@ -130,10 +141,13 @@ public static class ConduitRestHandlers
         where TCommand : ICommand
     {
         return endpoints.MapMethods(pattern, [method],
-            async ([AsParameters] TCommand command, IMediator mediator, CancellationToken cancellationToken) =>
+            async ([AsParameters] TCommand command, HttpContext httpContext,
+                IEnumerable<IDispatchContextEnricher> enrichers, IMediator mediator,
+                CancellationToken cancellationToken) =>
             {
                 try
                 {
+                    HttpDispatchContext.Start(httpContext, enrichers);
                     await mediator.ExecuteAsync(command, cancellationToken);
                     return Results.NoContent();
                 }
