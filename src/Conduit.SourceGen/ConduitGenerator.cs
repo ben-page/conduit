@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Conduit.Analysis;
 using Microsoft.CodeAnalysis;
 
@@ -15,63 +16,70 @@ public sealed class ConduitGenerator : IIncrementalGenerator
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Handlers and listeners are discovered from the whole compilation (including referenced
-        // assemblies) via RoslynScanner, so the source output depends on the compilation alone.
-        context.RegisterSourceOutput(context.CompilationProvider, static (spc, compilation) => Execute(compilation, spc));
+        // The discovery walk needs the whole compilation (cross-assembly, by-interface), so the model
+        // derives from CompilationProvider. BuildModel produces a value-equatable ConduitModel, letting
+        // Roslyn cache the emission when discovery is unchanged. (The walk itself still re-runs each
+        // change because the Compilation always changes — see Conduit.SourceGen/CLAUDE.md.)
+        var model = context.CompilationProvider
+            .Select(static (compilation, cancellationToken) => BuildModel(compilation, cancellationToken))
+            .WithTrackingName("BuildModel");
+
+        context.RegisterSourceOutput(model, static (context, model) => Emit(model, context));
     }
 
-    private static void Execute(
-        Compilation compilation,
-        SourceProductionContext context)
+    private static ConduitModel BuildModel(Compilation compilation, CancellationToken cancellationToken)
     {
         var dispatchableTypes = RoslynScanner.Scan(compilation);
+        var scan = RoslynScanner.ScanHandlers(compilation);
 
-        if (dispatchableTypes.Count == 0)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var listenerGroups = scan.ListenerGroups
+            .OrderBy(kvp => kvp.Key, System.StringComparer.Ordinal)
+            .Select(kvp => new ListenerGroup
+            {
+                EventFullTypeName = kvp.Key,
+                ListenerFullTypeNames = kvp.Value.ToEquatableArray(),
+                IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
+            }).ToEquatableArray();
+
+        return new ConduitModel
+        {
+            DispatchableTypes = dispatchableTypes.ToEquatableArray(),
+            Handlers = scan.Handlers.ToEquatableArray(),
+            ListenerGroups = listenerGroups,
+            InaccessibleHandlerMessageTypes = scan.InaccessibleHandlerMessageTypes.ToEquatableArray(),
+            RemoteContractPatterns = GetRemoteContractPatterns(compilation).ToEquatableArray(),
+            HasHttpTransport = compilation.GetTypeByMetadataName(EmitConstants.ConduitRestHandlers) is not null,
+            HasResilience = compilation.GetTypeByMetadataName(EmitConstants.ResilienceBehavior) is not null,
+        };
+    }
+
+    private static void Emit(ConduitModel model, SourceProductionContext context)
+    {
+        if (model.DispatchableTypes.Count == 0)
         {
             return;
         }
 
-        // Find handlers and listeners across the whole compilation (including referenced assemblies)
-        var scan = RoslynScanner.ScanHandlers(compilation);
-        var handlers = scan.Handlers;
+        var dispatchableTypes = model.DispatchableTypes;
+        var handlers = model.Handlers;
+        var groups = model.ListenerGroups;
 
-        // Emit diagnostics
-        var remotePatterns = GetRemoteContractPatterns(compilation);
-        EmitDiagnostics(context, dispatchableTypes, handlers, scan.InaccessibleHandlerMessageTypes, remotePatterns);
+        EmitDiagnostics(context, dispatchableTypes, handlers, model.InaccessibleHandlerMessageTypes, model.RemoteContractPatterns);
 
-        // Generate dispatch methods
-        var dispatchSource = DispatchEmitter.Emit(dispatchableTypes, handlers);
-        context.AddSource("ConduitDispatch.g.cs", dispatchSource);
+        context.AddSource("ConduitDispatch.g.cs", DispatchEmitter.Emit(dispatchableTypes, handlers));
+        context.AddSource("ConduitRegistration.g.cs", RegistrationEmitter.Emit(handlers, groups, dispatchableTypes));
+        context.AddSource("ConduitMediator.g.cs", MediatorEmitter.Emit(dispatchableTypes, handlers, groups));
 
-        // Generate mediator (build groups first — shared with registration)
-        var groups = scan.ListenerGroups.Select(kvp => new ListenerGroup
+        if (model.HasHttpTransport)
         {
-            EventFullTypeName = kvp.Key,
-            ListenerFullTypeNames = kvp.Value.ToEquatableArray(),
-            IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
-        }).ToList();
-
-        // Generate DI registration (interface-based)
-        var registrationSource = RegistrationEmitter.Emit(handlers, groups, dispatchableTypes);
-        context.AddSource("ConduitRegistration.g.cs", registrationSource);
-
-        var mediatorSource = MediatorEmitter.Emit(dispatchableTypes, handlers, groups);
-        context.AddSource("ConduitMediator.g.cs", mediatorSource);
-
-        // Generate REST endpoint mappings (only if Conduit.Transport.Http is referenced)
-        var restHandlersType = compilation.GetTypeByMetadataName(EmitConstants.ConduitRestHandlers);
-        if (restHandlersType != null)
-        {
-            var restSource = RestEmitter.Emit(dispatchableTypes);
-            context.AddSource("ConduitRestEndpoints.g.cs", restSource);
+            context.AddSource("ConduitRestEndpoints.g.cs", RestEmitter.Emit(dispatchableTypes));
         }
 
-        // Generate resilience dispatch (only if Conduit.Resilience is referenced)
-        var resilienceType = compilation.GetTypeByMetadataName(EmitConstants.ResilienceBehavior);
-        if (resilienceType != null)
+        if (model.HasResilience)
         {
-            var resilienceSource = ResilienceEmitter.Emit(dispatchableTypes);
-            context.AddSource("ConduitResilienceDispatch.g.cs", resilienceSource);
+            context.AddSource("ConduitResilienceDispatch.g.cs", ResilienceEmitter.Emit(dispatchableTypes));
         }
     }
 
@@ -93,7 +101,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         return patterns;
     }
 
-    private static bool IsRemoteContract(string fullTypeName, List<string> remotePatterns)
+    private static bool IsRemoteContract(string fullTypeName, EquatableArray<string> remotePatterns)
     {
         foreach (var pattern in remotePatterns)
         {
@@ -108,10 +116,10 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
     private static void EmitDiagnostics(
         SourceProductionContext context,
-        IReadOnlyList<DispatchableTypeInfo> types,
-        IReadOnlyList<HandlerInfo> handlers,
-        IReadOnlyList<string> inaccessibleHandlerMessageTypes,
-        List<string> remotePatterns)
+        EquatableArray<DispatchableTypeInfo> types,
+        EquatableArray<HandlerInfo> handlers,
+        EquatableArray<string> inaccessibleHandlerMessageTypes,
+        EquatableArray<string> remotePatterns)
     {
         foreach (var type in types)
         {
