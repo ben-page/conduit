@@ -213,7 +213,22 @@ public static class TypeMapper
             return $"{GetShortName(innerContent)}[]";
         }
 
-        return null;
+        // Dictionary<K, V> → Record<K, V>
+        if (DictionaryShortNames.Contains(outerShortName))
+        {
+            var commaIndex = FindTopLevelComma(innerContent);
+            if (commaIndex >= 0)
+            {
+                var keyContent = innerContent[..commaIndex].Trim();
+                var valueContent = innerContent[(commaIndex + 1)..].Trim();
+                return $"Record<{MapArg(keyContent)}, {MapArg(valueContent)}>";
+            }
+        }
+
+        // Any other generic (e.g. PagedResult<Item>) → OuterShort<Arg, ...>, arity-stripped.
+        var outerStripped = StripArity(outerShortName);
+        var args = SplitTopLevel(innerContent).Select(MapArg);
+        return $"{outerStripped}<{string.Join(", ", args)}>";
     }
 
     private static string GetShortName(string fullTypeName)
@@ -251,4 +266,87 @@ public static class TypeMapper
         "ICollection",
         "IReadOnlyCollection",
     ];
+
+    private static readonly HashSet<string> DictionaryShortNames =
+    [
+        "Dictionary",
+        "IDictionary",
+        "IReadOnlyDictionary",
+    ];
+
+    /// <summary>Maps one type-argument string: try the C#-style mapper, then reflection, then the short name.</summary>
+    private static string MapArg(string arg)
+    {
+        var mapped = MapFullTypeName(arg);
+        if (mapped is not null)
+        {
+            return mapped;
+        }
+
+        var resolved = TypeScriptEmitter.FindType(arg);
+        if (resolved is not null)
+        {
+            return MapType(resolved);
+        }
+
+        return GetShortName(arg);
+    }
+
+    private static string StripArity(string name)
+    {
+        var tick = name.IndexOf('`', StringComparison.Ordinal);
+        return tick >= 0 ? name[..tick] : name;
+    }
+
+    /// <summary>Splits a generic argument list on top-level commas (depth 0 w.r.t. angle brackets).</summary>
+    private static List<string> SplitTopLevel(string content)
+    {
+        var parts = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < content.Length; i++)
+        {
+            switch (content[i])
+            {
+                case '<':
+                    depth++;
+                    break;
+                case '>':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    parts.Add(content[start..i].Trim());
+                    start = i + 1;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        parts.Add(content[start..].Trim());
+        return parts;
+    }
+
+    private static int FindTopLevelComma(string text)
+    {
+        var depth = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            switch (text[i])
+            {
+                case '<':
+                    depth++;
+                    break;
+                case '>':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    return i;
+                default:
+                    break;
+            }
+        }
+
+        return -1;
+    }
 }

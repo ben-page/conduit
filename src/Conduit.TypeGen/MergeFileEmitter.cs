@@ -158,11 +158,13 @@ public static class MergeFileEmitter
 
     private static void EmitInterface(StringBuilder sb, string typeName, Type? type, string? baseTypeName = null)
     {
+        var tsName = type is not null && type.IsGenericType ? GenericTsName(type) : typeName;
+
         var extendsClause = string.IsNullOrEmpty(baseTypeName)
             ? string.Empty
             : $" extends {baseTypeName}";
 
-        sb.Append(CultureInfo.InvariantCulture, $"export interface {typeName}{extendsClause} {{").AppendLine();
+        sb.Append(CultureInfo.InvariantCulture, $"export interface {tsName}{extendsClause} {{").AppendLine();
 
         if (type != null)
         {
@@ -185,6 +187,24 @@ public static class MergeFileEmitter
         }
 
         sb.AppendLine("}");
+    }
+
+    /// <summary>TS name for a generic type definition: <c>PagedResult`1</c> → <c>PagedResult&lt;T&gt;</c>.</summary>
+    private static string GenericTsName(Type type)
+    {
+        var name = type.Name;
+        var tick = name.IndexOf('`', StringComparison.Ordinal);
+        if (tick >= 0)
+        {
+            name = name[..tick];
+        }
+
+        // The collected type may be a closed instance (e.g. PagedResult<Item>); the open
+        // generic definition's arguments are the type PARAMETERS (T, ...) we want for the
+        // declaration header.
+        var definition = type.IsGenericTypeDefinition ? type : type.GetGenericTypeDefinition();
+        var parameters = definition.GetGenericArguments().Select(a => a.Name);
+        return $"{name}<{string.Join(", ", parameters)}>";
     }
 
     /// <summary>
