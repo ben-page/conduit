@@ -125,8 +125,10 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Test directories: `Unit/` for single-class tests, `Integration/` for multi-component tests, `Support/` for test types (one class per file)
 - Test class naming: `[Subject]Should` (e.g. `MediatorShould`, `RoutingShould`)
 - AAA pattern with `// Arrange`, `// Act`, `// Assert` comments
-- Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `ContainerHelper`, `MessageContextSnapshot`)
+- Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `ContainerHelper`, `MessageContextSnapshot`, `TestTopologyPrefix`)
+- `TestTopologyPrefix` builds a per-project Test topology prefix `test-{hash8(assembly)}-{random}` (`ProjectHash`/`ProjectPrefix`/`NewForTest`). All hosts in a test project share the stable `test-{hash8}-` segment so the project can clean up exactly the resources it created.
 - Broker transport tests use per-transport abstract base classes (`RabbitMqTestBase`, `AsbTestBase`, etc.) that own container lifecycle (static), factory methods, and `[TestInitialize]` availability guard. `AssemblySetup` delegates to base class static init/cleanup methods.
+- Ephemeral resource cleanup for the TTL-less brokers: Kafka/SQS test projects reap their own `test-{hash8}-` prefix once at `[AssemblyInitialize]` (`*TestBase.ReapProjectResourcesAsync()` → `KafkaTopologyReaper`/`AmazonSqsTopologyReaper.ReapByPrefixAsync`). RabbitMQ/ASB/ActiveMQ self-clean via native auto-delete/TTL, so they don't reap. Cleanup is once-per-project (NOT per-host-startup — that cross-deletes concurrent hosts).
 - All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent and disposes the underlying host via `IAsyncDisposable.DisposeAsync` (not sync `Dispose()`) — broker transports implement `IAsyncDisposable` only, and sync disposal deadlocks AmqpNetLite's link close in ActiveMQ.
 - Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (behavior tests + universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
