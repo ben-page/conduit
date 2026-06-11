@@ -29,20 +29,28 @@ public static class AmazonSqsTopologyReaper
         using (snsClient)
         using (sqsClient)
         {
-            var queues = await sqsClient.ListQueuesAsync(
-                new ListQueuesRequest { QueueNamePrefix = prefix, MaxResults = 1000 }, cancellationToken);
-            foreach (var queueUrl in queues.QueueUrls ?? [])
+            string? queueToken = null;
+            do
             {
-                try
+                var queues = await sqsClient.ListQueuesAsync(
+                    new ListQueuesRequest { QueueNamePrefix = prefix, MaxResults = 1000, NextToken = queueToken },
+                    cancellationToken);
+                foreach (var queueUrl in queues.QueueUrls ?? [])
                 {
-                    await sqsClient.DeleteQueueAsync(queueUrl, cancellationToken);
-                    reaped++;
+                    try
+                    {
+                        await sqsClient.DeleteQueueAsync(queueUrl, cancellationToken);
+                        reaped++;
+                    }
+                    catch (AmazonSQSException)
+                    {
+                        // Best-effort.
+                    }
                 }
-                catch (AmazonSQSException)
-                {
-                    // Best-effort.
-                }
+
+                queueToken = queues.NextToken;
             }
+            while (!string.IsNullOrEmpty(queueToken));
 
             string? nextToken = null;
             do

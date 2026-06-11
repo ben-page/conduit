@@ -8,7 +8,7 @@ namespace Conduit.Transport.Kafka;
 /// test project's resources (named under a stable <c>test-{hash}-</c> prefix) between runs, and
 /// available to applications that want their own prefix-scoped cleanup pass. Best-effort: per-batch
 /// delete failures are swallowed and the call never throws on a single failure. Returns the number
-/// of resources deleted.
+/// of resources deleted (counting only batches that completed without error).
 /// </summary>
 public static class KafkaTopologyReaper
 {
@@ -44,6 +44,8 @@ public static class KafkaTopologyReaper
                 // Best-effort: a topic mid-delete/in-use is left for the next pass.
             }
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         var groups = await adminClient.ListConsumerGroupsAsync();
         var groupIds = groups.Valid
