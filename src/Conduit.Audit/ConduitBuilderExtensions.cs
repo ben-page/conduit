@@ -33,12 +33,10 @@ public static class ConduitBuilderExtensions
         builder.Services.Configure<AuditOptions>(options =>
         {
             options.BatchSize = auditBuilder.Options.BatchSize;
-            options.FlushInterval = auditBuilder.Options.FlushInterval;
             options.ServiceName = auditBuilder.Options.ServiceName;
             options.StaleGroupTimeout = auditBuilder.Options.StaleGroupTimeout;
             options.ChannelCapacity = auditBuilder.Options.ChannelCapacity;
             options.BackpressureMode = auditBuilder.Options.BackpressureMode;
-            options.MetricsAggregationInterval = auditBuilder.Options.MetricsAggregationInterval;
         });
 
         // Channel for observation consolidation -> batch publishing

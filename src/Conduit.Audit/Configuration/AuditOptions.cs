@@ -11,9 +11,6 @@ public sealed class AuditOptions
     /// <summary>Maximum number of records per batch before publishing.</summary>
     public int BatchSize { get; set; } = 100;
 
-    /// <summary>Maximum time to wait before flushing a partial batch.</summary>
-    public TimeSpan FlushInterval { get; set; } = TimeSpan.FromSeconds(5);
-
     /// <summary>The service name included in audit batches. Defaults to "unknown" if not set.</summary>
     public string? ServiceName { get; set; }
 
@@ -31,7 +28,4 @@ public sealed class AuditOptions
 
     /// <summary>How often the purge process runs to remove expired records.</summary>
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(24);
-
-    /// <summary>Interval at which metrics are aggregated from stored audit data.</summary>
-    public TimeSpan MetricsAggregationInterval { get; set; } = TimeSpan.FromHours(1);
 }

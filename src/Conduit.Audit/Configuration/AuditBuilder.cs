@@ -34,13 +34,6 @@ public sealed class AuditBuilder
         set => this.Options.BatchSize = value;
     }
 
-    /// <summary>Maximum time to wait before flushing a partial batch. Default 5 seconds.</summary>
-    public TimeSpan FlushInterval
-    {
-        get => this.Options.FlushInterval;
-        set => this.Options.FlushInterval = value;
-    }
-
     /// <summary>Maximum number of records buffered before backpressure applies. Default 10,000.</summary>
     public int ChannelCapacity
     {
