@@ -174,12 +174,63 @@ public static class MergeFileEmitter
             foreach (var property in properties)
             {
                 var tsType = TypeMapper.MapType(property.PropertyType);
+                if (IsNullableReference(property) && !tsType.EndsWith(" | null", StringComparison.Ordinal))
+                {
+                    tsType = $"{tsType} | null";
+                }
+
                 var propName = TypeScriptEmitter.ToCamelCase(property.Name);
                 sb.Append(CultureInfo.InvariantCulture, $"  {propName}: {tsType};").AppendLine();
             }
         }
 
         sb.AppendLine("}");
+    }
+
+    /// <summary>
+    /// Determines whether a reference-type property is annotated nullable (<c>string?</c>) by reading
+    /// the C# compiler's <c>NullableAttribute</c> (per-member) / <c>NullableContextAttribute</c>
+    /// (per-type default). Value types return false (their nullability is handled by the type map).
+    /// Flag byte 2 = nullable, 1 = not-null, 0 = oblivious.
+    /// </summary>
+    private static bool IsNullableReference(PropertyInfo property)
+    {
+        if (property.PropertyType.IsValueType)
+        {
+            return false;
+        }
+
+        const string nullableAttr = "System.Runtime.CompilerServices.NullableAttribute";
+        var memberNullable = property.GetCustomAttributesData()
+            .FirstOrDefault(a => a.AttributeType.FullName == nullableAttr);
+        if (memberNullable is not null && memberNullable.ConstructorArguments.Count == 1)
+        {
+            var arg = memberNullable.ConstructorArguments[0];
+            if (arg.Value is byte flag)
+            {
+                return flag == 2;
+            }
+
+            if (arg.Value is IReadOnlyList<CustomAttributeTypedArgument> flags
+                && flags.Count > 0 && flags[0].Value is byte first)
+            {
+                return first == 2;
+            }
+        }
+
+        const string contextAttr = "System.Runtime.CompilerServices.NullableContextAttribute";
+        for (var declaring = property.DeclaringType; declaring is not null; declaring = declaring.DeclaringType)
+        {
+            var ctx = declaring.GetCustomAttributesData()
+                .FirstOrDefault(a => a.AttributeType.FullName == contextAttr);
+            if (ctx is not null && ctx.ConstructorArguments.Count == 1
+                && ctx.ConstructorArguments[0].Value is byte ctxFlag)
+            {
+                return ctxFlag == 2;
+            }
+        }
+
+        return false;
     }
 
     private static void EmitConduitClient(StringBuilder sb)
