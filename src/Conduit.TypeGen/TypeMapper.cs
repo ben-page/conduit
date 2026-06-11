@@ -90,6 +90,17 @@ public static class TypeMapper
                 var valueType = type.GetGenericArguments()[1];
                 return $"Record<{MapType(keyType)}, {MapType(valueType)}>";
             }
+
+            // Any other generic type (e.g. PagedResult<T>) → Name<Arg, ...>, arity backtick stripped.
+            var typeArguments = type.GetGenericArguments().Select(MapType);
+            var genericName = genericDef.Name;
+            var tickIndex = genericName.IndexOf('`', StringComparison.Ordinal);
+            if (tickIndex >= 0)
+            {
+                genericName = genericName[..tickIndex];
+            }
+
+            return $"{genericName}<{string.Join(", ", typeArguments)}>";
         }
 
         // Handle enums → string literal union
@@ -109,6 +120,12 @@ public static class TypeMapper
 
         // Object/unknown
         if (type.FullName == "System.Object")
+        {
+            return "unknown";
+        }
+
+        // System.Text.Json dynamic JSON → unknown
+        if (type.FullName == "System.Text.Json.JsonElement")
         {
             return "unknown";
         }
