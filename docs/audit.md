@@ -143,7 +143,6 @@ conduit.AddAudit(audit =>
 {
     audit.ServiceName = "OrderService";                  // stamped on each batch (default: host app name)
     audit.BatchSize = 100;                               // records per batch (default: 100)
-    audit.FlushInterval = TimeSpan.FromSeconds(5);       // flush a partial batch after this (default: 5s)
     audit.ChannelCapacity = 10_000;                      // buffered records before backpressure (default: 10,000)
     audit.BackpressureMode = BoundedChannelFullMode.DropOldest; // when buffer is full (default: DropOldest)
     audit.StaleGroupTimeout = TimeSpan.FromMinutes(5);   // evict incomplete dispatch groups (default: 5m)
@@ -209,4 +208,4 @@ Because each service stamps its own records with the shared `MessageId`, the cen
 
 **Persistence requires a listener.** `AddAudit()` alone emits `AuditBatch` events but stores nothing. Without either a local `AddAuditListener()` or a central collector, the events have no consumer and the records are discarded.
 
-**Metrics aggregation is not yet implemented.** `AuditOptions.MetricsAggregationInterval` exists but no aggregation runs; only raw records are stored and purged.
+**Metrics are not the audit trail's job.** Audit stores the full per-dispatch observation trail for forensics and replay — it does not aggregate metrics. For real-time counts, durations, success rates, and dead-letter/transport metrics, use Conduit's built-in OpenTelemetry instrumentation (the `"Conduit"` `Meter` in `ConduitTelemetry`), wired into your OTel exporter (Prometheus/OTLP).
