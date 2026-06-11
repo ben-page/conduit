@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Conduit.Attributes;
+using Conduit.Messages;
 
 namespace Conduit.TypeGen.Tests.Sample;
 
@@ -26,6 +27,11 @@ public sealed record TestActivityPageDto
 {
     public TestPagedResult<TestActivityListItem> Results { get; init; } = new();
 }
+
+// A query returning a closed generic result, so the QueryMap `response` is produced via
+// TypeMapEmitter.ResolveResultType → TypeMapper.MapFullTypeName (Fix 1's map-path target).
+[ClientVisible]
+public sealed record TestListActivitiesQuery(int Page) : IQuery<TestPagedResult<TestActivityListItem>>;
 
 // --- Fix 2: System.Text.Json.JsonElement must emit `unknown`. ---
 

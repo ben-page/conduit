@@ -34,6 +34,29 @@ public class EmitterFixesShould
         result.Should().Contain("  results: TestPagedResult<TestActivityListItem>;");
     }
 
+    [TestMethod]
+    public void EmitGenericInterfaceDeclarationWithTypeParameter()
+    {
+        var result = EmitFromTestAssembly();
+
+        // The generic interface declaration itself must strip the arity backtick and emit the
+        // type parameter (`PagedResult`1` → `PagedResult<T>`), never the raw CLR name.
+        result.Should().Contain("export interface TestPagedResult<T> {");
+        result.Should().NotContain("TestPagedResult`1");
+    }
+
+    [TestMethod]
+    public void EmitGenericQueryResultInMapWithAngleBrackets()
+    {
+        var result = EmitFromTestAssembly();
+
+        // A query returning PagedResult<Item> goes through TypeMapEmitter.ResolveResultType, whose
+        // C#-style angle-bracket result name can't be reflection-resolved and must instead be
+        // reconstructed by MapFullTypeName as `PagedResult<Item>`, never the raw backtick name.
+        result.Should().Contain("response: TestPagedResult<TestActivityListItem>");
+        result.Should().NotContain("PagedResult`1");
+    }
+
     // --- Fix 2: JsonElement → unknown ---
 
     [TestMethod]
