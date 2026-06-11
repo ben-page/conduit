@@ -4,7 +4,7 @@ namespace Conduit.Analysis;
 /// Describes a discovered command, query, or event type for use by source generators
 /// and tooling emitters.
 /// </summary>
-public sealed class DispatchableTypeInfo
+public sealed record DispatchableTypeInfo
 {
     /// <summary>The short type name (e.g. "CreateItemCommand").</summary>
     public required string TypeName { get; init; }

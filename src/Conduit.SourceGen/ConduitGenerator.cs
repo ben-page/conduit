@@ -47,7 +47,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         var groups = scan.ListenerGroups.Select(kvp => new ListenerGroup
         {
             EventFullTypeName = kvp.Key,
-            ListenerFullTypeNames = kvp.Value,
+            ListenerFullTypeNames = kvp.Value.ToEquatableArray(),
             IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
         }).ToList();
 
