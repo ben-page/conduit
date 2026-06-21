@@ -406,12 +406,16 @@ public static class MediatorEmitter
             sb.AppendLine("        if (@event is " + string.Join(" or ", fireAndForgetTypes) + ")");
             sb.AppendLine("        {");
             sb.AppendLine("            var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
+            sb.AppendLine("            var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();");
             sb.AppendLine("            var captured = @event;");
             sb.AppendLine("            dispatcher.Enqueue(async ct =>");
             sb.AppendLine("            {");
+            sb.AppendLine("                // Fire-and-forget runs after the publishing request's DI scope is disposed,");
+            sb.AppendLine("                // so resolve listeners from a fresh scope rather than the captured (disposed) one.");
+            sb.AppendLine("                using var scope = scopeFactory.CreateScope();");
             sb.AppendLine("                try");
             sb.AppendLine("                {");
-            sb.AppendLine("                    await PublishLocalAsync(captured, ct);");
+            sb.AppendLine("                    await PublishLocalAsync(scope.ServiceProvider, captured, ct);");
             sb.AppendLine("                }");
             sb.AppendLine($"                catch ({EmitConstants.NamespaceExceptions}.EventListenerException ex)");
             sb.AppendLine("                {");
@@ -426,7 +430,7 @@ public static class MediatorEmitter
         // Non-F&F events run local listeners inline
         sb.AppendLine("        try");
         sb.AppendLine("        {");
-        sb.AppendLine("            await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine("            await PublishLocalAsync(serviceProvider, @event, cancellationToken);");
         sb.AppendLine("        }");
         sb.AppendLine($"        catch ({EmitConstants.NamespaceExceptions}.EventListenerException ex)");
         sb.AppendLine("        {");
@@ -479,7 +483,7 @@ public static class MediatorEmitter
         // Throws EventListenerException if any listener failed (all listeners still run).
         if (listenerGroups.Count == 0)
         {
-            sb.AppendLine("    private Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
+            sb.AppendLine("    private Task PublishLocalAsync(IServiceProvider serviceProvider, IEvent @event, CancellationToken cancellationToken)");
             sb.AppendLine("    {");
             sb.AppendLine("        return Task.CompletedTask;");
             sb.AppendLine("    }");
@@ -487,7 +491,7 @@ public static class MediatorEmitter
             return;
         }
 
-        sb.AppendLine("    private async Task PublishLocalAsync(IEvent @event, CancellationToken cancellationToken)");
+        sb.AppendLine("    private async Task PublishLocalAsync(IServiceProvider serviceProvider, IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine("        var exceptions = new List<Exception>();");
         sb.AppendLine("        switch (@event)");
@@ -667,7 +671,7 @@ public static class MediatorEmitter
 
         sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
         sb.AppendLine("            };");
-        sb.AppendLine("            await PublishLocalAsync(@event, cancellationToken);");
+        sb.AppendLine("            await PublishLocalAsync(serviceProvider, @event, cancellationToken);");
 
         EmitDispatchCompleted(sb, "            ");
 
@@ -690,6 +694,9 @@ public static class MediatorEmitter
 
         sb.AppendLine($"        var previousContext = {EmitConstants.MessageContext}.Current;");
         sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch(__dispatchOptions);");
+        // Attach this host's observer (DI singleton -> per-host) to the per-flow context, so audit
+        // observation is isolated per host rather than routed through a process-global static.
+        sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
 
         // Payload capture for non-DoNotAudit types
         if (emitPayloadCapture && !isDoNotAudit && requestVarName != null)
@@ -745,6 +752,9 @@ public static class MediatorEmitter
     /// </summary>
     private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
     {
+        // The transport already started the context (StartDispatchFromTransport); attach this host's
+        // observer from the mediator's scope before the first observation.
+        sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
         sb.AppendLine("        try");

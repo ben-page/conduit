@@ -17,26 +17,33 @@ public sealed class AuditDispatchObservationsShould
     public void Setup()
     {
         this.collector = new ObservationCollector();
-        MessageContext.Observer = this.collector;
     }
 
     [TestCleanup]
     public void Cleanup()
     {
-        MessageContext.Observer = null;
         MessageContext.RestoreContext(null);
     }
+
+    /// <summary>
+    /// Starts a host with the given observer registered as the per-host <see cref="IConduitObserver"/>.
+    /// The generated mediator resolves it from the dispatch scope and attaches it to the context —
+    /// there is no process-global observer to set.
+    /// </summary>
+    private static Task<TestHost> StartHostAsync(IConduitObserver observer) =>
+        TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddSingleton(observer);
+            builder.Services.AddConduit();
+        });
 
     [TestMethod]
     public async Task EmitDispatchInvokedAndCompletedForCommand()
     {
         // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
+        await using var host = await StartHostAsync(this.collector);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
@@ -57,12 +64,7 @@ public sealed class AuditDispatchObservationsShould
     public async Task EmitDispatchInvokedAndCompletedForVoidCommand()
     {
         // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
+        await using var host = await StartHostAsync(this.collector);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
@@ -81,12 +83,7 @@ public sealed class AuditDispatchObservationsShould
     public async Task EmitDispatchInvokedAndCompletedForQuery()
     {
         // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
+        await using var host = await StartHostAsync(this.collector);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
@@ -107,12 +104,7 @@ public sealed class AuditDispatchObservationsShould
     public async Task EmitDispatchFailedOnException()
     {
         // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
+        await using var host = await StartHostAsync(this.collector);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
@@ -136,12 +128,7 @@ public sealed class AuditDispatchObservationsShould
     public async Task EmitDispatchInvokedAndCompletedForEvent()
     {
         // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
+        await using var host = await StartHostAsync(this.collector);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
@@ -160,12 +147,7 @@ public sealed class AuditDispatchObservationsShould
     public async Task EmitHandlerStartedAndCompletedPerListener()
     {
         // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
+        await using var host = await StartHostAsync(this.collector);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
@@ -184,18 +166,10 @@ public sealed class AuditDispatchObservationsShould
     [TestMethod]
     public async Task CapturePayloadOnDispatch()
     {
-        // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
-        var mediator = host.GetRequiredService<IMediator>();
-
-        // Use a custom observer that captures the payload from the context
+        // Arrange — a custom observer registered as the host's IConduitObserver.
         var payloadCollector = new PayloadCapturingObserver();
-        MessageContext.Observer = payloadCollector;
+        await using var host = await StartHostAsync(payloadCollector);
+        var mediator = host.GetRequiredService<IMediator>();
 
         // Act
         await mediator.ExecuteAsync(new EchoCommand("payload-test"));
@@ -208,18 +182,10 @@ public sealed class AuditDispatchObservationsShould
     [TestMethod]
     public async Task PassPropertiesViaDispatchOptions()
     {
-        // Arrange
-        await using var host = await TestHost.StartAsync(builder =>
-        {
-            builder.Services.AddSingleton<ItemStore>();
-            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddConduit();
-        });
-        var mediator = host.GetRequiredService<IMediator>();
-
-        // Use a custom observer that captures properties from the context
+        // Arrange — a custom observer registered as the host's IConduitObserver.
         var propertiesCollector = new PropertiesCapturingObserver();
-        MessageContext.Observer = propertiesCollector;
+        await using var host = await StartHostAsync(propertiesCollector);
+        var mediator = host.GetRequiredService<IMediator>();
 
         // Act
         await mediator.ExecuteAsync(

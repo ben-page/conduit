@@ -23,10 +23,12 @@ public sealed class MessageContext
     public static MessageContext? Current => CurrentContext.Value;
 
     /// <summary>
-    /// The registered observer that receives observation records during dispatch.
-    /// Set during host startup by the audit infrastructure.
+    /// The observer that receives observation records for this dispatch. Resolved from the
+    /// dispatching host's DI container (a singleton, so per-host) and attached by the generated
+    /// mediator via <see cref="AttachObserver"/>. Carried on the per-flow context — never a
+    /// process-global static — so multiple hosts in one process stay isolated.
     /// </summary>
-    internal static IConduitObserver? Observer { get; set; }
+    private IConduitObserver? observer;
 
     /// <summary>Unique ID for this specific message dispatch.</summary>
     public string MessageId { get; }
@@ -92,10 +94,28 @@ public sealed class MessageContext
             messageId: messageId,
             causationId: parent?.MessageId ?? messageId,
             conversationId: parent?.ConversationId ?? messageId,
-            properties: properties);
+            properties: properties)
+        {
+            // Nested dispatches inherit the parent's observer; the mediator re-attaches the
+            // host's observer for root dispatches via AttachObserver.
+            observer = parent?.observer,
+        };
 
         CurrentContext.Value = context;
         return context;
+    }
+
+    /// <summary>
+    /// Attaches the dispatching host's observer (resolved from its DI container) to this context.
+    /// Called by the generated mediator at the start of every dispatch. No-ops when
+    /// <paramref name="observer"/> is null so an inherited observer is preserved.
+    /// </summary>
+    public void AttachObserver(IConduitObserver? observer)
+    {
+        if (observer is not null)
+        {
+            this.observer = observer;
+        }
     }
 
     /// <summary>
@@ -132,18 +152,13 @@ public sealed class MessageContext
     /// </summary>
     public static void Observe(MessageObservation observation)
     {
-        if (Observer is null)
-        {
-            return;
-        }
-
         var context = Current;
-        if (context is null)
+        if (context?.observer is null)
         {
             return;
         }
 
-        Observer.OnObservation(observation, context);
+        context.observer.OnObservation(observation, context);
     }
 
     /// <summary>
