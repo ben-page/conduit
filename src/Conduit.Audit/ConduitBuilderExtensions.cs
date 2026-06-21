@@ -59,7 +59,11 @@ public static class ConduitBuilderExtensions
             .Select(type => type.FullName!)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Observer (consolidates observations per dispatch)
+        // Observer (consolidates observations per dispatch). Registered as a singleton — one per DI
+        // container, i.e. per host — and exposed via IConduitObserver, which the generated mediator
+        // resolves from each dispatch's scope and attaches to the per-flow MessageContext. This keeps
+        // observation isolated per host (no process-global static), so multiple hosts in one process
+        // never cross-contaminate. The concrete type stays registered for the publisher's stale sweep.
         builder.Services.AddSingleton(serviceProvider =>
         {
             var serviceName = auditBuilder.Options.ServiceName
@@ -67,9 +71,8 @@ public static class ConduitBuilderExtensions
                 ?? "unknown";
             return new AuditObserver(channel.Writer, serviceName, suppressedTypes, suppressedPayloadTypes);
         });
-
-        // Wire observer at startup, unwire at shutdown
-        builder.Services.AddHostedService<AuditObserverInitializer>();
+        builder.Services.AddSingleton<Conduit.Runtime.IConduitObserver>(
+            serviceProvider => serviceProvider.GetRequiredService<AuditObserver>());
 
         // Background publisher (drains channel, publishes AuditBatch events)
         builder.Services.AddHostedService<AuditBatchPublisher>();

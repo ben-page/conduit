@@ -165,6 +165,7 @@ public static class DispatchEmitter
         sb.AppendLine();
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
         sb.AppendLine($"        var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
+        sb.AppendLine($"        var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();");
         sb.AppendLine();
         sb.AppendLine($"        // The handler call enqueues to the background dispatcher instead of executing inline.");
         sb.AppendLine($"        // Pipeline behaviors wrap this — they run in the caller context, the handler runs in the background.");
@@ -172,7 +173,9 @@ public static class DispatchEmitter
         sb.AppendLine("        {");
         sb.AppendLine($"            dispatcher.Enqueue(async ct =>");
         sb.AppendLine("            {");
-        sb.AppendLine($"                var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
+        sb.AppendLine($"                // Background work runs after the caller's DI scope is disposed — resolve from a fresh scope.");
+        sb.AppendLine($"                using var scope = scopeFactory.CreateScope();");
+        sb.AppendLine($"                var handler = scope.ServiceProvider.GetRequiredService<{handlerInterface}>();");
         sb.AppendLine($"                await handler.HandleAsync(command, ct);");
         sb.AppendLine("            });");
         sb.AppendLine($"            return Task.FromResult<object?>({EmitConstants.Unit}.Value)!;");

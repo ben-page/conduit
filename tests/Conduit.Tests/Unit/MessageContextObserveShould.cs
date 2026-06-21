@@ -11,15 +11,13 @@ public sealed class MessageContextObserveShould
     [TestCleanup]
     public void Cleanup()
     {
-        MessageContext.Observer = null;
         MessageContext.RestoreContext(null);
     }
 
     [TestMethod]
     public void NoOpWhenNoObserverRegistered()
     {
-        // Arrange
-        MessageContext.Observer = null;
+        // Arrange — a context with no observer attached.
         MessageContext.StartDispatch();
 
         // Act & Assert — should not throw
@@ -29,15 +27,15 @@ public sealed class MessageContextObserveShould
     [TestMethod]
     public void NoOpWhenNoCurrentContext()
     {
-        // Arrange
+        // Arrange — attach an observer to a context, then clear the current context.
         var collector = new ObservationCollector();
-        MessageContext.Observer = collector;
+        MessageContext.StartDispatch().AttachObserver(collector);
         MessageContext.RestoreContext(null);
 
         // Act
         MessageContext.Observe(new DispatchInvoked("Test.Type", "Command"));
 
-        // Assert
+        // Assert — no current context, so nothing is observed.
         collector.Collected.Should().BeEmpty();
     }
 
@@ -46,8 +44,7 @@ public sealed class MessageContextObserveShould
     {
         // Arrange
         var collector = new ObservationCollector();
-        MessageContext.Observer = collector;
-        MessageContext.StartDispatch();
+        MessageContext.StartDispatch().AttachObserver(collector);
         var observation = new DispatchInvoked("Test.Type", "Command");
 
         // Act
@@ -63,8 +60,8 @@ public sealed class MessageContextObserveShould
     {
         // Arrange
         var collector = new ObservationCollector();
-        MessageContext.Observer = collector;
         var context = MessageContext.StartDispatch();
+        context.AttachObserver(collector);
 
         // Act
         MessageContext.Observe(new DispatchInvoked("Test.Type", "Command"));
