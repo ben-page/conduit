@@ -16,6 +16,9 @@ public class ErrorCodeShould
         ErrorCode.Unauthorized.Value.Should().Be("Unauthorized");
         ErrorCode.Unauthorized.HttpStatusCode.Should().Be(401);
 
+        ErrorCode.Forbidden.Value.Should().Be("Forbidden");
+        ErrorCode.Forbidden.HttpStatusCode.Should().Be(403);
+
         ErrorCode.Conflict.Value.Should().Be("Conflict");
         ErrorCode.Conflict.HttpStatusCode.Should().Be(409);
 
