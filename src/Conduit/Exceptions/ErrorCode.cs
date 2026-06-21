@@ -33,8 +33,11 @@ public record ErrorCode
     /// <summary>HTTP 404 — resource not found.</summary>
     public static readonly ErrorCode NotFound = new("NotFound", 404);
 
-    /// <summary>HTTP 401 — authentication required or denied.</summary>
+    /// <summary>HTTP 401 — not authenticated (no/invalid credentials).</summary>
     public static readonly ErrorCode Unauthorized = new("Unauthorized", 401);
+
+    /// <summary>HTTP 403 — authenticated but not permitted to perform the action.</summary>
+    public static readonly ErrorCode Forbidden = new("Forbidden", 403);
 
     /// <summary>HTTP 409 — conflicting state.</summary>
     public static readonly ErrorCode Conflict = new("Conflict", 409);
@@ -49,6 +52,7 @@ public record ErrorCode
     {
         [NotFound.Value] = NotFound.HttpStatusCode,
         [Unauthorized.Value] = Unauthorized.HttpStatusCode,
+        [Forbidden.Value] = Forbidden.HttpStatusCode,
         [Conflict.Value] = Conflict.HttpStatusCode,
         [InternalError.Value] = InternalError.HttpStatusCode,
         [BadRequest.Value] = BadRequest.HttpStatusCode,
