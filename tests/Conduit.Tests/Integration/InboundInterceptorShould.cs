@@ -108,7 +108,7 @@ public class InboundInterceptorShould
     }
 
     [TestMethod]
-    public async Task RejectUnauthorizedTypeViaTypeFilter()
+    public async Task RejectDisallowedTypeViaTypeFilter()
     {
         // Arrange
         await using var host = TestWebHost.Start(
@@ -130,7 +130,7 @@ public class InboundInterceptorShould
 
         // Assert
         result.Error.Should().NotBeNull();
-        result.Error!.Code.Should().Be("Unauthorized");
+        result.Error!.Code.Should().Be("Forbidden");
     }
 
     [TestMethod]

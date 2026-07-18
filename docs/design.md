@@ -331,7 +331,7 @@ Events broadcast — they don't route. `PublishAsync` dispatches to local listen
 public record UserPasswordChangedEvent(Guid UserId) : IEvent;
 ```
 
-Inbound filtering is handled by `TypeFilterInterceptor` (rejects unauthorized types arriving from transports). `[LocalOnly]` is the outbound complement — preventing events from leaving.
+Inbound filtering is handled by `TypeFilterInterceptor` (rejects disallowed types arriving from transports with `ForbiddenException`). `[LocalOnly]` is the outbound complement — preventing events from leaving.
 
 ### Topology Naming
 

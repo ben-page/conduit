@@ -46,7 +46,7 @@ public Task<object?> InterceptRequestAsync(
     DispatchEnvelope envelope, Func<Task<object?>> next, CancellationToken cancellationToken)
 {
     if (!options.Value.AllowedTypes.Contains(envelope.Type))
-        throw new UnauthorizedException($"Type '{envelope.Type}' is not allowed.");
+        throw new ForbiddenException($"Type '{envelope.Type}' is not allowed.");
 
     return next();
 }
