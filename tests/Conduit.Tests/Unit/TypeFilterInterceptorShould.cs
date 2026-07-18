@@ -42,7 +42,7 @@ public class TypeFilterInterceptorShould
         var action = () => interceptor.ShouldProcessAsync("DeleteDatabase", CancellationToken.None);
 
         // Assert
-        await action.Should().ThrowAsync<Conduit.Exceptions.UnauthorizedException>()
+        await action.Should().ThrowAsync<Conduit.Exceptions.ForbiddenException>()
             .WithMessage("*DeleteDatabase*");
     }
 }
