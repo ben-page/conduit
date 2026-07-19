@@ -39,12 +39,16 @@ public class OutboxRelayShould
         TransportDispatcher dispatcher,
         OutboxOptions? outboxOptions = null)
     {
-        var options = Options.Create(outboxOptions ?? new OutboxOptions { MaxRetries = 3 });
+        // OutboxRelay resolves IOutboxStore scope-per-sweep (see its class remarks), so tests wire
+        // the stub store through a real IServiceScopeFactory rather than constructor-injecting it.
+        var services = new ServiceCollection();
+        services.AddScoped<IOutboxStore>(_ => store);
+        var provider = services.BuildServiceProvider();
 
         return new OutboxRelay(
-            store,
+            provider.GetRequiredService<IServiceScopeFactory>(),
             dispatcher,
-            options,
+            Options.Create(outboxOptions ?? new OutboxOptions { MaxRetries = 3 }),
             NullLogger<OutboxRelay>.Instance);
     }
 
@@ -121,6 +125,51 @@ public class OutboxRelayShould
         store.RetriesIncremented.Should().BeEmpty();
         store.MarkedFailed.Should().BeEmpty();
     }
+
+    [TestMethod]
+    public async Task IncrementRetryWhenALocalListenerThrows()
+    {
+        // Arrange — a claimed entry of a DeliversLocally type; the relay resolves both the stub
+        // store and a throwing ILocalEnvelopeDispatcher from the same scope factory, so this test
+        // builds the relay directly rather than through BuildRelay (which only wires the store).
+        var entry = MakeEntry(id: 4, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]);
+        var transport = new CapturingTransport();
+
+        var services = new ServiceCollection();
+        services.AddScoped<IOutboxStore>(_ => store);
+        services.AddSingleton<ILocalEnvelopeDispatcher, ThrowingLocalDispatcher>();
+        var provider = services.BuildServiceProvider();
+
+        var relay = new OutboxRelay(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            CreateDispatcher(transport),
+            Options.Create(new OutboxOptions { MaxRetries = 3 }),
+            NullLogger<OutboxRelay>.Instance);
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert — local dispatch failure is caught by the same retry path as a transport failure
+        store.RetriesIncremented.Should().ContainSingle().Which.Should().Be(4L);
+        store.MarkedSent.Should().BeEmpty();
+        transport.SentEventEnvelopes.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task DeleteCompletedEntriesOnCleanup()
+    {
+        // Arrange
+        var store = new StubOutboxStore();
+        var outboxOptions = new OutboxOptions { CompletedRetention = TimeSpan.FromDays(3) };
+        var relay = BuildRelay(store, CreateDispatcher(), outboxOptions);
+
+        // Act
+        await relay.CleanupCompletedAsync(CancellationToken.None);
+
+        // Assert
+        store.DeletedRetentions.Should().ContainSingle().Which.Should().Be(TimeSpan.FromDays(3));
+    }
 }
 
 file sealed class CapturingStubOutboxStore(IReadOnlyList<OutboxEntry> pending) : StubOutboxStore
@@ -163,4 +212,15 @@ file sealed class ThrowingTransport(Exception exception) : IConduitTransport
 
     public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw exception;
+}
+
+/// <summary>Local dispatcher stub whose local delivery always throws, to exercise the relay's retry path.</summary>
+file sealed class ThrowingLocalDispatcher : ILocalEnvelopeDispatcher
+{
+    public bool DeliversLocally(string messageType) => true;
+
+    public bool IsLocalOnly(string messageType) => false;
+
+    public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
+        => throw new InvalidOperationException("Simulated local dispatch failure");
 }

@@ -1,6 +1,7 @@
 ﻿using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Runtime;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -9,11 +10,19 @@ using System.Text.Json;
 namespace Conduit.Durability.Runtime.Outbox;
 
 /// <summary>
-/// Background service that polls the outbox table for pending entries
-/// and sends them to brokers via registered transports.
+/// Background service that polls the outbox table for pending entries, delivers local listeners
+/// and sends them to brokers via registered transports, then prunes completed entries.
 /// </summary>
+/// <remarks>
+/// Resolves the scoped <see cref="IOutboxStore"/> per sweep rather than constructor-injecting it:
+/// <see cref="OutboxRelay"/> is a singleton hosted service, and a singleton must not
+/// constructor-inject a scoped service — Development-mode scope validation
+/// (<c>ValidateScopes = true</c>, e.g. the consuming app's <c>WebApplicationFactory</c> tests)
+/// rejects the host at startup otherwise. Scope-per-sweep is a hard prerequisite for adoption,
+/// not a style preference.
+/// </remarks>
 public sealed partial class OutboxRelay(
-    IOutboxStore store,
+    IServiceScopeFactory scopeFactory,
     TransportDispatcher transportDispatcher,
     IOptions<OutboxOptions> options,
     ILogger<OutboxRelay> logger) : BackgroundService
@@ -23,11 +32,20 @@ public sealed partial class OutboxRelay(
     {
         // Table creation is handled by DurabilityTableInitializer on startup,
         // which honors OutboxOptions.AutoCreateTable.
+        var lastCleanup = DateTime.UtcNow;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await this.ProcessPendingAsync(stoppingToken);
+
+                if (options.Value.CompletedRetention > TimeSpan.Zero
+                    && DateTime.UtcNow - lastCleanup >= options.Value.CleanupInterval)
+                {
+                    await this.CleanupCompletedAsync(stoppingToken);
+                    lastCleanup = DateTime.UtcNow;
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -40,15 +58,32 @@ public sealed partial class OutboxRelay(
                 LogSweepFailed(logger, ex);
             }
 
-            await Task.Delay(options.Value.RelayInterval, stoppingToken);
+            try
+            {
+                // Delay lives in its own try: a stop request during the wait must exit quietly,
+                // the same as a stop request during the sweep above, rather than surface as an
+                // unhandled TaskCanceledException from ExecuteAsync (logged as noise by the host).
+                await Task.Delay(options.Value.RelayInterval, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 
     /// <summary>
-    /// Processes a single batch of pending outbox entries. Exposed as internal for testing.
+    /// Processes a single batch of pending outbox entries: resolves the store from a fresh
+    /// sweep-scoped provider, then for each claimed entry delivers local listeners (fresh scope
+    /// per entry) before the transport send — mirroring <see cref="OutboxCapture.FlushAsync"/>'s
+    /// delivery contract, so redelivery re-runs local listeners identically. Exposed as internal
+    /// for testing.
     /// </summary>
     internal async Task ProcessPendingAsync(CancellationToken cancellationToken)
     {
+        using var sweepScope = scopeFactory.CreateScope();
+        var store = sweepScope.ServiceProvider.GetRequiredService<IOutboxStore>();
+
         var pending = await store.ClaimPendingAsync(
             options.Value.BatchSize,
             options.Value.GracePeriod,
@@ -72,7 +107,21 @@ public sealed partial class OutboxRelay(
                     entry.CausationId,
                     entry.ConversationId);
 
-                await transportDispatcher.SendAsync(envelope, cancellationToken);
+                // Same delivery contract as the post-commit flush: local listeners first (fresh
+                // scope per entry), then transports, then mark sent. Redelivery re-runs local
+                // listeners — the idempotent-listener requirement is load-bearing.
+                using var entryScope = scopeFactory.CreateScope();
+                var localDispatcher = entryScope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
+
+                if (localDispatcher is not null && localDispatcher.DeliversLocally(entry.Type))
+                {
+                    await localDispatcher.PublishLocalEnvelopeAsync(envelope, entryScope.ServiceProvider, cancellationToken);
+                }
+
+                if (localDispatcher is null || !localDispatcher.IsLocalOnly(entry.Type))
+                {
+                    await transportDispatcher.SendAsync(envelope, cancellationToken);
+                }
 
                 await store.MarkSentAsync(entry.Id, cancellationToken);
                 MessageContext.Observe(new OutboxSent(entry.Id));
@@ -95,6 +144,21 @@ public sealed partial class OutboxRelay(
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Deletes Sent/Failed entries older than <see cref="OutboxOptions.CompletedRetention"/>,
+    /// resolving the store from its own fresh scope. Exposed as internal for testing. This method
+    /// does not itself check the retention gate — always deletes unconditionally, even when
+    /// <c>CompletedRetention</c> is <see cref="TimeSpan.Zero"/>; it is <see cref="ExecuteAsync"/>
+    /// that only calls it when <c>CompletedRetention</c> is above <see cref="TimeSpan.Zero"/>,
+    /// which is what makes <c>Zero</c> disable cleanup in practice.
+    /// </summary>
+    internal async Task CleanupCompletedAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.DeleteCompletedAsync(options.Value.CompletedRetention, cancellationToken);
     }
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Outbox relay sweep failed")]
