@@ -1,5 +1,6 @@
 ﻿using Conduit.Middleware;
 using Conduit.Runtime;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
@@ -23,6 +24,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     private readonly IOutboxStore store;
     private readonly TransportDispatcher transportDispatcher;
     private readonly IConduitConnectionFactory connectionFactory;
+    private readonly IServiceScopeFactory scopeFactory;
     private readonly ILogger<OutboxCapture> logger;
     private readonly List<DispatchEnvelope> captured = [];
     private List<WrittenOutboxMessage> writtenMessages = [];
@@ -34,11 +36,13 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
         IOutboxStore store,
         TransportDispatcher transportDispatcher,
         IConduitConnectionFactory connectionFactory,
+        IServiceScopeFactory scopeFactory,
         ILogger<OutboxCapture> logger)
     {
         this.store = store;
         this.transportDispatcher = transportDispatcher;
         this.connectionFactory = connectionFactory;
+        this.scopeFactory = scopeFactory;
         this.logger = logger;
     }
 
@@ -123,7 +127,22 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                         written.CausationId,
                         written.ConversationId);
 
-                    await this.transportDispatcher.SendAsync(written.Envelope, cancellationToken);
+                    // Local listeners first, from a fresh scope (mirrors fire-and-forget's
+                    // fresh-scope semantics); then transports; then mark sent. Any failure leaves
+                    // the entry pending for the relay — redelivery re-runs local listeners, so
+                    // listeners must stay idempotent.
+                    using var scope = this.scopeFactory.CreateScope();
+                    var localDispatcher = scope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
+
+                    if (localDispatcher is not null && localDispatcher.DeliversLocally(written.Envelope.Type))
+                    {
+                        await localDispatcher.PublishLocalEnvelopeAsync(written.Envelope, scope.ServiceProvider, cancellationToken);
+                    }
+
+                    if (localDispatcher is null || !localDispatcher.IsLocalOnly(written.Envelope.Type))
+                    {
+                        await this.transportDispatcher.SendAsync(written.Envelope, cancellationToken);
+                    }
 
                     await this.store.MarkSentAsync(entry.Id, cancellationToken);
                 }

@@ -25,15 +25,20 @@ public class OutboxCaptureShould
             transports);
     }
 
+    private static IServiceScopeFactory CreateEmptyScopeFactory()
+        => new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
     private static OutboxCapture CreateCapture(
         StubOutboxStore? store = null,
         TransportDispatcher? dispatcher = null,
-        IConduitConnectionFactory? connectionFactory = null)
+        IConduitConnectionFactory? connectionFactory = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         return new OutboxCapture(
             store ?? new StubOutboxStore(),
             dispatcher ?? CreateDispatcher(),
             connectionFactory ?? new TransactionPresentConnectionFactory(),
+            scopeFactory ?? CreateEmptyScopeFactory(),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -174,6 +179,38 @@ public class OutboxCaptureShould
     }
 
     [TestMethod]
+    public async Task FlushAsyncIncrementRetryOnLocalDispatchFailure()
+    {
+        // Arrange — local dispatcher throws; capture resolves it from the wired scope factory
+        var store = new StubOutboxStore();
+        var transport = new SpyTransport();
+        var localDispatcherServices = new ServiceCollection();
+        localDispatcherServices.AddSingleton<ILocalEnvelopeDispatcher, ThrowingLocalDispatcher>();
+        var scopeFactory = localDispatcherServices.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var capture = CreateCapture(store, CreateDispatcher(transport), scopeFactory: scopeFactory);
+
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+
+        capture.SetWrittenMessages([
+            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope),
+        ]);
+
+        store.ClaimedEntries =
+        [
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+        ];
+
+        // Act
+        var act = async () => await capture.FlushAsync(CancellationToken.None);
+
+        // Assert — no exception escapes; entry is retried, never marked sent, transport never reached
+        await act.Should().NotThrowAsync();
+        store.RetriesIncremented.Should().BeEquivalentTo([10L]);
+        store.MarkedSent.Should().BeEmpty();
+        transport.SentEvents.Should().BeEmpty();
+    }
+
+    [TestMethod]
     public async Task FlushAsyncSkipEntriesAlreadyClaimedByRelay()
     {
         // Arrange
@@ -229,4 +266,15 @@ file sealed class FakeDbTransaction : DbTransaction
     public override void Rollback()
     {
     }
+}
+
+/// <summary>Local dispatcher stub whose local delivery always throws, to exercise flush's failure path.</summary>
+file sealed class ThrowingLocalDispatcher : ILocalEnvelopeDispatcher
+{
+    public bool DeliversLocally(string messageType) => true;
+
+    public bool IsLocalOnly(string messageType) => false;
+
+    public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
+        => throw new InvalidOperationException("Simulated local dispatch failure");
 }

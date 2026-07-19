@@ -24,6 +24,9 @@ public class OutboxBehaviorShould
             transports);
     }
 
+    private static IServiceScopeFactory CreateEmptyScopeFactory()
+        => new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
     // Capture is given a transaction-present factory so Intercept accepts the envelopes under test:
     // these tests exercise OutboxBehavior's own logic, using capture only to pre-load captured state.
     private static OutboxCapture CreateCapture(StubOutboxStore? store = null, TransportDispatcher? dispatcher = null)
@@ -32,6 +35,7 @@ public class OutboxBehaviorShould
             store ?? new StubOutboxStore(),
             dispatcher ?? CreateDispatcher(),
             new StubTransactionFactory(hasTransaction: true),
+            CreateEmptyScopeFactory(),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -144,7 +148,7 @@ public class OutboxBehaviorShould
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
         var factory = new StubTransactionFactory(hasTransaction: true);
-        var capture = new OutboxCapture(store, CreateDispatcher(transport), factory, NullLogger<OutboxCapture>.Instance);
+        var capture = new OutboxCapture(store, CreateDispatcher(transport), factory, CreateEmptyScopeFactory(), NullLogger<OutboxCapture>.Instance);
 
         var envelope = new DispatchEnvelope("Test.OrderPlaced", JsonSerializer.SerializeToElement(new { id = 1 }));
         capture.Intercept(envelope);
