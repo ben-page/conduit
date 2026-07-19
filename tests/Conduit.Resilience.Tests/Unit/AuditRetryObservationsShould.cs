@@ -18,13 +18,11 @@ public sealed class AuditRetryObservationsShould
     public void Setup()
     {
         this.collector = new ObservationCollector();
-        MessageContext.Observer = this.collector;
     }
 
     [TestCleanup]
     public void Cleanup()
     {
-        MessageContext.Observer = null;
         MessageContext.RestoreContext(null);
     }
 
@@ -32,7 +30,7 @@ public sealed class AuditRetryObservationsShould
     public async Task EmitRetryAttemptedForEachFailedAttempt()
     {
         // Arrange
-        MessageContext.StartDispatch();
+        MessageContext.StartDispatch().AttachObserver(this.collector);
         var callCount = 0;
 
         var services = new ServiceCollection();
@@ -73,7 +71,7 @@ public sealed class AuditRetryObservationsShould
     public async Task NotEmitRetryAttemptedWhenNoRetries()
     {
         // Arrange
-        MessageContext.StartDispatch();
+        MessageContext.StartDispatch().AttachObserver(this.collector);
 
         var services = new ServiceCollection();
         services.AddResiliencePipelineRegistry<string>();
@@ -100,7 +98,7 @@ public sealed class AuditRetryObservationsShould
     public async Task EmitRetryAttemptedEvenWhenRetriesExhausted()
     {
         // Arrange
-        MessageContext.StartDispatch();
+        MessageContext.StartDispatch().AttachObserver(this.collector);
 
         var services = new ServiceCollection();
         services.AddResiliencePipelineRegistry<string>();
