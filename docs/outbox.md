@@ -86,8 +86,10 @@ Handler executes (in managed transaction)
   ├── Handler calls PublishAsync(event) or a routed [FireAndForget] command
   │     → IOutboundInterceptor.Intercept(envelope) offered first (skipped entirely for
   │       Immediate messages — see "The Immediate escape hatch")
-  │       - ambient transaction present → captured (true): local dispatch AND the
-  │         transport send are both skipped here; the outbox delivers both, post-commit
+  │       - ambient transaction present → captured (true): local dispatch
+  │         (events only — routed commands have no local step to skip) AND
+  │         the transport send are both skipped here; the outbox delivers
+  │         both, post-commit
   │       - no ambient transaction → declined (false): falls through to the pre-outbox
   │         behavior (local dispatch inline/background, direct transport send)
   ├── OutboxBehavior writes captured envelopes to the outbox table (same transaction)
@@ -263,13 +265,14 @@ call would decline, and the outbox would silently protect nothing.
 
 | Kind | At publish | On flush/relay |
 |---|---|---|
-| `[FireAndForget]` non-Immediate (incl. `[LocalOnly]`) | captured (with ambient txn) → skip local enqueue + broadcast; declined → immediate as before | local listeners (fresh scope) → transports (skipped if `[LocalOnly]`) → mark sent |
-| `[FireAndForget(Immediate = true)]` | never captured — immediate local enqueue + direct broadcast, at-most-once by declaration (for messages that must survive their command's rollback — the write-then-throw analog) | never stored |
+| `[FireAndForget]` non-Immediate (incl. `[LocalOnly]`) | captured (with ambient txn) → skip local enqueue + broadcast; declined → delivered right away, exactly as without an outbox | local listeners (fresh scope) → transports (skipped if `[LocalOnly]`) → mark sent |
+| `[FireAndForget(Immediate = true)]` | never captured — immediate local enqueue + direct broadcast (events only; routed commands skip straight to transport, no local listener chain), at-most-once by declaration (for messages that must survive their command's rollback — the write-then-throw analog) | never stored |
 | plain event | local listeners inline (inside the handler's transaction); transport envelope captured with txn, else direct send | transports only (local listeners already ran inline — no re-run) |
 | routed `[FireAndForget]` void command | captured with txn unless Immediate | transports (routed) |
 
-"Declined → immediate as before" and the `Immediate` row's publish-time behavior are the *same*
-path (background-enqueued local listeners, direct broadcast) — they just arrive there for
+The declined case ("delivered right away, exactly as without an outbox") and the `Immediate`
+row's publish-time behavior are the *same* path (background-enqueued local listeners, direct
+broadcast) — they just arrive there for
 different reasons: one because no transaction was active to capture into, the other because it
 was never offered to `Intercept` at all. See [The Immediate escape hatch](#the-immediate-escape-hatch)
 below. A plain event that is *also* `[LocalOnly]` never reaches the transport-envelope step in the
