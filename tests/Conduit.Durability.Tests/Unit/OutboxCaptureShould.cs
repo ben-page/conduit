@@ -28,17 +28,39 @@ public class OutboxCaptureShould
     private static IServiceScopeFactory CreateEmptyScopeFactory()
         => new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
+    // ClaimAndDeliverAsync resolves IOutboxStore (and, when present, ILocalEnvelopeDispatcher) from
+    // its own fresh scope rather than taking them as parameters directly — this wires the given
+    // stubs into a real scope factory so the routine under test can resolve them, mirroring how
+    // production DI provides them from the request/relay scope factory.
+    private static IServiceScopeFactory CreateScopeFactory(IOutboxStore store, ILocalEnvelopeDispatcher? localDispatcher = null)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(store);
+        if (localDispatcher is not null)
+        {
+            services.AddSingleton(localDispatcher);
+        }
+
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
+    // A real (but never-started) dispatcher: fine for tests that only assert whether FlushAsync
+    // enqueues, never for tests that need the enqueued item to actually drain — see
+    // ClaimAndDeliverAsync-targeted tests below, which invoke the delivery routine directly instead.
+    private static ConduitBackgroundDispatcher CreateBackgroundDispatcher()
+        => new(NullLogger<ConduitBackgroundDispatcher>.Instance);
+
     private static OutboxCapture CreateCapture(
-        StubOutboxStore? store = null,
         TransportDispatcher? dispatcher = null,
         IConduitConnectionFactory? connectionFactory = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        ConduitBackgroundDispatcher? backgroundDispatcher = null)
     {
         return new OutboxCapture(
-            store ?? new StubOutboxStore(),
             dispatcher ?? CreateDispatcher(),
             connectionFactory ?? new TransactionPresentConnectionFactory(),
             scopeFactory ?? CreateEmptyScopeFactory(),
+            backgroundDispatcher ?? CreateBackgroundDispatcher(),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -106,34 +128,47 @@ public class OutboxCaptureShould
     [TestMethod]
     public async Task FlushAsyncNoOpWhenNothingWritten()
     {
-        // Arrange
+        // Arrange — store/transport are wired into capture's own scope factory (the same one
+        // FlushAsync would hand the delivery routine, were it to run) so the assertions below
+        // would catch a regression to the old inline-delivery behavior.
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = CreateCapture(store, CreateDispatcher(transport));
+        var capture = CreateCapture(CreateDispatcher(transport), scopeFactory: CreateScopeFactory(store));
 
         // Act
         await capture.FlushAsync(CancellationToken.None);
 
-        // Assert
+        // Assert — nothing captured means nothing is scheduled: the delivery routine never runs.
+        // This is a deliberately weak signal at the unit level — ConduitBackgroundDispatcher is
+        // sealed with a non-virtual Enqueue so it can't be spied, and this dispatcher is never
+        // started, so "enqueued but never drained" and "never enqueued" both look like this. What
+        // it DOES pin is the empty-buffer early return itself: a regression back to claiming
+        // synchronously (the pre-background-flush shape) would show up here immediately. The
+        // "non-empty enqueues exactly once" half of the contract is pinned behaviorally by the
+        // integration suite instead (see
+        // OutboxLocalDeliveryShould.DeliverLocalListenersExactlyOnceOnFlushThenTransportsThenMarkSent).
+        store.ClaimByMessageIdsCalled.Should().BeFalse();
         store.MarkedSent.Should().BeEmpty();
         transport.SentEvents.Should().BeEmpty();
     }
 
     [TestMethod]
-    public async Task FlushAsyncSendClaimedEntriesAndMarkSent()
+    public async Task ClaimAndDeliverAsyncSendClaimedEntriesAndMarkSent()
     {
-        // Arrange
+        // Arrange — exercises the extracted delivery routine directly: this is the same
+        // claim-then-send-then-mark-sent loop FlushAsync used to run inline and now schedules on
+        // the background dispatcher instead, so it's pinned here rather than through FlushAsync.
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         var envelope1 = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
         var envelope2 = new DispatchEnvelope("MyApp.Events.OrderShipped", JsonSerializer.SerializeToElement(new { orderId = 2 }));
 
-        capture.SetWrittenMessages([
-            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope1),
-            new WrittenOutboxMessage("msg-2", "conv-2", null, envelope2),
-        ]);
+        var messages = new List<WrittenOutboxMessage>
+        {
+            new("msg-1", "conv-1", null, envelope1),
+            new("msg-2", "conv-2", null, envelope2),
+        };
 
         store.ClaimedEntries =
         [
@@ -142,7 +177,8 @@ public class OutboxCaptureShould
         ];
 
         // Act
-        await capture.FlushAsync(CancellationToken.None);
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store), CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
 
         // Assert
         transport.SentEvents.Should().HaveCount(2);
@@ -152,18 +188,18 @@ public class OutboxCaptureShould
     }
 
     [TestMethod]
-    public async Task FlushAsyncIncrementRetryOnTransportFailure()
+    public async Task ClaimAndDeliverAsyncIncrementRetryOnTransportFailure()
     {
         // Arrange
         var store = new StubOutboxStore();
         var transport = new ThrowingTransport();
-        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
 
-        capture.SetWrittenMessages([
-            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope),
-        ]);
+        var messages = new List<WrittenOutboxMessage>
+        {
+            new("msg-1", "conv-1", null, envelope),
+        };
 
         store.ClaimedEntries =
         [
@@ -171,7 +207,8 @@ public class OutboxCaptureShould
         ];
 
         // Act
-        await capture.FlushAsync(CancellationToken.None);
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store), CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
 
         // Assert
         store.MarkedSent.Should().BeEmpty();
@@ -179,21 +216,20 @@ public class OutboxCaptureShould
     }
 
     [TestMethod]
-    public async Task FlushAsyncIncrementRetryOnLocalDispatchFailure()
+    public async Task ClaimAndDeliverAsyncIncrementRetryOnLocalDispatchFailure()
     {
-        // Arrange — local dispatcher throws; capture resolves it from the wired scope factory
+        // Arrange — local dispatcher throws; the routine resolves both it and the store from the
+        // wired scope factory
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var localDispatcherServices = new ServiceCollection();
-        localDispatcherServices.AddSingleton<ILocalEnvelopeDispatcher, ThrowingLocalDispatcher>();
-        var scopeFactory = localDispatcherServices.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-        var capture = CreateCapture(store, CreateDispatcher(transport), scopeFactory: scopeFactory);
+        var scopeFactory = CreateScopeFactory(store, new ThrowingLocalDispatcher());
 
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
 
-        capture.SetWrittenMessages([
-            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope),
-        ]);
+        var messages = new List<WrittenOutboxMessage>
+        {
+            new("msg-1", "conv-1", null, envelope),
+        };
 
         store.ClaimedEntries =
         [
@@ -201,7 +237,8 @@ public class OutboxCaptureShould
         ];
 
         // Act
-        var act = async () => await capture.FlushAsync(CancellationToken.None);
+        var act = async () => await OutboxCapture.ClaimAndDeliverAsync(
+            scopeFactory, CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
 
         // Assert — no exception escapes; entry is retried, never marked sent, transport never reached
         await act.Should().NotThrowAsync();
@@ -211,23 +248,24 @@ public class OutboxCaptureShould
     }
 
     [TestMethod]
-    public async Task FlushAsyncSkipEntriesAlreadyClaimedByRelay()
+    public async Task ClaimAndDeliverAsyncSkipEntriesAlreadyClaimedByRelay()
     {
         // Arrange
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = CreateCapture(store, CreateDispatcher(transport));
 
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
 
-        capture.SetWrittenMessages([
-            new WrittenOutboxMessage("msg-1", "conv-1", null, envelope),
-        ]);
+        var messages = new List<WrittenOutboxMessage>
+        {
+            new("msg-1", "conv-1", null, envelope),
+        };
 
         store.ClaimedEntries = [];
 
         // Act
-        await capture.FlushAsync(CancellationToken.None);
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store), CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
 
         // Assert
         transport.SentEvents.Should().BeEmpty();
