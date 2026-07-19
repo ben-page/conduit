@@ -26,6 +26,10 @@ public class OutboundInterceptorShould
 
     private sealed class TestCapture(List<DispatchEnvelope> captured) : IOutboundInterceptor
     {
-        public void Intercept(DispatchEnvelope envelope) => captured.Add(envelope);
+        public bool Intercept(DispatchEnvelope envelope)
+        {
+            captured.Add(envelope);
+            return true;
+        }
     }
 }

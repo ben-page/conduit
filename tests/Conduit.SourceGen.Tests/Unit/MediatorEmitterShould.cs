@@ -166,4 +166,83 @@ namespace App.Events
         registrationSource.Should().Contain(
             "services.AddTransient<Conduit.ILocalEnvelopeDispatcher>(sp => sp.GetRequiredService<ConduitMediator>());");
     }
+
+    [TestMethod]
+    public void EmitTransactionGatedCaptureInPublishAsync()
+    {
+        // Arrange — one capturable F&F event and one Immediate F&F event (both broadcastable)
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+            using Conduit.Handlers;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace TestApp;
+
+            [FireAndForget]
+            public record CapturedEvent(string Detail) : IEvent;
+
+            [FireAndForget(Immediate = true)]
+            public record ImmediateEvent(string Detail) : IEvent;
+
+            public class CapturedListener : IEventListener<CapturedEvent>
+            {
+                public Task HandleAsync(CapturedEvent e, CancellationToken ct) => Task.CompletedTask;
+            }
+            """;
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert — PublishAsync attempts capture BEFORE the local-enqueue/broadcast body, then guards
+        // the entire body on the result so a captured event skips local enqueue AND transport send.
+        mediatorSource.Should().NotBeNull();
+        mediatorSource.Should().Contain("var __captured = false;");
+        mediatorSource.Should().Contain("__captured = __outboundInterceptor.Intercept(");
+        mediatorSource.Should().Contain("if (!__captured)");
+
+        // The capture type-pattern is the non-Immediate F&F set only: a bare close-paren right after
+        // CapturedEvent proves ImmediateEvent is NOT offered for capture (it must deliver immediately).
+        mediatorSource.Should().Contain("if (@event is TestApp.CapturedEvent)");
+
+        // The broadcast bypass flag covers ALL F&F types (declined-capturable OR Immediate) so neither
+        // is re-offered at the broadcast interceptor. Order is HashSet-nondeterministic -> match per type.
+        mediatorSource.Should().Contain("var __bypassCapture = @event is ");
+        mediatorSource.Should().MatchRegex(@"__bypassCapture = @event is [^;]*TestApp\.CapturedEvent");
+        mediatorSource.Should().MatchRegex(@"__bypassCapture = @event is [^;]*TestApp\.ImmediateEvent");
+    }
+
+    [TestMethod]
+    public void EmitNoCaptureAttemptWhenNoCapturableEvents()
+    {
+        // Arrange — only a plain (non-F&F) event: nothing is capturable, so no capture scaffold emits,
+        // and the broadcast interceptor condition uses the bool return with no bypass flag.
+        const string source = """
+            using Conduit.Messages;
+            using Conduit.Handlers;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace TestApp;
+
+            public record PlainEvent(string Detail) : IEvent;
+
+            public class PlainListener : IEventListener<PlainEvent>
+            {
+                public Task HandleAsync(PlainEvent e, CancellationToken ct) => Task.CompletedTask;
+            }
+            """;
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert — no capture guard and no bypass flag; the broadcast interceptor still uses the bool.
+        mediatorSource.Should().NotBeNull();
+        mediatorSource.Should().NotContain("var __captured = false;");
+        mediatorSource.Should().NotContain("__bypassCapture");
+        mediatorSource.Should().Contain("if (outboundInterceptor != null && outboundInterceptor.Intercept(eventEnvelope))");
+    }
 }

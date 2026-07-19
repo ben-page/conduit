@@ -153,13 +153,14 @@ public static class MediatorEmitter
             sb.AppendLine($"                var payload = JsonSerializer.SerializeToElement(command, ConduitRuntime.JsonOptions);");
             sb.AppendLine($"                var envelope = new DispatchEnvelope(\"{cmd.FullTypeName}\", payload);");
 
-            if (cmd.IsFireAndForget)
+            if (cmd.IsFireAndForget && !cmd.IsFireAndForgetImmediate)
             {
-                // F&F commands can be intercepted by the outbox -- no reply expected
+                // Non-Immediate F&F commands can be captured by the outbox for post-commit delivery.
+                // On capture (true) we return; on decline (no transaction) or absence we fall through
+                // to the direct transport send below. Immediate F&F commands skip capture entirely.
                 sb.AppendLine($"                var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
-                sb.AppendLine("                if (outboundInterceptor != null)");
+                sb.AppendLine("                if (outboundInterceptor != null && outboundInterceptor.Intercept(envelope))");
                 sb.AppendLine("                {");
-                sb.AppendLine("                    outboundInterceptor.Intercept(envelope);");
                 EmitDispatchCompleted(sb, "                    ");
                 sb.AppendLine("                    return;");
                 sb.AppendLine("                }");
@@ -389,6 +390,14 @@ public static class MediatorEmitter
         var fireAndForgetTypes = new HashSet<string>(
             events.Where(e => e.IsFireAndForget).Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
 
+        // Capturable = non-Immediate F&F events. These are offered to the outbox interceptor BEFORE
+        // any local enqueue: on capture the whole publish body is skipped (post-commit delivery).
+        // Immediate F&F events are excluded here (they must deliver at publish time) but stay in
+        // fireAndForgetTypes for the background local-enqueue and the broadcast-bypass flag.
+        var capturableTypes = new HashSet<string>(events
+            .Where(e => e.IsFireAndForget && !e.IsFireAndForgetImmediate)
+            .Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
+
         // Thin delegating overload (no configure parameter)
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
         sb.AppendLine("        => await PublishAsync(@event, null, cancellationToken);");
@@ -401,6 +410,28 @@ public static class MediatorEmitter
         EmitContextStart(sb, "@event.GetType().FullName!", "event",
             emitPayloadCapture: true, requestVarName: "@event",
             requestTypeName: null, isDoNotAudit: false);
+
+        // Transaction-gated outbox capture: offer non-Immediate F&F events to the interceptor before
+        // any local enqueue or broadcast. On capture (true) the entire publish body is skipped -- the
+        // outbox re-delivers post-commit (transport + local listeners). On decline (no transaction) or
+        // absence, __captured stays false and the publish proceeds exactly as without an interceptor.
+        if (capturableTypes.Count > 0)
+        {
+            sb.AppendLine("        var __captured = false;");
+            sb.AppendLine("        if (@event is " + string.Join(" or ", capturableTypes) + ")");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var __outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
+            sb.AppendLine("            if (__outboundInterceptor != null)");
+            sb.AppendLine("            {");
+            sb.AppendLine("                var __captureEnvelope = new DispatchEnvelope(");
+            sb.AppendLine("                    @event.GetType().FullName!,");
+            sb.AppendLine("                    JsonSerializer.SerializeToElement(@event, @event.GetType(), ConduitRuntime.JsonOptions));");
+            sb.AppendLine("                __captured = __outboundInterceptor.Intercept(__captureEnvelope);");
+            sb.AppendLine("            }");
+            sb.AppendLine("        }");
+            sb.AppendLine("        if (!__captured)");
+            sb.AppendLine("        {");
+        }
 
         // F&F events enqueue local listeners to background dispatcher instead of running inline.
         // Transport broadcast still happens inline -- events are already fire-and-forget on the wire.
@@ -454,7 +485,7 @@ public static class MediatorEmitter
         else if (localOnlyTypes.Count == 0)
         {
             // No local-only events -- always broadcast
-            EmitBroadcastBlock(sb);
+            EmitBroadcastBlock(sb, fireAndForgetTypes);
         }
         else
         {
@@ -471,7 +502,14 @@ public static class MediatorEmitter
             sb.AppendLine();
             sb.AppendLine("        if (shouldBroadcast)");
             sb.AppendLine("        {");
-            EmitBroadcastBlock(sb, indent: "    ");
+            EmitBroadcastBlock(sb, fireAndForgetTypes, indent: "    ");
+            sb.AppendLine("        }");
+        }
+
+        // Close the capture guard opened after context-start: everything from the local enqueue
+        // through broadcast is skipped when the interceptor captured the event.
+        if (capturableTypes.Count > 0)
+        {
             sb.AppendLine("        }");
         }
 
@@ -555,15 +593,28 @@ public static class MediatorEmitter
         sb.AppendLine();
     }
 
-    private static void EmitBroadcastBlock(StringBuilder sb, string indent = "")
+    private static void EmitBroadcastBlock(StringBuilder sb, HashSet<string> fireAndForgetTypes, string indent = "")
     {
         sb.AppendLine($"        {indent}var eventEnvelope = new DispatchEnvelope(");
         sb.AppendLine($"        {indent}    @event.GetType().FullName!,");
         sb.AppendLine($"        {indent}    JsonSerializer.SerializeToElement(@event, @event.GetType(), ConduitRuntime.JsonOptions));");
         sb.AppendLine($"        {indent}var outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
-        sb.AppendLine($"        {indent}if (outboundInterceptor != null)");
+
+        if (fireAndForgetTypes.Count > 0)
+        {
+            // Any F&F event reaching broadcast was either declined at the pre-enqueue capture attempt
+            // (don't re-ask the interceptor) or is Immediate (never captured) -- bypass capture here.
+            sb.AppendLine($"        {indent}var __bypassCapture = @event is " + string.Join(" or ", fireAndForgetTypes) + ";");
+            sb.AppendLine($"        {indent}if (outboundInterceptor != null && !__bypassCapture && outboundInterceptor.Intercept(eventEnvelope))");
+        }
+        else
+        {
+            sb.AppendLine($"        {indent}if (outboundInterceptor != null && outboundInterceptor.Intercept(eventEnvelope))");
+        }
+
         sb.AppendLine($"        {indent}{{");
-        sb.AppendLine($"        {indent}    outboundInterceptor.Intercept(eventEnvelope);");
+        sb.AppendLine($"        {indent}    // Captured for post-commit transport delivery. Inline local listeners (plain events)");
+        sb.AppendLine($"        {indent}    // already ran above, inside the ambient transaction -- flush will NOT re-run them.");
         sb.AppendLine($"        {indent}}}");
         sb.AppendLine($"        {indent}else");
         sb.AppendLine($"        {indent}{{");
