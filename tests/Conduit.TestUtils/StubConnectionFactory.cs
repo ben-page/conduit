@@ -43,6 +43,15 @@ public sealed class StubConnectionFactory : IConduitConnectionFactory, IAsyncDis
         }
     }
 
+    public async Task RollbackAsync()
+    {
+        if (this.transaction != null)
+        {
+            await this.transaction.RollbackAsync();
+            this.transaction = null;
+        }
+    }
+
     public async Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(this.connectionString);

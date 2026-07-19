@@ -3,9 +3,13 @@ using Conduit.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
+using Conduit.Persistence;
 using Conduit.Runtime;
+using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Data;
+using System.Data.Common;
 using System.Text.Json;
 
 namespace Conduit.Durability.Tests.Unit;
@@ -21,18 +25,22 @@ public class OutboxCaptureShould
             transports);
     }
 
-    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, TransportDispatcher? dispatcher = null)
+    private static OutboxCapture CreateCapture(
+        StubOutboxStore? store = null,
+        TransportDispatcher? dispatcher = null,
+        IConduitConnectionFactory? connectionFactory = null)
     {
         return new OutboxCapture(
             store ?? new StubOutboxStore(),
             dispatcher ?? CreateDispatcher(),
+            connectionFactory ?? new TransactionPresentConnectionFactory(),
             NullLogger<OutboxCapture>.Instance);
     }
 
     [TestMethod]
     public void CaptureInterceptedEnvelopes()
     {
-        // Arrange
+        // Arrange — ambient transaction present, so capture accepts the envelopes
         var capture = CreateCapture();
         var envelope1 = new DispatchEnvelope("Test.Event1", JsonSerializer.SerializeToElement(new { }));
         var envelope2 = new DispatchEnvelope("Test.Event2", JsonSerializer.SerializeToElement(new { }));
@@ -55,6 +63,39 @@ public class OutboxCaptureShould
 
         // Assert
         capture.Captured.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public void DeclineCaptureWhenNoAmbientTransaction()
+    {
+        // Arrange — factory with GetCurrentTransaction() == null
+        var capture = CreateCapture(connectionFactory: new NoTransactionConnectionFactory());
+        var envelope = new DispatchEnvelope("Test.Event", JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        var captured = capture.Intercept(envelope);
+
+        // Assert — declined: OutboxBehavior could never persist this, so capture must decline,
+        // leaving the caller to deliver via the pre-outbox path (no silent drop).
+        captured.Should().BeFalse();
+        capture.Captured.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task CaptureWhenTransactionIsAmbient()
+    {
+        // Arrange — a real ambient transaction on the shared in-memory connection
+        await using var factory = new StubConnectionFactory();
+        await factory.BeginTransactionAsync();
+        var capture = CreateCapture(connectionFactory: factory);
+        var envelope = new DispatchEnvelope("Test.Event", JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        var captured = capture.Intercept(envelope);
+
+        // Assert
+        captured.Should().BeTrue();
+        capture.Captured.Should().ContainSingle();
     }
 
     [TestMethod]
@@ -154,5 +195,38 @@ public class OutboxCaptureShould
         // Assert
         transport.SentEvents.Should().BeEmpty();
         store.MarkedSent.Should().BeEmpty();
+    }
+}
+
+/// <summary>Connection factory stub that reports an ambient transaction, so capture accepts envelopes.</summary>
+file sealed class TransactionPresentConnectionFactory : IConduitConnectionFactory
+{
+    public Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
+        => throw new NotImplementedException();
+
+    public DbTransaction? GetCurrentTransaction() => new FakeDbTransaction();
+}
+
+/// <summary>Connection factory stub with no ambient transaction, so capture declines.</summary>
+file sealed class NoTransactionConnectionFactory : IConduitConnectionFactory
+{
+    public Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
+        => throw new NotImplementedException();
+
+    public DbTransaction? GetCurrentTransaction() => null;
+}
+
+file sealed class FakeDbTransaction : DbTransaction
+{
+    public override IsolationLevel IsolationLevel => IsolationLevel.ReadCommitted;
+
+    protected override DbConnection? DbConnection => null;
+
+    public override void Commit()
+    {
+    }
+
+    public override void Rollback()
+    {
     }
 }

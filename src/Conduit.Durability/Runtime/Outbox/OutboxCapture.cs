@@ -2,6 +2,7 @@
 using Conduit.Runtime;
 using Microsoft.Extensions.Logging;
 using Conduit.Durability.Persistence.Outbox;
+using Conduit.Persistence;
 
 namespace Conduit.Durability.Runtime.Outbox;
 
@@ -12,10 +13,16 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// the handler's transaction commits.
 /// Registered as scoped — one instance per dispatch scope.
 /// </summary>
+/// <remarks>
+/// Capture is transaction-gated: <see cref="Intercept"/> declines (and the caller falls back to
+/// the pre-outbox path) when no ambient database transaction is present, because a captured
+/// envelope can only be persisted — and thus delivered — through the handler's transaction.
+/// </remarks>
 public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 {
     private readonly IOutboxStore store;
     private readonly TransportDispatcher transportDispatcher;
+    private readonly IConduitConnectionFactory connectionFactory;
     private readonly ILogger<OutboxCapture> logger;
     private readonly List<DispatchEnvelope> captured = [];
     private List<WrittenOutboxMessage> writtenMessages = [];
@@ -26,10 +33,12 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     public OutboxCapture(
         IOutboxStore store,
         TransportDispatcher transportDispatcher,
+        IConduitConnectionFactory connectionFactory,
         ILogger<OutboxCapture> logger)
     {
         this.store = store;
         this.transportDispatcher = transportDispatcher;
+        this.connectionFactory = connectionFactory;
         this.logger = logger;
     }
 
@@ -37,10 +46,20 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     public IReadOnlyList<DispatchEnvelope> Captured => this.captured;
 
     /// <inheritdoc />
-    public void Intercept(DispatchEnvelope envelope)
+    public bool Intercept(DispatchEnvelope envelope)
     {
         ArgumentNullException.ThrowIfNull(envelope);
+
+        // No ambient transaction -> decline: OutboxBehavior could never persist this envelope, so
+        // capturing it would silently drop the message (and suppress local F&F delivery). Declining
+        // preserves pre-outbox semantics for background/non-pipeline publishes.
+        if (this.connectionFactory.GetCurrentTransaction() is null)
+        {
+            return false;
+        }
+
         this.captured.Add(envelope);
+        return true;
     }
 
     /// <summary>

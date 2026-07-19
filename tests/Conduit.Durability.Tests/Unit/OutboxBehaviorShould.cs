@@ -24,11 +24,14 @@ public class OutboxBehaviorShould
             transports);
     }
 
+    // Capture is given a transaction-present factory so Intercept accepts the envelopes under test:
+    // these tests exercise OutboxBehavior's own logic, using capture only to pre-load captured state.
     private static OutboxCapture CreateCapture(StubOutboxStore? store = null, TransportDispatcher? dispatcher = null)
     {
         return new OutboxCapture(
             store ?? new StubOutboxStore(),
             dispatcher ?? CreateDispatcher(),
+            new StubTransactionFactory(hasTransaction: true),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -59,7 +62,8 @@ public class OutboxBehaviorShould
     [TestMethod]
     public async Task SkipPersistenceWhenNoTransaction()
     {
-        // Arrange
+        // Arrange — capture pre-loads an envelope (it saw a transaction at capture time), but the
+        // behavior's own connection factory reports none, so OutboxBehavior must skip persistence.
         var capture = CreateCapture();
         var store = new StubOutboxStore();
         var factory = new StubTransactionFactory(hasTransaction: false);
@@ -139,8 +143,8 @@ public class OutboxBehaviorShould
         // Arrange
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
-        var capture = new OutboxCapture(store, CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance);
         var factory = new StubTransactionFactory(hasTransaction: true);
+        var capture = new OutboxCapture(store, CreateDispatcher(transport), factory, NullLogger<OutboxCapture>.Instance);
 
         var envelope = new DispatchEnvelope("Test.OrderPlaced", JsonSerializer.SerializeToElement(new { id = 1 }));
         capture.Intercept(envelope);
