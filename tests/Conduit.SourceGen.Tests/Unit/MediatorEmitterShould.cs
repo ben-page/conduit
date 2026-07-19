@@ -126,6 +126,12 @@ namespace App.Events
             [LocalOnly]
             public record LocalOnlyEvent(string Detail) : IEvent;
 
+            public static class Outer
+            {
+                [FireAndForget]
+                public record NestedCapturedEvent(string Detail) : IEvent;
+            }
+
             public class CapturedListener : IEventListener<CapturedEvent>
             {
                 public Task HandleAsync(CapturedEvent e, CancellationToken ct) => Task.CompletedTask;
@@ -145,6 +151,14 @@ namespace App.Events
         mediatorSource.Should().Contain("public bool IsLocalOnly(string messageType)");
         mediatorSource.Should().Contain("\"TestApp.LocalOnlyEvent\" => true");
         mediatorSource.Should().Contain("public async Task PublishLocalEnvelopeAsync(");
+
+        // Nested types are the one case where metadata ('+') and C# ('.') forms differ: switch STRING
+        // keys must be the metadata form (what DispatchEnvelope.Type carries at runtime), while the
+        // Deserialize generic argument must be the C# form. Non-nested fixtures cannot catch a mixup.
+        mediatorSource.Should().Contain("\"TestApp.Outer+NestedCapturedEvent\" => true");
+        mediatorSource.Should().NotContain("\"TestApp.Outer.NestedCapturedEvent\" =>");
+        mediatorSource.Should().Contain("\"TestApp.Outer+NestedCapturedEvent\" => JsonSerializer.Deserialize<TestApp.Outer.NestedCapturedEvent>");
+        mediatorSource.Should().Contain("\"TestApp.ImmediateEvent\" => JsonSerializer.Deserialize<TestApp.ImmediateEvent>");
 
         // Assert — registration delegates the new interface to the same mediator instance
         var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
