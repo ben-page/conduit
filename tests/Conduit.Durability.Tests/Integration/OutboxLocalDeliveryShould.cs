@@ -148,4 +148,45 @@ public class OutboxLocalDeliveryShould
         Convert.ToInt32(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture)
             .Should().Be((int)OutboxEntryStatus.Sent);
     }
+
+    [TestMethod]
+    public async Task BypassCaptureForImmediateEventsEvenInsideATransaction()
+    {
+        // Arrange — host as before (probe registered; no transport needed)
+        await using var connectionFactory = new StubConnectionFactory();
+        var store = new DbConnectionOutboxStore(connectionFactory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.UseSqlite("Data Source=:memory:");
+                conduit.AddDurability(durability => durability.AddOutbox(options => options.AutoCreateTable = false));
+            });
+            builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
+            builder.Services.AddSingleton<ListenerProbe>();
+        });
+
+        var mediator = host.GetRequiredService<IMediator>();
+        var probe = host.GetRequiredService<ListenerProbe>();
+
+        // Act — open transaction, publish the Immediate event, NEVER commit
+        await connectionFactory.BeginTransactionAsync();
+        await mediator.PublishAsync(new LockoutStyleEvent("must-survive-rollback"), CancellationToken.None);
+        await connectionFactory.RollbackAsync();
+
+        // Assert — delivered via the background dispatcher despite the rollback; nothing stored
+        var delivered = false;
+        for (var attempt = 0; attempt < 50 && !delivered; attempt++)
+        {
+            delivered = probe.Count == 1;
+            await Task.Delay(100);
+        }
+
+        delivered.Should().BeTrue("Immediate declares rollback-survival by intent — delivery must not depend on the transaction");
+        using var query = connectionFactory.Connection.CreateCommand();
+        query.CommandText = "SELECT COUNT(*) FROM conduit_outbox";
+        Convert.ToInt32(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture).Should().Be(0);
+    }
 }
