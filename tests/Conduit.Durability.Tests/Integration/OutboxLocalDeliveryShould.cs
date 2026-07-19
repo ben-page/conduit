@@ -90,13 +90,33 @@ public class OutboxLocalDeliveryShould
         var flusher = host.GetRequiredService<IOutboxFlusher>();
         await flusher.FlushAsync(CancellationToken.None);
 
-        // Assert — exactly one local delivery, the transport got the envelope, entry is Sent
-        probe.Count.Should().Be(1);
-        spyTransport.SentEvents.Should().ContainSingle(e => e.Type.Contains("AuditTrailEvent"));
+        // Assert — THE contract pin: FlushAsync schedules delivery on the background dispatcher
+        // and returns without waiting for it, so the caller must never observe delivery having
+        // already happened at this point (restores [FireAndForget]'s "caller returns immediately"
+        // contract under transactional capture).
+        probe.Count.Should().Be(0, "FlushAsync must schedule background delivery and return without waiting for it");
+
         using var query = connectionFactory.Connection.CreateCommand();
         query.CommandText = "SELECT Status FROM conduit_outbox";
-        Convert.ToInt32(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture)
-            .Should().Be((int)OutboxEntryStatus.Sent);
+
+        // The background dispatcher drains the enqueued work item on its own hosted-service loop
+        // (TestWebHost starts it for real) — bounded-poll for it. Poll on the terminal DB state
+        // rather than probe.Count: MarkSentAsync is the LAST step of the delivery routine, strictly
+        // after local dispatch and the transport send, so once Sent is observed the probe/transport
+        // assertions below cannot be racing the still-in-flight work item.
+        var sent = false;
+        for (var attempt = 0; attempt < 50 && !sent; attempt++)
+        {
+            sent = Convert.ToInt32(await query.ExecuteScalarAsync(), CultureInfo.InvariantCulture) == (int)OutboxEntryStatus.Sent;
+            if (!sent)
+            {
+                await Task.Delay(100);
+            }
+        }
+
+        sent.Should().BeTrue("the background dispatcher must eventually deliver the flushed entry and mark it sent");
+        probe.Count.Should().Be(1);
+        spyTransport.SentEvents.Should().ContainSingle(e => e.Type.Contains("AuditTrailEvent"));
     }
 
     [TestMethod]

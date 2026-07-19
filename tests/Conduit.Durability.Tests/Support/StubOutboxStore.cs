@@ -49,10 +49,14 @@ public class StubOutboxStore : IOutboxStore
 
     public IReadOnlyList<ClaimedOutboxEntry> ClaimedEntries { get; set; } = [];
 
+    /// <summary>Whether <see cref="ClaimByMessageIdsAsync"/> was ever called — proves (or disproves) that a delivery attempt ran.</summary>
+    public bool ClaimByMessageIdsCalled { get; private set; }
+
     public virtual Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(
         IReadOnlyList<string> messageIds,
         CancellationToken cancellationToken)
     {
+        this.ClaimByMessageIdsCalled = true;
         return Task.FromResult<IReadOnlyList<ClaimedOutboxEntry>>(this.ClaimedEntries);
     }
 }

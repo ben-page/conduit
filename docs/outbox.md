@@ -95,8 +95,9 @@ Handler executes (in managed transaction)
   ├── OutboxBehavior writes captured envelopes to the outbox table (same transaction)
   └── Transaction commits (business data + outbox entries, atomic)
 
-IOutboxFlusher.FlushAsync (optional — "Immediate send" below) and OutboxRelay
-(background service — safety net) apply one per-entry delivery contract:
+The delivery IOutboxFlusher.FlushAsync schedules on the background dispatcher (optional —
+"Immediate send" below; the caller never waits for it) and OutboxRelay (background service —
+safety net) apply one per-entry delivery contract:
   ├── Local listeners first, from a fresh DI scope (redelivery-safe — see below)
   ├── Then the transport send
   ├── Marks the entry as sent on success
@@ -290,8 +291,8 @@ Never eligible for capture, at any point — these all expect a reply, so dispat
 
 ### Flush and relay delivery: local-then-transport
 
-For every entry a captured envelope produced, `IOutboxFlusher.FlushAsync` and `OutboxRelay` apply
-the identical per-entry delivery contract:
+For every entry a captured envelope produced, the delivery `IOutboxFlusher.FlushAsync` schedules
+and `OutboxRelay` apply the identical per-entry delivery contract:
 
 1. Resolve `ILocalEnvelopeDispatcher` from a **fresh DI scope** — one scope per entry, mirroring
    fire-and-forget's own fresh-scope semantics (the scope that captured the envelope is long gone
@@ -308,10 +309,11 @@ them, because they already ran inline, inside the handler's own transaction, at 
 Re-running them on flush/relay would double-deliver. Only their transport envelope (when captured)
 is subject to this contract.
 
-**Redelivery re-runs local listeners.** If a flush fails partway, or never runs at all (e.g. a
-crash between commit and `FlushAsync`), the relay claims the same entry later and repeats the full
-contract — including local listeners. Outbox delivery is **at-least-once**, exactly like transport
-delivery; local listeners must be idempotent for the same reason transport-side consumers must be.
+**Redelivery re-runs local listeners.** If a scheduled flush delivery fails partway, or never runs
+at all (e.g. a crash between commit and the background dispatcher draining the work item), the
+relay claims the same entry later and repeats the full contract — including local listeners.
+Outbox delivery is **at-least-once**, exactly like transport delivery; local listeners must be
+idempotent for the same reason transport-side consumers must be.
 
 **Degraded mode without the source generator.** `ILocalEnvelopeDispatcher` is implemented by the
 generated mediator and resolved with `GetService` (not `GetRequiredService`). A host that never
@@ -365,7 +367,7 @@ deliberately, per type — it is not a global default, and nothing gets it unles
 
 ## Immediate send
 
-By default, outbox messages wait for the relay's next poll cycle before reaching the broker. The immediate send optimization bypasses this delay by sending messages from the in-memory buffer right after the transaction commits, using the relay only as a safety net for failures.
+By default, outbox messages wait for the relay's next poll cycle before reaching the broker. The immediate send optimization bypasses this delay: `FlushAsync` schedules delivery from the in-memory buffer on the background dispatcher right after the transaction commits, instead of waiting for the relay's next poll — using the relay only as a safety net for failures. `FlushAsync` itself returns as soon as delivery is scheduled; it does not wait for delivery to complete, so the caller is never held up by listener or transport latency.
 
 ### Usage
 
@@ -392,15 +394,19 @@ public class PlaceOrderHandler(
 }
 ```
 
+`await flusher.FlushAsync(cancellationToken)` here returns once delivery is scheduled, not once it
+has happened — `HandleAsync` returns to its caller without waiting for `OrderPlacedEvent` to reach
+any listener or transport.
+
 ### Behavior
 
-`FlushAsync` claims the outbox entries written during the current scope using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token). It then sends each entry via the appropriate transport using the in-memory envelope — no database read needed. Successfully sent entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up on its next sweep.
+`FlushAsync` schedules delivery of the outbox entries written during the current scope on `ConduitBackgroundDispatcher` and returns immediately — the caller never waits for delivery, only for its own commit. The scheduled work item runs under the dispatcher's own lifetime, not the caller's request: it claims the entries using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token), then sends each one via the appropriate transport using the in-memory envelope — no database read needed. Successfully delivered entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up on its next sweep.
 
-`FlushAsync` is a no-op when nothing was captured during the scope, and safe to call unconditionally. If the relay has already claimed an entry before `FlushAsync` runs, the claim returns nothing and the call completes without sending duplicates.
+Because delivery is scheduled rather than synchronous, `FlushAsync` returning is not evidence that listeners or transports have run — there is no read-your-writes guarantee. `FlushAsync` is a no-op (nothing is scheduled) when nothing was captured during the scope, and safe to call unconditionally. If the relay has already claimed an entry by the time the scheduled delivery runs, the claim returns nothing and it completes without sending duplicates.
 
 ### EF Core auto-flush
 
-For EF Core applications, a `SaveChangesInterceptor` can call `FlushAsync` automatically after every successful save:
+For EF Core applications, a `SaveChangesInterceptor` can call `FlushAsync` automatically after every successful save. Because `FlushAsync` only schedules delivery, the interceptor itself still completes quickly:
 
 ```csharp
 public class OutboxFlushInterceptor(IOutboxFlusher flusher) : SaveChangesInterceptor
@@ -435,4 +441,4 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 **Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker, on every supported engine including SQLite. The relay and the immediate-send `FlushAsync` likewise never double-send the same entry.
 
-**Immediate send is best-effort.** `FlushAsync` attempts to send messages immediately, but the relay is still the safety net. If the process crashes between commit and `FlushAsync`, or if `FlushAsync` itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when immediate send is configured.
+**Immediate send is best-effort, and asynchronous.** `FlushAsync` schedules delivery on the background dispatcher and returns immediately — it does not wait for delivery, so a caller cannot assume listeners or transports have run by the time `FlushAsync` returns. The relay is still the safety net: if the process crashes between commit and the scheduled delivery running, or delivery itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when immediate send is configured.

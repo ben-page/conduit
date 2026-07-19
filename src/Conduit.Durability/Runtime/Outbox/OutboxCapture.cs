@@ -10,8 +10,9 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// <summary>
 /// Scoped <see cref="IOutboundInterceptor"/> implementation that buffers
 /// outbound dispatch envelopes for the OutboxBehavior pipeline behavior.
-/// Also implements <see cref="IOutboxFlusher"/> for immediate send after
-/// the handler's transaction commits.
+/// Also implements <see cref="IOutboxFlusher"/>: <see cref="FlushAsync"/> schedules immediate
+/// post-commit delivery on the background dispatcher and returns — the caller never waits; the
+/// relay remains the redelivery backstop.
 /// Registered as scoped — one instance per dispatch scope.
 /// </summary>
 /// <remarks>
@@ -21,10 +22,10 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// </remarks>
 public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 {
-    private readonly IOutboxStore store;
     private readonly TransportDispatcher transportDispatcher;
     private readonly IConduitConnectionFactory connectionFactory;
     private readonly IServiceScopeFactory scopeFactory;
+    private readonly ConduitBackgroundDispatcher backgroundDispatcher;
     private readonly ILogger<OutboxCapture> logger;
     private readonly List<DispatchEnvelope> captured = [];
     private List<WrittenOutboxMessage> writtenMessages = [];
@@ -32,17 +33,23 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     /// <summary>
     /// Initializes a new instance of the <see cref="OutboxCapture"/> class.
     /// </summary>
+    /// <remarks>
+    /// Does not take an <see cref="IOutboxStore"/>: unlike the pre-background-flush shape, no
+    /// method on this class touches the store directly anymore. <see cref="ClaimAndDeliverAsync"/>
+    /// (the only store-touching code path left) resolves its own from a fresh scope, since it runs
+    /// long after this instance's request scope — and any store it could have held — is gone.
+    /// </remarks>
     public OutboxCapture(
-        IOutboxStore store,
         TransportDispatcher transportDispatcher,
         IConduitConnectionFactory connectionFactory,
         IServiceScopeFactory scopeFactory,
+        ConduitBackgroundDispatcher backgroundDispatcher,
         ILogger<OutboxCapture> logger)
     {
-        this.store = store;
         this.transportDispatcher = transportDispatcher;
         this.connectionFactory = connectionFactory;
         this.scopeFactory = scopeFactory;
+        this.backgroundDispatcher = backgroundDispatcher;
         this.logger = logger;
     }
 
@@ -75,20 +82,73 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
         this.writtenMessages = [.. messages];
     }
 
+    /// <summary>
+    /// The messages set by <see cref="SetWrittenMessages"/>. Exposed for tests that exercise
+    /// <see cref="ClaimAndDeliverAsync"/> directly against the messages a real capture/behavior
+    /// pipeline correlated, without going through the background dispatcher.
+    /// </summary>
+    internal IReadOnlyList<WrittenOutboxMessage> WrittenMessages => this.writtenMessages;
+
     /// <inheritdoc />
-    public async Task FlushAsync(CancellationToken cancellationToken = default)
+    /// <remarks>
+    /// Schedules immediate post-commit delivery on <see cref="ConduitBackgroundDispatcher"/> and
+    /// returns — the caller never waits; the relay remains the redelivery backstop. This restores
+    /// <see cref="Conduit.Attributes.FireAndForgetAttribute"/>'s "caller returns immediately"
+    /// contract under transactional capture: captured fire-and-forget is transactional AND
+    /// asynchronous, not transactional-but-synchronous.
+    /// <para>
+    /// The scheduled work item runs under the dispatcher's own stopping token, not
+    /// <paramref name="cancellationToken"/> — delivery is intentionally decoupled from the
+    /// caller's request lifetime, so it must survive the request scope ending (and the request's
+    /// cancellation firing). Accordingly, the closure captures only singletons
+    /// (<see cref="IServiceScopeFactory"/>, <see cref="TransportDispatcher"/>, <see cref="ILogger"/>)
+    /// and the plain-record <see cref="WrittenOutboxMessage"/> values — no scoped state, and in
+    /// particular never this request scope's own <see cref="IOutboxStore"/> or
+    /// <see cref="IConduitConnectionFactory"/>, both of which are gone by the time the work item
+    /// runs.
+    /// </para>
+    /// </remarks>
+    public Task FlushAsync(CancellationToken cancellationToken = default)
     {
         if (this.writtenMessages.Count == 0)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        var messageIds = this.writtenMessages
+        var messages = this.writtenMessages;
+        this.writtenMessages = [];
+
+        this.backgroundDispatcher.Enqueue(
+            ct => ClaimAndDeliverAsync(this.scopeFactory, this.transportDispatcher, this.logger, messages, ct));
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Claims the outbox entries backing <paramref name="messages"/> and delivers each one:
+    /// local listeners first (fresh DI scope per entry), then the transport send, then marks the
+    /// entry sent; a failed entry is left for the relay to redeliver. This is the routine
+    /// <see cref="FlushAsync"/> schedules on the background dispatcher — it resolves
+    /// <see cref="IOutboxStore"/> from its own fresh scope rather than a captured scoped instance,
+    /// because the scope that produced <paramref name="messages"/> is gone by the time this runs
+    /// (mirrors <see cref="OutboxRelay.ProcessPendingAsync"/>'s scope-per-sweep pattern).
+    /// </summary>
+    internal static async Task ClaimAndDeliverAsync(
+        IServiceScopeFactory scopeFactory,
+        TransportDispatcher transportDispatcher,
+        ILogger logger,
+        IReadOnlyList<WrittenOutboxMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        var messageIds = messages
             .Select(m => m.MessageId)
             .Distinct()
             .ToList();
 
-        var claimed = await this.store.ClaimByMessageIdsAsync(messageIds, cancellationToken);
+        using var flushScope = scopeFactory.CreateScope();
+        var store = flushScope.ServiceProvider.GetRequiredService<IOutboxStore>();
+
+        var claimed = await store.ClaimByMessageIdsAsync(messageIds, cancellationToken);
         if (claimed.Count == 0)
         {
             return;
@@ -96,7 +156,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 
         // Build lookup: MessageId → queue of envelopes for correlation
         var envelopesByMessageId = new Dictionary<string, Queue<WrittenOutboxMessage>>();
-        foreach (var written in this.writtenMessages)
+        foreach (var written in messages)
         {
             if (!envelopesByMessageId.TryGetValue(written.MessageId, out var queue))
             {
@@ -131,7 +191,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                     // fresh-scope semantics); then transports; then mark sent. Any failure leaves
                     // the entry pending for the relay — redelivery re-runs local listeners, so
                     // listeners must stay idempotent.
-                    using var scope = this.scopeFactory.CreateScope();
+                    using var scope = scopeFactory.CreateScope();
                     var localDispatcher = scope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
 
                     if (localDispatcher is not null && localDispatcher.DeliversLocally(written.Envelope.Type))
@@ -141,17 +201,17 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 
                     if (localDispatcher is null || !localDispatcher.IsLocalOnly(written.Envelope.Type))
                     {
-                        await this.transportDispatcher.SendAsync(written.Envelope, cancellationToken);
+                        await transportDispatcher.SendAsync(written.Envelope, cancellationToken);
                     }
 
-                    await this.store.MarkSentAsync(entry.Id, cancellationToken);
+                    await store.MarkSentAsync(entry.Id, cancellationToken);
                 }
 #pragma warning disable CA1031
                 catch (Exception exception)
 #pragma warning restore CA1031
                 {
-                    LogFlushSendFailed(this.logger, entry.Id, written.Envelope.Type, exception);
-                    await this.store.IncrementRetryAsync(entry.Id, cancellationToken);
+                    LogFlushSendFailed(logger, entry.Id, written.Envelope.Type, exception);
+                    await store.IncrementRetryAsync(entry.Id, cancellationToken);
                 }
             }
         }

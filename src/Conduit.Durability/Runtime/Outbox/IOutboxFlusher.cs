@@ -1,14 +1,17 @@
 namespace Conduit.Durability.Runtime.Outbox;
 
 /// <summary>
-/// Sends captured outbox messages immediately from the in-memory buffer,
-/// bypassing the relay's poll cycle. Call after committing the transaction.
+/// Schedules immediate post-commit delivery of captured outbox messages from the in-memory
+/// buffer on the background dispatcher, bypassing the relay's poll cycle. Call after committing
+/// the transaction.
 /// </summary>
 public interface IOutboxFlusher
 {
     /// <summary>
-    /// Claims and sends any outbox messages captured during this scope.
-    /// No-op if nothing was captured or if entries were already claimed by the relay.
+    /// Schedules immediate post-commit delivery on the background dispatcher and returns — the
+    /// caller never waits; the relay remains the redelivery backstop. No-op (nothing is
+    /// scheduled) when nothing was captured during this scope. If the relay has already claimed
+    /// the entries by the time the scheduled delivery runs, it completes without redelivering.
     /// </summary>
     public Task FlushAsync(CancellationToken cancellationToken = default);
 }

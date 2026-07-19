@@ -115,27 +115,44 @@ public class OutboxEndToEndShould
         // Commit the transaction (business data + outbox entries, atomic)
         await connectionFactory.CommitAsync();
 
-        // Flush — sends from memory, marks entries as sent
+        // Flush — schedules delivery from memory on the background dispatcher and returns
         var flusher = host.GetRequiredService<IOutboxFlusher>();
         await flusher.FlushAsync(CancellationToken.None);
+
+        // Assert — THE contract pin: FlushAsync must not have delivered yet when it returns.
+        spyTransport.SentEvents.Should().BeEmpty("FlushAsync must schedule background delivery and return without waiting for it");
+
+        // The background dispatcher drains the enqueued work item on its own hosted-service loop
+        // (TestWebHost starts it for real) — bounded-poll for the terminal DB state. MarkSentAsync
+        // is the LAST step of the delivery routine, strictly after the transport send, so once Sent
+        // is observed the transport assertion below cannot be racing the still-in-flight work item.
+        using var queryCommand = connectionFactory.Connection.CreateCommand();
+        queryCommand.CommandText = "SELECT Status FROM conduit_outbox";
+
+        var sent = false;
+        for (var attempt = 0; attempt < 50 && !sent; attempt++)
+        {
+            using var reader = await queryCommand.ExecuteReaderAsync();
+            var statuses = new List<int>();
+            while (await reader.ReadAsync())
+            {
+                statuses.Add(reader.GetInt32(0));
+            }
+
+            sent = statuses.Count == 1 && statuses[0] == (int)OutboxEntryStatus.Sent;
+            await reader.CloseAsync();
+
+            if (!sent)
+            {
+                await Task.Delay(100);
+            }
+        }
+
+        sent.Should().BeTrue("the background dispatcher must eventually deliver the flushed entry and mark it sent");
 
         // Assert — transport received the event
         spyTransport.SentEvents.Should().HaveCount(1);
         spyTransport.SentEvents[0].Type.Should().Contain("OrderPlacedEvent");
-
-        // Assert — outbox entry is marked as Sent
-        using var queryCommand = connectionFactory.Connection.CreateCommand();
-        queryCommand.CommandText = "SELECT Status FROM conduit_outbox";
-        using var reader = await queryCommand.ExecuteReaderAsync();
-
-        var statuses = new List<int>();
-        while (await reader.ReadAsync())
-        {
-            statuses.Add(reader.GetInt32(0));
-        }
-
-        statuses.Should().HaveCount(1);
-        statuses[0].Should().Be((int)OutboxEntryStatus.Sent);
         orderId.Should().NotBeEmpty();
     }
 }

@@ -27,15 +27,30 @@ public class OutboxBehaviorShould
     private static IServiceScopeFactory CreateEmptyScopeFactory()
         => new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
+    // ClaimAndDeliverAsync resolves IOutboxStore from its own fresh scope rather than taking it as
+    // a parameter — this wires the given stub into a real scope factory so it can be resolved.
+    private static IServiceScopeFactory CreateScopeFactory(IOutboxStore store)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(store);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
+    // A real (but never-started) dispatcher: none of these tests need the background dispatcher to
+    // actually drain — FlushAsync is only exercised for its enqueue-vs-not behavior, and the one
+    // test that needs the delivery routine's actual effects invokes it directly.
+    private static ConduitBackgroundDispatcher CreateBackgroundDispatcher()
+        => new(NullLogger<ConduitBackgroundDispatcher>.Instance);
+
     // Capture is given a transaction-present factory so Intercept accepts the envelopes under test:
     // these tests exercise OutboxBehavior's own logic, using capture only to pre-load captured state.
-    private static OutboxCapture CreateCapture(StubOutboxStore? store = null, TransportDispatcher? dispatcher = null)
+    private static OutboxCapture CreateCapture(TransportDispatcher? dispatcher = null)
     {
         return new OutboxCapture(
-            store ?? new StubOutboxStore(),
             dispatcher ?? CreateDispatcher(),
             new StubTransactionFactory(hasTransaction: true),
             CreateEmptyScopeFactory(),
+            CreateBackgroundDispatcher(),
             NullLogger<OutboxCapture>.Instance);
     }
 
@@ -148,7 +163,7 @@ public class OutboxBehaviorShould
         var store = new StubOutboxStore();
         var transport = new SpyTransport();
         var factory = new StubTransactionFactory(hasTransaction: true);
-        var capture = new OutboxCapture(store, CreateDispatcher(transport), factory, CreateEmptyScopeFactory(), NullLogger<OutboxCapture>.Instance);
+        var capture = new OutboxCapture(CreateDispatcher(transport), factory, CreateEmptyScopeFactory(), CreateBackgroundDispatcher(), NullLogger<OutboxCapture>.Instance);
 
         var envelope = new DispatchEnvelope("Test.OrderPlaced", JsonSerializer.SerializeToElement(new { id = 1 }));
         capture.Intercept(envelope);
@@ -158,11 +173,15 @@ public class OutboxBehaviorShould
         // Act
         await behavior.HandleAsync("request", () => Task.FromResult("result"), CancellationToken.None);
 
-        // Assert -- after behavior runs, FlushAsync should be able to send
+        // Assert -- after behavior runs, capture's correlated messages should be deliverable.
+        // Exercises the delivery routine directly (rather than capture.FlushAsync, which now only
+        // schedules it on the background dispatcher) against the exact messages OutboxBehavior
+        // correlated via SetWrittenMessages, proving the MessageId round-trips correctly.
         var savedMessageId = store.SavedEntries[0].MessageId;
         store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 1, MessageId = savedMessageId }];
 
-        await capture.FlushAsync(CancellationToken.None);
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store), CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, capture.WrittenMessages, CancellationToken.None);
 
         transport.SentEvents.Should().HaveCount(1);
         transport.SentEvents[0].Type.Should().Be("Test.OrderPlaced");

@@ -75,9 +75,10 @@ public sealed partial class OutboxRelay(
     /// <summary>
     /// Processes a single batch of pending outbox entries: resolves the store from a fresh
     /// sweep-scoped provider, then for each claimed entry delivers local listeners (fresh scope
-    /// per entry) before the transport send — mirroring <see cref="OutboxCapture.FlushAsync"/>'s
-    /// delivery contract, so redelivery re-runs local listeners identically. Exposed as internal
-    /// for testing.
+    /// per entry) before the transport send — mirroring <see cref="OutboxCapture.ClaimAndDeliverAsync"/>'s
+    /// delivery contract (the routine <see cref="OutboxCapture.FlushAsync"/> schedules on the
+    /// background dispatcher), so redelivery re-runs local listeners identically. Exposed as
+    /// internal for testing.
     /// </summary>
     internal async Task ProcessPendingAsync(CancellationToken cancellationToken)
     {
