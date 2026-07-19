@@ -74,7 +74,7 @@ public class InterceptorPipelineShould
     }
 
     [TestMethod]
-    public async Task RejectDisallowedTypeWith401()
+    public async Task RejectDisallowedTypeWith403()
     {
         var (app, client) = CreateTestHostWithTypeFilter();
         await using (app)
@@ -87,7 +87,7 @@ public class InterceptorPipelineShould
                 new { Id = Guid.NewGuid() });
 
             // Assert
-            ((int)response.StatusCode).Should().Be(401);
+            ((int)response.StatusCode).Should().Be(403);
         }
     }
 }

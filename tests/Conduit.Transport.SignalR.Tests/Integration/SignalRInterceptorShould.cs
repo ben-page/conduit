@@ -78,6 +78,6 @@ public class SignalRInterceptorShould
         // Assert
         result.Should().NotBeNull();
         result.Error.Should().NotBeNull();
-        result.Error.Code.Should().Be("Unauthorized");
+        result.Error.Code.Should().Be("Forbidden");
     }
 }
