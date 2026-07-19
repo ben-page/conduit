@@ -68,10 +68,16 @@ Key facts verified against the code:
 For a local `[FireAndForget]` void command, `ConduitDispatch.Execute` resolves the pipeline
 behaviors in the **caller** context, then enqueues the handler invocation to the
 `ConduitBackgroundDispatcher` (a `BackgroundService` with an unbounded `Channel<T>`) via
-`dispatcher.Enqueue(...)`, and returns immediately. For a **routed** `[FireAndForget]` command,
-the generated mediator first checks for an `IOutboundInterceptor` (outbox capture); if present
-it calls `interceptor.Intercept(envelope)` *instead of* the transport, otherwise it calls
-`transport.SendEventAsync(envelope, ct)`.
+`dispatcher.Enqueue(...)`, and returns immediately. This path never involves the outbox — there's
+no transport send to defer, only a local handler invocation.
+
+For a **routed**, non-Immediate `[FireAndForget]` command, the generated mediator first checks for
+an `IOutboundInterceptor` (outbox capture) and offers it the envelope. `Intercept` returns `bool`:
+`true` (captured — requires an ambient transaction) replaces the transport call entirely, and the
+outbox delivers it later; `false` (declined, or no interceptor registered) falls through to
+`transport.SendEventAsync(envelope, ct)` exactly as if the outbox didn't exist.
+`[FireAndForget(Immediate = true)]` routed commands skip the interceptor check altogether — always
+straight to `transport.SendEventAsync`. See [Outbox → What gets captured](outbox.md#what-gets-captured).
 
 ---
 
@@ -117,9 +123,22 @@ Key facts:
   is thrown only after every listener has been attempted.
 - **`[LocalOnly]` events skip transport broadcast** — the generator omits the broadcast loop at
   compile time. There is no runtime check.
-- **`[FireAndForget]` events** enqueue the local-listener work to `ConduitBackgroundDispatcher`
-  (`dispatcher.Enqueue(...)` wrapping `PublishLocalAsync`) instead of running it inline. Transport
-  broadcast still proceeds inline (events are already fire-and-forget on the wire).
+- **`[FireAndForget]` events (non-Immediate)** are offered to a registered `IOutboundInterceptor`
+  (the outbox) *before* any local dispatch. When it captures the envelope — `Intercept` returns
+  `true`, which requires an ambient DB transaction — the entire publish body is skipped: local
+  listeners and transport broadcast both happen later, from the outbox, post-commit. When capture
+  is declined (no transaction) or no interceptor is registered, the local-listener work is
+  enqueued to `ConduitBackgroundDispatcher` (`dispatcher.Enqueue(...)` wrapping `PublishLocalAsync`)
+  instead of running it inline, and transport broadcast still proceeds inline (events are already
+  fire-and-forget on the wire). `[FireAndForget(Immediate = true)]` events skip the interceptor
+  check entirely — always background-enqueued locally and broadcast directly, so delivery doesn't
+  wait on (or depend on) an enclosing transaction. See
+  [Outbox → What gets captured](outbox.md#what-gets-captured) for the full matrix.
+- **Broadcast itself is capture-gated too**, for every event that reaches it (plain events always
+  do; F&F events only after a declined/absent pre-check above, never a second attempt). The
+  broadcast step offers the envelope to the interceptor and only calls `transport.SendEventAsync`
+  directly when nothing captured it — so a plain event's transport delivery can also be deferred
+  to the outbox, even though its local listeners already ran inline, above.
 - The error handling difference between paths matters: `PublishAsync` (local-origin) swallows
   `EventListenerException`; the **wire path** (`DispatchEventAsync`, see below) lets it propagate
   so the transport can retry / dead-letter.
@@ -220,10 +239,15 @@ retry / dead-letter; all other exceptions are logged and swallowed.
 
 ### Outbound F&F capture (`IOutboundInterceptor`)
 
-When an `IOutboundInterceptor` is registered (the outbox), the generated mediator calls
-`interceptor.Intercept(envelope)` *instead of* sending an outbound fire-and-forget message to the
-transport. The outbox captures the envelope in the same transaction as the business write and
-relays it later.
+When an `IOutboundInterceptor` is registered (the outbox), the generated mediator offers each
+capturable envelope to `interceptor.Intercept(envelope)` before any local enqueue or transport
+send. `Intercept` returns `bool`: `true` means it captured the envelope in the same transaction as
+the business write (relayed later, local-then-transport) and the caller must skip local enqueue
+and the transport send; `false` means it declined — no ambient transaction was active — and the
+caller proceeds exactly as if no interceptor were registered. `[FireAndForget(Immediate = true)]`
+messages skip this check entirely, unconditionally. See
+[Outbox → What gets captured](outbox.md#what-gets-captured) for which message kinds are offered
+and the full capture-eligibility matrix.
 
 ---
 
