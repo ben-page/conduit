@@ -9,6 +9,7 @@ public class StubOutboxStore : IOutboxStore
     public List<long> MarkedSent { get; } = [];
     public List<long> RetriesIncremented { get; } = [];
     public List<long> MarkedFailed { get; } = [];
+    public List<TimeSpan> DeletedRetentions { get; } = [];
 
     public virtual Task SaveAsync(IReadOnlyList<OutboxEntry> entries, DbTransaction transaction, CancellationToken cancellationToken)
     {
@@ -38,7 +39,10 @@ public class StubOutboxStore : IOutboxStore
     }
 
     public virtual Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
-        => Task.CompletedTask;
+    {
+        this.DeletedRetentions.Add(retentionPeriod);
+        return Task.CompletedTask;
+    }
 
     public virtual Task EnsureTableExistsAsync(CancellationToken cancellationToken)
         => Task.CompletedTask;

@@ -15,4 +15,11 @@ public sealed class OutboxOptions
     public int MaxRetries { get; set; } = 10;
     /// <summary>Whether to auto-create the outbox table on startup. Default: true.</summary>
     public bool AutoCreateTable { get; set; } = true;
+
+    /// <summary>Sent/Failed entries older than this are deleted by the relay's periodic cleanup.
+    /// <see cref="TimeSpan.Zero"/> disables retention cleanup entirely. Default: 7 days.</summary>
+    public TimeSpan CompletedRetention { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>How often the relay runs retention cleanup. Default: 1 hour.</summary>
+    public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromHours(1);
 }
