@@ -44,6 +44,10 @@ public sealed record DispatchableTypeInfo
     /// <summary>Whether the type has a <c>[FireAndForget]</c> attribute.</summary>
     public bool IsFireAndForget { get; init; }
 
+    /// <summary>Whether the <c>[FireAndForget]</c> attribute sets <c>Immediate = true</c>
+    /// (bypass transactional outbox capture).</summary>
+    public bool IsFireAndForgetImmediate { get; init; }
+
     /// <summary>Whether the type has a <c>[DoNotAudit]</c> attribute.</summary>
     public bool IsDoNotAudit { get; init; }
 }

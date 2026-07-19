@@ -56,6 +56,7 @@ public static class RoslynScanner
 
             var resultTypeName = GetResultTypeName(typeSymbol, kind.Value);
             var resultFullTypeName = GetResultFullTypeName(typeSymbol, kind.Value);
+            var fireAndForgetAttribute = GetAttribute(typeSymbol, FireAndForgetAttributeName);
 
             results.Add(new DispatchableTypeInfo
             {
@@ -66,7 +67,8 @@ public static class RoslynScanner
                 ResultTypeName = resultTypeName,
                 ResultFullTypeName = resultFullTypeName,
                 IsLocalOnly = HasAttribute(typeSymbol, LocalOnlyAttributeName),
-                IsFireAndForget = HasAttribute(typeSymbol, FireAndForgetAttributeName),
+                IsFireAndForget = fireAndForgetAttribute is not null,
+                IsFireAndForgetImmediate = GetNamedBoolArgument(fireAndForgetAttribute, "Immediate"),
                 IsDoNotAudit = HasAttribute(typeSymbol, DoNotAuditAttributeName),
             });
         }
@@ -317,6 +319,37 @@ public static class RoslynScanner
             if (attribute.AttributeClass?.ToDisplayString() == attributeFullName)
             {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static AttributeData? GetAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)
+    {
+        foreach (var attribute in typeSymbol.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() == attributeFullName)
+            {
+                return attribute;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool GetNamedBoolArgument(AttributeData? attribute, string name)
+    {
+        if (attribute is null)
+        {
+            return false;
+        }
+
+        foreach (var argument in attribute.NamedArguments)
+        {
+            if (argument.Key == name)
+            {
+                return argument.Value.Value is true;
             }
         }
 
