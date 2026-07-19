@@ -63,7 +63,7 @@ public static class MediatorEmitter
         sb.AppendLine("    IEnumerable<IConduitTransport> transports,");
         sb.AppendLine("    IEnumerable<IInboundInterceptor> interceptors,");
         sb.AppendLine("    ConduitOptions conduitOptions,");
-        sb.AppendLine("    ILogger<ConduitMediator> logger) : IWireMediator");
+        sb.AppendLine($"    ILogger<ConduitMediator> logger) : IWireMediator, {EmitConstants.ILocalEnvelopeDispatcher}");
         sb.AppendLine("{");
 
         // Strongly-typed overloads for commands with result
@@ -276,6 +276,9 @@ public static class MediatorEmitter
 
         // Wire publish (private, called by HandleWireEventAsync)
         EmitWirePublish(sb, events);
+
+        // Local envelope dispatcher (ILocalEnvelopeDispatcher: classification + envelope redelivery)
+        EmitLocalEnvelopeDispatcher(sb, events);
 
         // HandleWireRequestAsync -- delegates to ConduitRuntime
         sb.AppendLine("    public Task<DispatchResult<object>> HandleWireRequestAsync(");
@@ -676,6 +679,60 @@ public static class MediatorEmitter
         EmitDispatchCompleted(sb, "            ");
 
         EmitWireContextEnd(sb);
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Emits the generated <c>ILocalEnvelopeDispatcher</c> implementation: classification switches
+    /// consumed by the outbox's flush/relay delivery decisions, plus envelope-to-local-listener
+    /// redelivery. Switch case keys are <see cref="DispatchableTypeInfo.FullTypeName"/> verbatim
+    /// (metadata '+' form) -- the same strings <c>DispatchEnvelope.Type</c> carries at runtime.
+    /// <c>ToCSharpTypeRef</c> is used only for the generic type argument in the deserialize call,
+    /// never for the string case labels.
+    /// </summary>
+    private static void EmitLocalEnvelopeDispatcher(StringBuilder sb, List<DispatchableTypeInfo> events)
+    {
+        sb.AppendLine("    /// <inheritdoc />");
+        sb.AppendLine("    public bool DeliversLocally(string messageType) => messageType switch");
+        sb.AppendLine("    {");
+
+        foreach (var evt in events.Where(e => e.IsFireAndForget && !e.IsFireAndForgetImmediate))
+        {
+            sb.AppendLine($"        \"{evt.FullTypeName}\" => true,");
+        }
+
+        sb.AppendLine("        _ => false,");
+        sb.AppendLine("    };");
+        sb.AppendLine();
+
+        sb.AppendLine("    /// <inheritdoc />");
+        sb.AppendLine("    public bool IsLocalOnly(string messageType) => messageType switch");
+        sb.AppendLine("    {");
+
+        foreach (var evt in events.Where(e => e.IsLocalOnly))
+        {
+            sb.AppendLine($"        \"{evt.FullTypeName}\" => true,");
+        }
+
+        sb.AppendLine("        _ => false,");
+        sb.AppendLine("    };");
+        sb.AppendLine();
+
+        sb.AppendLine("    /// <inheritdoc />");
+        sb.AppendLine("    public async Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        IEvent @event = envelope.Type switch");
+        sb.AppendLine("        {");
+
+        foreach (var evt in events)
+        {
+            sb.AppendLine($"            \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(evt.FullTypeName)}>(envelope.Payload, ConduitRuntime.JsonOptions)!,");
+        }
+
+        sb.AppendLine("            _ => throw new InvalidOperationException($\"Unknown event type: {envelope.Type}\")");
+        sb.AppendLine("        };");
+        sb.AppendLine("        await PublishLocalAsync(scopedServices, @event, cancellationToken);");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
