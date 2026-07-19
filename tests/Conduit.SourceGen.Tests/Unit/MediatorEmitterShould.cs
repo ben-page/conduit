@@ -103,4 +103,53 @@ namespace App.Events
         mediatorSource.Should().Contain("HandleWireEventAsync(");
         mediatorSource.Should().Contain("IWireMediator");
     }
+
+    [TestMethod]
+    public void EmitLocalEnvelopeDispatcherMembers()
+    {
+        // Arrange — one capturable F&F event, one Immediate, one LocalOnly plain event
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+            using Conduit.Handlers;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace TestApp;
+
+            [FireAndForget]
+            public record CapturedEvent(string Detail) : IEvent;
+
+            [FireAndForget(Immediate = true)]
+            public record ImmediateEvent(string Detail) : IEvent;
+
+            [LocalOnly]
+            public record LocalOnlyEvent(string Detail) : IEvent;
+
+            public class CapturedListener : IEventListener<CapturedEvent>
+            {
+                public Task HandleAsync(CapturedEvent e, CancellationToken ct) => Task.CompletedTask;
+            }
+            """;
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert — interface on the class, classification switches keyed by METADATA names, publish entry
+        mediatorSource.Should().NotBeNull();
+        mediatorSource.Should().Contain("ILocalEnvelopeDispatcher");
+        mediatorSource.Should().Contain("public bool DeliversLocally(string messageType)");
+        mediatorSource.Should().Contain("\"TestApp.CapturedEvent\" => true");         // capturable F&F
+        mediatorSource.Should().NotContain("\"TestApp.ImmediateEvent\" => true");     // Immediate is not outbox-delivered
+        mediatorSource.Should().Contain("public bool IsLocalOnly(string messageType)");
+        mediatorSource.Should().Contain("\"TestApp.LocalOnlyEvent\" => true");
+        mediatorSource.Should().Contain("public async Task PublishLocalEnvelopeAsync(");
+
+        // Assert — registration delegates the new interface to the same mediator instance
+        var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
+        registrationSource.Should().NotBeNull();
+        registrationSource.Should().Contain(
+            "services.AddTransient<Conduit.ILocalEnvelopeDispatcher>(sp => sp.GetRequiredService<ConduitMediator>());");
+    }
 }

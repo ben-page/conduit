@@ -18,6 +18,7 @@ internal static class EmitConstants
     // Core types (fully qualified, used in generated code)
     internal const string IMediator = "Conduit.IMediator";
     internal const string IWireMediator = "Conduit.IWireMediator";
+    internal const string ILocalEnvelopeDispatcher = "Conduit.ILocalEnvelopeDispatcher";
     internal const string Unit = "Conduit.Messages.Unit";
 
     // Runtime types

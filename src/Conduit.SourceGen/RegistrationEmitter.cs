@@ -98,6 +98,7 @@ public static class RegistrationEmitter
         sb.AppendLine("        services.AddTransient<ConduitMediator>();");
         sb.AppendLine($"        services.AddTransient<{EmitConstants.IMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
         sb.AppendLine($"        services.AddTransient<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
+        sb.AppendLine($"        services.AddTransient<{EmitConstants.ILocalEnvelopeDispatcher}>(sp => sp.GetRequiredService<ConduitMediator>());");
 
         // Collect type lists for the registry
         var eventTypeNames = listenerGroups.Select(g => g.EventFullTypeName).Distinct().ToList();
