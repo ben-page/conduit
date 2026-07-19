@@ -118,8 +118,20 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
         var messages = this.writtenMessages;
         this.writtenMessages = [];
 
+        // Hoisted to locals before building the closure: a lambda that reads an instance field via
+        // `this.field` captures `this` as a whole (a compiler-generated back-reference to the
+        // entire OutboxCapture instance), not a copy of the field. Capturing `this` here would pin
+        // this instance's other fields — notably the scoped connectionFactory and the captured
+        // envelope list — reachable in memory for as long as the work item sits in the dispatcher's
+        // channel, and would violate the "closure captures only these singletons" contract documented
+        // on FlushAsync. Referencing only locals below means the closure captures exactly those
+        // locals, nothing else.
+        var scopeFactory = this.scopeFactory;
+        var transportDispatcher = this.transportDispatcher;
+        var logger = this.logger;
+
         this.backgroundDispatcher.Enqueue(
-            ct => ClaimAndDeliverAsync(this.scopeFactory, this.transportDispatcher, this.logger, messages, ct));
+            ct => ClaimAndDeliverAsync(scopeFactory, transportDispatcher, logger, messages, ct));
 
         return Task.CompletedTask;
     }

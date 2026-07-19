@@ -77,7 +77,14 @@ public class OutboxEndToEndShould
     [TestMethod]
     public async Task FlushAsyncSendsCapturedEventAndMarksEntrySent()
     {
-        // Arrange
+        // Arrange. The delivery gate starts HELD (count 0): OutboxCapture.ClaimAndDeliverAsync's
+        // very first operation is ClaimByMessageIdsAsync, so wiring a GatedOutboxStore in front of
+        // the real store blocks the ENTIRE delivery routine — deterministic proof that FlushAsync
+        // returned before delivery ran, rather than a timing-based assertion racing the real
+        // (started) ConduitBackgroundDispatcher hosted service under parallel test-run contention.
+        // (This test has no local listener, so the transport send is the delivery routine's first
+        // externally-observable step — making an unguarded "assert absence immediately" here more
+        // exposed to that race than a listener-based test, where local dispatch runs first.)
         var connectionFactory = new StubConnectionFactory();
         await using var _ = connectionFactory;
 
@@ -85,6 +92,7 @@ public class OutboxEndToEndShould
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
         var spyTransport = new SpyTransport();
+        using var deliveryGate = new SemaphoreSlim(0, 1);
 
         await using var host = TestWebHost.Start(builder =>
         {
@@ -102,6 +110,10 @@ public class OutboxEndToEndShould
 
             // Register a spy transport so FlushAsync can send through it
             builder.Services.AddSingleton<IConduitTransport>(spyTransport);
+
+            // Registered after AddOutbox() so it overrides the default IOutboxStore registration.
+            builder.Services.AddScoped<IOutboxStore>(
+                _ => new GatedOutboxStore(new DbConnectionOutboxStore(connectionFactory, new SqliteDialect()), deliveryGate));
         });
 
         var mediator = host.GetRequiredService<IMediator>();
@@ -119,8 +131,13 @@ public class OutboxEndToEndShould
         var flusher = host.GetRequiredService<IOutboxFlusher>();
         await flusher.FlushAsync(CancellationToken.None);
 
-        // Assert — THE contract pin: FlushAsync must not have delivered yet when it returns.
+        // Assert — THE contract pin: FlushAsync must not have delivered yet when it returns. The
+        // delivery gate is still held here, so the scheduled work item cannot have done ANYTHING
+        // yet — not even claimed the entry — making this deterministic rather than probabilistic.
         spyTransport.SentEvents.Should().BeEmpty("FlushAsync must schedule background delivery and return without waiting for it");
+
+        // Release the gate — the background dispatcher's already-enqueued work item can now proceed.
+        deliveryGate.Release();
 
         // The background dispatcher drains the enqueued work item on its own hosted-service loop
         // (TestWebHost starts it for real) — bounded-poll for the terminal DB state. MarkSentAsync

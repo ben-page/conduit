@@ -58,12 +58,18 @@ public class OutboxLocalDeliveryShould
     [TestMethod]
     public async Task DeliverLocalListenersExactlyOnceOnFlushThenTransportsThenMarkSent()
     {
-        // Arrange — host as in RunZeroListenersWhenTheTransactionNeverCommits, plus the spy transport
+        // Arrange — host as in RunZeroListenersWhenTheTransactionNeverCommits, plus the spy transport.
+        // The delivery gate starts HELD (count 0): OutboxCapture.ClaimAndDeliverAsync's very first
+        // operation is ClaimByMessageIdsAsync, so wiring a GatedOutboxStore in front of the real
+        // store blocks the ENTIRE delivery routine — deterministic proof that FlushAsync returned
+        // before delivery ran, rather than a timing-based assertion racing the real (started)
+        // ConduitBackgroundDispatcher hosted service under parallel test-run contention.
         await using var connectionFactory = new StubConnectionFactory();
         var store = new DbConnectionOutboxStore(connectionFactory, new SqliteDialect());
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
         var spyTransport = new SpyTransport();
+        using var deliveryGate = new SemaphoreSlim(0, 1);
 
         await using var host = TestWebHost.Start(builder =>
         {
@@ -75,6 +81,10 @@ public class OutboxLocalDeliveryShould
             builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
             builder.Services.AddSingleton<ListenerProbe>();
             builder.Services.AddSingleton<IConduitTransport>(spyTransport);
+
+            // Registered after AddOutbox() so it overrides the default IOutboxStore registration.
+            builder.Services.AddScoped<IOutboxStore>(
+                _ => new GatedOutboxStore(new DbConnectionOutboxStore(connectionFactory, new SqliteDialect()), deliveryGate));
         });
 
         var mediator = host.GetRequiredService<IMediator>();
@@ -91,10 +101,15 @@ public class OutboxLocalDeliveryShould
         await flusher.FlushAsync(CancellationToken.None);
 
         // Assert — THE contract pin: FlushAsync schedules delivery on the background dispatcher
-        // and returns without waiting for it, so the caller must never observe delivery having
-        // already happened at this point (restores [FireAndForget]'s "caller returns immediately"
-        // contract under transactional capture).
+        // and returns without waiting for it. The delivery gate is still held at this point, so the
+        // scheduled work item cannot have done ANYTHING yet — not even claimed the entry — which
+        // makes this a deterministic proof, not a probabilistic one, that the caller never waited
+        // (restores [FireAndForget]'s "caller returns immediately" contract under transactional
+        // capture).
         probe.Count.Should().Be(0, "FlushAsync must schedule background delivery and return without waiting for it");
+
+        // Release the gate — the background dispatcher's already-enqueued work item can now proceed.
+        deliveryGate.Release();
 
         using var query = connectionFactory.Connection.CreateCommand();
         query.CommandText = "SELECT Status FROM conduit_outbox";
