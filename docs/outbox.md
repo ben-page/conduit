@@ -90,8 +90,8 @@ Handler executes (in managed transaction)
   │         (events only — routed commands have no local step to skip) AND
   │         the transport send are both skipped here; the outbox delivers
   │         both, post-commit
-  │       - no ambient transaction → declined (false): falls through to the pre-outbox
-  │         behavior (local dispatch inline/background, direct transport send)
+  │       - no ambient transaction → declined (false): normal path — local dispatch
+  │         (events; commands go to their route) + direct transport send
   ├── OutboxBehavior writes captured envelopes to the outbox table (same transaction)
   └── Transaction commits (business data + outbox entries, atomic)
 
@@ -250,7 +250,7 @@ return value decides who owns delivery:
   (`IConduitConnectionFactory.GetCurrentTransaction()` is non-`null`). `OutboxCapture` buffers the
   envelope in memory; `OutboxBehavior` persists it to the outbox table in that same transaction
   once the handler returns. The caller — the generated mediator — skips local dispatch and the
-  transport send entirely; both happen later, from the outbox, once the transaction has actually
+  transport send entirely (events only — routed commands have no local listener chain); both happen later, from the outbox, once the transaction has actually
   committed.
 - **`false` — declined.** No ambient transaction was active. A captured-but-unpersisted envelope
   would be a silently dropped message, so `Intercept` refuses it instead: the caller proceeds

@@ -1113,7 +1113,7 @@ All 5 broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveM
 
 The outbox guarantees at-least-once delivery for fire-and-forget messages (events and void routed commands). It solves the dual-write problem: business data and outbound messages are written in the same database transaction.
 
-**Interception mechanism:** `IOutboundInterceptor` (in `Conduit.Middleware`, implemented by `OutboxCapture` when the outbox is registered) is offered each capture-eligible envelope by the generated mediator *before* local enqueue or transport send. `Intercept` returns `bool`: a successful capture (an ambient database transaction is active) suppresses both the local enqueue and the transport send for fire-and-forget events, with flush/relay delivering local listeners first and transports second once the transaction commits. Without an ambient transaction, capture is declined and the caller proceeds exactly as if no interceptor were registered, preserving immediate semantics. This is the symmetric counterpart to `IInboundInterceptor` (which intercepts messages arriving from transports).
+**Interception mechanism:** `IOutboundInterceptor` (in `Conduit.Middleware`, implemented by `OutboxCapture` when the outbox is registered) is offered each capture-eligible envelope by the generated mediator *before* local enqueue or transport send. `Intercept` returns `bool`: a successful capture (an ambient database transaction is active) suppresses both the local enqueue and the transport send for fire-and-forget events, with flush/relay delivering local listeners first and transports second once the transaction commits. Without an ambient transaction, capture is declined and the caller proceeds exactly as if no interceptor were registered, delivering right away, exactly as before the outbox existed. This is the symmetric counterpart to `IInboundInterceptor` (which intercepts messages arriving from transports).
 
 **Pipeline behavior:** `OutboxBehavior<TRequest, TResult>` wraps the handler. After the handler returns, the behavior reads captured envelopes from `OutboxCapture` and writes them to the outbox table via `IOutboxStore`, using the transaction from `IOutboxConnectionFactory.GetCurrentTransaction()`. If no transaction is active, the behavior passes through (no persistence).
 
@@ -1123,7 +1123,7 @@ The outbox guarantees at-least-once delivery for fire-and-forget messages (event
 
 **Registration:** `conduit.AddOutbox(outbox => outbox.UseSqlite(...))` registers the capture, behavior, relay, store, and options in one call.
 
-**Not captured:** Request/response messages (commands with results, queries) are excluded — the caller awaits a response and dispatch cannot be deferred. `[LocalOnly]` events are excluded — they never reach transports.
+**Not captured:** Request/response messages (commands with results, queries) are excluded — the caller awaits a response and dispatch cannot be deferred. `[LocalOnly]` events never reach transports (broadcast is compiled out). A plain `[LocalOnly]` event is never offered to the interceptor; a `[FireAndForget, LocalOnly]` event is — it can be captured like any other fire-and-forget event, it just never gets a transport step on delivery.
 
 ## Shared Analysis Library (`Conduit.Analysis`)
 
