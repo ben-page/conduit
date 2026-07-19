@@ -13,7 +13,20 @@ namespace Conduit.Attributes;
 /// <item>Pipeline behaviors run in the caller's context before enqueueing.</item>
 /// <item>Handler exceptions are logged, not propagated to the caller.</item>
 /// <item>Over a transport, uses <c>SendEventAsync</c> (no reply infrastructure).</item>
+/// <item>When an outbox is registered, non-<c>Immediate</c> fire-and-forget messages are
+/// captured transactionally and delivered post-commit; see docs/outbox.md.</item>
 /// </list>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class)]
-public sealed class FireAndForgetAttribute : Attribute;
+public sealed class FireAndForgetAttribute : Attribute
+{
+    /// <summary>
+    /// Bypasses transactional outbox capture for this type: the message is enqueued to local
+    /// listeners and sent to transports immediately at publish time, even when an outbound
+    /// interceptor (the outbox) is registered and a database transaction is ambient. Declare this
+    /// only for messages that must survive their publishing command's rollback — the event analog
+    /// of a write-then-throw side effect. Delivery is at-most-once, exactly as plain
+    /// fire-and-forget was before the outbox.
+    /// </summary>
+    public bool Immediate { get; init; }
+}

@@ -184,4 +184,52 @@ public class Container
             .EndWith("Container+NestedCommand");
         types[0].FullTypeName.Should().EndWith("Container+NestedCommand");
     }
+
+    [TestMethod]
+    public void ReadImmediateNamedArgumentOnFireAndForget()
+    {
+        // Arrange
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+
+            namespace TestApp;
+
+            [FireAndForget(Immediate = true)]
+            public record AlarmEvent(string Detail) : IEvent;
+            """;
+
+        // Act
+        var compilation = CreateCompilation(source);
+        var types = RoslynScanner.Scan(compilation);
+
+        // Assert
+        var evt = types.Single(t => t.FullTypeName == "TestApp.AlarmEvent");
+        evt.IsFireAndForget.Should().BeTrue();
+        evt.IsFireAndForgetImmediate.Should().BeTrue();
+    }
+
+    [TestMethod]
+    public void DefaultImmediateToFalseWhenNotSpecified()
+    {
+        // Arrange
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+
+            namespace TestApp;
+
+            [FireAndForget]
+            public record PlainFireAndForgetEvent(string Detail) : IEvent;
+            """;
+
+        // Act
+        var compilation = CreateCompilation(source);
+        var types = RoslynScanner.Scan(compilation);
+
+        // Assert
+        var evt = types.Single(t => t.FullTypeName == "TestApp.PlainFireAndForgetEvent");
+        evt.IsFireAndForget.Should().BeTrue();
+        evt.IsFireAndForgetImmediate.Should().BeFalse();
+    }
 }
