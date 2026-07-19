@@ -12,6 +12,7 @@
 - [Custom stores](#custom-stores)
 - [Relay configuration](#relay-configuration)
 - [What gets captured](#what-gets-captured)
+- [The Immediate escape hatch](#the-immediate-escape-hatch)
 - [Immediate send](#immediate-send)
 - [Limitations](#limitations)
 
@@ -82,23 +83,27 @@ The tradeoff is eventual consistency — messages arrive at the broker with a sm
 ```
 Handler executes (in managed transaction)
   ├── Business data written to DB
-  ├── Handler calls PublishAsync(event)
-  │     → IOutboundInterceptor captures envelope (not sent yet)
-  ├── OutboxBehavior writes captured envelopes to outbox table
+  ├── Handler calls PublishAsync(event) or a routed [FireAndForget] command
+  │     → IOutboundInterceptor.Intercept(envelope) offered first (skipped entirely for
+  │       Immediate messages — see "The Immediate escape hatch")
+  │       - ambient transaction present → captured (true): local dispatch AND the
+  │         transport send are both skipped here; the outbox delivers both, post-commit
+  │       - no ambient transaction → declined (false): falls through to the pre-outbox
+  │         behavior (local dispatch inline/background, direct transport send)
+  ├── OutboxBehavior writes captured envelopes to the outbox table (same transaction)
   └── Transaction commits (business data + outbox entries, atomic)
 
-IOutboxFlusher.FlushAsync (optional — immediate send)
-  ├── Claims entries by MessageId (same row-locking as relay)
-  ├── Sends from in-memory buffer (no DB read)
-  ├── Marks entries as sent on success
-  └── Increments retry on failure — relay picks up later
-
-OutboxRelay (background service — safety net)
-  ├── Polls outbox table for pending entries
-  ├── Sends each entry via the appropriate transport
-  ├── Marks entries as sent on success
-  └── Retries on failure, marks as failed after max retries
+IOutboxFlusher.FlushAsync (optional — "Immediate send" below) and OutboxRelay
+(background service — safety net) apply one per-entry delivery contract:
+  ├── Local listeners first, from a fresh DI scope (redelivery-safe — see below)
+  ├── Then the transport send
+  ├── Marks the entry as sent on success
+  └── On failure: retry count increments and the claim releases for the next sweep
+      (the relay marks an entry Failed once MaxRetries is exhausted)
 ```
+
+See [What gets captured](#what-gets-captured) for the full eligibility matrix and the
+local-then-transport delivery contract in detail.
 
 ## Setup
 
@@ -211,29 +216,149 @@ conduit.AddDurability(durability =>
 {
     durability.AddOutbox(outbox =>
     {
-        outbox.RelayInterval = TimeSpan.FromSeconds(5);    // polling interval (default: 5s)
-        outbox.GracePeriod = TimeSpan.FromSeconds(10);     // ignore entries newer than this (default: 10s)
-        outbox.BatchSize = 100;                            // entries per sweep (default: 100)
-        outbox.MaxRetries = 10;                            // before marking failed (default: 10)
-        outbox.AutoCreateTable = true;                     // create table on startup (default: true)
+        outbox.RelayInterval = TimeSpan.FromSeconds(5);        // polling interval (default: 5s)
+        outbox.GracePeriod = TimeSpan.FromSeconds(10);         // ignore entries newer than this (default: 10s)
+        outbox.BatchSize = 100;                                // entries per sweep (default: 100)
+        outbox.MaxRetries = 10;                                // before marking failed (default: 10)
+        outbox.AutoCreateTable = true;                         // create table on startup (default: true)
+        outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent/Failed entries older than this (default: 7d); Zero disables cleanup
+        outbox.CleanupInterval = TimeSpan.FromHours(1);         // how often cleanup runs (default: 1h)
     });
 });
 ```
 
 The grace period prevents the relay from racing with the handler. After the transaction commits, the entry is in the database — but the relay ignores entries newer than the grace period, giving the handler time to complete any post-commit work.
 
+### Retention
+
+The relay periodically deletes its own completed history: `Sent` and `Failed` entries older than
+`CompletedRetention` are removed every `CleanupInterval`, checked on the same sweep loop that
+processes pending entries (only when `CompletedRetention > TimeSpan.Zero`). Setting
+`CompletedRetention` to `TimeSpan.Zero` disables cleanup entirely — completed entries then
+accumulate indefinitely, which you may prefer if you query the outbox table for audit or
+observability purposes. Cleanup resolves the store from its own fresh DI scope, same as a sweep.
+
 ## What gets captured
 
-The outbox captures **fire-and-forget messages only** — messages where no reply is expected and the caller doesn't wait for confirmation:
+`IOutboundInterceptor.Intercept(envelope)` returns `bool`, not `void`. The generated mediator
+offers each capturable envelope to it *before* any local dispatch or transport send, and the
+return value decides who owns delivery:
 
-| Message type | Captured? | Why |
+- **`true` — captured.** An ambient database transaction was active
+  (`IConduitConnectionFactory.GetCurrentTransaction()` is non-`null`). `OutboxCapture` buffers the
+  envelope in memory; `OutboxBehavior` persists it to the outbox table in that same transaction
+  once the handler returns. The caller — the generated mediator — skips local dispatch and the
+  transport send entirely; both happen later, from the outbox, once the transaction has actually
+  committed.
+- **`false` — declined.** No ambient transaction was active. A captured-but-unpersisted envelope
+  would be a silently dropped message, so `Intercept` refuses it instead: the caller proceeds
+  exactly as if no interceptor were registered at all (the pre-outbox behavior).
+
+This is the **no-transaction decline rule**: the outbox never buffers what it cannot durably
+persist. It's also why `AddOutbox()` fails fast at startup without a transaction-aware connection
+factory (see [Providing a transaction](#providing-a-transaction)) — without one, every `Intercept`
+call would decline, and the outbox would silently protect nothing.
+
+### Capture-eligibility matrix
+
+| Kind | At publish | On flush/relay |
 |---|---|---|
-| Events (`PublishAsync`) | Yes | Always fire-and-forget on the transport side |
-| `[FireAndForget]` void routed commands | Yes | No reply expected — true fire-and-forget |
-| Non-`[FireAndForget]` void commands (`ICommand`) | No | Uses request/response to confirm handler execution |
-| Commands with results (`ICommand<TResult>`) | No | Caller awaits response — can't defer |
-| Queries (`IQuery<TResult>`) | No | Caller awaits response — can't defer |
-| `[LocalOnly]` events | No | Never sent to transports |
+| `[FireAndForget]` non-Immediate (incl. `[LocalOnly]`) | captured (with ambient txn) → skip local enqueue + broadcast; declined → immediate as before | local listeners (fresh scope) → transports (skipped if `[LocalOnly]`) → mark sent |
+| `[FireAndForget(Immediate = true)]` | never captured — immediate local enqueue + direct broadcast, at-most-once by declaration (for messages that must survive their command's rollback — the write-then-throw analog) | never stored |
+| plain event | local listeners inline (inside the handler's transaction); transport envelope captured with txn, else direct send | transports only (local listeners already ran inline — no re-run) |
+| routed `[FireAndForget]` void command | captured with txn unless Immediate | transports (routed) |
+
+"Declined → immediate as before" and the `Immediate` row's publish-time behavior are the *same*
+path (background-enqueued local listeners, direct broadcast) — they just arrive there for
+different reasons: one because no transaction was active to capture into, the other because it
+was never offered to `Intercept` at all. See [The Immediate escape hatch](#the-immediate-escape-hatch)
+below. A plain event that is *also* `[LocalOnly]` never reaches the transport-envelope step in the
+table above — there's no broadcast to defer, so nothing is ever offered to `Intercept` for it
+either; only its local listeners run, inline, exactly like any other plain event's.
+
+Never eligible for capture, at any point — these all expect a reply, so dispatch can't be deferred:
+
+| Message type | Why not |
+|---|---|
+| Commands with results (`ICommand<TResult>`) | Caller awaits the response |
+| Queries (`IQuery<TResult>`) | Caller awaits the response |
+| Non-`[FireAndForget]` void commands (`ICommand`) | Uses request/response to confirm handler execution |
+| Local (unrouted) `[FireAndForget]` void commands | No transport is involved — nothing to capture; always dispatched via `ConduitBackgroundDispatcher`, per [dispatch flows](dispatch-flows.md#fire-and-forget-void-commands) |
+
+### Flush and relay delivery: local-then-transport
+
+For every entry a captured envelope produced, `IOutboxFlusher.FlushAsync` and `OutboxRelay` apply
+the identical per-entry delivery contract:
+
+1. Resolve `ILocalEnvelopeDispatcher` from a **fresh DI scope** — one scope per entry, mirroring
+   fire-and-forget's own fresh-scope semantics (the scope that captured the envelope is long gone
+   by the time flush or the relay runs).
+2. If the entry's type is one whose local listeners the outbox owns (`DeliversLocally(type)` —
+   `true` only for captured, non-Immediate `[FireAndForget]` events), run its local listener chain
+   (with pipeline behaviors) against that fresh scope.
+3. Unless the type is `[LocalOnly]` (`IsLocalOnly(type)`), send the envelope via the appropriate
+   transport, routed exactly as it would have been at publish time.
+4. Mark the entry `Sent`.
+
+Plain events never reach step 2 for their *local* listeners — `DeliversLocally` is `false` for
+them, because they already ran inline, inside the handler's own transaction, at publish time.
+Re-running them on flush/relay would double-deliver. Only their transport envelope (when captured)
+is subject to this contract.
+
+**Redelivery re-runs local listeners.** If a flush fails partway, or never runs at all (e.g. a
+crash between commit and `FlushAsync`), the relay claims the same entry later and repeats the full
+contract — including local listeners. Outbox delivery is **at-least-once**, exactly like transport
+delivery; local listeners must be idempotent for the same reason transport-side consumers must be.
+
+**Degraded mode without the source generator.** `ILocalEnvelopeDispatcher` is implemented by the
+generated mediator and resolved with `GetService` (not `GetRequiredService`). A host that never
+ran `Conduit.SourceGen` — so no generated mediator is registered — resolves `null` there; flush and
+the relay then skip step 2 unconditionally and always attempt the transport send. The outbox
+degrades to transport-only delivery rather than failing.
+
+## The Immediate escape hatch
+
+Not to be confused with **[Immediate send](#immediate-send)** below (`IOutboxFlusher.FlushAsync`,
+an optimization that shortens *outbox* latency, unrelated to this). This section is about
+`[FireAndForget(Immediate = true)]` — a flag on the attribute itself that opts a specific event or
+routed void command **out of outbox capture entirely**. It is never offered to
+`IOutboundInterceptor.Intercept`, transaction or no transaction:
+
+```csharp
+[FireAndForget(Immediate = true)]
+public record AccountLockedEvent(Guid AccountId, string Reason) : IEvent;
+```
+
+An `Immediate` event always takes the pre-outbox path: local listeners run through
+`ConduitBackgroundDispatcher` (a fresh scope, after the publishing scope is gone) and the event
+broadcasts to transports directly — the same path a non-Immediate `[FireAndForget]` event takes
+when capture is declined for lack of a transaction. A routed `Immediate` void command takes the
+analogous direct path for commands: straight to `transport.SendEventAsync`, skipping the
+interceptor check entirely (there's no local listener chain for a command, only a handler). Either
+way, the difference from the non-Immediate case is *when*: `Immediate` takes its direct path
+unconditionally, including while a transaction **is** active, so delivery never waits for — or
+depends on — that transaction's outcome.
+
+### Why you'd want that
+
+The outbox's guarantee is at-least-once delivery *of things that got committed*: if the ambient
+transaction rolls back, a captured envelope rolls back with it — nothing was ever persisted to
+send. That's correct for ordinary business events; an `OrderPlaced` event should never outlive the
+order it describes. It's wrong for a narrow class of messages that must survive the rollback: a
+security-relevant notification — a failed-login lockout, say — raised by a handler that then
+throws to abort its own transaction. The message isn't reporting a committed fact; it's reporting
+that the attempt happened, independent of whether the surrounding write succeeds. This is the same
+shape as a write-then-throw side effect that deliberately runs outside its enclosing transaction —
+`Immediate` is that pattern applied to messages instead of writes.
+
+### At-most-once, by declaration
+
+`Immediate` messages are never persisted, so they carry none of the outbox's durability: no retry,
+no relay, no surviving a process crash between the background dispatcher's enqueue and its
+execution. Choosing `Immediate` is choosing at-most-once delivery for that message type, in
+exchange for guaranteed rollback-survival and zero outbox latency. Make that trade-off
+deliberately, per type — it is not a global default, and nothing gets it unless you write
+`Immediate = true` yourself.
 
 ## Immediate send
 
@@ -301,7 +426,7 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 ## Limitations
 
-**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again. Consumers must handle duplicates. The [inbox](inbox.md) — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication.
+**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again — and if the entry has captured local listeners, they run again too, since flush/relay redeliver local-then-transport as one unit (see [Flush and relay delivery](#flush-and-relay-delivery-local-then-transport)). Consumers and local listeners alike must handle duplicates. The [inbox](inbox.md) — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication for *wire-inbound* messages; there is no equivalent for local-listener redelivery, so those listeners must be naturally idempotent.
 
 **No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions, Kafka partitions) or handle ordering at the consumer.
 
