@@ -5,7 +5,26 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);NU1510</NoWarn>
+    <!--
+      RootNamespace is Conduit, not the SDK default (Conduit.Contracts), because these types kept
+      their original Conduit.Exceptions / Conduit.Messages / Conduit.Attributes namespaces when they
+      moved out of src/Conduit/ — both source generators match on those namespace strings, not
+      assembly identity. Without this override, IDE0130 (namespace/folder mismatch) is a build error
+      here, since the repo's shared analyzer settings treat it as one.
+    -->
     <RootNamespace>Conduit</RootNamespace>
   </PropertyGroup>
+
+  <!--
+    No ItemGroup: this project has zero PackageReference entries by design, so a domain project in
+    another repo can reference it alone for ConduitException/ErrorCode without taking on Conduit's
+    DI, hosting, or transport dependencies.
+
+    That's also why Messages/ConduitFile.cs is NOT here despite the rest of Messages/ having moved:
+    ConduitFile holds a BinaryData field, which needs the System.Memory.Data package even on net10.0.
+    It stays behind in src/Conduit/Messages/ (same Conduit.Messages namespace, different assembly) so
+    this project's zero-dependency guarantee holds. Do not "fix" this by moving it in or by adding the
+    package — see CLAUDE.md's "Namespace layout" section.
+  -->
 
 </Project>
