@@ -18,6 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Conduit.Contracts\Conduit.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Conduit.Audit" />
     <InternalsVisibleTo Include="Conduit.Tests" />
     <InternalsVisibleTo Include="Conduit.Resilience.Tests" />

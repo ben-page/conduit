@@ -16,6 +16,7 @@
     <File Path="src/Directory.Packages.props" />
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
     <Project Path="src/Conduit.Audit/Conduit.Audit.csproj" />
+    <Project Path="src/Conduit.Contracts/Conduit.Contracts.csproj" />
     <Project Path="src/Conduit.Durability/Conduit.Durability.csproj" />
     <Project Path="src/Conduit.Persistence/Conduit.Persistence.csproj" />
     <Project Path="src/Conduit.Persistence.MySql/Conduit.Persistence.MySql.csproj" />
