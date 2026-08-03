@@ -4,10 +4,11 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Nineteen source projects, fourteen test projects, one shared test utility, four sample apps:
+Twenty source projects, fourteen test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
+src/Conduit.Contracts/              Dependency-free contract types: Conduit.Exceptions, Conduit.Messages (minus ConduitFile), Conduit.Attributes — net10.0, zero package references, referenced by Conduit
 src/Conduit.Analysis/               Shared type model (DispatchableTypeInfo, etc.) — netstandard2.0 (PolySharp)
 src/Conduit.SourceGen/              Roslyn incremental source generator + RoslynScanner — netstandard2.0 (PolySharp)
 src/Conduit.TypeGen/                MSBuild task for TypeScript emission + ReflectionScanner — net10.0
@@ -53,14 +54,16 @@ src/Conduit.Persistence.MySql/          MySQL engine: MySqlConduitConnectionFact
 **Transport packages contain both sides:**
 - Each transport package has an **outbound** client (`HttpTransport`, `SignalRTransport`) and an **inbound** endpoint (`MapConduitEndpoint()`, `ConduitHub`). There is no separate "bridge" concept — browser clients and C# clients use the same transport infrastructure.
 
-**Namespace layout** (within `src/Conduit/`):
+**Namespace layout** (split across `src/Conduit/` and `src/Conduit.Contracts/` — namespaces do NOT
+follow assembly boundaries here; `Conduit.Contracts.csproj` sets `RootNamespace=Conduit` so its types
+keep their original `Conduit.*` names):
 - `Conduit.Configuration` — builder, options, endpoints, routes, `TopologyMode` (`src/Conduit/Configuration/`)
 - `Conduit.Runtime` — wire types + runtime: `ConduitRuntime`, `TransportDispatcher`, `DispatchEnvelope`, `DispatchResult`, `IConduitTransport`, `MessageContext`, `TopologyNaming`, `ConduitTypeRegistry` (`src/Conduit/Runtime/`)
 - `Conduit.Middleware` — pipeline, gate, and interceptor types: `IPipelineBehavior`, `IInboundInterceptor` (gate), `IOutboundInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
-- `Conduit.Messages` — `ICommand`, `IQuery`, `IEvent`, `Unit` (`src/Conduit/Messages/`)
+- `Conduit.Messages` — spans **two assemblies**. `ICommand`, `IQuery`, `IEvent`, `Unit` live in `src/Conduit.Contracts/Messages/`. `ConduitFile` stays behind in `src/Conduit/Messages/` (core) — it holds a `BinaryData` field, which needs the `System.Memory.Data` package, and `Conduit.Contracts` must carry zero package references (a downstream domain project references it alone, precisely to avoid pulling in packages). This is deliberate, not an oversight — do not "fix" it by moving `ConduitFile` into `Conduit.Contracts`.
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
-- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute` (`src/Conduit/Attributes/`)
-- `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException` (`src/Conduit/Exceptions/`)
+- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute` (`src/Conduit.Contracts/Attributes/`)
+- `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException` (`src/Conduit.Contracts/Exceptions/`)
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
 **Key design decisions:**
