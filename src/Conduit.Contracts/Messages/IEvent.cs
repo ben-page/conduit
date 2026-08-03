@@ -1,7 +1,7 @@
 ﻿namespace Conduit.Messages;
 
 /// <summary>
-/// Marker interface for events published via <see cref="IMediator.PublishAsync(IEvent, CancellationToken)"/>.
+/// Marker interface for events published via <c>IMediator.PublishAsync</c>.
 /// </summary>
 #pragma warning disable CA1040 // Marker interface by design
 public interface IEvent;

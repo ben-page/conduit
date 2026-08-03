@@ -1,3 +1,4 @@
+using Conduit.Handlers;
 using Conduit.Messages;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -7,8 +8,8 @@ namespace Conduit.SourceGen.Tests.Support;
 public abstract class GeneratorTestBase
 {
     /// <summary>
-    /// The base metadata references (object/Guid/System.Runtime/Conduit) shared by the
-    /// compilation under test and by <see cref="CompileReference"/>.
+    /// The base metadata references (object/Guid/System.Runtime/Conduit.Contracts/Conduit) shared
+    /// by the compilation under test and by <see cref="CompileReference"/>.
     /// </summary>
     protected static readonly IReadOnlyList<MetadataReference> BaseReferences = BuildBaseReferences();
 
@@ -83,7 +84,10 @@ public abstract class GeneratorTestBase
 
     private static System.Collections.ObjectModel.ReadOnlyCollection<MetadataReference> BuildBaseReferences()
     {
-        var conduitAssemblyPath = typeof(ICommand).Assembly.Location;
+        // ICommand etc. live in Conduit.Contracts; ICommandHandler<,> etc. live in Conduit
+        // core (Handlers/) — both assemblies are needed to resolve the fixtures below.
+        var conduitContractsAssemblyPath = typeof(ICommand).Assembly.Location;
+        var conduitCoreAssemblyPath = typeof(ICommandHandler<>).Assembly.Location;
         var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
 
         return new List<MetadataReference>
@@ -91,7 +95,8 @@ public abstract class GeneratorTestBase
             MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(Guid).Assembly.Location),
             MetadataReference.CreateFromFile(Path.Combine(runtimeDir, "System.Runtime.dll")),
-            MetadataReference.CreateFromFile(conduitAssemblyPath),
+            MetadataReference.CreateFromFile(conduitContractsAssemblyPath),
+            MetadataReference.CreateFromFile(conduitCoreAssemblyPath),
         }.AsReadOnly();
     }
 }
