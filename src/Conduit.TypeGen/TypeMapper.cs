@@ -170,8 +170,15 @@ public static class TypeMapper
     /// because their full name uses C#-style angle brackets instead of CLR backtick notation.
     /// </summary>
     /// <param name="fullTypeName">The fully-qualified C#-style type name.</param>
+    /// <param name="assemblies">
+    /// The scanned assemblies (may be <see cref="System.Reflection.MetadataLoadContext"/>-loaded), used to
+    /// resolve an element/argument type by name when <see cref="TypeScriptEmitter.FindType"/>'s bare
+    /// <c>Type.GetType</c> can't see it -- which is always, for a MetadataLoadContext type. Without this, an
+    /// element type this method's short-name table doesn't know (e.g. a project-declared enum) falls back to
+    /// its bare name rather than its mapped TypeScript shape (Fix 4).
+    /// </param>
     /// <returns>The TypeScript type string, or <see langword="null"/> if the type could not be mapped.</returns>
-    public static string? MapFullTypeName(string fullTypeName)
+    public static string? MapFullTypeName(string fullTypeName, IReadOnlyList<Assembly>? assemblies = null)
     {
         ArgumentNullException.ThrowIfNull(fullTypeName);
 
@@ -196,14 +203,17 @@ public static class TypeMapper
         // Collection types → T[]
         if (CollectionShortNames.Contains(outerShortName))
         {
-            var elementTs = MapFullTypeName(innerContent);
+            var elementTs = MapFullTypeName(innerContent, assemblies);
             if (elementTs is not null)
             {
                 return ToArrayType(elementTs);
             }
 
-            // Try resolving the element type via reflection
-            var elementType = TypeScriptEmitter.FindType(innerContent);
+            // Try resolving the element type via reflection: the runtime-loaded search first (works
+            // for types loaded via LoadFrom), then the scanned assemblies themselves (works for
+            // MetadataLoadContext types, including an enum — MapType's enum branch below turns it
+            // into a string-literal union rather than the bare name the fallback returns).
+            var elementType = TypeScriptEmitter.FindType(innerContent) ?? ResolveViaAssemblies(innerContent, assemblies);
             if (elementType is not null)
             {
                 return ToArrayType(MapType(elementType));
@@ -221,13 +231,13 @@ public static class TypeMapper
             {
                 var keyContent = innerContent[..commaIndex].Trim();
                 var valueContent = innerContent[(commaIndex + 1)..].Trim();
-                return $"Record<{MapArg(keyContent)}, {MapArg(valueContent)}>";
+                return $"Record<{MapArg(keyContent, assemblies)}, {MapArg(valueContent, assemblies)}>";
             }
         }
 
         // Any other generic (e.g. PagedResult<Item>) → OuterShort<Arg, ...>, arity-stripped.
         var outerStripped = StripArity(outerShortName);
-        var args = SplitTopLevel(innerContent).Select(MapArg);
+        var args = SplitTopLevel(innerContent).Select(a => MapArg(a, assemblies));
         return $"{outerStripped}<{string.Join(", ", args)}>";
     }
 
@@ -275,15 +285,15 @@ public static class TypeMapper
     ];
 
     /// <summary>Maps one type-argument string: try the C#-style mapper, then reflection, then the short name.</summary>
-    private static string MapArg(string arg)
+    private static string MapArg(string arg, IReadOnlyList<Assembly>? assemblies)
     {
-        var mapped = MapFullTypeName(arg);
+        var mapped = MapFullTypeName(arg, assemblies);
         if (mapped is not null)
         {
             return mapped;
         }
 
-        var resolved = TypeScriptEmitter.FindType(arg);
+        var resolved = TypeScriptEmitter.FindType(arg) ?? ResolveViaAssemblies(arg, assemblies);
         if (resolved is not null)
         {
             return MapType(resolved);
@@ -297,6 +307,17 @@ public static class TypeMapper
         var tick = name.IndexOf('`', StringComparison.Ordinal);
         return tick >= 0 ? name[..tick] : name;
     }
+
+    /// <summary>
+    /// Resolves <paramref name="fullName"/> against <paramref name="assemblies"/> (delegates to
+    /// <see cref="TypeCollector.ResolveType"/>). The second element/argument-type resolution attempt in
+    /// <see cref="MapFullTypeName"/>/<see cref="MapArg"/>, after <see cref="TypeScriptEmitter.FindType"/>'s
+    /// bare <c>Type.GetType</c> — which can never see a <see cref="System.Reflection.MetadataLoadContext"/>
+    /// type — returns null. <paramref name="assemblies"/> is <see langword="null"/> when a caller has none
+    /// to offer (its own signature has no <c>assemblies</c> parameter to thread through).
+    /// </summary>
+    private static Type? ResolveViaAssemblies(string fullName, IReadOnlyList<Assembly>? assemblies) =>
+        assemblies is null ? null : TypeCollector.ResolveType(assemblies, fullName);
 
     /// <summary>Splits a generic argument list on top-level commas (depth 0 w.r.t. angle brackets).</summary>
     private static List<string> SplitTopLevel(string content)

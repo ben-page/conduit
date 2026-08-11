@@ -93,7 +93,7 @@ public static class TypeMapEmitter
             }
 
             // Fall back to string-based mapping for generic types formatted in C#-style
-            var mapped = TypeMapper.MapFullTypeName(typeInfo.ResultFullTypeName);
+            var mapped = TypeMapper.MapFullTypeName(typeInfo.ResultFullTypeName, assemblies);
             if (mapped is not null)
             {
                 return mapped;

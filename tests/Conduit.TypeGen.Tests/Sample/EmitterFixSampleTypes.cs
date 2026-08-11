@@ -49,3 +49,17 @@ public sealed record TestNullabilityDto
     public string Required { get; init; } = string.Empty;
     public string? Optional { get; init; }
 }
+
+// --- Fix 4: a query result of IReadOnlyList<TEnum> must emit an inline string-literal union
+// array (('A' | 'B')[]), never the bare enum type name -- there is no `TestActivity` interface
+// or type alias on the TS side, so a bare name is a compile error, not merely an imprecise type. ---
+
+public enum TestActivity
+{
+    Run,
+    Idle,
+    TearDown,
+}
+
+[ClientVisible]
+public sealed record TestListActivityOptionsQuery(int OrderId) : IQuery<IReadOnlyList<TestActivity>>;
