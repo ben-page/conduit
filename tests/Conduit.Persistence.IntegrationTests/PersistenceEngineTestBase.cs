@@ -304,7 +304,10 @@ public abstract class PersistenceEngineTestBase
 
         // A timestamp with sub-millisecond (100-ns tick) precision to prove the ISO-8601 text path
         // preserves full precision (a native datetime mapping would silently truncate).
-        var preciseTimestamp = new DateTime(2026, 6, 9, 12, 34, 56, DateTimeKind.Utc).AddTicks(1234567);
+        // Anchored to today rather than a fixed calendar date: the purge below deletes anything
+        // older than one day, so a hard-coded date silently ages out of the retention window and
+        // fails the survival assertion a day after it is written.
+        var preciseTimestamp = DateTime.UtcNow.Date.AddHours(12).AddTicks(1234567);
         var oldTimestamp = DateTime.UtcNow.AddDays(-30);
 
         var records = new[]
