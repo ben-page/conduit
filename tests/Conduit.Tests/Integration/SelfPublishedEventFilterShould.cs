@@ -24,6 +24,7 @@ public sealed class SelfPublishedEventFilterShould
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddSingleton<EventSpy<ImportDataCommand>>();
             builder.Services.AddSingleton<IConduitObserver>(observations);
             builder.Services.AddConduit();
         });
@@ -133,6 +134,34 @@ public sealed class SelfPublishedEventFilterShould
         await fixture.Spy.WaitForCountAsync(1);
         fixture.Spy.Count.Should().Be(1);
         fixture.Observations.OfType<SelfPublishedEventSkipped>().Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task NotFilterFireAndForgetCommandsFromThisApplication()
+    {
+        // Arrange — a routed [FireAndForget] command is sent via SendEventAsync, so it arrives
+        // with IsRequest == false and this application's own stamp, exactly like a self-published
+        // event. It is not an event, and dropping it would lose the command silently.
+        var fixture = StartHost("OrderService");
+        await using var host = fixture.Host;
+        var commandSpy = host.GetRequiredService<EventSpy<ImportDataCommand>>();
+        var envelope = TestEnvelope.ForRequest(new ImportDataCommand("/imports/orders.csv"));
+        var message = new FakeBrokerMessage
+        {
+            Type = envelope.Type,
+            Body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
+                envelope.Payload, ConduitRuntime.JsonOptions)),
+        };
+        message.Properties[ConduitHeaders.SourceApp] = "OrderService";
+
+        // Act
+        await fixture.Transport.DeliverAsync(message);
+
+        // Assert — the handler ran, so the message reached dispatch rather than the filter
+        await commandSpy.WaitForCountAsync(1);
+        commandSpy.Count.Should().Be(1);
+        fixture.Observations.OfType<SelfPublishedEventSkipped>().Should().BeEmpty();
+        message.Acknowledged.Should().BeTrue();
     }
 
     [TestMethod]

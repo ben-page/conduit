@@ -261,7 +261,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 var sourceApp = this.ExtractMessageHeader(message, ConduitHeaders.SourceApp);
                 if (!this.IsRequest(message)
                     && !string.IsNullOrEmpty(applicationName)
-                    && string.Equals(sourceApp, applicationName, StringComparison.Ordinal))
+                    && string.Equals(sourceApp, applicationName, StringComparison.Ordinal)
+                    && this.IsEventType(messageType))
                 {
                     // The generated mediator attaches the host's observer, but a skipped message
                     // never reaches it — attach here so the skip is visible to the audit trail.
@@ -404,6 +405,20 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             LogMessageAbandoned(this.Logger, messageType, ex);
             await this.AbandonAsync(message);
         }
+    }
+
+    /// <summary>
+    /// Checks whether the message type is a known event type. The self-published filter applies to
+    /// events only: a routed <c>[FireAndForget]</c> command is sent via <c>SendEventAsync</c>, so it
+    /// also arrives with <c>IsRequest == false</c> and carries this application's own source stamp.
+    /// Since <see cref="ConduitOptions.ApplicationName"/> names the application rather than the
+    /// instance, an application that routes such a command to an endpoint served by itself — or by a
+    /// peer instance of itself — would otherwise have it acknowledged and never handled.
+    /// </summary>
+    private bool IsEventType(string messageType)
+    {
+        var typeRegistry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
+        return typeRegistry.EventTypeNames.Contains(messageType);
     }
 
     /// <summary>
