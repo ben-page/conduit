@@ -34,22 +34,25 @@ public static class EndpointBuilderExtensions
         };
         configure?.Invoke(options);
 
-        // Register options and transport as singletons
-        builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton<KafkaTransport>();
+        var endpointName = builder.EndpointName;
 
-        // Register as IConduitTransport for event broadcast
-        builder.Services.AddSingleton<IConduitTransport>(
-            serviceProvider => serviceProvider.GetRequiredService<KafkaTransport>());
+        // Options are keyed by endpoint — never non-keyed, or a second endpoint on this
+        // transport would silently overwrite the first.
+        builder.Services.AddKeyedSingleton(endpointName, options);
 
-        // Register as IHostedService for background consumer lifecycle
-        builder.Services.AddSingleton<IHostedService>(
-            serviceProvider => serviceProvider.GetRequiredService<KafkaTransport>());
-
-        // Register keyed transport for endpoint routing
+        // One transport instance per endpoint. ActivatorUtilities keeps constructor injection
+        // automatic for ConduitOptions, IServiceProvider and ILogger<T>; only the options are
+        // passed explicitly, resolved through this endpoint's key.
         builder.Services.AddKeyedSingleton<KafkaTransport>(
-            builder.EndpointName,
-            (serviceProvider, _) => serviceProvider.GetRequiredService<KafkaTransport>());
+            endpointName,
+            (serviceProvider, key) => ActivatorUtilities.CreateInstance<KafkaTransport>(
+                serviceProvider, serviceProvider.GetRequiredKeyedService<KafkaOptions>(key)));
+
+        // One broadcast target and one lifecycle per endpoint, each forwarding to its own instance
+        builder.Services.AddSingleton<IConduitTransport>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<KafkaTransport>(endpointName));
+        builder.Services.AddSingleton<IHostedService>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<KafkaTransport>(endpointName));
 
         return builder.UseTransport<KafkaTransport>();
     }
