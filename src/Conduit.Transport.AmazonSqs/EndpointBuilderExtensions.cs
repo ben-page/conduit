@@ -29,24 +29,25 @@ public static class EndpointBuilderExtensions
         var options = new AmazonSqsOptions { EndpointName = builder.EndpointName };
         configure(options);
 
-        // Register options
-        builder.Services.AddSingleton(options);
+        var endpointName = builder.EndpointName;
 
-        // Register transport as DI-managed singleton
-        builder.Services.AddSingleton<AmazonSqsTransport>();
+        // Options are keyed by endpoint — never non-keyed, or a second endpoint on this
+        // transport would silently overwrite the first.
+        builder.Services.AddKeyedSingleton(endpointName, options);
 
-        // Register as IHostedService for background receive lifecycle
-        builder.Services.AddSingleton<IHostedService>(
-            serviceProvider => serviceProvider.GetRequiredService<AmazonSqsTransport>());
-
-        // Register as IConduitTransport for event broadcast
-        builder.Services.AddSingleton<IConduitTransport>(
-            serviceProvider => serviceProvider.GetRequiredService<AmazonSqsTransport>());
-
-        // Register keyed transport for endpoint routing
+        // One transport instance per endpoint. ActivatorUtilities keeps constructor injection
+        // automatic for ConduitOptions, IServiceProvider and ILogger<T>; only the options are
+        // passed explicitly, resolved through this endpoint's key.
         builder.Services.AddKeyedSingleton<AmazonSqsTransport>(
-            builder.EndpointName,
-            (serviceProvider, _) => serviceProvider.GetRequiredService<AmazonSqsTransport>());
+            endpointName,
+            (serviceProvider, key) => ActivatorUtilities.CreateInstance<AmazonSqsTransport>(
+                serviceProvider, serviceProvider.GetRequiredKeyedService<AmazonSqsOptions>(key)));
+
+        // One broadcast target and one lifecycle per endpoint, each forwarding to its own instance
+        builder.Services.AddSingleton<IConduitTransport>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<AmazonSqsTransport>(endpointName));
+        builder.Services.AddSingleton<IHostedService>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<AmazonSqsTransport>(endpointName));
 
         return builder.UseTransport<AmazonSqsTransport>();
     }
