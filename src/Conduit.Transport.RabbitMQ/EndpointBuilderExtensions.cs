@@ -49,9 +49,6 @@ public static class EndpointBuilderExtensions
                 serviceProvider, serviceProvider.GetRequiredKeyedService<RabbitMQOptions>(key)));
 
         // One broadcast target and one lifecycle per endpoint, each forwarding to its own instance
-        builder.Services.AddKeyedSingleton<IConduitTransport>(
-            endpointName,
-            (serviceProvider, key) => serviceProvider.GetRequiredKeyedService<RabbitMQTransport>(key));
         builder.Services.AddSingleton<IConduitTransport>(
             serviceProvider => serviceProvider.GetRequiredKeyedService<RabbitMQTransport>(endpointName));
         builder.Services.AddSingleton<IHostedService>(
