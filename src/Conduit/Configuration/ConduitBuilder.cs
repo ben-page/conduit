@@ -1,4 +1,5 @@
 using Conduit.Middleware;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -82,6 +83,60 @@ public class ConduitBuilder
     {
         get => this.Options.ProducerOnly;
         set => this.Options.ProducerOnly = value;
+    }
+
+    /// <summary>
+    /// The resolved Conduit configuration section, or null when no configuration was supplied.
+    /// Transport extensions read their own section from here via <see cref="EndpointBuilder"/>.
+    /// </summary>
+    public IConfiguration? Configuration { get; private set; }
+
+    /// <summary>
+    /// Binds core options from configuration and makes the section available to endpoints.
+    /// Values set in code after this call override the configured ones.
+    /// </summary>
+    /// <param name="configuration">
+    /// The application configuration, or the Conduit section itself. When an
+    /// <see cref="IConfigurationSection"/> is passed it is used as-is; otherwise the
+    /// <c>"Conduit"</c> section is resolved from it.
+    /// </param>
+    /// <returns>This builder for chaining.</returns>
+    public ConduitBuilder UseConfiguration(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var section = configuration as IConfigurationSection ?? configuration.GetSection("Conduit");
+        this.Configuration = section;
+
+        // Bound property by property, never section.Bind(this.Options): Endpoints, Routes and
+        // PipelineTypes are code-owned shapes the binder would either mangle or choke on, and
+        // Conduit:Endpoints holds transport options rather than ConduitEndpoint instances.
+        if (section["SystemName"] is { Length: > 0 } systemName)
+        {
+            this.Options.SystemName = systemName;
+        }
+
+        if (section["ApplicationName"] is { Length: > 0 } applicationName)
+        {
+            this.Options.ApplicationName = applicationName;
+        }
+
+        if (section.GetValue<TopologyMode?>("TopologyMode") is { } topologyMode)
+        {
+            this.Options.TopologyMode = topologyMode;
+        }
+
+        if (section["TopologyPrefix"] is { Length: > 0 } topologyPrefix)
+        {
+            this.Options.TopologyPrefix = topologyPrefix;
+        }
+
+        if (section.GetValue<bool?>("ProducerOnly") is { } producerOnly)
+        {
+            this.Options.ProducerOnly = producerOnly;
+        }
+
+        return this;
     }
 
     /// <summary>
