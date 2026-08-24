@@ -142,7 +142,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         using var activity = ConduitTelemetry.StartProducerActivity<BrokerTransportBase<TMessage>>(envelope.Type);
         activity?.SetTag("conduit.transport", this.GetType().Name);
-        var headers = BuildOutboundHeaders(activity);
+        var headers = this.BuildOutboundHeaders(activity);
 
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
@@ -183,7 +183,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         using var activity = ConduitTelemetry.StartProducerActivity<BrokerTransportBase<TMessage>>(envelope.Type);
         activity?.SetTag("conduit.transport", this.GetType().Name);
-        var headers = BuildOutboundHeaders(activity);
+        var headers = this.BuildOutboundHeaders(activity);
 
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
@@ -565,14 +565,16 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
     /// <summary>
     /// Builds the complete outbound metadata set for a single publish: correlation IDs from the
-    /// ambient <see cref="MessageContext"/>, and W3C trace context from the current activity.
+    /// ambient <see cref="MessageContext"/>, W3C trace context from the current activity, and the
+    /// publishing application's name.
     /// </summary>
     /// <remarks>
-    /// A fresh dictionary per call. This replaced a process-wide <c>static Dictionary</c> in each
-    /// transport, which leaked trace context between concurrent publishes, could be corrupted by
-    /// unsynchronized mutation, and could be nulled out by one publish while another was writing.
+    /// A fresh dictionary per call. This replaced a <c>[ThreadStatic] static Dictionary</c> in each
+    /// transport, which was thread-affine rather than call-affine: an async continuation can resume
+    /// on a different pool thread than the one that wrote the slot, and a reused pool thread can
+    /// carry stale leftovers from an unrelated publish into the next one it services.
     /// </remarks>
-    private static Dictionary<string, string> BuildOutboundHeaders(Activity? activity)
+    private Dictionary<string, string> BuildOutboundHeaders(Activity? activity)
     {
         var headers = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -585,6 +587,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
 
         ConduitTelemetry.InjectTraceContext(activity, (key, value) => headers[key] = value);
+
+        var applicationName = this.ConduitOptions.ApplicationName;
+        if (!string.IsNullOrEmpty(applicationName))
+        {
+            headers[ConduitHeaders.SourceApp] = applicationName;
+        }
 
         return headers;
     }
