@@ -150,7 +150,7 @@ public class ConduitBuilder
     {
         ArgumentNullException.ThrowIfNull(configure);
         var endpoint = new ConduitEndpoint { Name = name };
-        var endpointBuilder = new EndpointBuilder(endpoint, this.Options, this.Services);
+        var endpointBuilder = new EndpointBuilder(endpoint, this.Options, this.Services, this.Configuration);
         configure(endpointBuilder);
         this.Options.Endpoints[name] = endpoint;
         return this;
