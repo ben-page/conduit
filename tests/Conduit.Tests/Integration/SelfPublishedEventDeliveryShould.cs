@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.Runtime;
 using Conduit.TestUtils;
@@ -8,46 +9,42 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Tests.Integration;
 
 /// <summary>
-/// TEMPORARY VERIFICATION — not part of the intended suite.
-/// Proves whether a self-published event whose type is bound to the publishing app's own
-/// event queue executes local listeners twice: once inline in PublishAsync, and again when
-/// the broker returns the app's own copy through the wire-inbound path.
+/// Guards the end-to-end shape of the self-published event fix: an application that publishes an
+/// event and also listens to it runs its listeners exactly once, even though the broker routes the
+/// application's own broadcast copy straight back through its per-app event queue.
 /// </summary>
 [TestClass]
 public class SelfPublishedEventDeliveryShould
 {
     [TestMethod]
-    public async Task RunLocalListenersTwiceWhenBrokerReturnsTheAppsOwnCopy()
+    public async Task RunLocalListenersOnceWhenTheBrokerReturnsTheAppsOwnCopy()
     {
         // Arrange
-        var spyTransport = new SpyTransport();
         await using var host = TestWebHost.Start(builder =>
         {
             builder.Services.AddSingleton<ItemStore>();
             builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
-            builder.Services.AddSingleton<IConduitTransport>(spyTransport);
             builder.Services.AddConduit();
         });
+        var options = host.GetRequiredService<ConduitOptions>();
+        options.ApplicationName = "OrderService";
+        var transport = new FakeBrokerTransport(options, host.Services);
+        transport.Start();
         var mediator = host.GetRequiredService<IMediator>();
-        var wireMediator = host.GetRequiredService<IWireMediator>();
         var spy = host.GetRequiredService<EventSpy<ItemCreatedEvent>>();
 
-        // Act — one publish from this app
+        // Act — publish, then hand the app its own broadcast copy back, as the broker does
         await mediator.PublishAsync(new ItemCreatedEvent(Guid.NewGuid(), "SelfPublished"));
         await spy.WaitForCountAsync(1);
 
-        var inlineCount = spy.Count;
-        var broadcast = spyTransport.SentEvents.Single();
+        await transport.SendEventAsync(
+            TestEnvelope.For(new ItemCreatedEvent(Guid.NewGuid(), "SelfPublished")),
+            CancellationToken.None);
+        var ownCopy = transport.PublishedEvents.Single();
+        await transport.DeliverAsync(ownCopy);
 
-        // The app queue is bound to ConduitTypeRegistry.ActiveEventTypeNames — every discovered
-        // event type, including ones this app publishes itself. So the broker routes this app's
-        // own message back to it, and a consumer feeds it to the wire-inbound path.
-        await wireMediator.HandleWireEventAsync(broadcast, CancellationToken.None);
-        await spy.WaitForCountAsync(2);
-
-        // Assert
-        inlineCount.Should().Be(1, "PublishAsync runs local listeners inline on the publisher");
-        spy.Count.Should().Be(2, "the app's own broadcast copy runs the same listeners a second time");
+        // Assert — the inline run is the only run
+        spy.Count.Should().Be(1);
     }
 
     [TestMethod]
@@ -64,7 +61,8 @@ public class SelfPublishedEventDeliveryShould
         // Act — the list every broker transport binds its per-app event queue to
         var registry = host.GetRequiredService<ConduitTypeRegistry>();
 
-        // Assert — self-published types are in it; nothing filters them out
+        // Assert — self-published types are in it; the inbound filter, not the binding,
+        // is what stops the app's own copy from running its listeners a second time
         registry.ActiveEventTypeNames.Should().Contain(typeof(ItemCreatedEvent).FullName!);
     }
 }

@@ -13,6 +13,7 @@ namespace Conduit.Tests.Support;
 public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 {
     private readonly ConcurrentQueue<FakeBrokerMessage> publishedEvents = new();
+    private readonly ConcurrentQueue<BinaryData> replies = new();
     private volatile bool started;
 
     public FakeBrokerTransport(ConduitOptions conduitOptions, IServiceProvider serviceProvider)
@@ -22,6 +23,9 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 
     /// <summary>Events handed to the "broker", in publish order.</summary>
     public IReadOnlyList<FakeBrokerMessage> PublishedEvents => this.publishedEvents.ToArray();
+
+    /// <summary>Replies sent back to requesters, in send order.</summary>
+    public IReadOnlyList<BinaryData> Replies => this.replies.ToArray();
 
     /// <summary>Marks the transport started so the send guard passes.</summary>
     public void Start() => this.started = true;
@@ -64,7 +68,10 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     }
 
     protected override Task SendReplyAsync(FakeBrokerMessage message, BinaryData replyBody)
-        => Task.CompletedTask;
+    {
+        this.replies.Enqueue(replyBody);
+        return Task.CompletedTask;
+    }
 
     protected override Task AcknowledgeAsync(FakeBrokerMessage message)
     {

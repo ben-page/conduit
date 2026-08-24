@@ -252,6 +252,29 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 var (messageId, causationId, conversationId) = this.ExtractContext(message);
                 MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId);
 
+                // This application published it, so its listeners already ran inline in
+                // PublishAsync. The per-app event queue is bound to every event type, including
+                // self-published ones, so the broker routes our own copy straight back to us.
+                // Placed after the context starts (Observe no-ops without one) and before the
+                // scope is created (a skipped message should cost neither scope nor deserialize).
+                var applicationName = this.ConduitOptions.ApplicationName;
+                var sourceApp = this.ExtractMessageHeader(message, ConduitHeaders.SourceApp);
+                if (!this.IsRequest(message)
+                    && !string.IsNullOrEmpty(applicationName)
+                    && string.Equals(sourceApp, applicationName, StringComparison.Ordinal))
+                {
+                    // The generated mediator attaches the host's observer, but a skipped message
+                    // never reaches it — attach here so the skip is visible to the audit trail.
+                    MessageContext.Current?.AttachObserver(
+                        this.ServiceProvider.GetService<IConduitObserver>());
+                    MessageContext.Observe(new SelfPublishedEventSkipped(messageType));
+                    await this.AcknowledgeAsync(message);
+
+                    // A deliberate skip is a healthy outcome, not a processing error.
+                    success = true;
+                    return;
+                }
+
                 scope = this.ServiceProvider.CreateAsyncScope();
                 wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>();
 
