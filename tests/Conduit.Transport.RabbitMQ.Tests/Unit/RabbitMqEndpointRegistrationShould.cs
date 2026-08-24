@@ -24,10 +24,10 @@ public class RabbitMqEndpointRegistrationShould
     }
 
     [TestMethod]
-    public void GiveEachEndpointItsOwnOptions()
+    public async Task GiveEachEndpointItsOwnOptions()
     {
         // Arrange
-        var serviceProvider = BuildProviderWithTwoEndpoints();
+        await using var serviceProvider = BuildProviderWithTwoEndpoints();
 
         // Act
         var orders = serviceProvider.GetRequiredKeyedService<RabbitMQOptions>("orders");
@@ -41,10 +41,10 @@ public class RabbitMqEndpointRegistrationShould
     }
 
     [TestMethod]
-    public void ResolveADistinctTransportPerEndpoint()
+    public async Task ResolveADistinctTransportPerEndpoint()
     {
         // Arrange
-        var serviceProvider = BuildProviderWithTwoEndpoints();
+        await using var serviceProvider = BuildProviderWithTwoEndpoints();
 
         // Act
         var orders = serviceProvider.GetRequiredKeyedService<IConduitTransport>("orders");
@@ -55,10 +55,10 @@ public class RabbitMqEndpointRegistrationShould
     }
 
     [TestMethod]
-    public void BroadcastToOneTransportInstancePerEndpoint()
+    public async Task BroadcastToOneTransportInstancePerEndpoint()
     {
         // Arrange
-        var serviceProvider = BuildProviderWithTwoEndpoints();
+        await using var serviceProvider = BuildProviderWithTwoEndpoints();
 
         // Act
         var transports = serviceProvider.GetServices<IConduitTransport>().ToList();
@@ -69,10 +69,10 @@ public class RabbitMqEndpointRegistrationShould
     }
 
     [TestMethod]
-    public void StartOneHostedServicePerEndpoint()
+    public async Task StartOneHostedServicePerEndpoint()
     {
         // Arrange
-        var serviceProvider = BuildProviderWithTwoEndpoints();
+        await using var serviceProvider = BuildProviderWithTwoEndpoints();
 
         // Act
         var hostedServices = serviceProvider.GetServices<IHostedService>()
