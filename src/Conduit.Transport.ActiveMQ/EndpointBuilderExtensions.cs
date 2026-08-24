@@ -34,22 +34,19 @@ public static class EndpointBuilderExtensions
         };
         configure?.Invoke(options);
 
-        // Register options and transport as singletons
-        builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton<ActiveMQTransport>();
+        var endpointName = builder.EndpointName;
 
-        // Register as IConduitTransport for event broadcast
-        builder.Services.AddSingleton<IConduitTransport>(
-            serviceProvider => serviceProvider.GetRequiredService<ActiveMQTransport>());
+        builder.Services.AddKeyedSingleton(endpointName, options);
 
-        // Register as IHostedService for background receiver lifecycle
-        builder.Services.AddSingleton<IHostedService>(
-            serviceProvider => serviceProvider.GetRequiredService<ActiveMQTransport>());
-
-        // Register keyed transport for endpoint routing
         builder.Services.AddKeyedSingleton<ActiveMQTransport>(
-            builder.EndpointName,
-            (serviceProvider, _) => serviceProvider.GetRequiredService<ActiveMQTransport>());
+            endpointName,
+            (serviceProvider, key) => ActivatorUtilities.CreateInstance<ActiveMQTransport>(
+                serviceProvider, serviceProvider.GetRequiredKeyedService<ActiveMQOptions>(key)));
+
+        builder.Services.AddSingleton<IConduitTransport>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<ActiveMQTransport>(endpointName));
+        builder.Services.AddSingleton<IHostedService>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<ActiveMQTransport>(endpointName));
 
         return builder.UseTransport<ActiveMQTransport>();
     }

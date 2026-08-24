@@ -34,24 +34,19 @@ public static class EndpointBuilderExtensions
         };
         configure?.Invoke(options);
 
-        // Register options
-        builder.Services.AddSingleton(options);
+        var endpointName = builder.EndpointName;
 
-        // Register transport as DI-managed singleton
-        builder.Services.AddSingleton<AzureServiceBusTransport>();
+        builder.Services.AddKeyedSingleton(endpointName, options);
 
-        // Register as IHostedService for background receive lifecycle
-        builder.Services.AddSingleton<IHostedService>(
-            serviceProvider => serviceProvider.GetRequiredService<AzureServiceBusTransport>());
-
-        // Register as IConduitTransport for event broadcast
-        builder.Services.AddSingleton<IConduitTransport>(
-            serviceProvider => serviceProvider.GetRequiredService<AzureServiceBusTransport>());
-
-        // Register keyed transport for endpoint routing
         builder.Services.AddKeyedSingleton<AzureServiceBusTransport>(
-            builder.EndpointName,
-            (serviceProvider, _) => serviceProvider.GetRequiredService<AzureServiceBusTransport>());
+            endpointName,
+            (serviceProvider, key) => ActivatorUtilities.CreateInstance<AzureServiceBusTransport>(
+                serviceProvider, serviceProvider.GetRequiredKeyedService<AzureServiceBusOptions>(key)));
+
+        builder.Services.AddSingleton<IConduitTransport>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<AzureServiceBusTransport>(endpointName));
+        builder.Services.AddSingleton<IHostedService>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<AzureServiceBusTransport>(endpointName));
 
         return builder.UseTransport<AzureServiceBusTransport>();
     }
