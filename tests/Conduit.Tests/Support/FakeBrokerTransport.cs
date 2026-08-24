@@ -13,7 +13,7 @@ namespace Conduit.Tests.Support;
 public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 {
     private readonly ConcurrentQueue<FakeBrokerMessage> publishedEvents = new();
-    private bool started;
+    private volatile bool started;
 
     public FakeBrokerTransport(ConduitOptions conduitOptions, IServiceProvider serviceProvider)
         : base(conduitOptions, serviceProvider, NullLogger.Instance)
@@ -81,22 +81,25 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     protected override Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
         => Task.FromResult(new BinaryData("{}"));
 
     protected override Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
-        this.publishedEvents.Enqueue(new FakeBrokerMessage { Type = envelope.Type, Body = body });
+        this.publishedEvents.Enqueue(new FakeBrokerMessage
+        {
+            Type = envelope.Type,
+            Body = body,
+            Properties = new Dictionary<string, string>(headers, StringComparer.Ordinal),
+        });
         return Task.CompletedTask;
     }
 
-    protected override void InjectTraceHeader(string key, string value)
-    {
-    }
-
-    protected override string? ExtractTraceHeader(FakeBrokerMessage message, string key)
+    protected override string? ExtractMessageHeader(FakeBrokerMessage message, string key)
         => message.Properties.GetValueOrDefault(key);
 }

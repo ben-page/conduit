@@ -34,9 +34,6 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<ReceiverLink> consumerLinks = [];
 
-    [ThreadStatic]
-    private static Dictionary<string, string>? pendingTraceHeaders;
-
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
@@ -427,6 +424,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     protected override async Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         var correlationId = Guid.NewGuid().ToString("N");
@@ -443,10 +441,11 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
                 Properties = new Properties
                 {
                     Subject = envelope.Type,
-                    MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
-                    CorrelationId = MessageContext.Current?.ConversationId,
+                    MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
+                        ?? Guid.NewGuid().ToString("N"),
+                    CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
                 },
-                ApplicationProperties = BuildOutboundApplicationProperties(),
+                ApplicationProperties = BuildOutboundApplicationProperties(headers),
             };
 
             message.ApplicationProperties["ReplyTo"] = this.replyQueueAddress;
@@ -474,6 +473,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     protected override async Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogPublishingEvent(this.Logger, envelope.Type, null);
@@ -483,10 +483,11 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             Properties = new Properties
             {
                 Subject = envelope.Type,
-                MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
-                CorrelationId = MessageContext.Current?.ConversationId,
+                MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
+                    ?? Guid.NewGuid().ToString("N"),
+                CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
             },
-            ApplicationProperties = BuildOutboundApplicationProperties(),
+            ApplicationProperties = BuildOutboundApplicationProperties(headers),
         };
 
         await this.eventSender!.SendAsync(message);
@@ -537,14 +538,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    protected override void InjectTraceHeader(string key, string value)
-    {
-        pendingTraceHeaders ??= new Dictionary<string, string>();
-        pendingTraceHeaders[key] = value;
-    }
-
-    /// <inheritdoc />
-    protected override string? ExtractTraceHeader(ActiveMQInboundMessage message, string key)
+    protected override string? ExtractMessageHeader(ActiveMQInboundMessage message, string key)
     {
         if (message.Message.ApplicationProperties?.Map is null)
         {
@@ -621,23 +615,20 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         ((ReceiverLink)receiverLink).Accept(message);
     }
 
-    private static ApplicationProperties BuildOutboundApplicationProperties()
+    private static ApplicationProperties BuildOutboundApplicationProperties(
+        IReadOnlyDictionary<string, string> headers)
     {
         var properties = new ApplicationProperties();
-        var context = MessageContext.Current;
-        if (context is not null)
+
+        foreach (var (key, value) in headers)
         {
-            properties["CausationId"] = context.CausationId;
+            properties[key] = value;
         }
 
-        if (pendingTraceHeaders is not null)
+        // Historical on-wire name, preserved so ExtractContext keeps working unchanged.
+        if (headers.TryGetValue(ConduitHeaders.CausationId, out var causationId))
         {
-            foreach (var (key, value) in pendingTraceHeaders)
-            {
-                properties[key] = value;
-            }
-
-            pendingTraceHeaders = null;
+            properties["CausationId"] = causationId;
         }
 
         return properties;
