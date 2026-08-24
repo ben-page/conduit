@@ -19,6 +19,7 @@ namespace Conduit.Runtime;
 [System.Text.Json.Serialization.JsonDerivedType(typeof(OutboxSent), "OutboxSent")]
 [System.Text.Json.Serialization.JsonDerivedType(typeof(OutboxRetryExhausted), "OutboxRetryExhausted")]
 [System.Text.Json.Serialization.JsonDerivedType(typeof(InboxDuplicate), "InboxDuplicate")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(SelfPublishedEventSkipped), "SelfPublishedEventSkipped")]
 [System.Text.Json.Serialization.JsonDerivedType(typeof(DeadLettered), "DeadLettered")]
 [System.Text.Json.Serialization.JsonDerivedType(typeof(CustomObservation), "CustomObservation")]
 public abstract record MessageObservation
@@ -133,6 +134,14 @@ public sealed record OutboxRetryExhausted(long EntryId)
 /// Emitted when a duplicate message is detected by the inbox.
 /// </summary>
 public sealed record InboxDuplicate()
+    : MessageObservation;
+
+/// <summary>
+/// Emitted when an inbound event is dropped because this application published it — its local
+/// listeners already ran inline at publish time.
+/// </summary>
+/// <param name="MessageType">The full type name of the skipped event.</param>
+public sealed record SelfPublishedEventSkipped(string MessageType)
     : MessageObservation;
 
 /// <summary>

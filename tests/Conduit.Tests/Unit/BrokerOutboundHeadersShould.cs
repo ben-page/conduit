@@ -140,6 +140,32 @@ public sealed class BrokerOutboundHeadersShould : IDisposable
     }
 
     [TestMethod]
+    public async Task OmitTheStampWhenTheApplicationNameIsEmpty()
+    {
+        // Arrange
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddConduit();
+        });
+        var options = host.GetRequiredService<ConduitOptions>();
+        options.ApplicationName = string.Empty;
+        var transport = new FakeBrokerTransport(options, host.Services);
+        transport.Start();
+
+        // Act
+        await transport.SendEventAsync(
+            TestEnvelope.For(new ItemCreatedEvent(Guid.NewGuid(), "Unstamped")),
+            CancellationToken.None);
+
+        // Assert — an empty name is as unnamed as a null one. Stamping it would make every
+        // empty-named host match its own header on the inbound filter and drop every event.
+        transport.PublishedEvents.Single()
+            .Properties.Should().NotContainKey(ConduitHeaders.SourceApp);
+    }
+
+    [TestMethod]
     public async Task OmitTheStampWhenTheApplicationIsUnnamed()
     {
         // Arrange
