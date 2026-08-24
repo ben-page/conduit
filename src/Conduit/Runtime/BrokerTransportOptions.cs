@@ -22,7 +22,9 @@ public abstract class BrokerTransportOptions
     public List<ReceiverPoolOptions> Pools { get; } = [];
 
     /// <summary>
-    /// Adds a named receiver pool with custom concurrency and message type routing.
+    /// Gets or creates a named receiver pool with custom concurrency and message type routing.
+    /// If a pool with this name already exists, configures the existing pool instead of adding a new one.
+    /// This allows configuration and code to merge on the same named pool.
     /// </summary>
     /// <param name="name">The pool name (used in broker-specific resource naming).</param>
     /// <param name="configure">Callback to configure the pool.</param>
@@ -31,8 +33,16 @@ public abstract class BrokerTransportOptions
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(configure);
 
-        var pool = new ReceiverPoolOptions { Name = name };
+        // Get-or-create: a pool of this name may already exist because configuration declared it.
+        // Configuration supplies operational values, code supplies message types; both merge here.
+        var pool = this.Pools.FirstOrDefault(existing => existing.Name == name);
+
+        if (pool is null)
+        {
+            pool = new ReceiverPoolOptions { Name = name };
+            this.Pools.Add(pool);
+        }
+
         configure(pool);
-        this.Pools.Add(pool);
     }
 }

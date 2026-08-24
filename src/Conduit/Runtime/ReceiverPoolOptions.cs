@@ -7,7 +7,7 @@ namespace Conduit.Runtime;
 /// <remarks>
 /// <para>
 /// The pool name is used in broker-specific resource naming (queue / consumer group naming).
-/// Message types are assigned by their <c>FullTypeName</c> via <see cref="Handle"/>; any type
+/// Message types are assigned by their <c>FullTypeName</c> via <see cref="Handle(string)"/>; any type
 /// not assigned to a pool falls back to the transport's default consumer.
 /// </para>
 /// <para>
@@ -39,11 +39,41 @@ public sealed class ReceiverPoolOptions
 
     /// <summary>
     /// Assigns a message type to this pool by its <c>FullTypeName</c>.
+    /// Assigning the same type twice is a no-op.
     /// </summary>
     /// <param name="messageTypeFullName">The full type name of the message.</param>
     public void Handle(string messageTypeFullName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(messageTypeFullName);
-        this.messageTypes.Add(messageTypeFullName);
+
+        if (!this.messageTypes.Contains(messageTypeFullName))
+        {
+            this.messageTypes.Add(messageTypeFullName);
+        }
+    }
+
+    /// <summary>
+    /// Assigns a message type to this pool. Equivalent to passing the type's full name —
+    /// a pool assembled from configuration and code holds the union of both.
+    /// </summary>
+    /// <typeparam name="TMessage">The message type.</typeparam>
+    public void Handle<TMessage>() => this.Handle(typeof(TMessage));
+
+    /// <summary>
+    /// Assigns a message type to this pool. Equivalent to passing the type's full name.
+    /// </summary>
+    /// <param name="messageType">The message type.</param>
+    public void Handle(Type messageType)
+    {
+        ArgumentNullException.ThrowIfNull(messageType);
+
+        if (messageType.FullName is not { Length: > 0 } fullName)
+        {
+            throw new ArgumentException(
+                $"Type '{messageType.Name}' has no full name and cannot be assigned to a receiver pool.",
+                nameof(messageType));
+        }
+
+        this.Handle(fullName);
     }
 }
