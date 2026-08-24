@@ -34,22 +34,28 @@ public static class EndpointBuilderExtensions
         };
         configure?.Invoke(options);
 
-        // Register options and transport as singletons
-        builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton<RabbitMQTransport>();
+        var endpointName = builder.EndpointName;
 
-        // Register as IConduitTransport for event broadcast
-        builder.Services.AddSingleton<IConduitTransport>(
-            serviceProvider => serviceProvider.GetRequiredService<RabbitMQTransport>());
+        // Options are keyed by endpoint — never non-keyed, or a second endpoint on this
+        // transport would silently overwrite the first.
+        builder.Services.AddKeyedSingleton(endpointName, options);
 
-        // Register as IHostedService for background receiver lifecycle
-        builder.Services.AddSingleton<IHostedService>(
-            serviceProvider => serviceProvider.GetRequiredService<RabbitMQTransport>());
-
-        // Register keyed transport for endpoint routing
+        // One transport instance per endpoint. ActivatorUtilities keeps constructor injection
+        // automatic for ConduitOptions, IServiceProvider and ILogger<T>; only the options are
+        // passed explicitly, resolved through this endpoint's key.
         builder.Services.AddKeyedSingleton<RabbitMQTransport>(
-            builder.EndpointName,
-            (serviceProvider, _) => serviceProvider.GetRequiredService<RabbitMQTransport>());
+            endpointName,
+            (serviceProvider, key) => ActivatorUtilities.CreateInstance<RabbitMQTransport>(
+                serviceProvider, serviceProvider.GetRequiredKeyedService<RabbitMQOptions>(key)));
+
+        // One broadcast target and one lifecycle per endpoint, each forwarding to its own instance
+        builder.Services.AddKeyedSingleton<IConduitTransport>(
+            endpointName,
+            (serviceProvider, key) => serviceProvider.GetRequiredKeyedService<RabbitMQTransport>(key));
+        builder.Services.AddSingleton<IConduitTransport>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<RabbitMQTransport>(endpointName));
+        builder.Services.AddSingleton<IHostedService>(
+            serviceProvider => serviceProvider.GetRequiredKeyedService<RabbitMQTransport>(endpointName));
 
         return builder.UseTransport<RabbitMQTransport>();
     }
