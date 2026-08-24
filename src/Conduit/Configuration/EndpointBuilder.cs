@@ -1,4 +1,5 @@
 using Conduit.Runtime;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Configuration;
@@ -26,16 +27,27 @@ public sealed class EndpointBuilder
     /// </summary>
     public IServiceCollection Services { get; }
 
+    /// <summary>
+    /// This endpoint's configuration section (<c>Conduit:Endpoints:{EndpointName}</c>), or null
+    /// when no configuration was supplied. Transport extensions bind their options from it.
+    /// </summary>
+    public IConfiguration? Configuration { get; }
+
     private ConduitOptions Options { get; }
 
     /// <summary>
     /// Creates a new builder for the given endpoint.
     /// </summary>
-    internal EndpointBuilder(ConduitEndpoint endpoint, ConduitOptions options, IServiceCollection services)
+    internal EndpointBuilder(
+        ConduitEndpoint endpoint,
+        ConduitOptions options,
+        IServiceCollection services,
+        IConfiguration? configuration = null)
     {
         this.Endpoint = endpoint;
         this.Options = options;
         this.Services = services;
+        this.Configuration = configuration?.GetSection($"Endpoints:{endpoint.Name}");
     }
 
     /// <summary>
