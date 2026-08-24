@@ -28,9 +28,6 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<Task> pollingTasks = [];
 
-    [ThreadStatic]
-    private static Dictionary<string, string>? pendingTraceHeaders;
-
     private AmazonSimpleNotificationServiceClient? snsClient;
     private AmazonSQSClient? sqsClient;
     private string? topicArn;
@@ -305,6 +302,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     protected override async Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogSendingRequest(this.Logger, envelope.Type, null);
@@ -315,7 +313,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
         try
         {
-            var messageAttributes = BuildOutboundAttributes(envelope.Type);
+            var messageAttributes = BuildOutboundAttributes(envelope.Type, headers);
             messageAttributes["ReplyQueueAddress"] = new SqsMessageAttributeValue
             {
                 DataType = "String",
@@ -366,11 +364,12 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     protected override async Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogPublishingEvent(this.Logger, envelope.Type, null);
 
-        var messageAttributes = BuildOutboundAttributes(envelope.Type);
+        var messageAttributes = BuildOutboundAttributes(envelope.Type, headers);
 
         await this.snsClient!.PublishAsync(
             new PublishRequest
@@ -416,14 +415,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    protected override void InjectTraceHeader(string key, string value)
-    {
-        pendingTraceHeaders ??= new Dictionary<string, string>();
-        pendingTraceHeaders[key] = value;
-    }
-
-    /// <inheritdoc />
-    protected override string? ExtractTraceHeader(AmazonSqsInboundMessage message, string key) =>
+    protected override string? ExtractMessageHeader(AmazonSqsInboundMessage message, string key) =>
         message.Message.MessageAttributes.TryGetValue(key, out var attr)
             ? attr.StringValue
             : null;
@@ -552,9 +544,21 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     // Private helpers -- attributes
     // -----------------------------------------------------------------------
 
-    private static Dictionary<string, SqsMessageAttributeValue> BuildOutboundAttributes(string type)
+    /// <summary>
+    /// Maps the outbound headers assembled by the base class onto SNS/SQS message attributes.
+    /// </summary>
+    /// <remarks>
+    /// The correlation headers are renamed to the historical on-wire names that
+    /// <see cref="ExtractContext"/> reads; every other header travels under its canonical key.
+    /// They are renamed rather than duplicated because SNS and SQS both cap a message at ten
+    /// message attributes, and a request publish already carries Type, three correlation
+    /// attributes, traceparent, ReplyQueueAddress, and CorrelationId.
+    /// </remarks>
+    private static Dictionary<string, SqsMessageAttributeValue> BuildOutboundAttributes(
+        string type,
+        IReadOnlyDictionary<string, string> headers)
     {
-        var attributes = new Dictionary<string, SqsMessageAttributeValue>
+        var attributes = new Dictionary<string, SqsMessageAttributeValue>(StringComparer.Ordinal)
         {
             ["Type"] = new SqsMessageAttributeValue
             {
@@ -563,44 +567,29 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
             },
         };
 
-        var context = MessageContext.Current;
-        if (context is not null)
+        foreach (var (key, value) in headers)
         {
-            attributes["MessageId"] = new SqsMessageAttributeValue
+            attributes[ToAttributeName(key)] = new SqsMessageAttributeValue
             {
                 DataType = "String",
-                StringValue = context.MessageId,
+                StringValue = value,
             };
-
-            attributes["CausationId"] = new SqsMessageAttributeValue
-            {
-                DataType = "String",
-                StringValue = context.CausationId,
-            };
-
-            attributes["ConversationId"] = new SqsMessageAttributeValue
-            {
-                DataType = "String",
-                StringValue = context.ConversationId,
-            };
-        }
-
-        if (pendingTraceHeaders is not null)
-        {
-            foreach (var (key, value) in pendingTraceHeaders)
-            {
-                attributes[key] = new SqsMessageAttributeValue
-                {
-                    DataType = "String",
-                    StringValue = value,
-                };
-            }
-
-            pendingTraceHeaders = null;
         }
 
         return attributes;
     }
+
+    /// <summary>
+    /// The on-wire attribute name for an outbound header key. The correlation headers keep the
+    /// names this transport has always written; everything else keeps its canonical key.
+    /// </summary>
+    private static string ToAttributeName(string headerKey) => headerKey switch
+    {
+        ConduitHeaders.MessageId => "MessageId",
+        ConduitHeaders.CausationId => "CausationId",
+        ConduitHeaders.ConversationId => "ConversationId",
+        _ => headerKey,
+    };
 
     /// <summary>
     /// Converts SQS-style MessageAttributeValue dict to SNS-style for PublishRequest.

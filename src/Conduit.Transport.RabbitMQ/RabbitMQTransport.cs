@@ -32,9 +32,6 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     private readonly List<string> consumerTags = [];
     private readonly List<IChannel> consumerChannels = [];
 
-    [ThreadStatic]
-    private static Dictionary<string, string>? pendingTraceHeaders;
-
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
@@ -327,6 +324,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     protected override async Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         var exchangeName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 255);
@@ -345,8 +343,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
                 Type = envelope.Type,
                 CorrelationId = correlationId,
                 ReplyTo = this.replyQueueName,
-                MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
-                Headers = BuildOutboundHeaders(),
+                MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
+                    ?? Guid.NewGuid().ToString("N"),
+                Headers = BuildOutboundHeaders(headers),
             };
 
             await this.publishChannel!.BasicPublishAsync(
@@ -377,6 +376,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     protected override async Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogPublishingEvent(this.Logger, envelope.Type, null);
@@ -387,8 +387,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         {
             ContentType = "application/json",
             Type = envelope.Type,
-            MessageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N"),
-            Headers = BuildOutboundHeaders(),
+            MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
+                ?? Guid.NewGuid().ToString("N"),
+            Headers = BuildOutboundHeaders(headers),
         };
 
         await this.publishChannel!.BasicPublishAsync(
@@ -438,14 +439,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    protected override void InjectTraceHeader(string key, string value)
-    {
-        pendingTraceHeaders ??= new Dictionary<string, string>();
-        pendingTraceHeaders[key] = value;
-    }
-
-    /// <inheritdoc />
-    protected override string? ExtractTraceHeader(RabbitMQInboundMessage message, string key) =>
+    protected override string? ExtractMessageHeader(RabbitMQInboundMessage message, string key) =>
         GetHeaderString(message.Args.BasicProperties.Headers, key);
 
     // -----------------------------------------------------------------------
@@ -492,27 +486,29 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         return Task.CompletedTask;
     }
 
-    private static Dictionary<string, object?> BuildOutboundHeaders()
+    private static Dictionary<string, object?> BuildOutboundHeaders(
+        IReadOnlyDictionary<string, string> headers)
     {
-        var headers = new Dictionary<string, object?>();
-        var context = MessageContext.Current;
-        if (context is not null)
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        foreach (var (key, value) in headers)
         {
-            headers["CausationId"] = Encoding.UTF8.GetBytes(context.CausationId);
-            headers["ConversationId"] = Encoding.UTF8.GetBytes(context.ConversationId);
+            result[key] = Encoding.UTF8.GetBytes(value);
         }
 
-        if (pendingTraceHeaders is not null)
+        // Preserve the historical on-wire names alongside the canonical keys so existing
+        // consumers and ExtractContext keep working unchanged.
+        if (headers.TryGetValue(ConduitHeaders.CausationId, out var causationId))
         {
-            foreach (var (key, value) in pendingTraceHeaders)
-            {
-                headers[key] = Encoding.UTF8.GetBytes(value);
-            }
-
-            pendingTraceHeaders = null;
+            result["CausationId"] = Encoding.UTF8.GetBytes(causationId);
         }
 
-        return headers;
+        if (headers.TryGetValue(ConduitHeaders.ConversationId, out var conversationId))
+        {
+            result["ConversationId"] = Encoding.UTF8.GetBytes(conversationId);
+        }
+
+        return result;
     }
 
     private static string? GetHeaderString(IDictionary<string, object?>? headers, string key)

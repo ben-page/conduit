@@ -142,7 +142,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         using var activity = ConduitTelemetry.StartProducerActivity<BrokerTransportBase<TMessage>>(envelope.Type);
         activity?.SetTag("conduit.transport", this.GetType().Name);
-        ConduitTelemetry.InjectTraceContext(activity, this.InjectTraceHeader);
+        var headers = BuildOutboundHeaders(activity);
 
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
@@ -151,7 +151,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var sw = Stopwatch.StartNew();
         try
         {
-            var replyData = await this.PublishRequestAsync(envelope, body, cancellationToken);
+            var replyData = await this.PublishRequestAsync(envelope, body, headers, cancellationToken);
             sw.Stop();
 
             ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
@@ -183,7 +183,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         using var activity = ConduitTelemetry.StartProducerActivity<BrokerTransportBase<TMessage>>(envelope.Type);
         activity?.SetTag("conduit.transport", this.GetType().Name);
-        ConduitTelemetry.InjectTraceContext(activity, this.InjectTraceHeader);
+        var headers = BuildOutboundHeaders(activity);
 
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
@@ -192,7 +192,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var sw = Stopwatch.StartNew();
         try
         {
-            await this.PublishEventAsync(envelope, body, cancellationToken);
+            await this.PublishEventAsync(envelope, body, headers, cancellationToken);
             sw.Stop();
 
             ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
@@ -234,7 +234,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         LogReceivedMessage(this.Logger, messageType, null);
 
-        var parentContext = ConduitTelemetry.ExtractTraceContext(key => this.ExtractTraceHeader(message, key));
+        var parentContext = ConduitTelemetry.ExtractTraceContext(key => this.ExtractMessageHeader(message, key));
         using var activity = ConduitTelemetry.StartConsumerActivity<BrokerTransportBase<TMessage>>(messageType, parentContext);
         activity?.SetTag("conduit.transport", this.GetType().Name);
 
@@ -534,28 +534,58 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     protected abstract bool IsStarted { get; }
 
     /// <summary>Publishes a request and returns the raw reply payload.</summary>
+    /// <param name="envelope">The message being published.</param>
+    /// <param name="body">The serialized payload.</param>
+    /// <param name="headers">Outbound metadata assembled by the base class. Transports map these
+    /// onto their native property model; the dictionary is never shared between publishes.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     protected abstract Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken);
 
     /// <summary>Publishes an event (fire-and-forget).</summary>
+    /// <param name="envelope">The message being published.</param>
+    /// <param name="body">The serialized payload.</param>
+    /// <param name="headers">Outbound metadata assembled by the base class.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     protected abstract Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Injects a trace context header into the outbound message.
-    /// Called during send to propagate W3C traceparent/tracestate.
-    /// Transports map this to their native header format.
-    /// </summary>
-    protected abstract void InjectTraceHeader(string key, string value);
-
-    /// <summary>
-    /// Extracts a trace context header from an inbound message.
+    /// Extracts a single header value from an inbound message.
     /// Called during receive to restore the parent trace context.
     /// Transports map this to their native header format.
     /// </summary>
-    protected abstract string? ExtractTraceHeader(TMessage message, string key);
+    protected abstract string? ExtractMessageHeader(TMessage message, string key);
+
+    /// <summary>
+    /// Builds the complete outbound metadata set for a single publish: correlation IDs from the
+    /// ambient <see cref="MessageContext"/>, and W3C trace context from the current activity.
+    /// </summary>
+    /// <remarks>
+    /// A fresh dictionary per call. This replaced a process-wide <c>static Dictionary</c> in each
+    /// transport, which leaked trace context between concurrent publishes, could be corrupted by
+    /// unsynchronized mutation, and could be nulled out by one publish while another was writing.
+    /// </remarks>
+    private static Dictionary<string, string> BuildOutboundHeaders(Activity? activity)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        var context = MessageContext.Current;
+        if (context is not null)
+        {
+            headers[ConduitHeaders.MessageId] = context.MessageId;
+            headers[ConduitHeaders.CausationId] = context.CausationId;
+            headers[ConduitHeaders.ConversationId] = context.ConversationId;
+        }
+
+        ConduitTelemetry.InjectTraceContext(activity, (key, value) => headers[key] = value);
+
+        return headers;
+    }
 }

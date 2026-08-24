@@ -42,9 +42,6 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
 
-    [ThreadStatic]
-    private static Dictionary<string, string>? pendingTraceHeaders;
-
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "PublishingEvent"),
@@ -432,6 +429,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     protected override async Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         var correlationId = Guid.NewGuid().ToString("N");
@@ -443,16 +441,16 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         try
         {
-            var headers = BuildOutboundHeaders();
-            headers.Add("conduit-type", Encoding.UTF8.GetBytes(envelope.Type));
-            headers.Add("conduit-reply-topic", Encoding.UTF8.GetBytes(this.replyTopicName!));
-            headers.Add("conduit-correlation-id", Encoding.UTF8.GetBytes(correlationId));
+            var kafkaHeaders = BuildOutboundHeaders(headers);
+            kafkaHeaders.Add("conduit-type", Encoding.UTF8.GetBytes(envelope.Type));
+            kafkaHeaders.Add("conduit-reply-topic", Encoding.UTF8.GetBytes(this.replyTopicName!));
+            kafkaHeaders.Add("conduit-correlation-id", Encoding.UTF8.GetBytes(correlationId));
 
             var message = new Message<string, byte[]>
             {
-                Key = PartitionKey(),
+                Key = PartitionKey(headers),
                 Value = body.ToArray(),
-                Headers = headers,
+                Headers = kafkaHeaders,
             };
 
             await this.producer!.ProduceAsync(this.sharedTopicName, message, cancellationToken);
@@ -477,18 +475,19 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     protected override async Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogPublishingEvent(this.Logger, envelope.Type, null);
 
-        var headers = BuildOutboundHeaders();
-        headers.Add("conduit-type", Encoding.UTF8.GetBytes(envelope.Type));
+        var kafkaHeaders = BuildOutboundHeaders(headers);
+        kafkaHeaders.Add("conduit-type", Encoding.UTF8.GetBytes(envelope.Type));
 
         var message = new Message<string, byte[]>
         {
-            Key = PartitionKey(),
+            Key = PartitionKey(headers),
             Value = body.ToArray(),
-            Headers = headers,
+            Headers = kafkaHeaders,
         };
 
         await this.producer!.ProduceAsync(this.sharedTopicName, message, cancellationToken);
@@ -528,29 +527,22 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     }
 
     /// <summary>
-    /// Builds the Kafka partition key for an outbound message. Uses the current message id (a
+    /// Builds the Kafka partition key for an outbound message. Uses the dispatch's message id (a
     /// fresh GUID per dispatch) so messages — including those of the same type — distribute across
     /// the shared topic's partitions. This lets a consumer group with concurrency &gt; 1 process
     /// them in parallel. The type discriminator travels in the <c>conduit-type</c> header, not the
     /// key, so partition routing is independent of message type. There is no cross-message ordering
     /// contract between distinct dispatches, so distributing the key is safe.
     /// </summary>
-    private static string PartitionKey() =>
-        MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N");
+    private static string PartitionKey(IReadOnlyDictionary<string, string> headers) =>
+        headers.GetValueOrDefault(ConduitHeaders.MessageId) ?? Guid.NewGuid().ToString("N");
 
     // -----------------------------------------------------------------------
     // Trace context
     // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    protected override void InjectTraceHeader(string key, string value)
-    {
-        pendingTraceHeaders ??= new Dictionary<string, string>();
-        pendingTraceHeaders[key] = value;
-    }
-
-    /// <inheritdoc />
-    protected override string? ExtractTraceHeader(KafkaInboundMessage message, string key) =>
+    protected override string? ExtractMessageHeader(KafkaInboundMessage message, string key) =>
         GetHeaderString(message.ConsumeResult.Message.Headers, key);
 
     // -----------------------------------------------------------------------
@@ -732,28 +724,16 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         }
     }
 
-    private static Headers BuildOutboundHeaders()
+    private static Headers BuildOutboundHeaders(IReadOnlyDictionary<string, string> headers)
     {
-        var headers = new Headers();
-        var context = MessageContext.Current;
-        if (context is not null)
+        var result = new Headers();
+
+        foreach (var (key, value) in headers)
         {
-            headers.Add("conduit-message-id", Encoding.UTF8.GetBytes(context.MessageId));
-            headers.Add("conduit-causation-id", Encoding.UTF8.GetBytes(context.CausationId));
-            headers.Add("conduit-conversation-id", Encoding.UTF8.GetBytes(context.ConversationId));
+            result.Add(key, Encoding.UTF8.GetBytes(value));
         }
 
-        if (pendingTraceHeaders is not null)
-        {
-            foreach (var (key, value) in pendingTraceHeaders)
-            {
-                headers.Add(key, Encoding.UTF8.GetBytes(value));
-            }
-
-            pendingTraceHeaders = null;
-        }
-
-        return headers;
+        return result;
     }
 
     private static string? GetHeaderString(Headers? headers, string key)

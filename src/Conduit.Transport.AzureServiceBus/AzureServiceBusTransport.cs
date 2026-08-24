@@ -23,9 +23,6 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     private ServiceBusClient? client;
     private ServiceBusSender? topicSender;
 
-    [ThreadStatic]
-    private static Dictionary<string, string>? pendingTraceHeaders;
-
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogSendingRequest =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(100, "SendingRequest"),
@@ -226,6 +223,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     protected override async Task<BinaryData> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogSendingRequest(this.Logger, envelope.Type, null);
@@ -241,7 +239,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
             ReplyTo = replyQueueName,
         };
 
-        SeedOutboundMessageContext(serviceBusMessage);
+        SeedOutboundMessageContext(serviceBusMessage, headers);
 
         await this.topicSender!.SendMessageAsync(serviceBusMessage, cancellationToken);
 
@@ -252,6 +250,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     protected override async Task PublishEventAsync(
         DispatchEnvelope envelope,
         BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
         LogPublishingEvent(this.Logger, envelope.Type, null);
@@ -262,7 +261,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
             ContentType = "application/json",
         };
 
-        SeedOutboundMessageContext(serviceBusMessage);
+        SeedOutboundMessageContext(serviceBusMessage, headers);
 
         await this.topicSender!.SendMessageAsync(serviceBusMessage, cancellationToken);
     }
@@ -300,14 +299,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     // -----------------------------------------------------------------------
 
     /// <inheritdoc />
-    protected override void InjectTraceHeader(string key, string value)
-    {
-        pendingTraceHeaders ??= new Dictionary<string, string>();
-        pendingTraceHeaders[key] = value;
-    }
-
-    /// <inheritdoc />
-    protected override string? ExtractTraceHeader(ProcessMessageEventArgs message, string key) =>
+    protected override string? ExtractMessageHeader(ProcessMessageEventArgs message, string key) =>
         message.Message.ApplicationProperties.TryGetValue(key, out var value)
             ? value?.ToString()
             : null;
@@ -366,24 +358,29 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         return replyMessage.Body;
     }
 
-    private static void SeedOutboundMessageContext(ServiceBusMessage message)
+    private static void SeedOutboundMessageContext(
+        ServiceBusMessage message,
+        IReadOnlyDictionary<string, string> headers)
     {
-        var context = MessageContext.Current;
-        if (context is not null)
+        if (headers.TryGetValue(ConduitHeaders.MessageId, out var messageId))
         {
-            message.MessageId = context.MessageId;
-            message.CorrelationId = context.ConversationId;
-            message.ApplicationProperties["CausationId"] = context.CausationId;
+            message.MessageId = messageId;
         }
 
-        if (pendingTraceHeaders is not null)
+        if (headers.TryGetValue(ConduitHeaders.ConversationId, out var conversationId))
         {
-            foreach (var (key, value) in pendingTraceHeaders)
-            {
-                message.ApplicationProperties[key] = value;
-            }
+            message.CorrelationId = conversationId;
+        }
 
-            pendingTraceHeaders = null;
+        // Historical on-wire name, preserved so ExtractContext keeps working unchanged.
+        if (headers.TryGetValue(ConduitHeaders.CausationId, out var causationId))
+        {
+            message.ApplicationProperties["CausationId"] = causationId;
+        }
+
+        foreach (var (key, value) in headers)
+        {
+            message.ApplicationProperties[key] = value;
         }
     }
 }
