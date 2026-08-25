@@ -392,6 +392,13 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 "Transport has not been started. Ensure the host is running before redelivering messages.");
         }
 
+        // Replay builds its attributes by hand and deliberately bypasses the base class's
+        // BuildOutboundHeaders/BuildOutboundAttributes — most importantly, it carries no
+        // conduit-source-app stamp. A replayed event is redelivered on behalf of whoever
+        // originally published it; stamping this host's ApplicationName would make the inbound
+        // self-published filter in BrokerTransportBase.ProcessInboundMessageAsync drop the
+        // replayed copy the moment it arrived, silently voiding the replay. Do not route replay
+        // through the base send path.
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
@@ -551,8 +558,11 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     /// The correlation headers are renamed to the historical on-wire names that
     /// <see cref="ExtractContext"/> reads; every other header travels under its canonical key.
     /// They are renamed rather than duplicated because SNS and SQS both cap a message at ten
-    /// message attributes, and a request publish already carries Type, three correlation
-    /// attributes, traceparent, ReplyQueueAddress, and CorrelationId.
+    /// message attributes, and a request publish already carries nine at worst: Type, the three
+    /// correlation attributes, traceparent, tracestate (written whenever the current activity
+    /// carries one), conduit-source-app, ReplyQueueAddress, and CorrelationId. Duplicating the
+    /// three correlation headers under both their canonical and historical names would put a
+    /// request publish at twelve — over the ceiling.
     /// </remarks>
     private static Dictionary<string, SqsMessageAttributeValue> BuildOutboundAttributes(
         string type,
