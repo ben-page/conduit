@@ -177,7 +177,11 @@ onboarding or answering "how does X work" questions:
 - [`docs/dead-letter-queue.md`](docs/dead-letter-queue.md) — DLQ capture and replay
 - [`docs/security.md`](docs/security.md) — access control, `TypeFilterInterceptor`, auth model
 - [`docs/faq.md`](docs/faq.md) — frequently asked questions
-- [`docs/transports/index.md`](docs/transports/index.md) — transport overview and routing; per-transport guides alongside it
+- [`docs/transports/index.md`](docs/transports/index.md) — transport overview and routing. Every
+  transport has a user guide alongside it: `signalr.md`, `http.md`, `typescript-client.md`,
+  `azure-service-bus.md`, `rabbitmq.md`, `kafka.md`, `amazon-sqs.md`, `activemq.md`. User-facing
+  facts (setup, options, configuration keys, topology, wire format) belong in those guides; the
+  per-project `CLAUDE.md` files keep only what a maintainer of the code needs.
 
 ## Sample Apps
 

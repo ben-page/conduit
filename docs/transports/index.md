@@ -31,14 +31,9 @@ an `IHostedService` consumer:
 |---|---|---|
 | **Azure Service Bus** | Azure.Messaging.ServiceBus (queues, topics, subscriptions) | [azure-service-bus.md](azure-service-bus.md) |
 | **RabbitMQ** | RabbitMQ.Client (AMQP exchanges, queues, bindings) | [rabbitmq.md](rabbitmq.md) |
-| **Kafka** | Confluent.Kafka (topics, partitions) | [`src/Conduit.Transport.Kafka/CLAUDE.md`](../../src/Conduit.Transport.Kafka/CLAUDE.md) |
-| **Amazon SQS** | AWSSDK SQS (+ SNS for fan-out) | [`src/Conduit.Transport.AmazonSqs/CLAUDE.md`](../../src/Conduit.Transport.AmazonSqs/CLAUDE.md) |
-| **ActiveMQ** | AMQPNetLite.Core (ActiveMQ Artemis) | [`src/Conduit.Transport.ActiveMQ/CLAUDE.md`](../../src/Conduit.Transport.ActiveMQ/CLAUDE.md) |
-
-Kafka, Amazon SQS, and ActiveMQ do not yet have dedicated prose guides; their per-project
-`CLAUDE.md` files document configuration and broker-specific behavior. They are configured the same
-way as the documented broker transports — `endpoint.UseKafka(...)`, `endpoint.UseAmazonSqs(...)`,
-`endpoint.UseActiveMQ(...)`.
+| **Kafka** | Confluent.Kafka (topics, partitions) | [kafka.md](kafka.md) |
+| **Amazon SQS** | AWSSDK SQS (+ SNS for fan-out) | [amazon-sqs.md](amazon-sqs.md) |
+| **ActiveMQ** | AMQPNetLite.Core (ActiveMQ Artemis) | [activemq.md](activemq.md) |
 
 Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a broker queue.
 
