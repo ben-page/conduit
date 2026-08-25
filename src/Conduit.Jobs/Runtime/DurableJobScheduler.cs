@@ -26,6 +26,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 {
     private const int ClaimBatchSize = 32;
 
+    // A schedule down for long enough to miss this many occurrences has no meaningful catch-up left
+    // to run, and walking every one of them would stall startup.
+    private const int MaxMisfireWalk = 100_000;
+
     private readonly ScheduleRegistry registry;
     private readonly IServiceScopeFactory scopeFactory;
     private readonly JobRunner runner;
@@ -87,6 +91,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     private async Task RunScheduleAsync(JobSchedule schedule, CancellationToken stoppingToken)
     {
         var cursor = await this.ReadCursorAsync(schedule.Name, stoppingToken) ?? this.startedAt;
+        cursor = await this.ApplyMisfireAsync(schedule, cursor, stoppingToken) ?? cursor;
+
         var next = schedule.NextOccurrenceAfter(cursor);
         var armed = false;
 
@@ -119,6 +125,59 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Settles what happens to occurrences that fell between the cursor and now — the ones missed
+    /// while the application was not running. Neither policy backfills: replaying a long outage would
+    /// produce a burst of runs whose moment has passed, which for most jobs is worse than missing
+    /// them.
+    /// </summary>
+    /// <returns>The most recent missed occurrence, or <see langword="null"/> when none were missed.</returns>
+    private async Task<DateTimeOffset?> ApplyMisfireAsync(
+        JobSchedule schedule, DateTimeOffset cursor, CancellationToken stoppingToken)
+    {
+        var now = this.timeProvider.GetUtcNow();
+        DateTimeOffset? lastMissed = null;
+        var walked = 0;
+
+        var candidate = schedule.NextOccurrenceAfter(cursor);
+        while (candidate is { } occurrence && occurrence <= now && walked < MaxMisfireWalk)
+        {
+            lastMissed = occurrence;
+            walked++;
+            candidate = schedule.NextOccurrenceAfter(occurrence);
+        }
+
+        if (lastMissed is not { } mostRecent)
+        {
+            return null;
+        }
+
+        if (walked >= MaxMisfireWalk)
+        {
+            LogMisfireTruncated(this.logger, schedule.Name, MaxMisfireWalk);
+            await this.RunOnStoreAsync(
+                store => store.AdvanceCursorAsync(schedule.Name, now, stoppingToken),
+                schedule.Name,
+                stoppingToken);
+            return now;
+        }
+
+        if (schedule.Misfire == MisfirePolicy.RunImmediately)
+        {
+            // Exactly one catch-up, for the most recent missed occurrence. There is no backfill.
+            LogMisfireCatchUp(this.logger, schedule.Name, mostRecent, walked);
+            await this.MaterializeAndClaimAsync(schedule, mostRecent, stoppingToken);
+            return mostRecent;
+        }
+
+        LogMisfireSkipped(this.logger, schedule.Name, walked);
+        await this.RunOnStoreAsync(
+            store => store.AdvanceCursorAsync(schedule.Name, mostRecent, stoppingToken),
+            schedule.Name,
+            stoppingToken);
+        return mostRecent;
+    }
+
     private async Task MaterializeAndClaimAsync(
         JobSchedule schedule, DateTimeOffset occurrence, CancellationToken stoppingToken)
     {
@@ -126,6 +185,17 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         {
             await using var scope = this.scopeFactory.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
+
+            if (!schedule.AllowsOverlap
+                && await store.HasOutstandingAsync(schedule.Name, stoppingToken))
+            {
+                // Running, or awaiting a retry: either way the previous occurrence has not succeeded,
+                // and starting a second is the overlap the policy exists to prevent. Bounded, because
+                // attempts are finite — an occurrence that keeps failing becomes terminal and stops
+                // holding the schedule up.
+                LogOverlapSkipped(this.logger, schedule.Name, occurrence);
+                return;
+            }
 
             // N replicas race here and one row results. The claim that follows then elects the single
             // host that runs it.
@@ -381,6 +451,26 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     private string? CursorScheduleFor(JobRun run)
         => this.registry.IsSchedule(run.ScheduleName) ? run.ScheduleName : null;
 
+    private async Task RunOnStoreAsync(
+        Func<IJobStore, Task> action, string scheduleName, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await using var scope = this.scopeFactory.CreateAsyncScope();
+            await action(scope.ServiceProvider.GetRequiredService<IJobStore>());
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Draining.
+        }
+#pragma warning disable CA1031 // One schedule's database error must not stop every other schedule.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            LogScheduleStoreFailed(this.logger, scheduleName, exception);
+        }
+    }
+
     private async Task<DateTimeOffset?> ReadCursorAsync(string scheduleName, CancellationToken stoppingToken)
     {
         try
@@ -436,6 +526,32 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         Level = LogLevel.Error,
         Message = "Job run '{JobKey}' failed on attempt {Attempts} and has no attempts left; marking it failed")]
     private static partial void LogAttemptsExhausted(ILogger logger, string jobKey, int attempts);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' skipped {MissedCount} occurrence(s) missed while the application was down")]
+    private static partial void LogMisfireSkipped(ILogger logger, string scheduleName, int missedCount);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' is running one catch-up for {Occurrence}, the most recent of {MissedCount} missed occurrence(s)")]
+    private static partial void LogMisfireCatchUp(
+        ILogger logger, string scheduleName, DateTimeOffset occurrence, int missedCount);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Job schedule '{ScheduleName}' has missed more than {MaxWalk} occurrences; its cursor has been moved to now and no catch-up will run")]
+    private static partial void LogMisfireTruncated(ILogger logger, string scheduleName, int maxWalk);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because a previous one is still outstanding")]
+    private static partial void LogOverlapSkipped(
+        ILogger logger, string scheduleName, DateTimeOffset occurrence);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Job schedule '{ScheduleName}' database access failed")]
+    private static partial void LogScheduleStoreFailed(
+        ILogger logger, string scheduleName, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job claim sweep failed")]
     private static partial void LogSweepFailed(ILogger logger, Exception exception);
