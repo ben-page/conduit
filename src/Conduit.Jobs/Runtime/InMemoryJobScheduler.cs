@@ -106,13 +106,16 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 
         // Cancellation still works without a database — it just cannot reach beyond this host. The
-        // token is linked to shutdown and, when declared, to a MaxRuntime timer, which needs nothing
-        // more than a start time and a token.
-        using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        // token is linked to shutdown and, when declared, to a MaxRuntime source, which needs nothing
+        // more than a start time and a token. Linking rather than cancelling from a timer callback
+        // matters: a bare timer can fire after the job has finished and its source is disposed, and
+        // the resulting ObjectDisposedException on a timer thread is unhandled.
         using var runtimeLimit = schedule.MaxRuntime is { } limit
-            ? this.timeProvider.CreateTimer(
-                CancelJob, jobCancellation, limit, Timeout.InfiniteTimeSpan)
+            ? new CancellationTokenSource(limit, this.timeProvider)
             : null;
+        using var jobCancellation = runtimeLimit is null
+            ? CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)
+            : CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, runtimeLimit.Token);
 
         this.state.Track(schedule.Name, jobCancellation);
         try
@@ -135,8 +138,6 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
             this.state.Forget(schedule.Name);
         }
     }
-
-    private static void CancelJob(object? state) => ((CancellationTokenSource)state!).Cancel();
 
     private static bool ReportArmedOnce(JobSchedulerReadiness readiness, bool alreadyArmed)
     {

@@ -98,6 +98,31 @@ public class NonDurableSchedulerShould
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*always durable*");
     }
 
+    [TestMethod]
+    public async Task CancelAJobThatExceedsItsMaxRuntimeWithoutAnEngine()
+    {
+        // Arrange — MaxRuntime needs only a start time and a token, so it works with no database
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { JobDuration = TimeSpan.FromHours(1) };
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("warm")
+                .Every(TimeSpan.FromMinutes(5))
+                .MaxRuntime(TimeSpan.FromMinutes(1))
+                .Run(() => new RecordedJob("warm")),
+            spy,
+            timeProvider);
+
+        // Act
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await spy.WaitForStartedAsync(1);
+        timeProvider.Advance(TimeSpan.FromMinutes(2));
+
+        // Assert — the handler is cancelled rather than running out its hour
+        await Task.Delay(200);
+        spy.Count.Should().Be(0);
+        spy.StartedCount.Should().Be(1);
+    }
+
     private static void WarmEveryFiveMinutes(JobsBuilder jobs)
         => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).Run(() => new RecordedJob("warm"));
 }
