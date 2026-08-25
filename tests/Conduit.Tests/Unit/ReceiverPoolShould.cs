@@ -27,6 +27,23 @@ public class ReceiverPoolShould
     }
 
     [TestMethod]
+    public void ConfigureAnExistingPoolCaseInsensitively()
+    {
+        // Arrange
+        var options = new TestBrokerOptions();
+        options.AddPool("Bulk", pool => pool.Concurrency = 50);
+
+        // Act
+        options.AddPool("bulk", pool => pool.Handle("Orders.Commands.Import"));
+
+        // Assert
+        options.Pools.Should().HaveCount(1);
+        options.Pools[0].Name.Should().Be("Bulk");
+        options.Pools[0].Concurrency.Should().Be(50);
+        options.Pools[0].MessageTypes.Should().ContainSingle().Which.Should().Be("Orders.Commands.Import");
+    }
+
+    [TestMethod]
     public void ResolveTypedHandlesToTheSameNameAsStrings()
     {
         // Arrange
