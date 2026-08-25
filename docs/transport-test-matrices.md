@@ -242,6 +242,67 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 
 ---
 
+## Matrix 3: Registration and Configuration Unit Tests
+
+Container-free unit tests over a `ServiceCollection`, proving that a host with **two endpoints on
+the same transport** gets two independent transports, and that each endpoint's options bind from its
+own configuration section. Tests live in `Unit/` within each transport's test project. No broker is
+involved — if one of these needs a container, it is testing the wrong thing.
+
+### Category R-1: Per-endpoint registration (`Unit/{Name}EndpointRegistrationShould.cs`)
+
+Universal. Two endpoints on the same transport, each given a different connection string or region.
+
+| # | Test Method | Assert |
+|---|---|---|
+| R-1.1 | `GiveEachEndpointItsOwnOptions` | The keyed `{Name}Options` for each endpoint name are different instances, each carrying that endpoint's values and its own `EndpointName` |
+| R-1.2 | `ResolveADistinctTransportPerEndpoint` | The keyed `IConduitTransport` for each endpoint name are two distinct objects |
+| R-1.3 | `RegisterOneBroadcastTargetAndOneLifecyclePerEndpoint` | `GetServices<IConduitTransport>()` and `GetServices<IHostedService>()` each yield one **distinct** object per endpoint — not the same instance twice (RabbitMQ splits this into `BroadcastToOneTransportInstancePerEndpoint` + `StartOneHostedServicePerEndpoint`) |
+
+These exist because the non-keyed registration they replaced failed silently in every one of these
+ways — see [Per-endpoint transport instances](transports/index.md#per-endpoint-transport-instances).
+
+### Category C-1: Configuration binding (`Unit/{Name}ConfigurationShould.cs`)
+
+Universal for any transport with an options class. Build a host from in-memory configuration and
+assert the resolved keyed options. These must not start hosted services.
+
+| # | Test Method | Assert |
+|---|---|---|
+| C-1.1 | `BindOptionsFromTheEndpointSection` | Scalars under `Conduit:Endpoints:{name}` land on the options instance |
+| C-1.2 | `GiveTwoEndpointsOnTheSameTransportTheirOwnKeyedOptions` | Two endpoints bind from their own sections, not each other's |
+| C-1.3 | `LetTheExplicitArgumentOverrideConfiguration` | A value passed to `Use{Name}(...)` or set in the `configure` callback beats the configured one |
+| C-1.4 | `MergeAConfiguredPoolWithCodeDeclaredMessageTypes` | A pool named in both places is one pool holding the union of both sources' message types |
+| C-1.5 | `ExplainWhichKeyIsMissingWhen...` | A required value supplied by neither source throws `InvalidOperationException` naming both the configuration key and the `Use*` argument |
+
+SignalR and HTTP have one key each and no pools, so they implement C-1.1 and C-1.5 only, named for
+the key they bind (`ResolveATransportFromTheConfiguredHubUri` / `...BaseAddress`). RabbitMQ carries
+the full C-1.x set; ActiveMQ and Azure Service Bus bind through the identical shared path and
+currently lean on that plus the core binder tests, but a **new** transport should write C-1.x
+directly rather than assume the shared path covers it.
+
+### Category C-S: Transport-specific binding
+
+Only where a transport hand-maps something the binder cannot handle:
+
+| # | Test Method | Transport | Validates |
+|---|---|---|---|
+| C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials` |
+| C-S.2 | `BuildSessionCredentialsWhenATokenIsSupplied` | Amazon SQS | A `SessionToken` selects `SessionAWSCredentials` |
+| C-S.3 | `LeaveCredentialsNullForTheDefaultAwsChain` | Amazon SQS | No key pair leaves `Credentials` null so the AWS default chain applies |
+| C-S.4 | `BindProducerAndConsumerConfigByPropertyName` | Kafka | `ProducerConfig:LingerMs` writes through to the librdkafka dictionary |
+| C-S.5 | `AcceptDottedLibrdkafkaKeys` | Kafka | `ProducerConfig:linger.ms` is applied by the post-bind `ClientConfig.Set` pass |
+| C-S.6 | `LeaveProducerAndConsumerConfigNullWhenTheEndpointHasNoKafkaSpecificConfiguration` | Kafka | No dotted keys leaves both properties null for a `configure` callback that branches on null |
+
+Core-side coverage for the shared machinery lives in `tests/Conduit.Tests/Unit/`:
+`ConduitConfigurationShould` (core scalar binding, enum/`TimeSpan` parsing, absent keys, code wins,
+`Conduit:Endpoints` not leaking into `ConduitOptions.Endpoints`, the generated
+`AddConduit(IConfiguration, …)` overload), `ReceiverPoolShould` (`AddPool` get-or-create, `Handle`
+overload equivalence and de-duplication), and `TransportOptionsBindingShould`
+(`ConduitConfigurationBinder`: pool merge, excluded keys, missing/duplicate pool `Name`).
+
+---
+
 ## Adding a New Transport
 
 When adding a new broker transport, create a test project and implement:
@@ -249,6 +310,7 @@ When adding a new broker transport, create a test project and implement:
 1. **All transport behavior tests** (Matrix 1 — 34 `[TestMethod]` tests per existing transport, categories 1–9) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
+4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable, a transport that skips it can ship the silent shared-singleton bug all five broker packages once had
 
 ### Test Project Structure
 
@@ -271,6 +333,8 @@ tests/Conduit.Transport.{Name}.Tests/
         {Name}SelfPublishedEventShould.cs
     Unit/
         TopologyManagerShould.cs
+        {Name}EndpointRegistrationShould.cs
+        {Name}ConfigurationShould.cs
 ```
 
 ### Source Gen Constraint

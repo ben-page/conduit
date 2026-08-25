@@ -10,6 +10,8 @@
   - [Pool merging](#pool-merging)
   - [Unmatched endpoint sections](#unmatched-endpoint-sections)
   - [Per-transport keys](#per-transport-keys)
+  - [What configuration does not cover](#what-configuration-does-not-cover)
+  - [Upgrading an existing host](#upgrading-an-existing-host)
 - [Attributes](#attributes)
 - [MSBuild properties (TypeGen)](#msbuild-properties-typegen)
 - [Diagnostics](#diagnostics)
@@ -306,6 +308,8 @@ expect.
 
 `Region` and `Credentials` are excluded from the generic bind and mapped by hand: the binder
 resolves `RegionEndpoint` to `null` silently and throws outright on the abstract `AWSCredentials`.
+`RegionEndpoint.GetBySystemName` accepts any well-formed name without checking it against a known
+list, so a typo in `Region` surfaces later as a connection failure rather than at startup.
 Leaving `Credentials` unset (or supplying no `AccessKey`/`SecretKey` pair) falls back to the
 default AWS credential chain — this is the common case, not an error state.
 
@@ -327,6 +331,47 @@ configuration — it exists for when you manage the `HttpClient` lifetime yourse
 `IHttpClientFactory` elsewhere), and the `HttpClient` you pass in already has a `BaseAddress`. It
 does still read the endpoint's configured `BasePath` when the `basePath` argument is omitted, so
 `Conduit:Endpoints:{name}:BasePath` applies to either `UseHttp` overload.
+
+### What configuration does not cover
+
+Configuration supplies an endpoint's *values*. It never declares its *existence*, and it does not
+reach the rest of the library:
+
+- **Endpoints and routes stay in code.** `AddEndpoint`, `RouteNamespace<T>()`, and `RouteType<T>()`
+  are compile-time declarations. Declaring them in configuration would need a transport-name
+  registry across all seven transport packages, so a string like `"RabbitMQ"` could resolve to a
+  `Use*` call, plus a string-based route API to replace the generic ones — neither exists, and
+  routing by string would give up the compile-time type checking the generic overloads buy.
+- **Pipelines and type filters stay in code.** `AddPipeline(typeof(...))` and `AddTypeFilter(...)`
+  take `Type` values; a configuration binder cannot produce one.
+- **Durability, audit, resilience, and persistence are not configurable.** `AddDurability(...)`,
+  `AddAudit(...)`, `AddResilience(...)`, and the engine calls (`UseSqlite(...)`, `UsePostgres(...)`,
+  …) read nothing from the `Conduit` section. Their connection strings come from wherever your code
+  reads them.
+- **No reload-on-change.** Options bind once during `AddConduit` and are registered as plain
+  singletons, not `IOptionsMonitor<T>`. Editing `appsettings.json` on a running host changes
+  nothing until it restarts.
+
+### Upgrading an existing host
+
+Every existing code-only registration still compiles unchanged — the connection-string and hub-URI
+arguments became optional rather than moving. Two consequences are worth knowing before you upgrade
+the packages:
+
+- **Recompile downstream assemblies.** `RabbitMQOptions.ConnectionString`,
+  `ActiveMQOptions.ConnectionString`, `AzureServiceBusOptions.ConnectionString`, and
+  `KafkaOptions.BootstrapServers` relaxed from `required init` to `{ get; set; }` so configuration
+  can supply them. That is source-compatible — object initializers still work — but *binary*
+  breaking: dropping `init` removes the setter's `IsExternalInit` modreq, so an assembly compiled
+  against the previous package version must be rebuilt rather than swapped in. `UseSignalR` also
+  gained parameters, so it is binary breaking in the same way.
+- **A missing required value now throws `InvalidOperationException`.**
+  Where `UseRabbitMQ(null)` or `UseSignalR(null)` used to fail immediately in a guard clause with
+  an `ArgumentNullException`/`ArgumentException`, the
+  value is now validated after configuration and code have both been applied, and the message names
+  both ways to supply it: *"RabbitMQ transport for endpoint 'orders' has no connection string. Set
+  'Conduit:Endpoints:orders:ConnectionString' in configuration or pass it to UseRabbitMQ()."*
+  It is still thrown from the `AddConduit` call, so a misconfigured host still fails at startup.
 
 ## Attributes
 

@@ -50,6 +50,20 @@ RabbitMQ cluster and `audit` pointed at another — are two fully independent co
 from its own options. This is true for all seven transports; the five broker packages register their
 options and transport as keyed singletons per endpoint, matching what SignalR and HTTP already did.
 
+Before that, the five broker packages registered their options and transport as **non-keyed**
+singletons and added a keyed entry that merely forwarded to the non-keyed one. MS.DI resolves the
+last-registered descriptor, so a host with two endpoints on one transport package ended up with a
+single instance built from the *last* endpoint's options — and every symptom of that was silent:
+commands routed to the first endpoint reached the second endpoint's broker with no error;
+`GetServices<IConduitTransport>()` returned two entries that were the same object, so every
+published event went twice to one broker and never to the other; two `IHostedService` entries
+resolved to that one object, so `StartAsync` ran twice and created its topology twice; and
+dead-letter replay, which resolves the transport by the recorded `SourceEndpoint`, replayed onto the
+wrong broker. Keying every registration by endpoint name is what rules all four out, which is why no
+broker package registers its options or its concrete transport type without a key — the only
+non-keyed entries left are the `IConduitTransport` and `IHostedService` forwarders, one per
+endpoint, each resolving that endpoint's keyed instance.
+
 The intended use of two endpoints on the same transport type is **two different brokers**. Two
 endpoints on the same transport pointed at the *same* broker from the *same* application will now
 genuinely start two independent transports, each creating its own app-scoped topology. That topology
