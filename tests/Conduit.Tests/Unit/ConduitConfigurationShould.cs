@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Generated;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -105,5 +106,45 @@ public class ConduitConfigurationShould
 
         // Assert
         builder.Options.SystemName.Should().Be("from-code");
+    }
+
+    [TestMethod]
+    public void BindCoreOptionsThroughTheGeneratedOverload()
+    {
+        // Arrange
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Conduit:SystemName"] = "acme",
+            ["Conduit:TopologyMode"] = "Developer",
+        });
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddConduit(configuration, conduit => conduit.ApplicationName = "orders-api");
+
+        // Assert
+        using var serviceProvider = services.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<ConduitOptions>();
+        options.SystemName.Should().Be("acme");
+        options.TopologyMode.Should().Be(TopologyMode.Developer);
+        options.ApplicationName.Should().Be("orders-api");
+    }
+
+    [TestMethod]
+    public void LetTheCallbackOverrideConfigurationInTheGeneratedOverload()
+    {
+        // Arrange
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Conduit:SystemName"] = "from-config",
+        });
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddConduit(configuration, conduit => conduit.SystemName = "from-code");
+
+        // Assert
+        using var serviceProvider = services.BuildServiceProvider();
+        serviceProvider.GetRequiredService<ConduitOptions>().SystemName.Should().Be("from-code");
     }
 }
