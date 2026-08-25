@@ -1,6 +1,7 @@
 using Conduit.Configuration;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR;
@@ -11,21 +12,51 @@ namespace Conduit.Transport.SignalR;
 public static class EndpointBuilderExtensions
 {
     /// <summary>
-    /// Configures this endpoint to connect to a remote SignalR hub at the given URI.
+    /// Configures this endpoint to connect to a remote SignalR hub, taking the hub URI from the
+    /// endpoint's configuration section unless one is supplied here.
     /// Creates a <see cref="HubConnection"/> in client mode for outbound C#-to-C# communication.
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
-    /// <param name="hubUri">The URI of the remote SignalR hub.</param>
+    /// <param name="hubUri">The hub URI. Overrides the configured value when given.</param>
+    /// <param name="configure">Optional callback to adjust the options after binding.</param>
     /// <returns>The endpoint builder for chaining.</returns>
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Reliability", "CA2000:Dispose objects before losing scope",
         Justification = "Transport lifetime is managed by DI via keyed singleton registration.")]
-    public static EndpointBuilder UseSignalR(this EndpointBuilder builder, Uri hubUri)
+    public static EndpointBuilder UseSignalR(
+        this EndpointBuilder builder,
+        Uri? hubUri = null,
+        Action<SignalROptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(hubUri);
 
-        var hubConnection = new HubConnectionBuilder()
+        var options = new SignalROptions();
+        builder.Configuration?.Bind(options);
+
+        if (hubUri is not null)
+        {
+            options.HubUri = hubUri;
+        }
+
+        configure?.Invoke(options);
+
+        if (options.HubUri is null)
+        {
+            throw new InvalidOperationException(
+                $"SignalR transport for endpoint '{builder.EndpointName}' has no hub URI. " +
+                $"Set 'Conduit:Endpoints:{builder.EndpointName}:HubUri' in configuration " +
+                $"or pass it to UseSignalR().");
+        }
+
+        builder.Services.AddKeyedSingleton(
+            builder.EndpointName, new SignalRTransport(BuildHubConnection(options.HubUri)));
+
+        return builder.UseTransport<SignalRTransport>();
+    }
+
+    private static HubConnection BuildHubConnection(Uri hubUri)
+    {
+        return new HubConnectionBuilder()
             .WithUrl(hubUri)
             .AddJsonProtocol(options =>
             {
@@ -40,10 +71,5 @@ public static class EndpointBuilderExtensions
             })
             .WithAutomaticReconnect()
             .Build();
-
-        builder.Services.AddKeyedSingleton(
-            builder.EndpointName, new SignalRTransport(hubConnection));
-
-        return builder.UseTransport<SignalRTransport>();
     }
 }
