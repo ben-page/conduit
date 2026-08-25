@@ -2,6 +2,7 @@ using Conduit.Configuration;
 using Conduit.Durability;
 using Conduit.Persistence.Sqlite;
 using Conduit.Generated;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Transport.RabbitMQ;
 using Microsoft.Extensions.DependencyInjection;
@@ -98,6 +99,16 @@ public abstract class RabbitMqTestBase
         return await TestHost.StartAsync(builder =>
         {
             builder.Services.AddSingleton<SpyLog>();
+
+            // The self-published-event filter drops the returning broker copy before it reaches
+            // the mediator, so the drop leaves no trace in SpyLog — its only signal is the
+            // SelfPublishedEventSkipped observation. Registering the collector on every host lets
+            // a test await that observation rather than sleep for a round trip whose duration it
+            // cannot know.
+            builder.Services.AddSingleton<ObservationCollector>();
+            builder.Services.AddSingleton<IConduitObserver>(
+                provider => provider.GetRequiredService<ObservationCollector>());
+
             builder.Services.AddConduit(conduit =>
             {
                 conduit.ApplicationName = applicationName;
