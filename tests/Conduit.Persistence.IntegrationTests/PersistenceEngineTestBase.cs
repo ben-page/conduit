@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using AwesomeAssertions;
 using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
@@ -6,6 +6,9 @@ using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;
+using Conduit.Jobs.Configuration;
+using Conduit.Jobs.Persistence;
+using Microsoft.Extensions.Options;
 using Conduit.Persistence;
 using Conduit.Runtime;
 
@@ -33,6 +36,13 @@ public abstract class PersistenceEngineTestBase
 
     // The body of the newest dead-letter entry (index 4): { (byte)4, 0xFE }.
     private static readonly byte[] ExpectedNewestBody = [0x04, 0xFE];
+
+    private static readonly IOptions<JobsOptions> JobsOptionsForTest = Options.Create(
+        new JobsOptions
+        {
+            HeartbeatInterval = TimeSpan.FromSeconds(30),
+            ClaimTimeout = TimeSpan.FromMinutes(2),
+        });
 
     /// <summary>True when the engine container is up and tests may run.</summary>
     protected abstract bool IsAvailable { get; }
@@ -335,6 +345,119 @@ public abstract class PersistenceEngineTestBase
         (await store.GetByMessageIdAsync("audit-keep", CancellationToken.None)).Should().NotBeNull();
     }
 
+    // 6) Jobs run ledger ------------------------------------------------------------------------
+    //
+    // The claim protocol is the whole coordination design, and SQLite exercises none of the
+    // row-locking each server engine uses for it.
+
+    [TestMethod]
+    public async Task ClaimAJobRunExactlyOnceUnderConcurrency()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+        await store.TryMaterializeAsync(NewJobRun("nightly@fixed", now.AddMinutes(-1)), CancellationToken.None);
+
+        // Act — twenty workers race for one due row
+        var claims = await Task.WhenAll(Enumerable.Range(0, 20).Select(worker =>
+            store.ClaimDueAsync($"worker-{worker}", now, 10, CancellationToken.None)));
+
+        // Assert — this is what the whole coordination design rests on
+        claims.SelectMany(claimed => claimed).Should().HaveCount(1);
+    }
+
+    [TestMethod]
+    public async Task MaterializeAJobRunExactlyOnceUnderConcurrency()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+
+        // Act — twenty replicas race to materialize one occurrence
+        var inserts = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
+            store.TryMaterializeAsync(NewJobRun("nightly@race", now), CancellationToken.None)));
+
+        // Assert — the unique constraint on JobKey is what collapses the race, and each engine
+        // reaches it by a different route (ON CONFLICT, INSERT IGNORE, UPDLOCK/HOLDLOCK)
+        inserts.Count(inserted => inserted).Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task RecoverAClaimAbandonedByACrashedHost()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+        await store.TryMaterializeAsync(NewJobRun("nightly@fixed", now.AddMinutes(-1)), CancellationToken.None);
+        await store.ClaimDueAsync("crashed-host", now, 10, CancellationToken.None);
+
+        // Act — no heartbeat arrives, so the claim goes stale
+        var recovered = await store.ClaimDueAsync(
+            "healthy-host",
+            now.Add(JobsOptionsForTest.Value.ClaimTimeout).AddSeconds(1),
+            10,
+            CancellationToken.None);
+
+        // Assert — leader election would simply lose this occurrence
+        recovered.Should().HaveCount(1);
+    }
+
+    [TestMethod]
+    public async Task NotRecoverAClaimThatIsStillBeingHeartbeated()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+        await store.TryMaterializeAsync(NewJobRun("nightly@fixed", now.AddMinutes(-1)), CancellationToken.None);
+        var claimed = await store.ClaimDueAsync("busy-host", now, 10, CancellationToken.None);
+
+        // Act — the host renews its claim past the timeout, as a long-running job does
+        var later = now.Add(JobsOptionsForTest.Value.ClaimTimeout).AddSeconds(1);
+        var beat = await store.HeartbeatAsync(
+            claimed[0].Id, claimed[0].ClaimToken!, later, CancellationToken.None);
+        var stolen = await store.ClaimDueAsync(
+            "other-host", later.AddSeconds(1), 10, CancellationToken.None);
+
+        // Assert — the regression test for executing a long job twice
+        beat.ClaimHeld.Should().BeTrue();
+        stolen.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task RoundTripAJobRunAndItsCursorWithFullTimestampPrecision()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+
+        // Sub-millisecond precision proves the ISO-8601 text path is not silently truncating, which
+        // would make two nearby occurrences collide on the same key.
+        var occurrence = DateTimeOffset.UtcNow.AddMinutes(-1).AddTicks(1234567);
+        await store.TryMaterializeAsync(NewJobRun("nightly@precise", occurrence), CancellationToken.None);
+
+        // Act
+        var claimed = await store.ClaimDueAsync(
+            "worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
+        await store.CompleteAsync(
+            claimed[0].Id, "nightly", claimed[0].Occurrence, CancellationToken.None);
+
+        // Assert — the delete and the cursor advance land together, on the live engine
+        claimed[0].RunAt.Should().Be(occurrence);
+        (await store.GetRunAsync("nightly@precise", CancellationToken.None)).Should().BeNull();
+        var schedule = await store.GetScheduleAsync("nightly", CancellationToken.None);
+        schedule!.LastCompletedOccurrence.Should().Be(occurrence);
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static OutboxEntry NewEntry(string messageId, DateTime createdAt) => new()
@@ -344,6 +467,17 @@ public abstract class PersistenceEngineTestBase
         Type = "Test.Event",
         Payload = "{}",
         CreatedAt = createdAt,
+    };
+
+    private static JobRun NewJobRun(string jobKey, DateTimeOffset runAt) => new()
+    {
+        JobKey = jobKey,
+        ScheduleName = "nightly",
+        Occurrence = runAt,
+        MessageType = "Tests.NoopJob",
+        Payload = "{}",
+        RunAt = runAt,
+        Status = JobRunStatus.Pending,
     };
 
     private static DispatchAuditRecord NewAuditRecord(string messageId, DateTime timestamp) => new()
