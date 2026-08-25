@@ -1036,14 +1036,14 @@ All 5 broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveM
 **Template methods (not overridable):**
 - `StartAsync` — branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + resolves `ConduitTypeRegistry` + `EnsureTopologyAsync` + `StartConsumersAsync`
 - `StopAsync` — calls `StopConsumersAsync`
-- `SendRequestAsync` — serializes to `BinaryData`, assembles outbound headers, calls `PublishRequestAsync`, deserializes reply, calls `ConduitRuntime.UnwrapReply`
-- `SendEventAsync` — serializes to `BinaryData`, assembles outbound headers, calls `PublishEventAsync`
-- `ProcessInboundMessageAsync` — full inbound dispatch: save/restore `MessageContext`, apply the self-published-event filter, create DI scope, resolve `IWireMediator`, deserialize, branch request/event, handle errors, ack/abandon
+- `SendRequestAsync` — serializes to `BinaryData`, calls `PublishRequestAsync`, deserializes reply, calls `ConduitRuntime.UnwrapReply`
+- `SendEventAsync` — serializes to `BinaryData`, calls `PublishEventAsync`
+- `ProcessInboundMessageAsync` — full inbound dispatch: save/restore `MessageContext`, create DI scope, resolve `IWireMediator`, deserialize, branch request/event, handle errors, ack/abandon
 
 **Abstract methods (transport-specific):**
 - Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `EnsureOutboundTopologyAsync`, `StartConsumersAsync`, `StopConsumersAsync`, `DisposeAsync`
-- Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `ExtractMessageHeader`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync`
-- Outbound: `IsStarted`, `PublishRequestAsync(envelope, body, headers, ct)`, `PublishEventAsync(envelope, body, headers, ct)` — both take the assembled header dictionary as an explicit parameter
+- Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync`
+- Outbound: `IsStarted`, `PublishRequestAsync`, `PublishEventAsync`
 
 **Design decisions:**
 - `BinaryData` used for all payload passing between base and transport — zero-copy for ASB (native type), single allocation for others
@@ -1051,8 +1051,6 @@ All 5 broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveM
 - Error reply on request failure is standardized — all broker transports send an `InternalError` reply on handler failure, preventing caller timeouts
 - HTTP and SignalR transports do not extend this base — they lack inbound dispatch, topology, and hosted service lifecycle
 - **Configurable ResponseTimeout**: Each transport options class has a `ResponseTimeout` property (default 60s). Replaces any hardcoded timeout values.
-- **Outbound metadata assembled once, passed explicitly**: `SendRequestAsync`/`SendEventAsync` build a fresh `Dictionary<string, string>` per publish — keyed by the well-known `ConduitHeaders` constants (`MessageId`, `CausationId`, `ConversationId`, `SourceApp`) — from `MessageContext.Current`, W3C trace context, and `ConduitOptions.ApplicationName`, and hand it to `PublishRequestAsync`/`PublishEventAsync`. No transport reads ambient state (`MessageContext.Current`, a static field) on the outbound path; each is reduced to mapping the supplied dictionary onto its native property model, keeping its historical on-wire names. `SourceApp` is omitted when `ApplicationName` is unset.
-- **Self-published event filter**: because a broker's per-app event queue is bound to every discovered event type — including ones the application publishes itself — `ProcessInboundMessageAsync` drops an inbound event whose `SourceApp` stamp matches this host's own `ApplicationName`, since that application's local listeners already ran inline when `PublishAsync` published it. The check runs after `MessageContext.StartDispatchFromTransport` and before the DI scope is created, applies to events only (decided via `ConduitTypeRegistry`, not `!IsRequest`, so a routed `[FireAndForget]` command is never affected), keys on the application rather than the instance (so every replica of an application drops that application's own copy), requires a non-empty `ApplicationName` before comparing (otherwise an unnamed application would drop every inbound event), and treats a missing or foreign stamp as a normal dispatch (safe across a rolling upgrade). A drop is recorded as a `SelfPublishedEventSkipped` observation. One consequence: an application's own listeners always run on the *publishing instance*, never load-balanced across replicas. See [Transports → Self-published events](transports/index.md#self-published-events).
 - **No application retry**: Transports are one-shot dispatch + dead letter on failure. The `AbandonAsync` abstract method is called on event listener failure; transports decide how to dead-letter (RMQ/ASB use broker native redelivery, Kafka publishes to a dead-letter topic). Application retry is the user's concern via `IPipelineBehavior<,>` + Polly.
 
 ## Kafka Transport (`Conduit.Transport.Kafka`)
