@@ -22,6 +22,7 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
     private readonly TimeProvider timeProvider;
     private readonly ILogger<InMemoryJobScheduler> logger;
     private readonly JobSchedulerReadiness readiness;
+    private readonly InMemoryJobState state;
     private readonly DateTimeOffset startedAt;
 
     public InMemoryJobScheduler(
@@ -29,12 +30,14 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         JobSchedulerReadiness readiness,
+        InMemoryJobState state,
         ILogger<InMemoryJobScheduler> logger)
     {
         this.registry = registry;
         this.scopeFactory = scopeFactory;
         this.timeProvider = timeProvider;
         this.readiness = readiness;
+        this.state = state;
         this.logger = logger;
 
         // Read at construction rather than when the loop first runs: hosted services are constructed
@@ -94,16 +97,32 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
 
     private async Task DispatchAsync(JobSchedule schedule, CancellationToken stoppingToken)
     {
+        if (this.state.IsPaused(schedule.Name))
+        {
+            return;
+        }
+
         await using var scope = this.scopeFactory.CreateAsyncScope();
         var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 
+        // Cancellation still works without a database — it just cannot reach beyond this host. The
+        // token is linked to shutdown and, when declared, to a MaxRuntime timer, which needs nothing
+        // more than a start time and a token.
+        using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        using var runtimeLimit = schedule.MaxRuntime is { } limit
+            ? this.timeProvider.CreateTimer(
+                CancelJob, jobCancellation, limit, Timeout.InfiniteTimeSpan)
+            : null;
+
+        this.state.Track(schedule.Name, jobCancellation);
         try
         {
-            await mediator.ExecuteAsync(schedule.CreateCommand(), stoppingToken);
+            await mediator.ExecuteAsync(schedule.CreateCommand(), jobCancellation.Token);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            // Draining. There is no ledger to release, so the occurrence is simply not run here.
+            // Draining, cancelled, or past MaxRuntime. There is no ledger to release, so the
+            // occurrence is simply not run here.
         }
 #pragma warning disable CA1031 // A failing job must not tear down the scheduler for every other schedule.
         catch (Exception exception)
@@ -111,7 +130,13 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         {
             LogJobFailed(this.logger, schedule.Name, exception);
         }
+        finally
+        {
+            this.state.Forget(schedule.Name);
+        }
     }
+
+    private static void CancelJob(object? state) => ((CancellationTokenSource)state!).Cancel();
 
     private static bool ReportArmedOnce(JobSchedulerReadiness readiness, bool alreadyArmed)
     {

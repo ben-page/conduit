@@ -184,6 +184,16 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             await using var scope = this.scopeFactory.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
 
+            var row = await store.GetScheduleAsync(schedule.Name, stoppingToken);
+            if (row is { IsPaused: true })
+            {
+                // Skipped, and the cursor is left alone: resuming should pick up from the next
+                // occurrence, and a paused schedule that had silently advanced its cursor would look
+                // to a later misfire evaluation like it had run everything.
+                LogPausedSkip(this.logger, schedule.Name, occurrence);
+                return;
+            }
+
             if (!schedule.AllowsOverlap
                 && await store.HasOutstandingAsync(schedule.Name, stoppingToken))
             {
@@ -404,6 +414,12 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         Level = LogLevel.Warning,
         Message = "Job schedule '{ScheduleName}' has missed more than {MaxWalk} occurrences; its cursor has been moved to now and no catch-up will run")]
     private static partial void LogMisfireTruncated(ILogger logger, string scheduleName, int maxWalk);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' is paused, so occurrence {Occurrence} was skipped")]
+    private static partial void LogPausedSkip(
+        ILogger logger, string scheduleName, DateTimeOffset occurrence);
 
     [LoggerMessage(
         Level = LogLevel.Information,

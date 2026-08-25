@@ -1,0 +1,89 @@
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Conduit.Jobs.Runtime;
+
+/// <summary>
+/// The <see cref="IJobs"/> implementation for the no-database deployment. Everything it can answer,
+/// it answers from the in-memory registry; everything it changes, it changes on this host only.
+/// </summary>
+internal sealed class InMemoryJobs : IJobs
+{
+    private readonly ScheduleRegistry registry;
+    private readonly InMemoryJobState state;
+    private readonly IServiceScopeFactory scopeFactory;
+    private readonly TimeProvider timeProvider;
+
+    public InMemoryJobs(
+        ScheduleRegistry registry,
+        InMemoryJobState state,
+        IServiceScopeFactory scopeFactory,
+        TimeProvider timeProvider)
+    {
+        this.registry = registry;
+        this.state = state;
+        this.scopeFactory = scopeFactory;
+        this.timeProvider = timeProvider;
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<JobScheduleInfo>> GetSchedulesAsync(CancellationToken cancellationToken)
+    {
+        var now = this.timeProvider.GetUtcNow();
+        IReadOnlyList<JobScheduleInfo> schedules =
+        [
+            .. this.registry.Schedules.Select(schedule => new JobScheduleInfo(
+                schedule.Name,
+                schedule.NextOccurrenceAfter(now),
+                LastCompletedOccurrence: null,
+                this.state.IsPaused(schedule.Name),
+                PausedAt: null)),
+        ];
+
+        return Task.FromResult(schedules);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<JobRunInfo>> GetInFlightAsync(CancellationToken cancellationToken)
+        => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(
+        JobFilter filter, CancellationToken cancellationToken)
+        => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
+
+    /// <inheritdoc/>
+    public Task PauseAsync(string scheduleName, CancellationToken cancellationToken)
+    {
+        this.state.SetPaused(scheduleName, value: true);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task ResumeAsync(string scheduleName, CancellationToken cancellationToken)
+    {
+        this.state.SetPaused(scheduleName, value: false);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public async Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
+    {
+        var schedule = this.registry.Schedules
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, scheduleName, StringComparison.Ordinal))
+            ?? throw new ArgumentException(
+                $"No job schedule named '{scheduleName}' is declared.", nameof(scheduleName));
+
+        await using var scope = this.scopeFactory.CreateAsyncScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+        await mediator.ExecuteAsync(schedule.CreateCommand(), cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// There is no ledger, so the only thing a key can name here is a schedule running on this host.
+    /// Anything else is indistinguishable from a job that has already finished.
+    /// </remarks>
+    public Task<CancellationOutcome> CancelAsync(string jobKey, CancellationToken cancellationToken)
+        => Task.FromResult(
+            this.state.TryCancel(jobKey) ? CancellationOutcome.Requested : CancellationOutcome.NotFound);
+}
