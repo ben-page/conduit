@@ -36,7 +36,9 @@ config binds first, code always wins.
 
 `BrokerTransportOptions.AddPool(name, configure)` is **get-or-create**: if a pool with that name
 already exists (typically because configuration produced it), `configure` runs against the existing
-pool instead of appending a duplicate. Combined with `ReceiverPoolOptions.Handle`'s de-duplication,
+pool instead of appending a duplicate. Name matching is `OrdinalIgnoreCase`; since configuration
+binds first and creates the instance, the configuration's spelling of `Name` is what survives into
+broker resource naming. Combined with `ReceiverPoolOptions.Handle`'s de-duplication,
 a pool declared in both configuration and code ends up with the union of both sources' message
 types rather than two competing pools. See [`docs/configuration-reference.md`](../../docs/configuration-reference.md#loading-from-iconfiguration)
 for the full picture, including per-transport configuration key tables.

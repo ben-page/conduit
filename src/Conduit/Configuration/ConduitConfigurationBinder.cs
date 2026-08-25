@@ -53,7 +53,15 @@ public static class ConduitConfigurationBinder
         // skips silently — leaving pools that consume concurrency but route nothing. Add by hand.
         foreach (var poolSection in poolSections)
         {
-            var pool = options.Pools.First(candidate => candidate.Name == poolSection["Name"]);
+            var poolName = poolSection["Name"];
+            var pool = options.Pools.FirstOrDefault(candidate => string.Equals(candidate.Name, poolName, StringComparison.OrdinalIgnoreCase));
+
+            if (pool is null)
+            {
+                throw new InvalidOperationException(
+                    $"Receiver pool '{poolName}' at '{poolSection.Path}' was not found after binding. " +
+                    "Pool-related keys ('Pools', 'Name') must not be passed as excludedKeys to BindTransportOptions.");
+            }
 
             foreach (var messageType in poolSection.GetSection("MessageTypes").GetChildren())
             {
@@ -67,7 +75,7 @@ public static class ConduitConfigurationBinder
 
     private static void ValidatePoolNames(List<IConfigurationSection> poolSections)
     {
-        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var poolSection in poolSections)
         {

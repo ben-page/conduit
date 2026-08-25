@@ -35,7 +35,8 @@ public abstract class BrokerTransportOptions
 
         // Get-or-create: a pool of this name may already exist because configuration declared it.
         // Configuration supplies operational values, code supplies message types; both merge here.
-        var pool = this.Pools.FirstOrDefault(existing => existing.Name == name);
+        // Matching is case-insensitive, consistent with configuration keys elsewhere.
+        var pool = this.Pools.FirstOrDefault(existing => string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase));
 
         if (pool is null)
         {
