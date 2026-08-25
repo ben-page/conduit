@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Conduit.Handlers;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Runtime;
@@ -89,8 +90,20 @@ public static class ConduitBuilderExtensions
         {
             builder.Services.AddScoped<IJobStore, DbJobStore>();
             builder.Services.AddSingleton<JobRunner>();
+            builder.Services.AddSingleton<ClaimedJobExecutor>();
             builder.Services.AddHostedService<DurableJobScheduler>();
             builder.Services.AddHostedService<JobCleanup>();
+
+            // One closed listener per declared trigger's event type. The generated mediator resolves
+            // listeners from the container at publish time, so a runtime registration is enough.
+            foreach (var eventType in jobsBuilder.Triggers
+                .Select(trigger => trigger.EventType)
+                .Distinct())
+            {
+                builder.Services.AddTransient(
+                    typeof(IEventListener<>).MakeGenericType(eventType),
+                    typeof(EventTriggerListener<>).MakeGenericType(eventType));
+            }
         }
         else
         {

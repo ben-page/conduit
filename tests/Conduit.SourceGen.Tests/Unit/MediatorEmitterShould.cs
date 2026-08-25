@@ -105,6 +105,30 @@ namespace App.Events
     }
 
     [TestMethod]
+    public void ResolveListenersForAnEventTypeThatHasNoneAtCompileTime()
+    {
+        // Arrange — an event nothing in the compilation listens to
+        const string source = """
+            using Conduit.Messages;
+
+            namespace TestApp;
+
+            public record CartAbandoned(string CartId) : IEvent;
+            """;
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+
+        // Assert — the case resolves listeners from the container, so a listener registered at
+        // runtime (as Conduit.Jobs does for an event trigger) still runs. Gating the case on
+        // compile-time discovery would make such an event undeliverable however it was registered.
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        mediatorSource.Should().Contain("case TestApp.CartAbandoned e:");
+        mediatorSource.Should().Contain(
+            "GetServices<Conduit.Handlers.IEventListener<TestApp.CartAbandoned>>");
+    }
+
+    [TestMethod]
     public void EmitLocalEnvelopeDispatcherMembers()
     {
         // Arrange — one capturable F&F event, one Immediate, one LocalOnly plain event

@@ -17,17 +17,10 @@ public static class MediatorEmitter
     /// </summary>
     /// <param name="types">All discovered dispatchable types.</param>
     /// <param name="handlers">All discovered handler registrations.</param>
-    /// <param name="listenerGroups">All discovered event listener groups.</param>
     public static string Emit(
         IReadOnlyList<DispatchableTypeInfo> types,
-        IReadOnlyList<HandlerInfo> handlers,
-        IReadOnlyList<ListenerGroup> listenerGroups)
+        IReadOnlyList<HandlerInfo> handlers)
     {
-        if (listenerGroups is null)
-        {
-            throw new System.ArgumentNullException(nameof(listenerGroups));
-        }
-
         var handledTypes = new HashSet<string>(handlers.Select(h => h.MessageFullTypeName));
         var commands = types.Where(t => t.Kind == DispatchableKind.Command).ToList();
         var voidCommands = types.Where(t => t.Kind == DispatchableKind.VoidCommand).ToList();
@@ -270,7 +263,7 @@ public static class MediatorEmitter
         EmitQueryFallback(sb, queries);
 
         // PublishAsync
-        EmitPublishAsync(sb, listenerGroups, events);
+        EmitPublishAsync(sb, events);
 
         // Wire dispatch (private, called by HandleWireRequestAsync)
         EmitWireDispatch(sb, commands, voidCommands, queries, handledTypes);
@@ -381,7 +374,6 @@ public static class MediatorEmitter
 
     private static void EmitPublishAsync(
         StringBuilder sb,
-        IReadOnlyList<ListenerGroup> listenerGroups,
         List<DispatchableTypeInfo> events)
     {
         // These are used in C# type-pattern positions, so use the C# ('.') form for nested types.
@@ -522,7 +514,12 @@ public static class MediatorEmitter
         // Used by DispatchEventAsync for wire-inbound events to prevent echo loops.
         // Uses the unified IPipelineBehavior<TEvent, object> pipeline (same as commands/queries).
         // Throws EventListenerException if any listener failed (all listeners still run).
-        if (listenerGroups.Count == 0)
+        //
+        // A case is emitted for every event type, not only for those with a listener discovered at
+        // compile time. Each case already resolves its listeners from the container, so gating the
+        // cases on compile-time discovery would mean an event type could never gain a listener
+        // registered at runtime -- which is how Conduit.Jobs wires an event trigger to a job.
+        if (events.Count == 0)
         {
             sb.AppendLine("    private Task PublishLocalAsync(IServiceProvider serviceProvider, IEvent @event, CancellationToken cancellationToken)");
             sb.AppendLine("    {");
@@ -538,9 +535,9 @@ public static class MediatorEmitter
         sb.AppendLine("        switch (@event)");
         sb.AppendLine("        {");
 
-        foreach (var group in listenerGroups)
+        foreach (var discoveredEvent in events)
         {
-            var eventTypeRef = EmitConstants.ToCSharpTypeRef(group.EventFullTypeName);
+            var eventTypeRef = EmitConstants.ToCSharpTypeRef(discoveredEvent.FullTypeName);
             sb.AppendLine($"            case {eventTypeRef} e:");
             sb.AppendLine($"            {{");
 

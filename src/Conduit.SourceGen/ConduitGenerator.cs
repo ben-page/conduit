@@ -70,7 +70,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
         context.AddSource("ConduitDispatch.g.cs", DispatchEmitter.Emit(dispatchableTypes, handlers));
         context.AddSource("ConduitRegistration.g.cs", RegistrationEmitter.Emit(handlers, groups, dispatchableTypes));
-        context.AddSource("ConduitMediator.g.cs", MediatorEmitter.Emit(dispatchableTypes, handlers, groups));
+        context.AddSource("ConduitMediator.g.cs", MediatorEmitter.Emit(dispatchableTypes, handlers));
 
         if (model.HasHttpTransport)
         {

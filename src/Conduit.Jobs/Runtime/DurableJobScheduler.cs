@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Conduit.Jobs.Configuration;
@@ -32,18 +31,17 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     private readonly ScheduleRegistry registry;
     private readonly IServiceScopeFactory scopeFactory;
-    private readonly JobRunner runner;
+    private readonly ClaimedJobExecutor executor;
     private readonly TimeProvider timeProvider;
     private readonly IOptions<JobsOptions> options;
     private readonly ILogger<DurableJobScheduler> logger;
     private readonly JobSchedulerReadiness readiness;
-    private readonly ConcurrentDictionary<long, Task> inFlight = new();
     private readonly DateTimeOffset startedAt;
 
     public DurableJobScheduler(
         ScheduleRegistry registry,
         IServiceScopeFactory scopeFactory,
-        JobRunner runner,
+        ClaimedJobExecutor executor,
         TimeProvider timeProvider,
         IOptions<JobsOptions> options,
         JobSchedulerReadiness readiness,
@@ -51,7 +49,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     {
         this.registry = registry;
         this.scopeFactory = scopeFactory;
-        this.runner = runner;
+        this.executor = executor;
         this.timeProvider = timeProvider;
         this.options = options;
         this.readiness = readiness;
@@ -70,7 +68,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
         // In-flight runs are not part of ExecuteAsync's task, so without this a draining host would
         // exit while still holding claims — exactly the stall that releasing them is meant to avoid.
-        await Task.WhenAll(this.inFlight.Values);
+        await this.executor.DrainAsync();
     }
 
     /// <inheritdoc/>
@@ -313,7 +311,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
         foreach (var run in claimed)
         {
-            this.StartRun(run, stoppingToken);
+            this.StartRun(run);
         }
 
         return claimed.Count;
@@ -323,133 +321,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     /// Runs a claimed job without blocking the loop that claimed it, so a long job never delays the
     /// next occurrence or the next sweep. Overlap is governed by the overlap check, not by this.
     /// </summary>
-    private void StartRun(JobRun run, CancellationToken stoppingToken)
-    {
-        var task = Task.Run(() => this.RunClaimedAsync(run, stoppingToken), CancellationToken.None);
-        this.inFlight[run.Id] = task;
-        _ = task.ContinueWith(
-            _ => this.inFlight.TryRemove(run.Id, out var _),
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private async Task RunClaimedAsync(JobRun run, CancellationToken stoppingToken)
-    {
-        // Linked to the host's stopping token, so a graceful drain reaches the handler the same way
-        // an operator's cancellation and a MaxRuntime breach do — the runner tells them apart after.
-        using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-
-        JobAttempt attempt;
-        var heartbeat = ClaimHeartbeat.Start(
-            run,
-            this.registry.MaxRuntimeFor(run.ScheduleName),
-            this.scopeFactory,
-            this.timeProvider,
-            this.options,
-            jobCancellation,
-            this.logger);
-
-        await using (heartbeat.ConfigureAwait(false))
-        {
-            attempt = await this.runner.ExecuteAsync(
-                run, () => heartbeat.CancellationRequested || heartbeat.ClaimLost,
-                stoppingToken, jobCancellation.Token);
-        }
-
-        // A lost claim outranks everything the runner concluded: the row belongs to another host now,
-        // so this one must write nothing at all to it.
-        var outcome = heartbeat.ClaimLost ? JobOutcome.ClaimLost : attempt.Outcome;
-        await this.RecordOutcomeAsync(run, outcome, attempt.Error);
-    }
-
-    private async Task RecordOutcomeAsync(JobRun run, JobOutcome outcome, Exception? error)
-    {
-        if (outcome == JobOutcome.ClaimLost)
-        {
-            return;
-        }
-
-        try
-        {
-            await using var scope = this.scopeFactory.CreateAsyncScope();
-            var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
-
-            switch (outcome)
-            {
-                case JobOutcome.Completed:
-                    await store.CompleteAsync(run.Id, run.ScheduleName, run.Occurrence, CancellationToken.None);
-                    break;
-
-                case JobOutcome.Cancelled:
-                    // Terminal and never retried — retrying would defeat the cancellation. The cursor
-                    // still advances, or the occurrence would be re-materialized and cancelling would
-                    // loop forever.
-                    await store.MarkTerminalAsync(
-                        run.Id, JobRunStatus.Cancelled, null,
-                        this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
-                    break;
-
-                case JobOutcome.HandedOver:
-                    // A handover, not an attempt: the count is untouched so the next host starts
-                    // where this one left off rather than one attempt closer to giving up.
-                    await store.ReleaseAsync(run.Id, run.ClaimToken!, CancellationToken.None);
-                    break;
-
-                case JobOutcome.Failed:
-                    await this.RecordFailureAsync(store, run, error);
-                    break;
-
-                case JobOutcome.ClaimLost:
-                default:
-                    await store.ReleaseAsync(run.Id, run.ClaimToken!, CancellationToken.None);
-                    break;
-            }
-        }
-#pragma warning disable CA1031 // Losing the outcome write must not tear the scheduler down; the claim
-        catch (Exception exception) // goes stale and another host recovers the run.
-#pragma warning restore CA1031
-        {
-            LogOutcomeNotRecorded(this.logger, run.JobKey, exception);
-        }
-    }
-
-    /// <summary>
-    /// Decides whether this failure gets another attempt. Conduit.Resilience has already had its say
-    /// about <i>this</i> attempt; the ledger decides whether there is <i>another</i> one, and only the
-    /// ledger survives a restart.
-    /// </summary>
-    private async Task RecordFailureAsync(IJobStore store, JobRun run, Exception? error)
-    {
-        var message = error?.Message ?? "The job failed without an exception message.";
-        var attempts = run.AttemptCount + 1;
-
-        if (attempts >= this.options.Value.MaxAttempts)
-        {
-            // The cursor advances even though the occurrence never succeeded: one permanently broken
-            // occurrence must not block every later one, and the failed row keeps it visible.
-            LogAttemptsExhausted(this.logger, run.JobKey, attempts);
-            await store.MarkTerminalAsync(
-                run.Id, JobRunStatus.Failed, message,
-                this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
-            return;
-        }
-
-        var nextRunAt = this.timeProvider.GetUtcNow() + BackoffFor(attempts);
-        LogRetryScheduled(this.logger, run.JobKey, attempts, nextRunAt);
-        await store.IncrementAttemptAsync(run.Id, nextRunAt, message, CancellationToken.None);
-    }
-
-    /// <summary>Exponential backoff from thirty seconds: 1 minute, 2, 4, ...</summary>
-    private static TimeSpan BackoffFor(int attempts)
-        => TimeSpan.FromSeconds(30 * Math.Pow(2, attempts));
-
-    /// <summary>
-    /// The schedule whose cursor this run should advance, or <see langword="null"/> when the run came
-    /// from an event trigger and there is no cursor to move.
-    /// </summary>
-    private string? CursorScheduleFor(JobRun run)
-        => this.registry.IsSchedule(run.ScheduleName) ? run.ScheduleName : null;
+    private void StartRun(JobRun run)
+        => this.executor.Start(run);
 
     private async Task RunOnStoreAsync(
         Func<IJobStore, Task> action, string scheduleName, CancellationToken stoppingToken)
@@ -517,17 +390,6 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         ILogger logger, string scheduleName, DateTimeOffset occurrence, Exception exception);
 
     [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "Job run '{JobKey}' failed on attempt {Attempts}; the next attempt is due at {NextRunAt}")]
-    private static partial void LogRetryScheduled(
-        ILogger logger, string jobKey, int attempts, DateTimeOffset nextRunAt);
-
-    [LoggerMessage(
-        Level = LogLevel.Error,
-        Message = "Job run '{JobKey}' failed on attempt {Attempts} and has no attempts left; marking it failed")]
-    private static partial void LogAttemptsExhausted(ILogger logger, string jobKey, int attempts);
-
-    [LoggerMessage(
         Level = LogLevel.Information,
         Message = "Job schedule '{ScheduleName}' skipped {MissedCount} occurrence(s) missed while the application was down")]
     private static partial void LogMisfireSkipped(ILogger logger, string scheduleName, int missedCount);
@@ -556,8 +418,4 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     [LoggerMessage(Level = LogLevel.Error, Message = "Job claim sweep failed")]
     private static partial void LogSweepFailed(ILogger logger, Exception exception);
 
-    [LoggerMessage(
-        Level = LogLevel.Error,
-        Message = "Outcome of job run '{JobKey}' could not be recorded; its claim will go stale and another host will recover it")]
-    private static partial void LogOutcomeNotRecorded(ILogger logger, string jobKey, Exception exception);
 }
