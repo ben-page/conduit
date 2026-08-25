@@ -187,7 +187,8 @@ types are the union of what configuration listed and what code added:
 ```
 ```csharp
 options.AddPool("imports", pool => pool.Handle<ReindexCatalogCommand>());
-// -> one pool "imports", Concurrency 2, handling [BulkImportCommand, ReindexCatalogCommand]
+// -> one pool "imports", Concurrency 2, handling
+//    [Catalog.Commands.BulkImportCommand, Catalog.Commands.ReindexCatalogCommand]
 ```
 
 ---

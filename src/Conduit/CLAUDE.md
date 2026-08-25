@@ -43,6 +43,38 @@ a pool declared in both configuration and code ends up with the union of both so
 types rather than two competing pools. See [`docs/configuration-reference.md`](../../docs/configuration-reference.md#loading-from-iconfiguration)
 for the full picture, including per-transport configuration key tables.
 
+**Measured binder behaviours.** Every row below was verified against the real
+`Microsoft.Extensions.Configuration.Binder` (with the real `Confluent.Kafka` and `AWSSDK.SQS`
+types), not inferred from its documentation. They are the reason `ConduitConfigurationBinder` has
+the shape it has — re-measure before "simplifying" any step away, because each one that goes back
+takes a silent misconfiguration with it.
+
+| Binder behaviour | Consequence in the code |
+|---|---|
+| A getter-only `List<ReceiverPoolOptions> Pools` **does** bind — entries are created with their `Name` and `Concurrency` | pools never need hand-constructing; the helper only fixes up what the binder misses |
+| A getter-only `IReadOnlyList<string> MessageTypes` is **silently skipped** — the pool binds but routes nothing | `BindTransportOptions` re-walks the pool sections afterwards and hand-adds each type via `Handle(...)` |
+| A `Pools` entry missing the `required` `Name` binds as `""` rather than throwing | `ValidatePoolNames` runs first and throws `InvalidOperationException` naming the offending configuration path |
+| A blanket `Bind` **throws** on an abstract/interface-typed property (`AmazonSqsOptions.Credentials` is an `AWSCredentials`) and binds `RegionEndpoint` to **null silently** | `excludedKeys` projects a key and its whole subtree out before binding; Amazon SQS excludes `Region` + `Credentials` and hand-maps both |
+| Dotted librdkafka keys (`ProducerConfig:linger.ms`) bind **nothing** — the binder matches C# property names only | `UseKafka`'s `ApplyDottedKeys` second pass feeds them through `ClientConfig.Set`, so both spellings work |
+| `ClientConfig` implements `IEnumerable<KeyValuePair<string, string>>`, but the binder treats it as an **object** and writes through the property setters into the underlying librdkafka dictionary | `ProducerConfig`/`ConsumerConfig` bind natively — no hand-mapping needed |
+| Non-public setters are skipped | `EndpointName { get; internal set; }` cannot be hijacked from configuration — the endpoint's identity is not a setting |
+| Enum members bind by name (`"Developer"`), `TimeSpan` parses from `"00:00:30"`, and an absent key yields null | `UseConfiguration` assigns only when the key is present, so unset keys leave defaults alone |
+
+**Rejected alternatives** (recorded so they are not re-proposed without new information):
+
+- `services.AddOptions<T>().BindConfiguration(...)` with `IOptions<T>` resolution — idiomatic, and it would enable reload-on-change, but it defers binding past registration, which is exactly where the required-value validation runs, and it changes how all seven transports consume their options.
+- A `ConnectionStrings:{endpointName}` fallback — a familiar .NET convention, but it puts the same value in two discoverable places and mirrors no builder call, breaking the key-name rule.
+- Config wins over code — rejected in favour of code-wins so an explicit `UseRabbitMQ("amqp://prod")` can never be silently redirected by a stray appsettings entry.
+- `Conduit:Endpoints:{name}:{Transport}` nesting — redundant, since an endpoint has exactly one transport. And `Conduit:Transports:{Transport}` — cannot express two endpoints on the same broker technology with different connection strings.
+- Growing `ConduitEndpoint` to hold its transport options so the runtime object graph matches the configuration shape — core cannot reference the transport packages, so the property would have to be `object?`, a weaker contract than the keyed DI registration that already owns it.
+
+**Trim/AOT.** `Microsoft.Extensions.Configuration.Binder` is reflection-based, so the
+`AddConduit(IConfiguration, ...)` path is the one reflective seam in an otherwise source-generated
+library. It runs at registration time only, and only for applications that opt into it. Nothing in
+the repo sets `IsTrimmable` today, so this is a constraint to settle before publishing trimmable or
+AOT-friendly packages rather than a present defect — but it does qualify the "reflection-free,
+compile-time" positioning, and a code-only host never touches it.
+
 ## Wire dispatch route forwarding
 
 The generated `DispatchRequestAsync` checks routes before the local type switch. Unknown types matching a route are forwarded as raw envelopes to the transport without deserializing locally.

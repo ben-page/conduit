@@ -199,6 +199,23 @@ already has one — but it does read the endpoint's configured `BasePath` when y
 See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
 for the full precedence rule.
 
+One caveat on the `HttpClient` `UseHttp(configure?)` creates for you: the transport is a keyed
+singleton, so it calls `IHttpClientFactory.CreateClient(endpointName)` once at construction and
+holds that client for the life of the process. `IHttpClientFactory`'s handler rotation — the thing
+that picks up DNS changes without leaking sockets — only applies to clients obtained per use, so a
+long-lived host will keep talking to whichever address the remote host resolved to at startup. This
+is no worse than passing your own long-lived `HttpClient` to the other overload, but the factory is
+not buying you rotation here. If the remote address moves behind a changing DNS record, reach the
+named client — it is registered under the endpoint name — and give it a bounded connection lifetime:
+
+```csharp
+builder.Services.AddHttpClient("billing")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+    });
+```
+
 ---
 
 Previous: [TypeScript Client](typescript-client.md) | [Home](../../README.md) | Next: [Azure Service Bus](azure-service-bus.md)
