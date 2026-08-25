@@ -309,6 +309,14 @@ them, because they already ran inline, inside the handler's own transaction, at 
 Re-running them on flush/relay would double-deliver. Only their transport envelope (when captured)
 is subject to this contract.
 
+Step 3's transport send for an event goes through the same `BrokerTransportBase` path as any other
+publish, so it carries the same publishing-application stamp and is subject to the same
+[self-published event filter](transports/index.md#self-published-events) on receipt. That matters
+here specifically because step 2 can also run local listeners (for a captured `[FireAndForget]`
+event) before step 3 broadcasts — without the filter, a broker routing that broadcast back to this
+application would run the same listeners a second time, exactly as it would for a plain event
+published outside the outbox.
+
 **Redelivery re-runs local listeners.** If a scheduled flush delivery fails partway, or never runs
 at all (e.g. a crash between commit and the background dispatcher draining the work item), the
 relay claims the same entry later and repeats the full contract — including local listeners.

@@ -62,7 +62,8 @@ public static class TopologyNaming
 
     /// <summary>
     /// Creates an app-scoped resource name including the application name.
-    /// App-scoped names are unique per application instance (used for multicast resources).
+    /// App-scoped names are unique per application and shared by all instances of it, which makes
+    /// the resulting queue a competing-consumer queue (used for multicast resources).
     /// </summary>
     /// <param name="options">Conduit options providing system name, application name, and topology prefix.</param>
     /// <param name="maxLength">Maximum allowed length. Names exceeding this are hash-truncated.</param>

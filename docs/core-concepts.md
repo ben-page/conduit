@@ -114,6 +114,20 @@ An event with zero listeners is valid. It has no effect locally but may still br
 
 When the [transactional outbox](outbox.md) is enabled, events published during handler execution are captured and persisted to the outbox table atomically with business data, rather than sent directly to transports.
 
+### Where an application's own listeners run
+
+When an application publishes an event, its local listeners run **inline on the publishing
+instance**, not load-balanced across replicas. With a broker configured, the broker also routes the
+application's own copy back to it; that copy is dropped on receipt, because the listeners already
+ran. So an application observes its own event exactly once, on whichever instance published it. A
+dropped copy is recorded as a `SelfPublishedEventSkipped` observation, so "why didn't my listener
+run" has an answer in the [audit trail](audit.md) rather than in silence. See
+[Transports → Self-published events](transports/index.md#self-published-events) for how the drop
+works.
+
+A heavy listener therefore stays on the publishing instance. If you want that work distributed,
+publish a command routed to a worker endpoint instead of relying on the event listener.
+
 ## Dispatching
 
 Inject `IMediator` and use the method that matches the message type:

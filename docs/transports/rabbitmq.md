@@ -58,7 +58,7 @@ Queue: {systemName}-{appName}-{poolName}
 Reply Queue: exclusive auto-delete (per connection)
 ```
 
-All message types (commands, queries, events) flow through a single topic exchange. There is no direct exchange. Each handled type gets a queue binding with the full type name as the routing key. Reply messages bypass the exchange and go directly to the exclusive reply queue.
+All message types (commands, queries, events) flow through a single topic exchange. There is no direct exchange. Each handled type gets a queue binding with the full type name as the routing key — including event types this application publishes itself, so its own broadcasts route back to its own queue. See [Self-published events](index.md#self-published-events) for how the inbound side avoids running that application's own listeners twice. Reply messages bypass the exchange and go directly to the exclusive reply queue.
 
 All declarations are idempotent.
 
@@ -121,8 +121,10 @@ Messages use JSON serialization with type information in AMQP properties:
 | `MessageId` | From `MessageContext` or auto-generated |
 | `CorrelationId` | Request/response correlation (requests only) |
 | `ReplyTo` | Reply queue name (requests only) |
-| Header `CausationId` | From `MessageContext.CausationId` |
-| Header `ConversationId` | From `MessageContext.ConversationId` |
+| Header `CausationId` | From `MessageContext.CausationId` — historical name, kept for existing consumers |
+| Header `ConversationId` | From `MessageContext.ConversationId` — historical name, kept for existing consumers |
+| Header `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the historical names above |
+| Header `conduit-source-app` | The publishing application's `ApplicationName`, used by the [self-published event filter](index.md#self-published-events) (omitted when `ApplicationName` is unset) |
 
 ## Receiver pools
 
