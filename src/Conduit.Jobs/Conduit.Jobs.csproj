@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Conduit.Jobs.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Cronos" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Conduit\Conduit.csproj" />
+    <ProjectReference Include="..\Conduit.Persistence\Conduit.Persistence.csproj" />
+  </ItemGroup>
+</Project>
