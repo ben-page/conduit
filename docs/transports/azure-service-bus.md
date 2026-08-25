@@ -3,6 +3,7 @@
 - [Overview](#overview)
 - [Setup](#setup)
 - [Options](#options)
+  - [Loading from configuration](#loading-from-configuration)
 - [Topology](#topology)
   - [Unicast vs multicast subscriptions](#unicast-vs-multicast-subscriptions)
 - [Developer and test modes](#developer-and-test-modes)
@@ -43,10 +44,35 @@ endpoint.UseAzureServiceBus(connectionString, options =>
 
 | Property | Default | Description |
 |---|---|---|
+| `ConnectionString` | *(required)* | The Azure Service Bus connection string |
 | `DefaultConcurrency` | `10` | Max concurrent message processing on the default receiver |
 | `AdminConnectionString` | `null` | Separate connection string for topology management. Required when using the ASB Emulator with different AMQP/HTTP ports |
+| `ResponseTimeout` | `60s` | Timeout for request/response operations |
 
 Topic and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
+
+### Loading from configuration
+
+Every property above also binds from `Conduit:Endpoints:{endpointName}`, so `UseAzureServiceBus()` can run with no arguments:
+
+```json
+{
+  "Conduit": {
+    "Endpoints": {
+      "orders": {
+        "ConnectionString": "Endpoint=sb://my-namespace.servicebus.windows.net/...",
+        "DefaultConcurrency": 20
+      }
+    }
+  }
+}
+```
+
+```csharp
+conduit.AddEndpoint("orders", endpoint => endpoint.UseAzureServiceBus());
+```
+
+Configuration binds first; an explicit `UseAzureServiceBus(connectionString)` argument or a `configure` callback overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration) for the full precedence rule, the pool-merge behavior, and the complete key reference.
 
 ## Topology
 
@@ -120,7 +146,7 @@ When the generated mediator routes a command to an ASB endpoint:
 3. The receiving service processes the command and sends a reply to the reply queue with the matching session ID.
 4. The sender accepts the session, receives the reply, and deserializes the `DispatchResult`.
 
-Replies time out after 30 seconds. Reply messages bypass the topic and go directly to the session-enabled reply queue.
+Replies time out after `ResponseTimeout` (default 60 seconds). Reply messages bypass the topic and go directly to the session-enabled reply queue.
 
 ## Auto-discovery
 
@@ -158,12 +184,25 @@ endpoint.UseAzureServiceBus(connectionString, options =>
     options.AddPool("imports", pool =>
     {
         pool.Concurrency = 2;
-        pool.MessageTypes.Add("Catalog.Commands.BulkImportCommand");
+        pool.Handle("Catalog.Commands.BulkImportCommand");
     });
 });
 ```
 
 This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue processed with concurrency 2, while everything else uses the default queue at concurrency 20. Use pools to prevent slow or resource-intensive commands from blocking normal traffic.
+
+`AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
+endpoint's section) and configured again in code on the same name, and the two merge into one pool
+rather than producing a duplicate. `pool.Handle(...)` de-duplicates, so the merged pool's message
+types are the union of what configuration listed and what code added:
+
+```jsonc
+{ "Name": "imports", "Concurrency": 2, "MessageTypes": [ "Catalog.Commands.BulkImportCommand" ] }
+```
+```csharp
+options.AddPool("imports", pool => pool.Handle<ReindexCatalogCommand>());
+// -> one pool "imports", Concurrency 2, handling [BulkImportCommand, ReindexCatalogCommand]
+```
 
 ---
 

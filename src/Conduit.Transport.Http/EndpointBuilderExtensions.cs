@@ -48,6 +48,8 @@ public static class EndpointBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
 
         var options = new HttpOptions();
+
+        // Configuration first, then the callback — code always wins.
         builder.Configuration?.Bind(options);
         configure?.Invoke(options);
 

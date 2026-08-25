@@ -30,6 +30,7 @@ public static class EndpointBuilderExtensions
 
         var options = new AmazonSqsOptions { EndpointName = builder.EndpointName };
 
+        // Configuration first, then the callback — code always wins.
         // Region and Credentials are excluded from the bind and mapped by hand: RegionEndpoint has
         // no constructor the binder can use (it binds null silently) and AWSCredentials is abstract
         // (the binder throws outright).

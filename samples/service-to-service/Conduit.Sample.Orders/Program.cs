@@ -18,14 +18,11 @@ public partial class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
-        var inventoryHubUrl = builder.Configuration["InventoryService:HubUrl"]
-            ?? throw new InvalidOperationException("InventoryService:HubUrl is not configured.");
-
-        builder.Services.AddConduit(conduit =>
+        builder.Services.AddConduit(builder.Configuration, conduit =>
         {
             conduit.AddEndpoint("inventory", endpoint =>
             {
-                endpoint.UseSignalR(new Uri(inventoryHubUrl));
+                endpoint.UseSignalR();
                 endpoint.RouteNamespace<Inventory.Commands.ReserveInventoryCommand>();
                 endpoint.RouteNamespace<Inventory.Queries.CheckStockQuery>();
             });

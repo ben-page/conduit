@@ -31,6 +31,7 @@ public static class EndpointBuilderExtensions
 
         var options = new ActiveMQOptions { EndpointName = builder.EndpointName };
 
+        // Configuration first, then the explicit argument, then the callback — code always wins.
         ConduitConfigurationBinder.BindTransportOptions(options, builder.Configuration);
 
         if (!string.IsNullOrWhiteSpace(connectionString))

@@ -9,6 +9,7 @@
 - [Envelope dispatch](#envelope-dispatch)
 - [When to use which](#when-to-use-which)
 - [Outbound HttpTransport](#outbound-httptransport)
+  - [Loading from configuration](#loading-from-configuration)
 
 ## Overview
 
@@ -162,6 +163,39 @@ builder.Services.AddConduit(conduit =>
 `UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs the plain serialized message to `/api/conduit/dispatch` with the type in the `X-Conduit-Type` header (configurable via the `basePath` parameter).
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
+
+### Loading from configuration
+
+A second `UseHttp(configure?)` overload takes the base address and path from the endpoint's
+configuration section instead of a caller-owned `HttpClient`. It registers its own named
+`HttpClient` internally (via `AddHttpClient`), so there is nothing to pass:
+
+```json
+{
+  "Conduit": {
+    "Endpoints": {
+      "billing": {
+        "BaseAddress": "https://billing.example",
+        "BasePath": "/api/conduit"
+      }
+    }
+  }
+}
+```
+
+```csharp
+conduit.AddEndpoint("billing", endpoint => endpoint.UseHttp());
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `BaseAddress` | *(required)* | Base address of the remote Conduit host |
+| `BasePath` | `/api/conduit` | Path prefix the remote host maps its dispatch endpoint on |
+
+Configuration binds first; a `configure` callback overrides it. The `UseHttp(httpClient, basePath?)`
+overload shown above never reads configuration — it exists for when you manage the `HttpClient`
+yourself. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
+for the full precedence rule.
 
 ---
 

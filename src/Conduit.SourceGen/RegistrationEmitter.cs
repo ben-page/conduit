@@ -168,8 +168,9 @@ public static class RegistrationEmitter
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    /// <summary>");
-        sb.AppendLine("    /// Registers Conduit, binding core options and each endpoint's transport options");
-        sb.AppendLine("    /// from configuration before the callback runs, so values set in code win.");
+        sb.AppendLine("    /// Registers Conduit, binding core options from configuration and making the Conduit");
+        sb.AppendLine("    /// section available to endpoints, before the callback runs, so values set in code win.");
+        sb.AppendLine("    /// Each endpoint's transport options are bound later, by its own Use* extension.");
         sb.AppendLine("    /// </summary>");
         sb.AppendLine("    public static IServiceCollection AddConduit(");
         sb.AppendLine("        this IServiceCollection services,");

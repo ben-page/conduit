@@ -1,7 +1,7 @@
 # Conduit.Transport.ActiveMQ
 
 - `ActiveMQTransport` — extends `BrokerTransportBase<ActiveMQInboundMessage>`. Uses `AmqpNetLite` (AMQP 1.0). Inbound dispatch, lifecycle, and outbound serialization handled by base class. Implements Artemis-specific primitives: AMQP 1.0 connection/session management, two-address publishing, exclusive reply queue correlation, receiver link management.
-- `UseActiveMQ(connectionString, configure?)` registers: singleton transport, `IHostedService` forwarding, non-keyed `IConduitTransport` (for event broadcast), keyed `IConduitTransport` (for endpoint routing), and calls `UseTransport<ActiveMQTransport>()`
+- `UseActiveMQ(connectionString?, configure?)` registers everything **keyed by endpoint name** — options, `ActiveMQTransport` (via `ActivatorUtilities.CreateInstance`, resolving the keyed options), a forwarding non-keyed `IConduitTransport` entry and a forwarding non-keyed `IHostedService` entry (each resolving the endpoint's keyed transport instance) — and calls `UseTransport<ActiveMQTransport>()`. No non-keyed `ActiveMQTransport`/options registration exists: two endpoints on ActiveMQ are two independent transport instances with independent options, never a shared last-write-wins singleton.
 - Two addresses: anycast for commands/queries, multicast for events
 - Command/query queues: shared names on anycast address (unicast). Event queues: per-app names on multicast address (multicast).
 - Reply queue: per-instance exclusive temporary queue (destroyed on shutdown)
@@ -9,3 +9,4 @@
 - Topology via Artemis management address (`activemq.management`). Topology modes: Production = durable, Developer = auto-delete-delay 4h, Test = auto-delete-delay 5min (native Artemis support).
 - Concurrency via AMQP link credit (prefetch count). Options inherit `BrokerTransportOptions` (core): `DefaultConcurrency` and `ReceiverPoolOptions.Concurrency` both map to the receiver link prefetch count.
 - Type discovery via `ConduitTypeRegistry` (source-generated, compile-time verified) — no runtime DI scanning
+- **Configuration keys** (`Conduit:Endpoints:{endpointName}`, bound by `ConduitConfigurationBinder.BindTransportOptions` before the `configure` callback runs): `ConnectionString` (required), `Username`/`Password` (optional SASL PLAIN, bind directly — no hand-mapping needed), `DefaultConcurrency` (default `10`), `ResponseTimeout` (default `00:01:00`), `Pools` (array of `{ Name, Concurrency, MessageTypes[] }` — see `AddPool` merge semantics in `src/Conduit/CLAUDE.md`). See [`docs/configuration-reference.md`](../../docs/configuration-reference.md#loading-from-iconfiguration).

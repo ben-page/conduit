@@ -1,6 +1,7 @@
 # Conduit (core)
 
-No ASP.NET dependency — only DI abstractions, Hosting abstractions, Logging abstractions, Options.
+No ASP.NET dependency — only DI abstractions, Hosting abstractions, Logging abstractions, Options,
+and `Microsoft.Extensions.Configuration.Binder`.
 
 ## Runtime types
 
@@ -15,13 +16,30 @@ No ASP.NET dependency — only DI abstractions, Hosting abstractions, Logging ab
 - `ConduitHeaders` — well-known keys for the outbound header dictionary `BrokerTransportBase` assembles once per publish (`MessageId`, `CausationId`, `ConversationId`, `SourceApp`). These name **in-process** dictionary entries; each transport maps them onto its own native property model and keeps its existing on-wire names. Transports must not read ambient state (`MessageContext.Current`, static fields) on the outbound path — the dictionary is the only source.
 - **Self-published event filter** (`BrokerTransportBase.ProcessInboundMessageAsync`) — drops an inbound event whose `ConduitHeaders.SourceApp` stamp matches this host's own `ApplicationName`, because that application's listeners already ran inline when `PublishAsync` published it. An application's own listeners therefore always run **on the publishing instance**, never load-balanced across replicas — the fix removes the extra broker-delivered execution rather than redistributing the work. Placed immediately after `MessageContext.StartDispatchFromTransport` (so the skip observation isn't dropped — `MessageContext.Observe` no-ops without a current context) and before `CreateAsyncScope` (so a filtered message costs neither a DI scope nor a deserialize); acknowledges rather than abandons, to avoid a redelivery loop. Four details make the guard correct: it keys on the **application**, not the instance — `ApplicationName` is shared by every replica, so an instance-scoped stamp would let a peer replay the listeners; it recognizes events via `ConduitTypeRegistry.EventTypeNames`, not `!IsRequest` — a routed `[FireAndForget]` command also arrives with `IsRequest == false`, and filtering on that alone would silently drop a command an application routed to itself or a peer; it requires `ApplicationName` to be non-empty before comparing — without that guard, a missing stamp on *any* inbound event, including one from a non-Conduit producer, would compare equal to an unset `ApplicationName` and be silently discarded, so an unnamed application would drop every inbound event rather than none; and a missing or non-matching stamp always dispatches normally, so pre-upgrade messages and non-Conduit producers are unaffected. Emits `SelfPublishedEventSkipped` (a `MessageObservation`) on drop, so a dropped listener run is visible to any registered `IConduitObserver` (see [Audit](../../docs/audit.md)) instead of silently disappearing.
 - `BrokerTransportOptions` — abstract base for all 5 broker options classes. Owns `DefaultConcurrency` (int, default 10), the `Pools` list, and `AddPool(name, configure)`. Concrete transport options inherit it and add only broker-specific settings.
-- `ReceiverPoolOptions` — single shared named-pool config: `Name` (required), `Concurrency` (int, default 1), `MessageTypes` (`IReadOnlyList<string>`, exposed read-only; populate via `Handle(fullTypeName)`). `Concurrency` is interpreted per broker (prefetch for RabbitMQ/ActiveMQ, max-concurrent-calls for ASB, polling parallelism for SQS, consume parallelism for Kafka); transports cast to the broker-native type at the consumption site (e.g. `(ushort)` for RabbitMQ prefetch).
+- `ReceiverPoolOptions` — single shared named-pool config: `Name` (required), `Concurrency` (int, default 1), `MessageTypes` (`IReadOnlyList<string>`, exposed read-only; populate via `Handle(fullTypeName)`, `Handle<TMessage>()`, or `Handle(Type)` — all three resolve to `FullTypeName` and de-duplicate, so calling any of them twice with the same type is a no-op). `Concurrency` is interpreted per broker (prefetch for RabbitMQ/ActiveMQ, max-concurrent-calls for ASB, polling parallelism for SQS, consume parallelism for Kafka); transports cast to the broker-native type at the consumption site (e.g. `(ushort)` for RabbitMQ prefetch).
+- `ConduitConfigurationBinder` (`Conduit.Configuration`) — static helper, `BindTransportOptions(BrokerTransportOptions options, IConfiguration? section, params string[] excludedKeys)`. Called by each broker transport's `Use*` extension before its `configure` callback runs. No-ops when `section` is null or has no children. Validates every `Pools` entry has a unique, non-empty `Name` (the binder itself would bind a missing required `Name` as `""` rather than throwing) — throws `InvalidOperationException` naming the offending configuration path otherwise. Binds everything except `excludedKeys` (and null values) by projecting the section through `AsEnumerable(makePathsRelative: true)`, rebuilding it as an in-memory configuration, and calling `Bind(options)` — `excludedKeys` exists because the binder throws on abstract/interface-typed properties it cannot construct (e.g. `AmazonSqsOptions.Credentials`). Then hand-adds each pool's `MessageTypes` via `Handle(...)`, because `ReceiverPoolOptions.MessageTypes` is a getter-only `IReadOnlyList<string>` that the binder skips silently.
 
 ## Configuration
 
 `AddConduit()` is generated by source gen. All configuration goes through `ConduitBuilder`: `AddEndpoint`, `AddPipeline`, `AddTypeFilter`. Routing is configured per-endpoint via `EndpointBuilder.RouteNamespace<T>()` and `EndpointBuilder.RouteType<T>()`.
 
 `TopologyMode` enum (Production/Developer/Test) and `SystemName`/`TopologyPrefix` properties on `ConduitOptions` control topology resource naming and durability across broker transports.
+
+`ConduitBuilder.UseConfiguration(IConfiguration)` binds the five `ConduitOptions` scalars
+(`SystemName`, `ApplicationName`, `TopologyMode`, `TopologyPrefix`, `ProducerOnly`) explicitly,
+property by property — never `section.Bind(options)`, because `Endpoints`/`Routes`/`PipelineTypes`
+are code-owned shapes the binder would mangle or choke on. It stores the resolved section on
+`ConduitBuilder.Configuration` for `EndpointBuilder` to slice into `Endpoints:{name}` per endpoint.
+Source-generated `AddConduit(IServiceCollection, IConfiguration, Action<ConduitBuilder>?)` (emitted
+by `RegistrationEmitter`, `src/Conduit.SourceGen/`) just calls `UseConfiguration` then the callback —
+config binds first, code always wins.
+
+`BrokerTransportOptions.AddPool(name, configure)` is **get-or-create**: if a pool with that name
+already exists (typically because configuration produced it), `configure` runs against the existing
+pool instead of appending a duplicate. Combined with `ReceiverPoolOptions.Handle`'s de-duplication,
+a pool declared in both configuration and code ends up with the union of both sources' message
+types rather than two competing pools. See [`docs/configuration-reference.md`](../../docs/configuration-reference.md#loading-from-iconfiguration)
+for the full picture, including per-transport configuration key tables.
 
 ## Wire dispatch route forwarding
 
