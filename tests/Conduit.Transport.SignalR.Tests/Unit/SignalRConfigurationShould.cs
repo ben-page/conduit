@@ -30,6 +30,9 @@ public class SignalRConfigurationShould
         await using var serviceProvider = services.BuildServiceProvider();
         serviceProvider.GetRequiredKeyedService<IConduitTransport>("inventory")
             .Should().BeOfType<SignalRTransport>();
+
+        var options = serviceProvider.GetRequiredKeyedService<SignalROptions>("inventory");
+        options.HubUri.Should().Be(new Uri("https://inventory.example/conduit"));
     }
 
     [TestMethod]

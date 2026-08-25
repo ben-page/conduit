@@ -17,7 +17,8 @@ public static class EndpointBuilderExtensions
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="httpClient">An HttpClient with BaseAddress set to the remote service.</param>
     /// <param name="basePath">
-    /// The base Conduit endpoint path. Defaults to "/api/conduit" when not supplied.
+    /// The base Conduit endpoint path. When not supplied, falls back to the endpoint's configured
+    /// <c>BasePath</c> (<c>Conduit:Endpoints:{endpointName}:BasePath</c>), then to "/api/conduit".
     /// </param>
     /// <returns>The endpoint builder for chaining.</returns>
     public static EndpointBuilder UseHttp(
@@ -28,8 +29,12 @@ public static class EndpointBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(httpClient);
 
+        // The explicit argument wins, then the configured BasePath, then the default —
+        // an HttpClient supplied by the caller doesn't opt an endpoint out of configuration.
+        var resolvedBasePath = basePath ?? builder.Configuration?["BasePath"] ?? "/api/conduit";
+
         builder.Services.AddKeyedSingleton(
-            builder.EndpointName, new HttpTransport(httpClient, basePath ?? "/api/conduit"));
+            builder.EndpointName, new HttpTransport(httpClient, resolvedBasePath));
 
         return builder.UseTransport<HttpTransport>();
     }
@@ -64,6 +69,10 @@ public static class EndpointBuilderExtensions
         var endpointName = builder.EndpointName;
         var baseAddress = options.BaseAddress;
         var basePath = options.BasePath;
+
+        // Keyed by endpoint, matching the broker transports' pattern, so the bound options are
+        // inspectable instead of being bound and dropped.
+        builder.Services.AddKeyedSingleton(endpointName, options);
 
         builder.Services.AddHttpClient(endpointName, httpClient => httpClient.BaseAddress = baseAddress);
 
