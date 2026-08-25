@@ -70,6 +70,49 @@ EXISTS` is unsupported on MySQL and SQL Server.
 reusing one while an earlier claim is still in flight would hand the caller the earlier claim's rows
 too. `DurableJobScheduler` generates a fresh GUID per sweep.
 
+## Rejected alternatives
+
+Recorded because each is appealing enough to be proposed again.
+
+**Inbox dedup instead of row claiming.** `IInboundInterceptor` gates run only on the wire-inbound
+path, so a locally-dispatched scheduled command never passes one — the common case would get no
+protection at all. It would also need a deterministic `MessageId`, which no API exposes
+(`DispatchOptions` carries only properties; `MessageContext.StartDispatch` mints a fresh GUID), and
+`InboxOptions.RetentionPeriod` defaults to 30 minutes, so dedup would silently degrade under clock
+skew exceeding retention.
+
+**Leader election instead of row claiming.** No lease primitive exists in the repo, and the fencing
+gap is real: a leader that has GC-paused past its lease still believes it leads while a new leader
+also fires. Raft closes that with a term number, but Raft's guarantee covers the replicated log, and
+firing a job is a side effect *outside* the log — a partitioned old leader can still dispatch.
+Making it safe means carrying the term into a conditional write at the point of the side effect,
+which is a row claim wearing a hat. It would also change Conduit's deployment contract permanently:
+today every instance talks to a broker and/or a database and **never to another instance**; Raft
+adds peer discovery, intra-cluster ports, an fsync'd log, and quorum sizing. And leader election
+loses the part that matters most — if the host running the 02:00 rollup dies mid-job, a claim
+becomes re-claimable after `ClaimTimeout` and another replica takes it, where a leader simply loses
+the occurrence.
+
+The decisive framing: a database is already a hard dependency for durable jobs, so using it for
+coordination is free. Raft would add a *second* coordination substrate alongside one we must have
+anyway.
+
+**An event-based cancellation signal instead of the heartbeat.** Publishing a
+`JobCancellationRequested` event would be lower-latency but does not work with Conduit's topology.
+The per-app event queue is competing-consumer (`TopologyNaming.CreateAppResourceName` is per
+*application*, shared by every replica), so a broadcast reaches exactly **one** replica — almost
+certainly not the one holding the claim — and the self-published-event filter would discard even
+that delivery, since the publishing application's own stamp matches. Fanning out to every replica
+needs per-instance topology Conduit does not have, and would work only with a broker configured,
+while durable jobs are perfectly viable with a database and none.
+
+**Imperative one-shot scheduling** (`ScheduleAsync(command, runAt)`) and the handle/cancellation API
+it implies. Declined deliberately; a delayed *event trigger* covers the declarative version of the
+same need and reuses the run row's existing `RunAt` column and claim path.
+
+If jobs ever needs a wire header, note that Amazon SQS request publishes already use 9 of the
+SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
+
 ## Non-obvious decisions
 
 - **Two tables.** The runs table is deleted on success, so it cannot answer "did we already run
