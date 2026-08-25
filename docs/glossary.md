@@ -134,6 +134,53 @@ A queue (broker transports) the sender owns for receiving request/response repli
 **bypass** the topic/exchange and are delivered point-to-point to the reply queue. Reply queues are
 created by `EnsureOutboundTopologyAsync` even in `ProducerOnly` mode.
 
+### Job
+
+Background work declared via `conduit.AddJobs(...)`, either on a recurring **schedule** or as a
+reaction to an event (an **event trigger**). A job body is an ordinary command, so it inherits
+routing, pipeline behaviors, resilience and audit. See [Background Jobs](jobs.md).
+
+### Schedule
+
+A code-declared recurring job: a cron expression or a fixed interval, plus what to dispatch. Its
+name is its database key and must be unique. Because it is declared in code, every host computes
+the same occurrences without coordinating.
+
+### Occurrence
+
+One moment a schedule is due, computed in memory from the declaration. Distinct from a **run**: an
+occurrence is a point in time; a run is the ledger row for executing it.
+
+### Run
+
+A row in `conduit_job_runs` representing one execution of an occurrence or an event trigger, keyed
+`{schedule}@{occurrenceUtcIso}` or `{trigger}@{eventMessageId}`. The table holds work, not history —
+a successful run's row is deleted, and history is [Audit](audit.md).
+
+### Claim
+
+The atomic UPDATE that elects exactly one host to run a due job, reusing the outbox's claim SQL with
+the run's due time as the eligibility column. A claim is **renewed** by a heartbeat while the job is
+genuinely running, so only a dead host's claim goes stale and becomes re-claimable — without
+renewal, a long job and a dead host are the same observation.
+
+### Cursor
+
+`conduit_job_schedules.LastCompletedOccurrence`: the most recent occurrence that reached a terminal
+outcome. Because a successful run's row is deleted, the cursor — not the row — is what stops a
+completed occurrence being re-materialized and re-run.
+
+### Misfire
+
+What happens to occurrences that fell between the cursor and now, i.e. were missed while the
+application was down. `MisfirePolicy.Skip` (default) advances past all of them; `RunImmediately`
+runs exactly one catch-up. Neither backfills.
+
+### Overlap
+
+Whether a new occurrence may start while a previous one is still outstanding — running, or awaiting
+a retry. Skipped by default; `AllowOverlap()` opts in.
+
 ---
 
 See also: [Core Concepts](core-concepts.md) · [Dispatch Flows](dispatch-flows.md) ·
