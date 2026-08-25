@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.Http;
@@ -15,18 +16,60 @@ public static class EndpointBuilderExtensions
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="httpClient">An HttpClient with BaseAddress set to the remote service.</param>
-    /// <param name="basePath">The base Conduit endpoint path. Defaults to "/api/conduit".</param>
+    /// <param name="basePath">
+    /// The base Conduit endpoint path. Defaults to "/api/conduit" when not supplied.
+    /// </param>
     /// <returns>The endpoint builder for chaining.</returns>
     public static EndpointBuilder UseHttp(
         this EndpointBuilder builder,
         HttpClient httpClient,
-        string basePath = "/api/conduit")
+        string? basePath = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(httpClient);
 
         builder.Services.AddKeyedSingleton(
-            builder.EndpointName, new HttpTransport(httpClient, basePath));
+            builder.EndpointName, new HttpTransport(httpClient, basePath ?? "/api/conduit"));
+
+        return builder.UseTransport<HttpTransport>();
+    }
+
+    /// <summary>
+    /// Configures this endpoint to dispatch over HTTP, taking the base address and path from the
+    /// endpoint's configuration section. Registers a named <see cref="HttpClient"/> for the endpoint.
+    /// </summary>
+    /// <param name="builder">The endpoint builder.</param>
+    /// <param name="configure">Optional callback to adjust the options after binding.</param>
+    /// <returns>The endpoint builder for chaining.</returns>
+    public static EndpointBuilder UseHttp(
+        this EndpointBuilder builder,
+        Action<HttpOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var options = new HttpOptions();
+        builder.Configuration?.Bind(options);
+        configure?.Invoke(options);
+
+        if (options.BaseAddress is null)
+        {
+            throw new InvalidOperationException(
+                $"HTTP transport for endpoint '{builder.EndpointName}' has no base address. " +
+                $"Set 'Conduit:Endpoints:{builder.EndpointName}:BaseAddress' in configuration " +
+                $"or pass an HttpClient to UseHttp().");
+        }
+
+        var endpointName = builder.EndpointName;
+        var baseAddress = options.BaseAddress;
+        var basePath = options.BasePath;
+
+        builder.Services.AddHttpClient(endpointName, httpClient => httpClient.BaseAddress = baseAddress);
+
+        builder.Services.AddKeyedSingleton(
+            endpointName,
+            (serviceProvider, _) => new HttpTransport(
+                serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(endpointName),
+                basePath));
 
         return builder.UseTransport<HttpTransport>();
     }
