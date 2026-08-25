@@ -19,7 +19,7 @@ public sealed class KafkaOptions : BrokerTransportOptions
     /// <summary>
     /// Kafka bootstrap servers connection string (e.g. "localhost:9092").
     /// </summary>
-    public required string BootstrapServers { get; init; }
+    public string BootstrapServers { get; set; } = string.Empty;
 
     /// <summary>
     /// Timeout for request/response operations. Default 60 seconds.

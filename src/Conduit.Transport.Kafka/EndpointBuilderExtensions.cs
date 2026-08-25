@@ -1,5 +1,6 @@
 using Conduit.Configuration;
 using Conduit.Runtime;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -16,23 +17,39 @@ public static class EndpointBuilderExtensions
     /// and <see cref="IHostedService"/> (for background consumer lifecycle).
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
-    /// <param name="bootstrapServers">Kafka bootstrap servers (e.g. "localhost:9092").</param>
+    /// <param name="bootstrapServers">
+    /// Kafka bootstrap servers (e.g. "localhost:9092"). Overrides the endpoint's configured
+    /// <c>BootstrapServers</c>, if any. Optional when configuration supplies one.
+    /// </param>
     /// <param name="configure">Optional callback to configure Kafka-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
     public static EndpointBuilder UseKafka(
         this EndpointBuilder builder,
-        string bootstrapServers,
+        string? bootstrapServers = null,
         Action<KafkaOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(bootstrapServers);
 
-        var options = new KafkaOptions
+        var options = new KafkaOptions { EndpointName = builder.EndpointName };
+
+        // Configuration first, then the explicit argument, then the callback — code always wins.
+        ConduitConfigurationBinder.BindTransportOptions(options, builder.Configuration);
+        ApplyDottedKeys(options, builder.Configuration);
+
+        if (!string.IsNullOrWhiteSpace(bootstrapServers))
         {
-            BootstrapServers = bootstrapServers,
-            EndpointName = builder.EndpointName,
-        };
+            options.BootstrapServers = bootstrapServers;
+        }
+
         configure?.Invoke(options);
+
+        if (string.IsNullOrWhiteSpace(options.BootstrapServers))
+        {
+            throw new InvalidOperationException(
+                $"Kafka transport for endpoint '{builder.EndpointName}' has no bootstrap servers. " +
+                $"Set 'Conduit:Endpoints:{builder.EndpointName}:BootstrapServers' in configuration " +
+                $"or pass it to UseKafka().");
+        }
 
         var endpointName = builder.EndpointName;
 
@@ -55,5 +72,33 @@ public static class EndpointBuilderExtensions
             serviceProvider => serviceProvider.GetRequiredKeyedService<KafkaTransport>(endpointName));
 
         return builder.UseTransport<KafkaTransport>();
+    }
+
+    /// <summary>
+    /// Applies librdkafka-style dotted keys (e.g. <c>linger.ms</c>) that the configuration binder
+    /// ignores, since it matches on C# property names. Both spellings are accepted; a dotted key
+    /// would otherwise bind nothing at all, silently.
+    /// </summary>
+    private static void ApplyDottedKeys(KafkaOptions options, IConfiguration? section)
+    {
+        if (section is null)
+        {
+            return;
+        }
+
+        ApplyTo(options.ProducerConfig ??= new Confluent.Kafka.ProducerConfig(), section.GetSection("ProducerConfig"));
+        ApplyTo(options.ConsumerConfig ??= new Confluent.Kafka.ConsumerConfig(), section.GetSection("ConsumerConfig"));
+
+        static void ApplyTo(Confluent.Kafka.ClientConfig config, IConfiguration configSection)
+        {
+            foreach (var entry in configSection.GetChildren())
+            {
+                if (entry.Key.Contains('.', StringComparison.Ordinal)
+                    && entry.Value is { Length: > 0 } value)
+                {
+                    config.Set(entry.Key, value);
+                }
+            }
+        }
     }
 }
