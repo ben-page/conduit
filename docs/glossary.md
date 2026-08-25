@@ -117,6 +117,17 @@ transport-native properties: HTTP `X-Conduit-Type` header, a SignalR hub method 
 wire values so correlation propagates across services — if the wire omits `causationId`, it defaults to
 `messageId` (self-causation). See [dispatch flows](dispatch-flows.md).
 
+### Self-published event filter
+
+A check in `BrokerTransportBase.ProcessInboundMessageAsync` that drops an inbound event whose
+`conduit-source-app` header (`ConduitHeaders.SourceApp`) matches this host's own `ApplicationName`.
+Exists because a broker's per-app event queue is bound to every discovered event type, including
+ones the application publishes itself — without the filter, an application would run its own event
+listeners twice: once inline at publish time, once again when the broker hands the message back.
+Applies to events only, keyed on the application (not the instance) so any replica drops the
+application's own copy. A dropped event is recorded as a `SelfPublishedEventSkipped` observation.
+See [Transports → Self-published events](transports/index.md#self-published-events).
+
 ### Reply queue
 
 A queue (broker transports) the sender owns for receiving request/response replies. Replies

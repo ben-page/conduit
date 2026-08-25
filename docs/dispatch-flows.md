@@ -159,15 +159,31 @@ transport receives raw message
   2. (messageId, causationId, conversationId) = ExtractContext(message)
   |  MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId)
   |      *** the wire-supplied MessageId/CausationId now flow through to the handler ***
-  3. scope = ServiceProvider.CreateAsyncScope()
+  3. self-published filter (events only):
+  |      sourceApp = ExtractMessageHeader(message, ConduitHeaders.SourceApp)
+  |      if !IsRequest(message) && ApplicationName is non-empty
+  |            && sourceApp == ApplicationName && IsEventType(messageType):
+  |          MessageContext.Observe(SelfPublishedEventSkipped(messageType))
+  |          AcknowledgeAsync(message); return   -- costs no scope, no deserialize
+  4. scope = ServiceProvider.CreateAsyncScope()
   |  wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>()
   |  body -> JsonElement payload -> DispatchEnvelope(messageType, payload)
-  4. dispatch by kind:
+  5. dispatch by kind:
   |     IsRequest(message)              -> DispatchRequestAsync           (command/query w/ reply)
   |     IsFireAndForgetCommand(...)     -> DispatchFireAndForgetCommandAsync (no reply)
   |     else                            -> DispatchEventAsync             (event)
-  5. MessageContext.RestoreContext(previous)   -- in finally
+  6. MessageContext.RestoreContext(previous)   -- in finally
 ```
+
+Step 3 only ever fires for the broker transports: this application's own listeners already ran
+inline when it called `PublishAsync`, and the per-app event queue is bound to every discovered
+event type including self-published ones, so the broker hands the application its own broadcast
+back. It must run after step 2 (`MessageContext.Observe` no-ops without a current context) and
+before scope creation (a filtered message shouldn't cost a DI scope or a deserialize). It checks
+`IsEventType`, not just `!IsRequest`, because a routed `[FireAndForget]` command also arrives with
+`IsRequest == false` and must not be dropped. See
+[Transports → Self-published events](transports/index.md#self-published-events) for the full
+rationale.
 
 ### The three-layer middleware
 

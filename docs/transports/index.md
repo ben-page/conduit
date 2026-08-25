@@ -7,6 +7,7 @@
 - [Event broadcasting](#event-broadcasting)
   - [\[LocalOnly\]](#localonly)
   - [Inbound events](#inbound-events)
+  - [Self-published events](#self-published-events)
 
 ## Overview
 
@@ -164,6 +165,60 @@ Browser --SignalR--> ConduitHub.Publish()
 ```
 
 This prevents echo loops. If an inbound event were re-broadcast, it would bounce between services indefinitely. The generated mediator uses a private `PublishLocalAsync` method for wire-inbound events that skips broadcast entirely.
+
+### Self-published events
+
+The five broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveMQ) route every
+message through a shared topic/exchange, and each application's per-app event queue is bound to
+*every* discovered event type — including the ones the application publishes itself. Left alone,
+that means a broker-backed application receives its own broadcast back:
+
+```
+App A publishes MyEvent
+  |
+  +-- local listeners run inline, on A                    (PublishAsync, always)
+  |
+  +-- transport broadcast --> topic --> A's own per-app queue --> A receives MyEvent again
+```
+
+Running A's listeners a second time would be a bug, not a feature, so every outbound event carries
+the publishing application's name (`ConduitOptions.ApplicationName`), and a broker transport drops
+an inbound event whose stamp matches its own application name — that application's listeners
+already ran when it was published. The drop happens before a DI scope is created or the payload is
+deserialized, and is recorded as a `SelfPublishedEventSkipped` observation, visible in the
+[audit trail](../audit.md), so "why didn't my listener run" has an answer.
+
+A few things worth knowing about the check:
+
+- **It keys on the application, not the instance.** Every replica of a service shares the same
+  `ApplicationName`, so any instance of application A drops A's own copy, not just the instance
+  that published it. An instance-scoped stamp would let a *peer* instance run the listeners again
+  — the defect this exists to prevent, one hop later.
+- **Requests are never dropped.** A command or query legitimately routed back to its own
+  application — self-routing, or a receiver pool shared with the publisher — must still be
+  handled, so the check only ever looks at events.
+- **Event-ness is decided by the type registry, not by "not a request."** A routed
+  `[FireAndForget]` command also arrives expecting no reply, which looks like an event at the wire
+  level. Checking the type registry instead of the absence of a reply keeps such a command from
+  being dropped.
+- **An application with no configured name never filters.** A missing stamp would otherwise
+  compare equal to a missing `ApplicationName`, and every inbound event would be silently
+  discarded — an outage, not a fix. The guard exists specifically to rule that out.
+- **A missing or foreign stamp always dispatches normally**, so events published before an
+  upgrade (no stamp yet) and events from non-Conduit producers behave exactly as before. This
+  keeps a rolling upgrade safe.
+- **SignalR and HTTP are unaffected.** SignalR's server mode never consumes its own hub, and its
+  client mode dispatches to the server's local listeners without re-broadcasting to other clients.
+  HTTP carries no events at all — `SendEventAsync` is unsupported. The filter lives entirely in
+  `BrokerTransportBase`, shared by the five broker transports only.
+- **There is no configuration knob to turn it off.** The filter is unconditional wherever it
+  applies; add an opt-out only if a concrete use case for double-processing your own events
+  actually shows up.
+
+One consequence follows directly: an application's own listeners always run **on the publishing
+instance**, not load-balanced across replicas, because the inline run happens at publish time and
+the broker-delivered copy is the one that gets dropped. See
+[Core Concepts → Where an application's own listeners run](../core-concepts.md#where-an-applications-own-listeners-run).
 
 ## Ephemeral resource cleanup
 
