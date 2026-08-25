@@ -45,6 +45,36 @@ public class RabbitMqConfigurationShould
     }
 
     [TestMethod]
+    public async Task GiveTwoEndpointsOnTheSameTransportTheirOwnKeyedOptions()
+    {
+        // Arrange — two RabbitMQ endpoints, each with its own configuration section. This pins
+        // the property the whole per-endpoint + IConfiguration-binding branch rests on: phase 1
+        // (each endpoint binds from its own Conduit:Endpoints:{name} section) and phase 2 (each
+        // endpoint's options are registered as an independently keyed singleton) working together.
+        var builder = BuilderWith(new Dictionary<string, string?>
+        {
+            ["Conduit:Endpoints:orders:ConnectionString"] = "amqp://guest@alpha:5672/",
+            ["Conduit:Endpoints:orders:DefaultConcurrency"] = "20",
+            ["Conduit:Endpoints:audit:ConnectionString"] = "amqp://guest@beta:5672/",
+            ["Conduit:Endpoints:audit:DefaultConcurrency"] = "5",
+        });
+
+        // Act
+        builder.AddEndpoint("orders", endpoint => endpoint.UseRabbitMQ());
+        builder.AddEndpoint("audit", endpoint => endpoint.UseRabbitMQ());
+
+        // Assert
+        await using var serviceProvider = builder.Services.BuildServiceProvider();
+        var ordersOptions = serviceProvider.GetRequiredKeyedService<RabbitMQOptions>("orders");
+        var auditOptions = serviceProvider.GetRequiredKeyedService<RabbitMQOptions>("audit");
+
+        ordersOptions.ConnectionString.Should().Be("amqp://guest@alpha:5672/");
+        ordersOptions.DefaultConcurrency.Should().Be(20);
+        auditOptions.ConnectionString.Should().Be("amqp://guest@beta:5672/");
+        auditOptions.DefaultConcurrency.Should().Be(5);
+    }
+
+    [TestMethod]
     public async Task LetTheExplicitArgumentOverrideConfiguration()
     {
         // Arrange
