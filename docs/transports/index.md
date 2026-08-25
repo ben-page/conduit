@@ -54,10 +54,18 @@ The intended use of two endpoints on the same transport type is **two different 
 endpoints on the same transport pointed at the *same* broker from the *same* application will now
 genuinely start two independent transports, each creating its own app-scoped topology. That topology
 collides: `TopologyNaming.CreateAppResourceName` keys resource names off `ApplicationName`, not the
-endpoint name, so both endpoints derive identical queue/subscription/consumer-group names and end up
-as competing consumers on one shared queue. This is redundant — messages still get processed exactly
-once, just by whichever of the two instances happens to receive them — rather than incorrect, but it
-is not a useful configuration. If you need two logically separate destinations on the same broker
+endpoint name, so both endpoints derive identical resource names — with different consequences for
+each message kind. Commands and queries route: dispatch resolves exactly one keyed transport by
+endpoint name, so a routed message is only ever sent once, and the two endpoints' identical queue
+names just make them competing consumers on that one queue — redundant, not incorrect. Events do not
+route, they broadcast: the generated mediator iterates every registered `IConduitTransport` and calls
+`SendEventAsync` on each one (`MediatorEmitter.EmitBroadcastBlock`), with no dedupe by broker or
+connection. Two endpoints on the same broker publish every event twice to the same topic, and because
+both derive the same app-scoped event queue name, that queue receives two copies and listeners run
+twice — unless the durability inbox is enabled to dedupe by message ID. This is not a regression from
+the per-endpoint change: before it, registering a transport twice returned the same shared instance
+for both registrations, and broadcasting to it produced the same double publish. It just was not
+previously documented. If you need two logically separate destinations on the same broker
 technology, give them distinct connection strings (different brokers, or at minimum different virtual
 hosts/namespaces).
 
