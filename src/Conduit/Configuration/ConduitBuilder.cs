@@ -95,6 +95,14 @@ public class ConduitBuilder
     /// Binds core options from configuration and makes the section available to endpoints.
     /// Values set in code after this call override the configured ones.
     /// </summary>
+    /// <remarks>
+    /// Must be called BEFORE <see cref="AddEndpoint"/>. <see cref="AddEndpoint"/> snapshots the
+    /// current <see cref="Configuration"/> into the <see cref="EndpointBuilder"/> it creates, so
+    /// calling <see cref="UseConfiguration"/> afterwards silently binds nothing for that endpoint.
+    /// The source-generated <c>AddConduit(IConfiguration, ...)</c> overload calls this first and
+    /// always gets the order right; this method is public and directly callable, so calling it
+    /// out of order is a real risk when wiring <see cref="ConduitBuilder"/> up by hand.
+    /// </remarks>
     /// <param name="configuration">
     /// The application configuration, or the Conduit section itself. When an
     /// <see cref="IConfigurationSection"/> is passed it is used as-is; otherwise the

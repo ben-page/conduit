@@ -31,9 +31,12 @@ public static class EndpointBuilderExtensions
         var options = new AmazonSqsOptions { EndpointName = builder.EndpointName };
 
         // Configuration first, then the callback — code always wins.
-        // Region and Credentials are excluded from the bind and mapped by hand: RegionEndpoint has
-        // no constructor the binder can use (it binds null silently) and AWSCredentials is abstract
-        // (the binder throws outright).
+        // "Credentials" MUST be excluded: AWSCredentials is abstract, so the generic binder throws
+        // outright when it tries to construct one. "Region" is belt-and-braces, not strictly
+        // required: the binder would bind RegionEndpoint to null silently rather than throwing (it
+        // has no usable constructor either), and ApplyAwsConfiguration below overwrites
+        // options.Region either way — excluding it here just avoids a wasted, silently-discarded
+        // bind attempt.
         ConduitConfigurationBinder.BindTransportOptions(
             options, builder.Configuration, "Region", "Credentials");
         ApplyAwsConfiguration(options, builder.Configuration);
