@@ -1,5 +1,6 @@
 using Conduit.Generated;
 using Conduit.Jobs.Configuration;
+using Conduit.Jobs.Runtime;
 using Conduit.Persistence.Sqlite;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,8 +17,11 @@ namespace Conduit.Jobs.Tests.Support;
 /// </summary>
 public static class JobsTestHost
 {
-    /// <summary>Starts a host. Supplying a connection string makes the jobs durable.</summary>
-    public static Task<TestHost> StartAsync(
+    /// <summary>
+    /// Starts a host and waits until its scheduling loops are actually waiting on the clock.
+    /// Supplying a connection string makes the jobs durable.
+    /// </summary>
+    public static async Task<TestHost> StartAsync(
         Action<JobsBuilder> configureJobs,
         JobSpy? spy = null,
         TimeProvider? timeProvider = null,
@@ -29,7 +33,7 @@ public static class JobsTestHost
         var resolvedSpy = spy ?? new JobSpy();
         var resolvedTime = timeProvider ?? TimeProvider.System;
 
-        return TestHost.StartAsync(builder =>
+        var host = await TestHost.StartAsync(builder =>
         {
             builder.Logging.ClearProviders();
             if (logs is not null)
@@ -53,5 +57,12 @@ public static class JobsTestHost
                 conduit.AddJobs(configureJobs);
             });
         });
+
+        // Without this the test could advance a FakeTimeProvider past an occurrence before any loop
+        // had armed a timer for it, and the host would sit waiting for the occurrence after.
+        await host.GetRequiredService<JobSchedulerReadiness>().Ready
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        return host;
     }
 }

@@ -78,17 +78,23 @@ public static class ConduitBuilderExtensions
         // Never the ambient clock: every scheduling decision reads this, so occurrence computation,
         // misfire detection, backoff and MaxRuntime stay deterministically testable.
         builder.Services.TryAddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton<JobSchedulerReadiness>();
+
+        // Registered first, because hosted services start in registration order and both schedulers
+        // read the tables on their very first pass. It also validates, so a misconfiguration fails
+        // before any loop has begun.
+        builder.Services.AddHostedService<JobTableInitializer>();
 
         if (HasPersistenceEngine(builder.Services))
         {
             builder.Services.AddScoped<IJobStore, DbJobStore>();
+            builder.Services.AddSingleton<JobRunner>();
+            builder.Services.AddHostedService<DurableJobScheduler>();
         }
         else
         {
             builder.Services.AddHostedService<InMemoryJobScheduler>();
         }
-
-        builder.Services.AddHostedService<JobTableInitializer>();
 
         return builder;
     }
