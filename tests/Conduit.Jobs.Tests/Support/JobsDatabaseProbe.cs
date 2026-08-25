@@ -24,6 +24,19 @@ public static class JobsDatabaseProbe
             Options.Create(options ?? new JobsOptions()));
     }
 
+    /// <summary>
+    /// Creates the jobs tables and seeds a schedule's cursor, standing in for an application that has
+    /// been running the schedule and then stopped.
+    /// </summary>
+    public static async Task SeedCursorAsync(
+        SharedSqliteDatabase database, string scheduleName, DateTimeOffset lastCompleted)
+    {
+        var store = StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync([scheduleName], CancellationToken.None);
+        await store.AdvanceCursorAsync(scheduleName, lastCompleted, CancellationToken.None);
+    }
+
     /// <summary>Waits until a run reaches a terminal status, or fails the test.</summary>
     public static async Task<JobRun> WaitForTerminalAsync(
         SharedSqliteDatabase database, string jobKey, TimeSpan? timeout = null)
