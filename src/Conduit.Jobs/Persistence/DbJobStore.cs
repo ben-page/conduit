@@ -459,12 +459,13 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             cancellationToken);
 
     /// <inheritdoc/>
-    public Task<int> PurgeFailedAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+    public Task<int> PurgeTerminalAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
         => this.ExecuteNonQueryAsync(
-            $"DELETE FROM {JobTableSchema.RunsTable} WHERE Status = @Failed AND RunAt <= @Cutoff",
+            $"DELETE FROM {JobTableSchema.RunsTable} WHERE Status IN (@Failed, @Cancelled) AND RunAt <= @Cutoff",
             command =>
             {
                 DbParameterHelper.Add(command, "@Failed", (int)JobRunStatus.Failed);
+                DbParameterHelper.Add(command, "@Cancelled", (int)JobRunStatus.Cancelled);
                 DbParameterHelper.Add(command, "@Cutoff", FormatTimestamp(olderThan));
             },
             cancellationToken);

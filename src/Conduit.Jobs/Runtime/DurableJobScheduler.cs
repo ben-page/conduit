@@ -290,10 +290,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         // A lost claim outranks everything the runner concluded: the row belongs to another host now,
         // so this one must write nothing at all to it.
         var outcome = heartbeat.ClaimLost ? JobOutcome.ClaimLost : attempt.Outcome;
-        await this.RecordOutcomeAsync(run, outcome);
+        await this.RecordOutcomeAsync(run, outcome, attempt.Error);
     }
 
-    private async Task RecordOutcomeAsync(JobRun run, JobOutcome outcome)
+    private async Task RecordOutcomeAsync(JobRun run, JobOutcome outcome, Exception? error)
     {
         if (outcome == JobOutcome.ClaimLost)
         {
@@ -327,6 +327,9 @@ internal sealed partial class DurableJobScheduler : BackgroundService
                     break;
 
                 case JobOutcome.Failed:
+                    await this.RecordFailureAsync(store, run, error);
+                    break;
+
                 case JobOutcome.ClaimLost:
                 default:
                     await store.ReleaseAsync(run.Id, run.ClaimToken!, CancellationToken.None);
@@ -340,6 +343,36 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             LogOutcomeNotRecorded(this.logger, run.JobKey, exception);
         }
     }
+
+    /// <summary>
+    /// Decides whether this failure gets another attempt. Conduit.Resilience has already had its say
+    /// about <i>this</i> attempt; the ledger decides whether there is <i>another</i> one, and only the
+    /// ledger survives a restart.
+    /// </summary>
+    private async Task RecordFailureAsync(IJobStore store, JobRun run, Exception? error)
+    {
+        var message = error?.Message ?? "The job failed without an exception message.";
+        var attempts = run.AttemptCount + 1;
+
+        if (attempts >= this.options.Value.MaxAttempts)
+        {
+            // The cursor advances even though the occurrence never succeeded: one permanently broken
+            // occurrence must not block every later one, and the failed row keeps it visible.
+            LogAttemptsExhausted(this.logger, run.JobKey, attempts);
+            await store.MarkTerminalAsync(
+                run.Id, JobRunStatus.Failed, message,
+                this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
+            return;
+        }
+
+        var nextRunAt = this.timeProvider.GetUtcNow() + BackoffFor(attempts);
+        LogRetryScheduled(this.logger, run.JobKey, attempts, nextRunAt);
+        await store.IncrementAttemptAsync(run.Id, nextRunAt, message, CancellationToken.None);
+    }
+
+    /// <summary>Exponential backoff from thirty seconds: 1 minute, 2, 4, ...</summary>
+    private static TimeSpan BackoffFor(int attempts)
+        => TimeSpan.FromSeconds(30 * Math.Pow(2, attempts));
 
     /// <summary>
     /// The schedule whose cursor this run should advance, or <see langword="null"/> when the run came
@@ -392,6 +425,17 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         Message = "Job schedule '{ScheduleName}' could not materialize occurrence {Occurrence}")]
     private static partial void LogOccurrenceFailed(
         ILogger logger, string scheduleName, DateTimeOffset occurrence, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Job run '{JobKey}' failed on attempt {Attempts}; the next attempt is due at {NextRunAt}")]
+    private static partial void LogRetryScheduled(
+        ILogger logger, string jobKey, int attempts, DateTimeOffset nextRunAt);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Job run '{JobKey}' failed on attempt {Attempts} and has no attempts left; marking it failed")]
+    private static partial void LogAttemptsExhausted(ILogger logger, string jobKey, int attempts);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job claim sweep failed")]
     private static partial void LogSweepFailed(ILogger logger, Exception exception);
