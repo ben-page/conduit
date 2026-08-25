@@ -348,6 +348,17 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
+    public async Task<DateTimeOffset?> GetNextPendingDueAsync(CancellationToken cancellationToken)
+    {
+        var earliest = await this.ExecuteScalarAsync(
+            $"SELECT MIN(RunAt) FROM {JobTableSchema.RunsTable} WHERE Status = @Pending",
+            command => DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending),
+            cancellationToken);
+
+        return earliest is string raw ? ParseTimestamp(raw) : null;
+    }
+
+    /// <inheritdoc/>
     public async Task<JobRun?> GetRunAsync(string jobKey, CancellationToken cancellationToken)
     {
         var rows = await this.ExecuteReaderAsync(

@@ -12,6 +12,33 @@ public sealed class CapturingLoggerProvider : ILoggerProvider
     /// <summary>Every message logged at Warning or above.</summary>
     public IReadOnlyList<string> Warnings => [.. this.warnings];
 
+    /// <summary>
+    /// Waits for a matching warning. Startup logging is not guaranteed to have happened by the time
+    /// the host's StartAsync returns, so asserting on it directly is a race.
+    /// </summary>
+    public async Task<string> WaitForWarningAsync(Func<string, bool> match, TimeSpan? timeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            var found = this.Warnings.FirstOrDefault(match);
+            if (found is not null)
+            {
+                return found;
+            }
+
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException(
+                    $"No matching warning was logged. Saw: [{string.Join(" | ", this.Warnings)}]");
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
     /// <inheritdoc/>
     public ILogger CreateLogger(string categoryName) => new CapturingLogger(this.warnings);
 

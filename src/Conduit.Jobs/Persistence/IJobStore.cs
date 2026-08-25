@@ -139,6 +139,14 @@ public interface IJobStore
     /// <returns><see langword="true"/> when a non-terminal run exists.</returns>
     public Task<bool> HasOutstandingAsync(string scheduleName, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// When the earliest not-yet-claimed run becomes due. The sweep waits until then instead of
+    /// polling, so steady-state traffic tracks the work outstanding rather than the passage of time.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The earliest pending due time, or <see langword="null"/> when nothing is pending.</returns>
+    public Task<DateTimeOffset?> GetNextPendingDueAsync(CancellationToken cancellationToken);
+
     /// <summary>Reads one run by its key.</summary>
     /// <param name="jobKey">The run key.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>

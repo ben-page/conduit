@@ -21,26 +21,33 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
     private readonly IServiceScopeFactory scopeFactory;
     private readonly TimeProvider timeProvider;
     private readonly ILogger<InMemoryJobScheduler> logger;
+    private readonly JobSchedulerReadiness readiness;
+    private readonly DateTimeOffset startedAt;
 
     public InMemoryJobScheduler(
         ScheduleRegistry registry,
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
+        JobSchedulerReadiness readiness,
         ILogger<InMemoryJobScheduler> logger)
     {
         this.registry = registry;
         this.scopeFactory = scopeFactory;
         this.timeProvider = timeProvider;
+        this.readiness = readiness;
         this.logger = logger;
+
+        // Read at construction rather than when the loop first runs: hosted services are constructed
+        // before any of them starts, so a schedule's first occurrence is anchored to when the host
+        // came up and does not drift with however long startup takes.
+        this.startedAt = timeProvider.GetUtcNow();
     }
 
     /// <inheritdoc/>
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Every loop must register its first timer before this method yields, or a test that
-        // advances a FakeTimeProvider immediately after the host starts would advance past an
-        // occurrence no timer was waiting for yet. Starting them without an intervening await is
-        // what guarantees that.
+        this.readiness.Expect(this.registry.Schedules.Count);
+
         var loops = new List<Task>(this.registry.Schedules.Count);
         foreach (var schedule in this.registry.Schedules)
         {
@@ -53,21 +60,31 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
 
     private async Task RunScheduleAsync(JobSchedule schedule, CancellationToken stoppingToken)
     {
-        var next = schedule.NextOccurrenceAfter(this.timeProvider.GetUtcNow());
+        var next = schedule.NextOccurrenceAfter(this.startedAt);
+        var armed = false;
 
         while (!stoppingToken.IsCancellationRequested && next is { } occurrence)
         {
             var delay = occurrence - this.timeProvider.GetUtcNow();
             if (delay > TimeSpan.Zero)
             {
+                // The timer exists the moment Task.Delay is called, so reporting between creating it
+                // and awaiting it is the only point at which "armed" is true and not yet racy.
+                var wait = Task.Delay(delay, this.timeProvider, stoppingToken);
+                armed = ReportArmedOnce(this.readiness, armed);
+
                 try
                 {
-                    await Task.Delay(delay, this.timeProvider, stoppingToken);
+                    await wait;
                 }
                 catch (OperationCanceledException)
                 {
                     return;
                 }
+            }
+            else
+            {
+                armed = ReportArmedOnce(this.readiness, armed);
             }
 
             await this.DispatchAsync(schedule, stoppingToken);
@@ -94,6 +111,16 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         {
             LogJobFailed(this.logger, schedule.Name, exception);
         }
+    }
+
+    private static bool ReportArmedOnce(JobSchedulerReadiness readiness, bool alreadyArmed)
+    {
+        if (!alreadyArmed)
+        {
+            readiness.ReportArmed();
+        }
+
+        return true;
     }
 
     [LoggerMessage(

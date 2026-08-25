@@ -54,9 +54,10 @@ public class NonDurableSchedulerShould
             WarmEveryFiveMinutes, timeProvider: new FakeTimeProvider(Start), logs: logs);
 
         // Assert — the guarantee is weaker here, so it must be visible in any real deployment's logs
-        logs.Warnings.Should().ContainSingle(entry =>
+        await logs.WaitForWarningAsync(entry =>
             entry.Contains("warm", StringComparison.Ordinal)
             && entry.Contains("every host", StringComparison.Ordinal));
+        logs.Warnings.Should().ContainSingle();
     }
 
     [TestMethod]
