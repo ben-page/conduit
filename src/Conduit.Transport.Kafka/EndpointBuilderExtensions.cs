@@ -86,16 +86,28 @@ public static class EndpointBuilderExtensions
             return;
         }
 
-        ApplyTo(options.ProducerConfig ??= new Confluent.Kafka.ProducerConfig(), section.GetSection("ProducerConfig"));
-        ApplyTo(options.ConsumerConfig ??= new Confluent.Kafka.ConsumerConfig(), section.GetSection("ConsumerConfig"));
+        ApplyTo(section.GetSection("ProducerConfig"), () => options.ProducerConfig ??= new Confluent.Kafka.ProducerConfig());
+        ApplyTo(section.GetSection("ConsumerConfig"), () => options.ConsumerConfig ??= new Confluent.Kafka.ConsumerConfig());
 
-        static void ApplyTo(Confluent.Kafka.ClientConfig config, IConfiguration configSection)
+        static void ApplyTo(IConfiguration configSection, Func<Confluent.Kafka.ClientConfig> getOrCreateConfig)
         {
-            foreach (var entry in configSection.GetChildren())
+            var children = configSection.GetChildren().ToList();
+
+            if (children.Count == 0)
+            {
+                return;
+            }
+
+            // Only materialize the config instance once there is an actual dotted key to apply,
+            // so an endpoint with no Kafka configuration at all leaves ProducerConfig/ConsumerConfig null.
+            Confluent.Kafka.ClientConfig? config = null;
+
+            foreach (var entry in children)
             {
                 if (entry.Key.Contains('.', StringComparison.Ordinal)
                     && entry.Value is { Length: > 0 } value)
                 {
+                    config ??= getOrCreateConfig();
                     config.Set(entry.Key, value);
                 }
             }

@@ -65,6 +65,25 @@ public class KafkaConfigurationShould
     }
 
     [TestMethod]
+    public async Task LeaveProducerAndConsumerConfigNullWhenTheEndpointHasNoKafkaSpecificConfiguration()
+    {
+        // Arrange
+        var builder = BuilderWith(new Dictionary<string, string?>
+        {
+            ["Conduit:Endpoints:telemetry:BootstrapServers"] = "kafka:9092",
+        });
+
+        // Act
+        builder.AddEndpoint("telemetry", endpoint => endpoint.UseKafka());
+
+        // Assert
+        await using var serviceProvider = builder.Services.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredKeyedService<KafkaOptions>("telemetry");
+        options.ProducerConfig.Should().BeNull();
+        options.ConsumerConfig.Should().BeNull();
+    }
+
+    [TestMethod]
     public async Task ExplainWhichKeyIsMissingWhenNoBootstrapServersAreSupplied()
     {
         // Arrange
