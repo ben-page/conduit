@@ -37,6 +37,45 @@ public static class JobsDatabaseProbe
         await store.AdvanceCursorAsync(scheduleName, lastCompleted, CancellationToken.None);
     }
 
+    /// <summary>
+    /// Waits for the single run row the test expects and returns it. A triggered run's key contains
+    /// the event's message id, which a local publish mints, so the test cannot name it in advance.
+    /// </summary>
+    public static async Task<JobRun> WaitForOnlyRunAsync(
+        SharedSqliteDatabase database, TimeSpan? timeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            var key = await ReadOnlyJobKeyAsync(database);
+            if (key is not null)
+            {
+                var run = await StoreFor(database).GetRunAsync(key, CancellationToken.None);
+                if (run is not null)
+                {
+                    return run;
+                }
+            }
+
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException("No run row was ever written.");
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
+    private static async Task<string?> ReadOnlyJobKeyAsync(SharedSqliteDatabase database)
+    {
+        await using var connection = await database.OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT JobKey FROM {JobTableSchema.RunsTable} ORDER BY Id LIMIT 1";
+        return await command.ExecuteScalarAsync() as string;
+    }
+
     /// <summary>Waits until a run reaches a terminal status, or fails the test.</summary>
     public static async Task<JobRun> WaitForTerminalAsync(
         SharedSqliteDatabase database, string jobKey, TimeSpan? timeout = null)
