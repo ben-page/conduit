@@ -123,6 +123,36 @@ public class ClaimRenewalShould
         schedule!.LastCompletedOccurrence.Should().Be(Occurrence);
     }
 
+    [TestMethod]
+    public async Task LetAJobThatIgnoresItsTokenCompleteAndRecordItAsCompleted()
+    {
+        // Arrange — a handler that never checks its CancellationToken, with a MaxRuntime it breaches
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { JobDuration = TimeSpan.FromMinutes(2), IgnoresCancellation = true };
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("warm")
+                .Every(TimeSpan.FromMinutes(5))
+                .MaxRuntime(TimeSpan.FromMinutes(1))
+                .Run(() => new RecordedJob("warm")),
+            spy,
+            timeProvider,
+            database.ConnectionString);
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await spy.WaitForStartedAsync(1);
+
+        // Act — cancel it by breaching MaxRuntime, then let its own duration elapse
+        timeProvider.Advance(TimeSpan.FromMinutes(2));
+
+        // Assert — cancellation is cooperative, so the work finishes and is recorded as a success,
+        // not as a cancellation. "Cancelled" never means "did not run".
+        await spy.WaitForCountAsync(1);
+        await JobsDatabaseProbe.WaitForDeletionAsync(database, JobKey);
+        var schedule = await JobsDatabaseProbe.StoreFor(database)
+            .GetScheduleAsync("warm", CancellationToken.None);
+        schedule!.LastCompletedOccurrence.Should().Be(Occurrence);
+    }
+
     private static Task<TestHost> StartHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, JobSpy spy)
         => JobsTestHost.StartAsync(
