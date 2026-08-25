@@ -124,11 +124,22 @@ Test class: `{Transport}DeadLetterShould`
 | 8.3 | `AcknowledgeFailedMessageAfterCapture` | After capture, the broker message is acknowledged (not redelivered) |
 | 8.4 | `ReplayDeadLetteredMessageBackToBroker` | A dead-lettered message can be replayed back through the transport |
 
-### Totals (verified 2026-06-09)
+### Category 9: Self-Published Event Delivery & Wire Correlation
 
-Each transport's `Integration/` directory contains a baseline of **32 `[TestMethod]` behavior tests** (the same shared matrix across all five broker transports: RabbitMQ, Kafka, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. Kafka adds **1 transport-specific behavior test** (`HonorPoolConcurrencyWithParallelExecution`, see the Kafka note in Category 6) for **33** in its `Integration/` directory. Kafka and SQS each add **1 reaper test** (`KafkaTopologyReaperShould` / `AmazonSqsTopologyReaperShould`) in a separate test class, bringing their totals to **34** and **33** respectively.
+Test class: `{Transport}SelfPublishedEventShould`
 
-Behavior-test methods across the five transports: 32 (RabbitMQ) + 34 (Kafka) + 32 (ASB) + 33 (SQS) + 32 (ActiveMQ) = **163 `[TestMethod]` integration tests**.
+Universal — required of every transport, real broker only (the in-memory `FakeBrokerTransport` double in `Conduit.Tests` already covers this at the unit level; these two prove the same behavior actually holds on the wire).
+
+| # | Test Method | Hosts | Assert |
+|---|---|---|---|
+| 9.1 | Self-published event runs local listeners exactly once | Single host both publishes and locally listens to `TestEvent` | Publish an event the app also listens to; assert one listener execution, not two — wait deliberately for the broker's own-copy round trip before asserting, since a bare `await` on publish passes vacuously either way |
+| 9.2 | Correlation and trace context survive the wire | A publishes `ContextCaptureEvent` under a known `MessageContext` and `Activity`, B captures | Publish under a known MessageContext and Activity; assert MessageId, CausationId, ConversationId and traceparent arrive intact |
+
+### Totals (verified 2026-08-24)
+
+Each transport's `Integration/` directory contains a baseline of **34 `[TestMethod]` behavior tests** (the same shared matrix across all five broker transports: RabbitMQ, Kafka, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8 plus the 2 self-published/wire-correlation methods in category 9. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. Kafka adds **1 transport-specific behavior test** (`HonorPoolConcurrencyWithParallelExecution`, see the Kafka note in Category 6) for **35** in its `Integration/` directory. Kafka and SQS each add **1 reaper test** (`KafkaTopologyReaperShould` / `AmazonSqsTopologyReaperShould`) in a separate test class, bringing their totals to **36** and **35** respectively.
+
+Behavior-test methods across the five transports: 34 (RabbitMQ) + 36 (Kafka) + 34 (ASB) + 35 (SQS) + 34 (ActiveMQ) = **173 `[TestMethod]` integration tests**.
 
 ---
 
@@ -235,7 +246,7 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 
 When adding a new broker transport, create a test project and implement:
 
-1. **All transport behavior tests** (Matrix 1 — 32 `[TestMethod]` tests per existing transport, categories 1–8) — copy the test class structure from an existing transport, adjust the fixture
+1. **All transport behavior tests** (Matrix 1 — 34 `[TestMethod]` tests per existing transport, categories 1–9) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
 
@@ -257,6 +268,7 @@ tests/Conduit.Transport.{Name}.Tests/
         {Name}ReceiverPoolShould.cs
         {Name}TopologyModeShould.cs
         {Name}DeadLetterShould.cs
+        {Name}SelfPublishedEventShould.cs
     Unit/
         TopologyManagerShould.cs
 ```
