@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Twenty source projects, fourteen test projects, one shared test utility, four sample apps:
+Twenty-one source projects, fifteen test projects, one shared test utility, four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -22,6 +22,7 @@ src/Conduit.Transport.AmazonSqs/         Amazon SQS (+SNS) transport (IConduitTr
 src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Durability/                 Durable messaging — transactional outbox + inbox (idempotent dedup) + dead-letter queue — net10.0
 src/Conduit.Audit/                      Audit trail — observation consolidation, batching, local store — net10.0
+src/Conduit.Jobs/                       Background jobs — cron/interval schedules + event triggers, cluster-safe via row claiming — net10.0
 src/Conduit.Resilience/                 Resilience pipeline behavior — Polly v8 retry/circuit-breaker over dispatch — net10.0
 
 src/Conduit.Persistence/                Engine-agnostic relational persistence abstraction (ISqlDialect, IConduitConnectionFactory, DbStoreBase) — net10.0
@@ -41,6 +42,7 @@ src/Conduit.Persistence.MySql/          MySQL engine: MySqlConduitConnectionFact
 - `Transport.ActiveMQ` → `Conduit` (core) + AMQPNetLite.Core
 - `Durability` → `Conduit` (core) + `Conduit.Persistence` (no direct DB-driver dependency; engine resolved from DI)
 - `Audit` → `Conduit` (core) + `Conduit.Persistence` (no direct DB-driver dependency; engine resolved from DI, shared with Durability)
+- `Jobs` → `Conduit` (core) + `Conduit.Persistence` + Cronos (no direct DB-driver dependency; engine resolved from DI, shared with Durability and Audit)
 - `Resilience` → `Conduit` (core) + Polly (via Microsoft.Extensions.Resilience)
 - `Persistence` → `Conduit` (core) + DI/Hosting abstractions (no DB driver)
 - `Persistence.Sqlite` → `Persistence` + Microsoft.Data.Sqlite
@@ -74,6 +76,7 @@ keep their original `Conduit.*` names):
 - **Configuration binding**: a source-generated `AddConduit(IConfiguration, Action<ConduitBuilder>?)` overload binds `ConduitOptions` scalars from the `Conduit` section and hands each endpoint its `Conduit:Endpoints:{endpointName}` section, which its `Use*` extension binds onto the transport's options via `ConduitConfigurationBinder`. Configuration binds first and the `configure` callback runs second, so code always wins; named pools merge across both sources. Endpoints, routes, pipelines and type filters stay code-declared. See [`docs/configuration-reference.md`](docs/configuration-reference.md#loading-from-iconfiguration).
 - **Topic-based message flow (broker transports)**: All messages (commands, queries, events) flow through the topic/exchange. Subscriptions route messages from the topic to the appropriate queue. Reply messages are the only exception — they bypass the topic and go point-to-point to the reply queue.
 - **Topology modes**: `TopologyMode` enum (Production/Developer/Test) on `ConduitOptions` controls resource naming and durability. `SystemName` (default `"conduit"`) replaces per-transport topic/exchange name configuration. `TopologyNaming` static class in core generates all resource names consistently across transports, using `TopologyPrefix` which auto-resolves on first access (Developer defaults to `Environment.UserName`, Test generates a random 13-char prefix, Production resolves to null). Ephemeral resources: Developer mode = 4h auto-delete, Test mode = 5min auto-delete.
+- **Background jobs**: `conduit.AddJobs(...)` declares cron/interval schedules and event triggers whose bodies are ordinary commands. Durability is inferred, not declared — a persistence engine means every schedule fires exactly once cluster-wide, no engine means every schedule fires on every host. Coordination reuses the outbox's atomic claim SQL by pointing `IClaimableTableSchema.CreatedAtColumn` at the run's due time, so there is no new per-engine SQL. Occurrences are computed in memory from the declaration (every host agrees without coordinating); the database only decides who runs one. `AddJobs` must come **after** the engine registration. See [`docs/jobs.md`](docs/jobs.md).
 - **TypeFilterInterceptor**: Access control interceptor in core that rejects dispatch requests for types not in the allowed set. Configured via `conduit.AddTypeFilter(filter => filter.AllowType(...))`. Transport-agnostic — works with any inbound path.
 - `IWireMediator : IMediator` — extended interface for inbound wire dispatch. Adds `HandleWireRequestAsync` and `HandleWireEventAsync`. Transport packages inject this; application code uses `IMediator`.
 - **Three-layer middleware model** for inbound wire messages:
@@ -83,6 +86,7 @@ keep their original `Conduit.*` names):
 - `IConduitTransport` is a bidirectional transport with `SendRequestAsync` (request/response) and `SendEventAsync` (fire-and-forget events), both envelope-based.
 - Generated `ConduitMediator` implements `IWireMediator`, checks route table for commands/queries before local dispatch. Registered as **transient** (stateless — resolves handlers from `IServiceProvider` per call). Handlers are also transient. This allows `IMediator` to be injected into singletons like `BackgroundService` without scope issues.
 - **Unified pipeline behaviors**: `IPipelineBehavior<TRequest, TResult>` wraps commands, queries, and events uniformly. Register open generics via `conduit.AddPipeline(typeof(MyPipeline<,>))`. Order is explicit (first registered = outermost). Pipeline types are stored in `ConduitOptions.PipelineTypes` and resolved via `ConduitRuntime.ResolvePipelines` — ordering is owned by Conduit, not DI.
+- **Event listener resolution**: the generated `PublishLocalAsync` emits a dispatch case for **every** discovered event type, not only for types with a listener found at compile time, and each case resolves its listeners from DI at publish time. That is what lets a listener registered at runtime (e.g. `Conduit.Jobs`' `EventTriggerListener<TEvent>`) receive events. It also means pipeline behaviors run for events with no listeners.
 - **Event broadcast model**: `PublishAsync` dispatches to local listeners AND broadcasts to all DI-registered `IConduitTransport` instances (server-mode transports). Events marked `[LocalOnly]` skip transport broadcast at compile time. Wire-inbound events use `PublishLocalAsync` (private) to prevent re-broadcast loops.
 - **Event error propagation**: Listener failures use continue-on-failure semantics — all listeners run even if some throw. `PublishLocalAsync` collects exceptions and throws `EventListenerException` if any failed. `PublishAsync` (local path) catches and logs it (fire-and-forget). `DispatchEventAsync` (wire path) lets it propagate so transports can retry/dead-letter. Generated code emits inline try/catch per listener (no runtime helper wrapper).
 - **Transport limitations**: HTTP has no server→client push — events only flow client→server over HTTP. SignalR supports bidirectional event flow. Cross-pod unsolicited events require a SignalR backplane.
@@ -148,6 +152,7 @@ Each project has its own `CLAUDE.md` with implementation-level detail. These are
 - [`src/Conduit.Persistence/CLAUDE.md`](src/Conduit.Persistence/CLAUDE.md) — engine-agnostic relational persistence abstraction (`ISqlDialect`, connection factories, `DbStoreBase`) + the four engine packages (Sqlite/Postgres/SqlServer/MySql)
 - [`src/Conduit.Durability/CLAUDE.md`](src/Conduit.Durability/CLAUDE.md) — outbox + inbox + dead-letter queue implementation, dialects, configuration
 - [`src/Conduit.Audit/CLAUDE.md`](src/Conduit.Audit/CLAUDE.md) — audit observer, consolidation, AuditBatch event, local store
+- [`src/Conduit.Jobs/CLAUDE.md`](src/Conduit.Jobs/CLAUDE.md) — schedules, event triggers, the run ledger and its reuse of the outbox claim, claim renewal
 - [`src/Conduit.Resilience/CLAUDE.md`](src/Conduit.Resilience/CLAUDE.md) — Polly v8 resilience pipeline behavior, named pipelines, predicates, context enrichment
 - [`src/Conduit.Transport.Http/CLAUDE.md`](src/Conduit.Transport.Http/CLAUDE.md)
 - [`src/Conduit.Transport.SignalR/CLAUDE.md`](src/Conduit.Transport.SignalR/CLAUDE.md) — dual-mode server/client transport
@@ -172,6 +177,7 @@ onboarding or answering "how does X work" questions:
 - [`docs/error-handling.md`](docs/error-handling.md) — `ConduitException`, `ErrorCode`, Problem Details
 - [`docs/modular-monolith.md`](docs/modular-monolith.md) — handler composition across modules in one process
 - [`docs/audit.md`](docs/audit.md) — audit trail / observer subsystem
+- [`docs/jobs.md`](docs/jobs.md) — background jobs: schedules, event triggers, durability, cancellation
 - [`docs/outbox.md`](docs/outbox.md) — transactional outbox (`IOutboundInterceptor`)
 - [`docs/inbox.md`](docs/inbox.md) — idempotent inbox dedup (`InboxInterceptor` gate)
 - [`docs/dead-letter-queue.md`](docs/dead-letter-queue.md) — DLQ capture and replay
