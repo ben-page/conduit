@@ -15,8 +15,10 @@ public sealed class ActiveMQOptions : BrokerTransportOptions
 {
     /// <summary>
     /// AMQP 1.0 connection string (e.g. "amqp://localhost:5672").
+    /// Supplied in code or from the endpoint's <c>ConnectionString</c> configuration key;
+    /// validated after both are applied.
     /// </summary>
-    public required string ConnectionString { get; init; }
+    public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
     /// Optional username for AMQP SASL PLAIN authentication.
