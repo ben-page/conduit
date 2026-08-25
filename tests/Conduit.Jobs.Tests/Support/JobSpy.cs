@@ -28,6 +28,13 @@ public sealed class JobSpy
     /// </summary>
     public TimeSpan JobDuration { get; set; }
 
+    /// <summary>
+    /// When set, the handler waits without honouring its <see cref="CancellationToken"/>, standing in
+    /// for a handler that never checks it. Cancellation is cooperative, so such a job runs to
+    /// completion however hard it is cancelled.
+    /// </summary>
+    public bool IgnoresCancellation { get; set; }
+
     /// <summary>How many further invocations throw before one is allowed to succeed.</summary>
     public int FailuresRemaining
     {

@@ -24,7 +24,10 @@ public sealed class RecordedJobHandler : ICommandHandler<RecordedJob>
 
         if (this.spy.JobDuration > TimeSpan.Zero)
         {
-            await Task.Delay(this.spy.JobDuration, this.timeProvider, cancellationToken);
+            await Task.Delay(
+                this.spy.JobDuration,
+                this.timeProvider,
+                this.spy.IgnoresCancellation ? CancellationToken.None : cancellationToken);
         }
 
         if (this.spy.ShouldFail())
