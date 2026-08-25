@@ -267,13 +267,18 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
-    public Task ReleaseAsync(long id, CancellationToken cancellationToken)
+    public Task ReleaseAsync(long id, string claimToken, CancellationToken cancellationToken)
         => this.ExecuteNonQueryAsync(
-            $"UPDATE {JobTableSchema.RunsTable} SET Status = @Pending, ClaimToken = NULL, ClaimedAt = NULL, StartedAt = NULL WHERE Id = @Id",
+            $"""
+            UPDATE {JobTableSchema.RunsTable}
+            SET Status = @Pending, ClaimToken = NULL, ClaimedAt = NULL, StartedAt = NULL
+            WHERE Id = @Id AND ClaimToken = @ClaimToken
+            """,
             command =>
             {
                 DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending);
                 DbParameterHelper.Add(command, "@Id", id);
+                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
             },
             cancellationToken);
 
@@ -306,17 +311,45 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
-    public Task MarkTerminalAsync(
-        long id, JobRunStatus status, string? error, CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(
-            $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id",
+    public async Task MarkTerminalAsync(
+        long id,
+        JobRunStatus status,
+        string? error,
+        string? scheduleName,
+        DateTimeOffset? occurrence,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await ExecuteNonQueryOnAsync(
+            connection,
+            MarkTerminalSql,
             command =>
             {
                 DbParameterHelper.Add(command, "@Status", (int)status);
                 DbParameterHelper.Add(command, "@LastError", error is null ? DBNull.Value : Truncate(error));
                 DbParameterHelper.Add(command, "@Id", id);
             },
-            cancellationToken);
+            cancellationToken,
+            transaction);
+
+        if (scheduleName is not null && occurrence is { } reached)
+        {
+            await ExecuteNonQueryOnAsync(
+                connection,
+                AdvanceCursorSql,
+                command =>
+                {
+                    DbParameterHelper.Add(command, "@LastCompletedOccurrence", FormatTimestamp(reached));
+                    DbParameterHelper.Add(command, "@Name", scheduleName);
+                },
+                cancellationToken,
+                transaction);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
 
     /// <inheritdoc/>
     public Task AdvanceCursorAsync(
@@ -435,6 +468,9 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 DbParameterHelper.Add(command, "@Cutoff", FormatTimestamp(olderThan));
             },
             cancellationToken);
+
+    private static string MarkTerminalSql =>
+        $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
 
     private static string AdvanceCursorSql =>
         $"UPDATE {JobTableSchema.SchedulesTable} SET LastCompletedOccurrence = @LastCompletedOccurrence WHERE Name = @Name";

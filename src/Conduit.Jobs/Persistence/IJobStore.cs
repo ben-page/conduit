@@ -96,9 +96,13 @@ public interface IJobStore
     /// another host resumes the work immediately instead of waiting out the claim timeout.
     /// </summary>
     /// <param name="id">The run's primary key.</param>
+    /// <param name="claimToken">
+    /// The token this host claimed under. The release is conditional on it, so a claim taken by
+    /// another host in the meantime is never handed back out from under them.
+    /// </param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public Task ReleaseAsync(long id, CancellationToken cancellationToken);
+    public Task ReleaseAsync(long id, string claimToken, CancellationToken cancellationToken);
 
     /// <summary>
     /// Records a failed attempt: increments the attempt count, reschedules to the backoff time and
@@ -112,14 +116,26 @@ public interface IJobStore
     public Task<int> IncrementAttemptAsync(
         long id, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken);
 
-    /// <summary>Moves a run to a terminal status and releases its claim.</summary>
+    /// <summary>
+    /// Moves a run to a terminal status, releases its claim and, for a schedule run, advances the
+    /// cursor past the occurrence — in one transaction. Both halves are needed and neither is safe
+    /// alone: without the cursor the occurrence is re-materialized once the row is purged, and a
+    /// crash between two separate writes leaves exactly that state behind.
+    /// </summary>
     /// <param name="id">The run's primary key.</param>
     /// <param name="status">The terminal status.</param>
     /// <param name="error">The failure message, when there is one.</param>
+    /// <param name="scheduleName">The schedule to advance, or <see langword="null"/> for a trigger run.</param>
+    /// <param name="occurrence">The occurrence to advance the cursor to.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public Task MarkTerminalAsync(
-        long id, JobRunStatus status, string? error, CancellationToken cancellationToken);
+        long id,
+        JobRunStatus status,
+        string? error,
+        string? scheduleName,
+        DateTimeOffset? occurrence,
+        CancellationToken cancellationToken);
 
     /// <summary>Advances a schedule's cursor past an occurrence that will not be run again.</summary>
     /// <param name="scheduleName">The schedule to advance.</param>
