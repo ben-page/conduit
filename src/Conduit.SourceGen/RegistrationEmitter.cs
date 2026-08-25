@@ -166,6 +166,22 @@ public static class RegistrationEmitter
         sb.AppendLine();
         sb.AppendLine("        return services;");
         sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    /// <summary>");
+        sb.AppendLine("    /// Registers Conduit, binding core options and each endpoint's transport options");
+        sb.AppendLine("    /// from configuration before the callback runs, so values set in code win.");
+        sb.AppendLine("    /// </summary>");
+        sb.AppendLine("    public static IServiceCollection AddConduit(");
+        sb.AppendLine("        this IServiceCollection services,");
+        sb.AppendLine("        Microsoft.Extensions.Configuration.IConfiguration configuration,");
+        sb.AppendLine($"        System.Action<{EmitConstants.ConduitBuilder}>? configure = null)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        return AddConduit(services, builder =>");
+        sb.AppendLine("        {");
+        sb.AppendLine("            builder.UseConfiguration(configuration);");
+        sb.AppendLine("            configure?.Invoke(builder);");
+        sb.AppendLine("        });");
+        sb.AppendLine("    }");
         sb.AppendLine("}");
 
         return sb.ToString();
