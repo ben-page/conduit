@@ -16,9 +16,14 @@ internal enum JobOutcome
     Cancelled,
 
     /// <summary>
-    /// The host stopped, or another host took the claim. No outcome is recorded: on shutdown the
-    /// claim is released so another host resumes immediately, and on a lost claim the row already
-    /// belongs to someone else.
+    /// The host is draining. The claim is released with the attempt count untouched, so a rolling
+    /// deploy hands the work over at once instead of stalling it until the claim expires.
+    /// </summary>
+    HandedOver,
+
+    /// <summary>
+    /// Another host has taken the claim. Nothing is written — the row belongs to someone else now,
+    /// and writing to it would clobber their claim.
     /// </summary>
     ClaimLost,
 }

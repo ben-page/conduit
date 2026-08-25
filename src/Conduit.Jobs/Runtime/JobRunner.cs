@@ -81,7 +81,7 @@ internal sealed partial class JobRunner
         {
             // Shutdown wins over an operator cancellation that arrived in the same breath: the claim
             // is released untouched so another host resumes, rather than recording a terminal state.
-            return new JobAttempt(JobOutcome.ClaimLost, Error: null);
+            return new JobAttempt(JobOutcome.HandedOver, Error: null);
         }
         catch (OperationCanceledException) when (cancellationRequested())
         {

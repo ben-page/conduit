@@ -266,37 +266,70 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     private async Task RunClaimedAsync(JobRun run, CancellationToken stoppingToken)
     {
+        // Linked to the host's stopping token, so a graceful drain reaches the handler the same way
+        // an operator's cancellation and a MaxRuntime breach do — the runner tells them apart after.
         using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
-        var attempt = await this.runner.ExecuteAsync(
-            run, () => false, stoppingToken, jobCancellation.Token);
+        JobAttempt attempt;
+        var heartbeat = ClaimHeartbeat.Start(
+            run,
+            this.registry.MaxRuntimeFor(run.ScheduleName),
+            this.scopeFactory,
+            this.timeProvider,
+            this.options,
+            jobCancellation,
+            this.logger);
 
-        await this.RecordOutcomeAsync(run, attempt);
+        await using (heartbeat.ConfigureAwait(false))
+        {
+            attempt = await this.runner.ExecuteAsync(
+                run, () => heartbeat.CancellationRequested || heartbeat.ClaimLost,
+                stoppingToken, jobCancellation.Token);
+        }
+
+        // A lost claim outranks everything the runner concluded: the row belongs to another host now,
+        // so this one must write nothing at all to it.
+        var outcome = heartbeat.ClaimLost ? JobOutcome.ClaimLost : attempt.Outcome;
+        await this.RecordOutcomeAsync(run, outcome);
     }
 
-    private async Task RecordOutcomeAsync(JobRun run, JobAttempt attempt)
+    private async Task RecordOutcomeAsync(JobRun run, JobOutcome outcome)
     {
+        if (outcome == JobOutcome.ClaimLost)
+        {
+            return;
+        }
+
         try
         {
             await using var scope = this.scopeFactory.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
 
-            switch (attempt.Outcome)
+            switch (outcome)
             {
                 case JobOutcome.Completed:
                     await store.CompleteAsync(run.Id, run.ScheduleName, run.Occurrence, CancellationToken.None);
                     break;
 
-                case JobOutcome.ClaimLost:
+                case JobOutcome.Cancelled:
+                    // Terminal and never retried — retrying would defeat the cancellation. The cursor
+                    // still advances, or the occurrence would be re-materialized and cancelling would
+                    // loop forever.
+                    await store.MarkTerminalAsync(
+                        run.Id, JobRunStatus.Cancelled, null,
+                        this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
+                    break;
+
+                case JobOutcome.HandedOver:
                     // A handover, not an attempt: the count is untouched so the next host starts
                     // where this one left off rather than one attempt closer to giving up.
-                    await store.ReleaseAsync(run.Id, CancellationToken.None);
+                    await store.ReleaseAsync(run.Id, run.ClaimToken!, CancellationToken.None);
                     break;
 
                 case JobOutcome.Failed:
-                case JobOutcome.Cancelled:
+                case JobOutcome.ClaimLost:
                 default:
-                    await store.ReleaseAsync(run.Id, CancellationToken.None);
+                    await store.ReleaseAsync(run.Id, run.ClaimToken!, CancellationToken.None);
                     break;
             }
         }
@@ -307,6 +340,13 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             LogOutcomeNotRecorded(this.logger, run.JobKey, exception);
         }
     }
+
+    /// <summary>
+    /// The schedule whose cursor this run should advance, or <see langword="null"/> when the run came
+    /// from an event trigger and there is no cursor to move.
+    /// </summary>
+    private string? CursorScheduleFor(JobRun run)
+        => this.registry.IsSchedule(run.ScheduleName) ? run.ScheduleName : null;
 
     private async Task<DateTimeOffset?> ReadCursorAsync(string scheduleName, CancellationToken stoppingToken)
     {

@@ -78,6 +78,11 @@ public static class JobsDatabaseProbe
         }
     }
 
+    /// <summary>Waits until the run's claim has been renewed to at least <paramref name="atLeast"/>.</summary>
+    public static Task<JobRun> WaitForClaimRenewedAsync(
+        SharedSqliteDatabase database, string jobKey, DateTimeOffset atLeast)
+        => WaitForRunAsync(database, jobKey, run => run.ClaimedAt >= atLeast);
+
     /// <summary>Waits until a run's row is gone, which is how success is recorded.</summary>
     public static async Task WaitForDeletionAsync(
         SharedSqliteDatabase database, string jobKey, TimeSpan? timeout = null)

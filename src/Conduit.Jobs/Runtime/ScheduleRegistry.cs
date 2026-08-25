@@ -20,4 +20,45 @@ public sealed class ScheduleRegistry
 
     /// <summary>All declared event triggers.</summary>
     public IReadOnlyList<JobTrigger> Triggers { get; }
+
+    /// <summary>
+    /// The declared <c>MaxRuntime</c> for a run's declaring schedule or trigger. The host that claims
+    /// a run is not necessarily the one that wrote it, so the limit is looked up from the declaration
+    /// rather than carried on the row.
+    /// </summary>
+    /// <param name="declaringName">The run's schedule or trigger name.</param>
+    /// <returns>The limit, or <see langword="null"/> when none was declared.</returns>
+    public TimeSpan? MaxRuntimeFor(string? declaringName)
+    {
+        if (declaringName is null)
+        {
+            return null;
+        }
+
+        foreach (var schedule in this.Schedules)
+        {
+            if (string.Equals(schedule.Name, declaringName, StringComparison.Ordinal))
+            {
+                return schedule.MaxRuntime;
+            }
+        }
+
+        foreach (var trigger in this.Triggers)
+        {
+            if (string.Equals(trigger.Name, declaringName, StringComparison.Ordinal))
+            {
+                return trigger.MaxRuntime;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether a run's declaring name refers to a recurring schedule rather than a trigger.</summary>
+    /// <param name="declaringName">The run's schedule or trigger name.</param>
+    /// <returns><see langword="true"/> when a schedule of that name is declared.</returns>
+    public bool IsSchedule(string? declaringName)
+        => declaringName is not null
+            && this.Schedules.Any(schedule =>
+                string.Equals(schedule.Name, declaringName, StringComparison.Ordinal));
 }
