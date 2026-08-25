@@ -89,6 +89,7 @@ public static class ConduitBuilderExtensions
         if (HasPersistenceEngine(builder.Services))
         {
             builder.Services.AddScoped<IJobStore, DbJobStore>();
+            builder.Services.AddScoped<IJobs, DurableJobs>();
             builder.Services.AddSingleton<JobRunner>();
             builder.Services.AddSingleton<ClaimedJobExecutor>();
             builder.Services.AddHostedService<DurableJobScheduler>();
@@ -107,6 +108,8 @@ public static class ConduitBuilderExtensions
         }
         else
         {
+            builder.Services.AddSingleton<InMemoryJobState>();
+            builder.Services.AddSingleton<IJobs, InMemoryJobs>();
             builder.Services.AddHostedService<InMemoryJobScheduler>();
         }
 
