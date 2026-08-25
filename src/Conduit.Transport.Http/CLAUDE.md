@@ -1,6 +1,7 @@
 # Conduit.Transport.Http
 
-- `HttpTransport` — outbound C#→C# request/response via HTTP POST. `UseHttp(httpClient)` registers as keyed singleton by endpoint name and calls `UseTransport<HttpTransport>()`
+- `HttpTransport` — outbound C#→C# request/response via HTTP POST. Two `UseHttp` overloads, both keyed by endpoint name and both calling `UseTransport<HttpTransport>()`: `UseHttp(httpClient, basePath?)` wraps a caller-owned `HttpClient` (never reads configuration); `UseHttp(configure?)` binds `HttpOptions` from the endpoint's configuration section, registers its own named `HttpClient` via `AddHttpClient(endpointName, …)`, and resolves it through `IHttpClientFactory` in the keyed transport factory.
+- **Configuration keys** (`Conduit:Endpoints:{endpointName}`, bound via `builder.Configuration?.Bind(options)` before the `configure` callback runs — `UseHttp(configure?)` only): `BaseAddress` (required), `BasePath` (default `/api/conduit`). See [`docs/configuration-reference.md`](../../docs/configuration-reference.md#loading-from-iconfiguration) and [`docs/transports/http.md`](../../docs/transports/http.md#loading-from-configuration).
 - `MapConduitEndpoint()` — inbound HTTP wire dispatch endpoint, maps POST `/api/conduit/dispatch` and `/api/conduit/publish` (base path configurable)
 - Wire format: request body = plain serialized message JSON, type in `X-Conduit-Type` header, `MessageContext` in `X-Conduit-Message-Id`/`X-Conduit-Causation-Id`/`X-Conduit-Conversation-Id` headers. Matches the broker wire format (type in transport-native properties, body is the raw message).
 - `ConduitRestHandlers` — typed handler helpers for RESTful endpoint mapping (query→route binding, command→body binding)

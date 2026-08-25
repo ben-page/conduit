@@ -31,6 +31,8 @@ public static class EndpointBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
 
         var options = new SignalROptions();
+
+        // Configuration first, then the explicit argument, then the callback — code always wins.
         builder.Configuration?.Bind(options);
 
         if (hubUri is not null)

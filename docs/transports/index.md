@@ -1,6 +1,7 @@
 # Transports
 
 - [Overview](#overview)
+  - [Per-endpoint transport instances](#per-endpoint-transport-instances)
 - [Routing](#routing)
 - [Shared contracts](#shared-contracts)
   - [\[RemoteContracts\]](#remotecontracts)
@@ -40,6 +41,28 @@ way as the documented broker transports — `endpoint.UseKafka(...)`, `endpoint.
 `endpoint.UseActiveMQ(...)`.
 
 Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a broker queue.
+
+### Per-endpoint transport instances
+
+Every endpoint gets its own transport instance, options, and `IHostedService` lifecycle, keyed in DI
+by the endpoint name. Two endpoints on the same transport package — say `orders` pointed at one
+RabbitMQ cluster and `audit` pointed at another — are two fully independent connections, each built
+from its own options. This is true for all seven transports; the five broker packages register their
+options and transport as keyed singletons per endpoint, matching what SignalR and HTTP already did.
+
+The intended use of two endpoints on the same transport type is **two different brokers**. Two
+endpoints on the same transport pointed at the *same* broker from the *same* application will now
+genuinely start two independent transports, each creating its own app-scoped topology. That topology
+collides: `TopologyNaming.CreateAppResourceName` keys resource names off `ApplicationName`, not the
+endpoint name, so both endpoints derive identical queue/subscription/consumer-group names and end up
+as competing consumers on one shared queue. This is redundant — messages still get processed exactly
+once, just by whichever of the two instances happens to receive them — rather than incorrect, but it
+is not a useful configuration. If you need two logically separate destinations on the same broker
+technology, give them distinct connection strings (different brokers, or at minimum different virtual
+hosts/namespaces).
+
+Configuration can supply each endpoint's operational values — connection strings, regions, timeouts —
+without touching code. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration).
 
 ## Routing
 

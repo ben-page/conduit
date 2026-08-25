@@ -3,6 +3,7 @@
 - [Overview](#overview)
 - [Setup](#setup)
 - [Options](#options)
+  - [Loading from configuration](#loading-from-configuration)
 - [Topology](#topology)
   - [Unicast correctness](#unicast-correctness)
 - [Developer and test modes](#developer-and-test-modes)
@@ -41,9 +42,35 @@ endpoint.UseRabbitMQ(connectionString, options =>
 
 | Property | Default | Description |
 |---|---|---|
+| `ConnectionString` | *(required)* | AMQP connection string, e.g. `"amqp://guest:guest@localhost:5672/"` |
 | `DefaultConcurrency` | `10` | Default consumer concurrency. For RabbitMQ this maps to the consumer channel prefetch count (`BasicQos`). |
+| `ResponseTimeout` | `60s` | Timeout for request/response operations |
 
 Exchange and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
+
+### Loading from configuration
+
+Every property above also binds from `Conduit:Endpoints:{endpointName}`, so `UseRabbitMQ()` can run with no arguments:
+
+```json
+{
+  "Conduit": {
+    "Endpoints": {
+      "orders": {
+        "ConnectionString": "amqp://guest:guest@rmq:5672/",
+        "DefaultConcurrency": 20,
+        "ResponseTimeout": "00:00:30"
+      }
+    }
+  }
+}
+```
+
+```csharp
+conduit.AddEndpoint("orders", endpoint => endpoint.UseRabbitMQ());
+```
+
+Configuration binds first; an explicit `UseRabbitMQ(connectionString)` argument or a `configure` callback overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration) for the full precedence rule, the pool-merge behavior, and the complete key reference.
 
 ## Topology
 
@@ -98,7 +125,7 @@ When the generated mediator routes a command to a RabbitMQ endpoint:
 3. The receiving service processes the command and publishes a reply directly to the sender's reply queue with the matching correlation ID.
 4. The sender matches the reply by correlation ID and deserializes the `DispatchResult`.
 
-Replies time out after 30 seconds. Reply messages bypass the topic exchange.
+Replies time out after `ResponseTimeout` (default 60 seconds). Reply messages bypass the topic exchange.
 
 ## Auto-discovery
 
@@ -146,6 +173,19 @@ endpoint.UseRabbitMQ(connectionString, options =>
 This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with prefetch 2 (`pool.Concurrency` maps to the consumer prefetch count for RabbitMQ). Everything else uses the default queue at prefetch 20.
 
 Prefetch count controls how many unacknowledged messages RabbitMQ delivers to a consumer at once. Lower values limit throughput but prevent a slow consumer from buffering too many messages.
+
+`AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
+endpoint's section) and configured again in code on the same name, and the two merge into one pool
+rather than producing a duplicate. `pool.Handle(...)` de-duplicates, so the merged pool's message
+types are the union of what configuration listed and what code added:
+
+```jsonc
+{ "Name": "imports", "Concurrency": 2, "MessageTypes": [ "Catalog.Commands.BulkImportCommand" ] }
+```
+```csharp
+options.AddPool("imports", pool => pool.Handle<ReindexCatalogCommand>());
+// -> one pool "imports", Concurrency 2, handling [BulkImportCommand, ReindexCatalogCommand]
+```
 
 ---
 

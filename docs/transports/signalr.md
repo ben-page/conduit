@@ -112,6 +112,35 @@ builder.Services.AddConduit(conduit =>
 
 This creates a `SignalRTransport` in client mode. It wraps a `HubConnection` with automatic reconnect. The connection is lazy and auto-starts on the first dispatch call, so your service starts without waiting for the remote hub.
 
+The hub URI can also come from configuration instead of the `hubUri` argument:
+
+```json
+{
+  "Conduit": {
+    "Endpoints": {
+      "inventory": {
+        "HubUri": "https://inventory-service/conduit"
+      }
+    }
+  }
+}
+```
+
+```csharp
+builder.Services.AddConduit(builder.Configuration, conduit =>
+{
+    conduit.AddEndpoint("inventory", endpoint =>
+    {
+        endpoint.UseSignalR();
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
+});
+```
+
+Configuration binds first; an explicit `UseSignalR(hubUri)` argument or a `configure` callback
+overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
+for the full precedence rule.
+
 The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept requests:
 
 ```csharp

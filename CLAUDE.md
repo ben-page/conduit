@@ -49,7 +49,7 @@ src/Conduit.Persistence.MySql/          MySQL engine: MySqlConduitConnectionFact
 - `Persistence.MySql` → `Persistence` + MySqlConnector
 - `SourceGen` → `Analysis` → Roslyn APIs
 - `TypeGen` → `Analysis`
-- Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, and Options.
+- Core has no ASP.NET dependency. Depends only on DI abstractions, Hosting abstractions, Logging abstractions, Options, and `Microsoft.Extensions.Configuration.Binder` (for binding `ConduitOptions` and transport options from `IConfiguration`). `Conduit.Contracts` still carries zero package references.
 
 **Transport packages contain both sides:**
 - Each transport package has an **outbound** client (`HttpTransport`, `SignalRTransport`) and an **inbound** endpoint (`MapConduitEndpoint()`, `ConduitHub`). There is no separate "bridge" concept — browser clients and C# clients use the same transport infrastructure.
