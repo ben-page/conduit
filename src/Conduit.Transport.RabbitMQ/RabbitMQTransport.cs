@@ -345,7 +345,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
                 ReplyTo = this.replyQueueName,
                 MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
                     ?? Guid.NewGuid().ToString("N"),
-                Headers = BuildOutboundHeaders(headers),
+                Headers = ToRabbitHeaders(headers),
             };
 
             await this.publishChannel!.BasicPublishAsync(
@@ -389,7 +389,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             Type = envelope.Type,
             MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
                 ?? Guid.NewGuid().ToString("N"),
-            Headers = BuildOutboundHeaders(headers),
+            Headers = ToRabbitHeaders(headers),
         };
 
         await this.publishChannel!.BasicPublishAsync(
@@ -412,6 +412,12 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
                 "Transport has not been started. Ensure the host is running before redelivering messages.");
         }
 
+        // Replay builds its properties by hand and deliberately bypasses the base class's
+        // BuildOutboundHeaders — most importantly, it carries no conduit-source-app stamp. A
+        // replayed event is redelivered on behalf of whoever originally published it; stamping
+        // this host's ApplicationName would make the inbound self-published filter in
+        // BrokerTransportBase.ProcessInboundMessageAsync drop the replayed copy the moment it
+        // arrived, silently voiding the replay. Do not route replay through the base send path.
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
@@ -486,7 +492,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         return Task.CompletedTask;
     }
 
-    private static Dictionary<string, object?> BuildOutboundHeaders(
+    private static Dictionary<string, object?> ToRabbitHeaders(
         IReadOnlyDictionary<string, string> headers)
     {
         var result = new Dictionary<string, object?>(StringComparer.Ordinal);

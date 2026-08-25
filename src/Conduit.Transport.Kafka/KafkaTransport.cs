@@ -441,7 +441,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
 
         try
         {
-            var kafkaHeaders = BuildOutboundHeaders(headers);
+            var kafkaHeaders = ToKafkaHeaders(headers);
             kafkaHeaders.Add("conduit-type", Encoding.UTF8.GetBytes(envelope.Type));
             kafkaHeaders.Add("conduit-reply-topic", Encoding.UTF8.GetBytes(this.replyTopicName!));
             kafkaHeaders.Add("conduit-correlation-id", Encoding.UTF8.GetBytes(correlationId));
@@ -480,7 +480,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
     {
         LogPublishingEvent(this.Logger, envelope.Type, null);
 
-        var kafkaHeaders = BuildOutboundHeaders(headers);
+        var kafkaHeaders = ToKafkaHeaders(headers);
         kafkaHeaders.Add("conduit-type", Encoding.UTF8.GetBytes(envelope.Type));
 
         var message = new Message<string, byte[]>
@@ -507,6 +507,13 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         // Kafka has no direct-to-consumer-group mechanism — produce to the main topic.
         // All consumer groups see the message; inbox prevents duplicate processing by
         // non-target services (recommended for Kafka DLQ replay).
+        //
+        // Replay builds its headers by hand and deliberately bypasses the base class's
+        // BuildOutboundHeaders — most importantly, it carries no conduit-source-app stamp. A
+        // replayed event is redelivered on behalf of whoever originally published it; stamping
+        // this host's ApplicationName would make the inbound self-published filter in
+        // BrokerTransportBase.ProcessInboundMessageAsync drop the replayed copy the moment it
+        // arrived, silently voiding the replay. Do not route replay through the base send path.
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
@@ -724,7 +731,7 @@ public sealed class KafkaTransport : BrokerTransportBase<KafkaInboundMessage>
         }
     }
 
-    private static Headers BuildOutboundHeaders(IReadOnlyDictionary<string, string> headers)
+    private static Headers ToKafkaHeaders(IReadOnlyDictionary<string, string> headers)
     {
         var result = new Headers();
 

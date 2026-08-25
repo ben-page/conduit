@@ -207,6 +207,8 @@ Every dead-lettered message carries:
 
 Replay re-publishes through the source transport's `RedeliverAsync`, which targets the service's inbound queue directly so any available instance picks the message up.
 
+Every `RedeliverAsync` builds its message by hand and deliberately skips the base class's outbound header assembly, so a replayed message carries **no** `conduit-source-app` stamp. This is load-bearing: stamping the replaying host's `ApplicationName` would make the [self-published event filter](transports/index.md#self-published-events) drop the replayed event the moment it arrived back, silently voiding the replay. Do not "unify" replay onto the normal send path without addressing that.
+
 | Transport | Redeliver mechanism |
 |---|---|
 | **Azure Service Bus** | Sends directly to the app queue (bypasses the topic). |

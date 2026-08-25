@@ -194,6 +194,14 @@ A few things worth knowing about the check:
   `ApplicationName`, so any instance of application A drops A's own copy, not just the instance
   that published it. An instance-scoped stamp would let a *peer* instance run the listeners again
   — the defect this exists to prevent, one hop later.
+- **`ApplicationName` must be unique per logical application.** The stamp *is* the application's
+  identity, so two genuinely different deployments that happen to share one `ApplicationName` are
+  a single application as far as the filter is concerned: each drops the other's events, and an
+  event that one publishes but only the other listens for is lost with no error. Sharing a name
+  was already unsupported — it also means sharing one competing-consumer command/query queue, so
+  the two deployments would steal each other's commands — but the filter makes that misconfigured
+  case fail more quietly. Give every logical application its own name; give every replica of one
+  application the same name.
 - **Requests are never dropped.** A command or query legitimately routed back to its own
   application — self-routing, or a receiver pool shared with the publisher — must still be
   handled, so the check only ever looks at events.
