@@ -114,9 +114,11 @@ you already have the `Conduit` section) and an optional callback, same as the co
 **The configuration shape mirrors the fluent builder API, not the runtime object graph.** A key's
 name and position is exactly the name of the property that fluent call sets, nested the same way
 the property is nested. `Conduit:Endpoints:orders` corresponds to `AddEndpoint("orders", …)`;
-`Conduit:Endpoints:events:Credentials:AccessKey` corresponds to `AmazonSqsOptions.Credentials`'
-`AccessKey`. If you know the C# property name, you know the key — there is no separate config
-vocabulary to learn.
+`Conduit:Endpoints:telemetry:ProducerConfig:LingerMs` corresponds to `KafkaOptions.ProducerConfig`'s
+`LingerMs`. If you know the C# property name, you know the key — there is no separate config
+vocabulary to learn. (`AmazonSqsOptions.Credentials` is the one exception to this — see
+[Per-transport keys](#per-transport-keys) below, where it is mapped by hand rather than bound
+generically.)
 
 ### Core scalars
 
@@ -198,6 +200,11 @@ declare in both places without conflicting:
 
 - **`AddPool` is get-or-create.** If configuration already produced a pool with that name, the
   code callback configures the *same* pool instead of adding a duplicate.
+- **Name matching is case-insensitive.** A pool named `"Bulk"` in configuration and
+  `AddPool("bulk", …)` in code merge into one pool, not two. Because configuration binds first and
+  creates the pool instance, **the configured spelling of `Name` is the one that survives** into
+  broker resource naming — the code callback's casing of the name argument is only used to look the
+  pool up, never to rename it.
 - **`ReceiverPoolOptions.Handle` de-duplicates.** `Handle(string)`, `Handle<TMessage>()`, and
   `Handle(Type)` all resolve to the same `FullTypeName` and skip a type already present. A pool
   assembled from both sources ends up with the **union** of its configured `MessageTypes` and its
@@ -208,7 +215,7 @@ declare in both places without conflicting:
 ```
 ```csharp
 options.AddPool("bulk", pool => pool.Handle<ReindexCommand>());
-// → one pool "bulk", Concurrency 50, handling [Orders.Commands.Import, Orders.Commands.Reindex]
+// → one pool "bulk", Concurrency 50, handling [Orders.Commands.Import, Orders.Commands.ReindexCommand]
 ```
 
 Everything else in a pool section binds the same as any other options property: `Concurrency`
@@ -277,11 +284,10 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 Both `ProducerConfig:LingerMs` (the C# property name) and `ProducerConfig:linger.ms` (the native
 librdkafka key) work — the binder matches property names, so a dotted key would otherwise bind
 nothing at all; `UseKafka` applies a second pass over dotted keys through `ClientConfig.Set` so
-either spelling is accepted. Note that once *any* configuration is passed to `AddConduit`, `UseKafka`
-always leaves `KafkaOptions.ProducerConfig`/`ConsumerConfig` non-null (it materializes an empty
-`ProducerConfig`/`ConsumerConfig` before scanning for dotted keys), even for an endpoint whose
-section has no `ProducerConfig`/`ConsumerConfig` entries at all. A `configure` callback that
-branches on `options.ProducerConfig is null` will not see `null` in that case.
+either spelling is accepted. That second pass only materializes `KafkaOptions.ProducerConfig`/
+`ConsumerConfig` when the corresponding section actually has a dotted key to apply, so an endpoint
+with no Kafka configuration at all leaves both properties `null`, as a `configure` callback would
+expect.
 
 **Amazon SQS** (`endpoint.UseAmazonSqs()`)
 
@@ -316,8 +322,11 @@ default AWS credential chain — this is the common case, not an error state.
 | `BaseAddress` | `Uri` | Required. Registers a named `HttpClient` via `AddHttpClient` |
 | `BasePath` | `string` | Default `/api/conduit` |
 
-The caller-owned `UseHttp(httpClient, basePath?)` overload never reads configuration — it exists
-for when you manage the `HttpClient` lifetime yourself (e.g. via `IHttpClientFactory` elsewhere).
+The caller-owned `UseHttp(httpClient, basePath?)` overload never reads `BaseAddress` from
+configuration — it exists for when you manage the `HttpClient` lifetime yourself (e.g. via
+`IHttpClientFactory` elsewhere), and the `HttpClient` you pass in already has a `BaseAddress`. It
+does still read the endpoint's configured `BasePath` when the `basePath` argument is omitted, so
+`Conduit:Endpoints:{name}:BasePath` applies to either `UseHttp` overload.
 
 ## Attributes
 

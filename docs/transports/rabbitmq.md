@@ -176,7 +176,10 @@ Prefetch count controls how many unacknowledged messages RabbitMQ delivers to a 
 
 `AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
 endpoint's section) and configured again in code on the same name, and the two merge into one pool
-rather than producing a duplicate. `pool.Handle(...)` de-duplicates, so the merged pool's message
+rather than producing a duplicate. Name matching is case-insensitive, and because configuration
+binds first, the configured spelling of `Name` is the one that survives into queue naming — a code
+callback's `AddPool("imports", …)` merges into a configured `"Imports"` without renaming it.
+`pool.Handle(...)` de-duplicates, so the merged pool's message
 types are the union of what configuration listed and what code added:
 
 ```jsonc

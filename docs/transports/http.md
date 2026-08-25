@@ -160,7 +160,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs the plain serialized message to `/api/conduit/dispatch` with the type in the `X-Conduit-Type` header (configurable via the `basePath` parameter).
+`UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs the plain serialized message to `/api/conduit/dispatch` with the type in the `X-Conduit-Type` header. The path prefix is configurable via the `basePath` parameter; when omitted, it falls back to the endpoint's configured `BasePath` and then to `/api/conduit` (see [Loading from configuration](#loading-from-configuration) below — `BaseAddress` still comes from the `HttpClient` you pass in, since the caller owns that).
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
 
@@ -193,8 +193,10 @@ conduit.AddEndpoint("billing", endpoint => endpoint.UseHttp());
 | `BasePath` | `/api/conduit` | Path prefix the remote host maps its dispatch endpoint on |
 
 Configuration binds first; a `configure` callback overrides it. The `UseHttp(httpClient, basePath?)`
-overload shown above never reads configuration — it exists for when you manage the `HttpClient`
-yourself. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
+overload shown above never reads `BaseAddress` from configuration — the `HttpClient` you pass in
+already has one — but it does read the endpoint's configured `BasePath` when you don't pass a
+`basePath` argument, so the same `Conduit:Endpoints:{name}:BasePath` key applies to either overload.
+See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
 for the full precedence rule.
 
 ---
