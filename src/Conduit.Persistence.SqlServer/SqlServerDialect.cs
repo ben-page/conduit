@@ -98,7 +98,7 @@ public sealed class SqlServerDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
-    public string BuildClaimPendingSql(IOutboxTableSchema schema)
+    public string BuildClaimPendingSql(IClaimableTableSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
 
@@ -123,7 +123,7 @@ public sealed class SqlServerDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
-    public string BuildClaimByIdsSql(IOutboxTableSchema schema)
+    public string BuildClaimByIdsSql(IClaimableTableSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
 

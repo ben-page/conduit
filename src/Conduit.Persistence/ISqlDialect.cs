@@ -118,7 +118,7 @@ public interface ISqlDialect
     /// <c>@BatchSize</c>, <c>@PendingStatus</c>, <c>@ClaimingStatus</c>. Identifiers are substituted
     /// from <paramref name="schema"/>.
     /// </summary>
-    public string BuildClaimPendingSql(IOutboxTableSchema schema);
+    public string BuildClaimPendingSql(IClaimableTableSchema schema);
 
     /// <summary>
     /// Builds the complete atomic "claim by message ids" SQL: transition rows matching a MessageId
@@ -131,5 +131,5 @@ public interface ISqlDialect
     /// <c>@ClaimingStatus</c>, and the <c>@p0, @p1, ...</c> MessageId list. Identifiers are
     /// substituted from <paramref name="schema"/>.
     /// </summary>
-    public string BuildClaimByIdsSql(IOutboxTableSchema schema);
+    public string BuildClaimByIdsSql(IClaimableTableSchema schema);
 }

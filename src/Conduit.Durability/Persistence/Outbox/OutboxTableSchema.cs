@@ -6,7 +6,7 @@ namespace Conduit.Durability.Persistence.Outbox;
 /// The durability outbox table/column names, supplied to the engine's claim builders
 /// (<see cref="ISqlDialect.BuildClaimPendingSql"/> / <see cref="ISqlDialect.BuildClaimByIdsSql"/>).
 /// </summary>
-public sealed class OutboxTableSchema : IOutboxTableSchema
+public sealed class OutboxTableSchema : IClaimableTableSchema
 {
     private OutboxTableSchema()
     {

@@ -19,7 +19,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     /// </summary>
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
 
-    private static readonly IOutboxTableSchema Schema = OutboxTableSchema.Default;
+    private static readonly IClaimableTableSchema Schema = OutboxTableSchema.Default;
 
     private const string SelectClaimedEntriesSql = """
         SELECT Id, MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, SentAt, RetryCount

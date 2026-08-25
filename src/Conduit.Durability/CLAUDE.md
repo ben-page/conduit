@@ -12,7 +12,7 @@ The relational persistence abstraction lives in **`Conduit.Persistence`** (engin
 ## Directory layout
 
 - `Configuration/` — `DurabilityBuilder`, `OutboxOptions`, `InboxOptions`, `DeadLetterQueueOptions`
-- `Persistence/Outbox/` — `IOutboxStore`, `DbConnectionOutboxStore`, `OutboxTableSchema` (`IOutboxTableSchema.Default`), `OutboxEntry`, `OutboxEntryStatus`, `ClaimedOutboxEntry`
+- `Persistence/Outbox/` — `IOutboxStore`, `DbConnectionOutboxStore`, `OutboxTableSchema` (`IClaimableTableSchema.Default`), `OutboxEntry`, `OutboxEntryStatus`, `ClaimedOutboxEntry`
 - `Persistence/Inbox/` — `IInboxStore`, `DbConnectionInboxStore`
 - `Persistence/DeadLetterQueue/` — `DbDeadLetterStore`
 - `DeadLetterQueue/` — `IDeadLetters`, `IDeadLetterStore`, `DeadLetterEntry`, `DeadLetterFilter`, `DeadLetterPage`, `ReplayResult`
