@@ -195,9 +195,13 @@ public interface IJobStore
     /// <returns>A task representing the asynchronous operation.</returns>
     public Task SetPausedAsync(string name, bool paused, DateTimeOffset now, CancellationToken cancellationToken);
 
-    /// <summary>Deletes failed runs older than the retention cutoff.</summary>
+    /// <summary>
+    /// Deletes terminal runs older than the retention cutoff. Cancelled rows are purged alongside
+    /// failed ones: both are kept only so an operator can see what happened, and neither is ever
+    /// retried, so leaving cancelled rows behind would grow the table without bound.
+    /// </summary>
     /// <param name="olderThan">The cutoff; runs due before it are deleted.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The number of rows deleted.</returns>
-    public Task<int> PurgeFailedAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
+    public Task<int> PurgeTerminalAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 }

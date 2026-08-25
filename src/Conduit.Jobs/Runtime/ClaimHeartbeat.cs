@@ -98,16 +98,6 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
 
             var now = timeProvider.GetUtcNow();
 
-            if (maxRuntime is { } limit && now - startedAt >= limit)
-            {
-                // A hung job would otherwise block its schedule indefinitely through the overlap
-                // check. Cancelling turns it into a bounded, visible outcome instead.
-                LogMaxRuntimeExceeded(logger, run.JobKey, limit);
-                Volatile.Write(ref this.cancellationRequested, 1);
-                await jobCancellation.CancelAsync();
-                return;
-            }
-
             HeartbeatResult beat;
             try
             {
@@ -131,11 +121,29 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
                 return;
             }
 
+            if (this.CancellationRequested)
+            {
+                // Already cancelled, but the handler has not returned yet — cancellation is
+                // cooperative, so it may not for a while. Keep renewing until it does: stopping here
+                // would let the claim go stale and another host would run the job a second time
+                // while this one is still winding down.
+                continue;
+            }
+
+            if (maxRuntime is { } limit && now - startedAt >= limit)
+            {
+                // A hung job would otherwise block its schedule indefinitely through the overlap
+                // check. Cancelling turns it into a bounded, visible outcome instead.
+                LogMaxRuntimeExceeded(logger, run.JobKey, limit);
+                Volatile.Write(ref this.cancellationRequested, 1);
+                await jobCancellation.CancelAsync();
+                continue;
+            }
+
             if (beat.CancellationRequested)
             {
                 Volatile.Write(ref this.cancellationRequested, 1);
                 await jobCancellation.CancelAsync();
-                return;
             }
         }
     }

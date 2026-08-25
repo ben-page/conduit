@@ -265,22 +265,27 @@ public class JobStoreShould
     }
 
     [TestMethod]
-    public async Task PurgeOnlyFailedRunsPastRetention()
+    public async Task PurgeOnlyTerminalRunsPastRetention()
     {
         // Arrange
         await using var fixture = await SqliteJobStoreFixture.CreateAsync();
         await fixture.Store.TryMaterializeAsync(NewRun("nightly@old", Now.AddDays(-30)), CancellationToken.None);
+        await fixture.Store.TryMaterializeAsync(NewRun("nightly@stopped", Now.AddDays(-30)), CancellationToken.None);
         await fixture.Store.TryMaterializeAsync(NewRun("nightly@new", Now), CancellationToken.None);
         var old = await fixture.Store.GetRunAsync("nightly@old", CancellationToken.None);
+        var stopped = await fixture.Store.GetRunAsync("nightly@stopped", CancellationToken.None);
         await fixture.Store.MarkTerminalAsync(
             old!.Id, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null,
             CancellationToken.None);
+        await fixture.Store.MarkTerminalAsync(
+            stopped!.Id, JobRunStatus.Cancelled, null, scheduleName: null, occurrence: null,
+            CancellationToken.None);
 
         // Act
-        var purged = await fixture.Store.PurgeFailedAsync(Now.AddDays(-7), CancellationToken.None);
+        var purged = await fixture.Store.PurgeTerminalAsync(Now.AddDays(-7), CancellationToken.None);
 
         // Assert
-        purged.Should().Be(1);
+        purged.Should().Be(2, "cancelled runs are terminal history too and would otherwise never go");
         (await fixture.Store.GetRunAsync("nightly@new", CancellationToken.None)).Should().NotBeNull();
     }
 

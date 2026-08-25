@@ -90,6 +90,7 @@ public static class ConduitBuilderExtensions
             builder.Services.AddScoped<IJobStore, DbJobStore>();
             builder.Services.AddSingleton<JobRunner>();
             builder.Services.AddHostedService<DurableJobScheduler>();
+            builder.Services.AddHostedService<JobCleanup>();
         }
         else
         {
