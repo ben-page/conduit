@@ -24,9 +24,19 @@ internal sealed class JobTableInitializer : TableInitializerBase
         var registry = scopedProvider.GetRequiredService<ScheduleRegistry>();
         var connectionFactory = scopedProvider.GetService<IConduitConnectionFactory>();
         var dialect = scopedProvider.GetService<ISqlDialect>();
+        var store = scopedProvider.GetService<IJobStore>();
 
         if (connectionFactory is not null && dialect is not null)
         {
+            if (store is null)
+            {
+                throw new InvalidOperationException(
+                    "A persistence engine is registered, but the jobs subsystem was configured without " +
+                    "one and is running as per-host in-memory timers. AddJobs decides durability from " +
+                    "what is already in the service collection, so the engine must be registered first: " +
+                    "call conduit.UseSqlite(connectionString) (or another engine) before conduit.AddJobs(...).");
+            }
+
             return;
         }
 
