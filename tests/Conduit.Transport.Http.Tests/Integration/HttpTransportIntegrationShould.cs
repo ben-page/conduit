@@ -5,6 +5,7 @@ using Conduit.Transport.Http.Tests.Support;
 using Conduit.Generated;
 using Conduit.Transport.SignalR;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.Http.Tests.Integration;
@@ -96,6 +97,56 @@ public class HttpTransportShould
 
         // Assert
         result.Should().Be("Query Test");
+    }
+
+    [TestMethod]
+    public async Task ReachTheConfiguredBasePathWhenACallerSuppliedHttpClientOmitsIt()
+    {
+        // Arrange — handler host maps its dispatch endpoint at a non-default base path
+        await using var handlerHost = TestWebHost.Start(
+            builder =>
+            {
+                builder.Services.AddSingleton<ItemStore>();
+                builder.Services.AddConduit();
+                builder.Services.AddConduitSignalR();
+            },
+            app =>
+            {
+                app.MapConduitEndpoint("/api/messages");
+                app.MapHub<ConduitHub>("/conduit");
+            });
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Conduit:Endpoints:remote:BasePath"] = "/api/messages",
+            })
+            .Build();
+
+        // Caller supplies its own HttpClient (no basePath argument) — the configured BasePath
+        // must be the one that reaches HttpTransport, not the "/api/conduit" default.
+        await using var callerHost = TestWebHost.Start(
+            builder =>
+            {
+                builder.Services.AddSingleton<ItemStore>();
+                builder.Services.AddConduit(configuration, conduit =>
+                {
+                    conduit.AddEndpoint("remote", endpoint =>
+                    {
+                        endpoint.UseHttp(new HttpClient { BaseAddress = new Uri(handlerHost.Address) });
+                        endpoint.RouteNamespace<CreateItemCommand>();
+                    });
+                });
+                builder.Services.AddConduitSignalR();
+            },
+            app => app.MapHub<ConduitHub>("/conduit"));
+        var mediator = callerHost.GetRequiredService<IMediator>();
+
+        // Act
+        var id = await mediator.ExecuteAsync(new CreateItemCommand("Configured Base Path"));
+
+        // Assert
+        id.Should().NotBeEmpty();
     }
 
     [TestMethod]

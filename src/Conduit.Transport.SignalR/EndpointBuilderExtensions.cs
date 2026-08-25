@@ -50,6 +50,10 @@ public static class EndpointBuilderExtensions
                 $"or pass it to UseSignalR().");
         }
 
+        // Keyed by endpoint, matching the broker transports' pattern, so the bound options are
+        // inspectable instead of being bound and dropped.
+        builder.Services.AddKeyedSingleton(builder.EndpointName, options);
+
         builder.Services.AddKeyedSingleton(
             builder.EndpointName, new SignalRTransport(BuildHubConnection(options.HubUri)));
 

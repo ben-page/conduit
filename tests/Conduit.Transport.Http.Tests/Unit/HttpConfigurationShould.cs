@@ -31,6 +31,10 @@ public class HttpConfigurationShould
         await using var serviceProvider = services.BuildServiceProvider();
         serviceProvider.GetRequiredKeyedService<IConduitTransport>("billing")
             .Should().BeOfType<HttpTransport>();
+
+        var options = serviceProvider.GetRequiredKeyedService<HttpOptions>("billing");
+        options.BaseAddress.Should().Be(new Uri("https://billing.example"));
+        options.BasePath.Should().Be("/api/messages");
     }
 
     [TestMethod]
