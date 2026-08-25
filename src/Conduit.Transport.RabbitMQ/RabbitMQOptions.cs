@@ -14,8 +14,10 @@ public sealed class RabbitMQOptions : BrokerTransportOptions
 {
     /// <summary>
     /// AMQP connection string (e.g. "amqp://guest:guest@localhost:5672/").
+    /// Supplied in code or from the endpoint's <c>ConnectionString</c> configuration key;
+    /// validated after both are applied.
     /// </summary>
-    public required string ConnectionString { get; init; }
+    public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
     /// Timeout for request/response operations. Default 60 seconds.

@@ -16,23 +16,37 @@ public static class EndpointBuilderExtensions
     /// and <see cref="IHostedService"/> for background receive lifecycle.
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
-    /// <param name="connectionString">The Azure Service Bus connection string.</param>
+    /// <param name="connectionString">
+    /// The Azure Service Bus connection string. Overrides the endpoint's configured
+    /// <c>ConnectionString</c>, if any. Optional when configuration supplies one.
+    /// </param>
     /// <param name="configure">Optional callback to configure transport options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
     public static EndpointBuilder UseAzureServiceBus(
         this EndpointBuilder builder,
-        string connectionString,
+        string? connectionString = null,
         Action<AzureServiceBusOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var options = new AzureServiceBusOptions
+        var options = new AzureServiceBusOptions { EndpointName = builder.EndpointName };
+
+        ConduitConfigurationBinder.BindTransportOptions(options, builder.Configuration);
+
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            ConnectionString = connectionString,
-            EndpointName = builder.EndpointName,
-        };
+            options.ConnectionString = connectionString;
+        }
+
         configure?.Invoke(options);
+
+        if (string.IsNullOrWhiteSpace(options.ConnectionString))
+        {
+            throw new InvalidOperationException(
+                $"Azure Service Bus transport for endpoint '{builder.EndpointName}' has no connection string. " +
+                $"Set 'Conduit:Endpoints:{builder.EndpointName}:ConnectionString' in configuration " +
+                $"or pass it to UseAzureServiceBus().");
+        }
 
         var endpointName = builder.EndpointName;
 

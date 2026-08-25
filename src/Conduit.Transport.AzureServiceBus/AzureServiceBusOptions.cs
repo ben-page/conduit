@@ -13,8 +13,10 @@ public sealed class AzureServiceBusOptions : BrokerTransportOptions
 {
     /// <summary>
     /// The Azure Service Bus connection string.
+    /// Supplied in code or from the endpoint's <c>ConnectionString</c> configuration key;
+    /// validated after both are applied.
     /// </summary>
-    public required string ConnectionString { get; init; }
+    public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
     /// Connection string for the administration client (topology management).

@@ -16,23 +16,37 @@ public static class EndpointBuilderExtensions
     /// and <see cref="IHostedService"/> (for background receiver lifecycle).
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
-    /// <param name="connectionString">AMQP 1.0 connection string (e.g. "amqp://localhost:5672").</param>
+    /// <param name="connectionString">
+    /// AMQP 1.0 connection string (e.g. "amqp://localhost:5672"). Overrides the endpoint's
+    /// configured <c>ConnectionString</c>, if any. Optional when configuration supplies one.
+    /// </param>
     /// <param name="configure">Optional callback to configure ActiveMQ-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
     public static EndpointBuilder UseActiveMQ(
         this EndpointBuilder builder,
-        string connectionString,
+        string? connectionString = null,
         Action<ActiveMQOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var options = new ActiveMQOptions
+        var options = new ActiveMQOptions { EndpointName = builder.EndpointName };
+
+        ConduitConfigurationBinder.BindTransportOptions(options, builder.Configuration);
+
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            ConnectionString = connectionString,
-            EndpointName = builder.EndpointName,
-        };
+            options.ConnectionString = connectionString;
+        }
+
         configure?.Invoke(options);
+
+        if (string.IsNullOrWhiteSpace(options.ConnectionString))
+        {
+            throw new InvalidOperationException(
+                $"ActiveMQ transport for endpoint '{builder.EndpointName}' has no connection string. " +
+                $"Set 'Conduit:Endpoints:{builder.EndpointName}:ConnectionString' in configuration " +
+                $"or pass it to UseActiveMQ().");
+        }
 
         var endpointName = builder.EndpointName;
 
