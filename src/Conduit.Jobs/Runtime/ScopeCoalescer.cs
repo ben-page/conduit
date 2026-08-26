@@ -113,11 +113,25 @@ internal sealed partial class ScopeCoalescer
     /// which is what bounds a burst to one run in flight and one waiting behind it. The delete happens
     /// only on the branch that wrote the run, and is conditional on the version this pickup read, so a
     /// merge landing in between leaves the scope alive at a higher version and becomes its own run.
+    /// <para>
+    /// A run that stopped attempting — <see cref="JobRunStatus.Failed"/> or
+    /// <see cref="JobRunStatus.Cancelled"/> — still holds the key, because only
+    /// <see cref="IJobStore.CompleteAsync"/> deletes on success; a terminal row otherwise sits until
+    /// the retention purge, up to <c>FailedRetention</c> later. Since the key <i>is</i> the coalesce
+    /// key, leaving it held would silently stop every future scope for it from ever running. The
+    /// attempts that were exhausted belonged to the occurrence that failed; the scope waiting behind
+    /// it is different work, so pickup clears a terminal row for this key before materializing.
+    /// </para>
     /// </remarks>
     public async Task PickUpAsync(
         JobScope scope, DateTimeOffset now, bool runInline, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(scope);
+
+        if (await this.store.TryClearTerminalRunAsync(scope.ScopeKey, cancellationToken))
+        {
+            LogTerminalRunSuperseded(this.logger, scope.ScopeKey);
+        }
 
         var run = new JobRun
         {
@@ -186,4 +200,9 @@ internal sealed partial class ScopeCoalescer
         Level = LogLevel.Error,
         Message = "Coalescing scope '{ScopeKey}' was still contended after {Attempts} attempts; this event's scope was not merged")]
     private static partial void LogMergeContended(ILogger logger, string scopeKey, int attempts);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Coalesce key '{ScopeKey}' was held by a run that had stopped attempting; newer coalesced work has superseded it")]
+    private static partial void LogTerminalRunSuperseded(ILogger logger, string scopeKey);
 }
