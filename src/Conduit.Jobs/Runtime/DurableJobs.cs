@@ -67,6 +67,24 @@ internal sealed class DurableJobs : IJobs
     }
 
     /// <inheritdoc/>
+    public async Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(
+        JobFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var scopes = await this.store.GetScopesAsync(filter.ScheduleName, cancellationToken);
+        return
+        [
+            .. scopes.Select(scope => new JobScopeInfo(
+                scope.TriggerName,
+                SplitCoalesceKey(scope.ScopeKey, scope.TriggerName),
+                scope.MessageType,
+                scope.DueAt,
+                scope.Version)),
+        ];
+    }
+
+    /// <inheritdoc/>
     public Task PauseAsync(string scheduleName, CancellationToken cancellationToken)
         => this.store.SetPausedAsync(
             scheduleName, paused: true, this.timeProvider.GetUtcNow(), cancellationToken);
@@ -116,6 +134,15 @@ internal sealed class DurableJobs : IJobs
         var run = await this.store.GetRunAsync(jobKey, cancellationToken);
         return run is null ? CancellationOutcome.NotFound : CancellationOutcome.AlreadyComplete;
     }
+
+    /// <summary>
+    /// Recovers the coalesce key from the composed scope key. The trigger name is a prefix followed by
+    /// '@'; the key itself may contain '@', so the split is by prefix length, not by the separator.
+    /// </summary>
+    private static string SplitCoalesceKey(string scopeKey, string triggerName)
+        => scopeKey.Length > triggerName.Length + 1
+            ? scopeKey[(triggerName.Length + 1)..]
+            : scopeKey;
 
     private static JobRunInfo ToInfo(JobRun run) => new(
         run.JobKey,

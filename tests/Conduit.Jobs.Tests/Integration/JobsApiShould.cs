@@ -261,6 +261,59 @@ public class JobsApiShould
         pending.Should().BeEmpty();
     }
 
+    [TestMethod]
+    public async Task ListAScopeParkedBehindAnInFlightRun()
+    {
+        // Arrange — for a projection, scope depth IS queue depth: every key that changed while a
+        // rebuild runs parks a scope until it finishes
+        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.On<PunchChanged>("rebuild")
+                .CoalesceBy(punch => punch.LocationId)
+                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+                .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
+            timeProvider: new FakeTimeProvider(Start),
+            connectionString: database.ConnectionString,
+            workstationSpy: spy);
+        var mediator = host.GetRequiredService<IMediator>();
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await spy.WaitForCountAsync(1);
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(7)));
+        await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
+
+        // Act
+        var scopes = await host.GetRequiredService<IJobs>()
+            .GetPendingScopesAsync(JobFilter.All, CancellationToken.None);
+
+        // Assert — Version climbing while DueAt holds still is the signal it is absorbing a stream
+        var waiting = scopes.Should().ContainSingle().Subject;
+        waiting.TriggerName.Should().Be("rebuild");
+        waiting.CoalesceKey.Should().Be("loc-1");
+        waiting.Version.Should().Be(1);
+
+        spy.BlockUntilReleased = false;
+        spy.ReleaseOne();
+    }
+
+    [TestMethod]
+    public async Task ReturnNoScopesWithoutAnEngine()
+    {
+        // Arrange — event triggers are rejected at startup without an engine, so there are no scopes
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("rollup").Every(TimeSpan.FromHours(1)).Run(() => new NoopJob()));
+
+        // Act
+        var scopes = await host.GetRequiredService<IJobs>()
+            .GetPendingScopesAsync(JobFilter.All, CancellationToken.None);
+
+        // Assert
+        scopes.Should().BeEmpty();
+    }
+
     private static Task<TestHost> StartHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, JobSpy spy)
         => JobsTestHost.StartAsync(

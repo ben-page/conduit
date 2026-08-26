@@ -61,6 +61,15 @@ internal sealed class InMemoryJobs : IJobs
         => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Always empty. Event triggers require a persistence engine and are rejected at startup without
+    /// one, so a host on this path has no scopes.
+    /// </remarks>
+    public Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(
+        JobFilter filter, CancellationToken cancellationToken)
+        => Task.FromResult<IReadOnlyList<JobScopeInfo>>([]);
+
+    /// <inheritdoc/>
     public Task PauseAsync(string scheduleName, CancellationToken cancellationToken)
     {
         this.state.SetPaused(scheduleName, value: true);
