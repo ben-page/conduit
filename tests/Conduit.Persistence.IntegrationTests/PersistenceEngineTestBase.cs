@@ -458,6 +458,88 @@ public abstract class PersistenceEngineTestBase
         schedule!.LastCompletedOccurrence.Should().Be(occurrence);
     }
 
+    // 7) Jobs coalescing scopes -----------------------------------------------------------------
+    //
+    // A whole new table with its own DDL, an insert-or-ignore whose conflict target is the primary
+    // key itself, the (ScopeKey, ScopeId, Version) compare-and-set UPDATE and DELETE, MIN over the
+    // ISO-8601 text column, and a due read pairing ORDER BY with the engine's pagination suffix —
+    // OFFSET/FETCH on SQL Server, LIMIT/OFFSET everywhere else. SQLite exercises none of that
+    // divergence, and a lost merge here NARROWS a scope, which loses work rather than duplicating it.
+
+    [TestMethod]
+    public async Task RoundTripACoalescingScopeThroughInsertMergeAndDelete()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        // Sub-millisecond precision, as the run ledger does: a truncating text path would collapse
+        // two nearby due times and stop MIN and ORDER BY agreeing with the clock.
+        var now = DateTimeOffset.UtcNow;
+        var earliest = now.AddMinutes(-2).AddTicks(1234567);
+
+        // Act — open one scope, then race a second insert for the same key
+        var opened = await store.TryInsertScopeAsync(
+            NewScope("rebuild@loc-1", "gen-1", earliest), CancellationToken.None);
+        var refused = await store.TryInsertScopeAsync(
+            NewScope("rebuild@loc-1", "gen-2", earliest), CancellationToken.None);
+
+        // Assert — two hosts opening one scope must produce one row, exactly as materialization does
+        opened.Should().BeTrue();
+        refused.Should().BeFalse();
+
+        var read = await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None);
+        read.Should().NotBeNull();
+        read!.ScopeId.Should().Be("gen-1", "the first writer's generation is the one that survives");
+        read.DueAt.Should().Be(earliest);
+        read.Version.Should().Be(0);
+
+        // Act — the compare-and-set that makes read-modify-write merging safe
+        var merged = await store.TryMergeScopeAsync(
+            "rebuild@loc-1", "gen-1", """{"widened":true}""", version: 0, CancellationToken.None);
+        var stale = await store.TryMergeScopeAsync(
+            "rebuild@loc-1", "gen-1", """{"clobbered":true}""", version: 0, CancellationToken.None);
+
+        // Assert — the refusal is the whole guard: the caller must re-read, never retry blindly
+        merged.Should().BeTrue();
+        stale.Should().BeFalse("the version this caller read is gone, so its merge would clobber");
+
+        var afterMerge = await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None);
+        afterMerge!.Version.Should().Be(1);
+        afterMerge.Payload.Should().Be("""{"widened":true}""");
+        afterMerge.DueAt.Should().Be(earliest, "merging is leading-edge and never moves the due time");
+
+        // Arrange — three due scopes and one in the future, so the due read has something to order,
+        // page and exclude
+        await store.TryInsertScopeAsync(
+            NewScope("rebuild@loc-2", "gen-3", now.AddMinutes(-1)), CancellationToken.None);
+        await store.TryInsertScopeAsync(
+            NewScope("rebuild@loc-3", "gen-4", now.AddSeconds(-30)), CancellationToken.None);
+        await store.TryInsertScopeAsync(
+            NewScope("rebuild@loc-4", "gen-5", now.AddHours(1)), CancellationToken.None);
+
+        // Act
+        var due = await store.GetDueScopesAsync(now, batchSize: 2, CancellationToken.None);
+        var nextDue = await store.GetNextScopeDueAsync(CancellationToken.None);
+
+        // Assert — soonest first, capped at the batch, and the future scope is not due
+        due.Select(scope => scope.ScopeKey).Should().Equal("rebuild@loc-1", "rebuild@loc-2");
+        nextDue.Should().Be(earliest, "MIN over the text column must agree with the clock");
+
+        // Act — pickup's conditional delete
+        var deleteRefused = await store.TryDeleteScopeAsync(
+            "rebuild@loc-1", "gen-1", version: 0, CancellationToken.None);
+        var deleted = await store.TryDeleteScopeAsync(
+            "rebuild@loc-1", "gen-1", version: 1, CancellationToken.None);
+
+        // Assert — a merge landing between materialize and delete leaves the scope alive to become
+        // the next run, which is exactly what the version guard buys
+        deleteRefused.Should().BeFalse();
+        deleted.Should().BeTrue();
+        (await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None)).Should().BeNull();
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static OutboxEntry NewEntry(string messageId, DateTime createdAt) => new()
@@ -478,6 +560,17 @@ public abstract class PersistenceEngineTestBase
         Payload = "{}",
         RunAt = runAt,
         Status = JobRunStatus.Pending,
+    };
+
+    private static JobScope NewScope(string scopeKey, string scopeId, DateTimeOffset dueAt) => new()
+    {
+        ScopeKey = scopeKey,
+        ScopeId = scopeId,
+        TriggerName = "rebuild",
+        MessageType = "Tests.RecomputeWorkstation",
+        Payload = "{}",
+        DueAt = dueAt,
+        Version = 0,
     };
 
     private static DispatchAuditRecord NewAuditRecord(string messageId, DateTime timestamp) => new()
