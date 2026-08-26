@@ -22,14 +22,17 @@ internal sealed partial class ScopeCoalescer
     private const int MaxMergeAttempts = 8;
 
     private readonly IJobStore store;
+    private readonly ClaimedJobExecutor executor;
     private readonly ILogger<ScopeCoalescer> logger;
 
     /// <summary>Initializes a new coalescer.</summary>
     /// <param name="store">The store to read and write scopes through.</param>
+    /// <param name="executor">Runs a scope this host is picking up inline.</param>
     /// <param name="logger">The logger for merge contention.</param>
-    public ScopeCoalescer(IJobStore store, ILogger<ScopeCoalescer> logger)
+    public ScopeCoalescer(IJobStore store, ClaimedJobExecutor executor, ILogger<ScopeCoalescer> logger)
     {
         this.store = store;
+        this.executor = executor;
         this.logger = logger;
     }
 
@@ -91,6 +94,62 @@ internal sealed partial class ScopeCoalescer
 
         LogMergeContended(this.logger, scopeKey, MaxMergeAttempts);
         return null;
+    }
+
+    /// <summary>Turns a due scope into a run and frees the coalescing slot.</summary>
+    /// <param name="scope">The due scope.</param>
+    /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
+    /// <param name="runInline">
+    /// Whether this host runs it immediately. True on the host that received the event, mirroring the
+    /// non-coalescing immediate path; false for the sweep, which materializes pending and lets the
+    /// claim elect a runner.
+    /// </param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <remarks>
+    /// The run key is the scope key, so the run ledger holds at most one row per coalesce key and the
+    /// existing insert-or-ignore is what enforces it. A refused insert therefore means "that key is
+    /// already running", and the scope stays put as the accumulator for everything arriving since —
+    /// which is what bounds a burst to one run in flight and one waiting behind it. The delete happens
+    /// only on the branch that wrote the run, and is conditional on the version this pickup read, so a
+    /// merge landing in between leaves the scope alive at a higher version and becomes its own run.
+    /// </remarks>
+    public async Task PickUpAsync(
+        JobScope scope, DateTimeOffset now, bool runInline, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var run = new JobRun
+        {
+            JobKey = scope.ScopeKey,
+            ScheduleName = scope.TriggerName,
+            MessageType = scope.MessageType,
+            Payload = scope.Payload,
+            RunAt = scope.DueAt,
+            Status = JobRunStatus.Pending,
+        };
+
+        if (!runInline)
+        {
+            if (await this.store.TryMaterializeAsync(run, cancellationToken))
+            {
+                await this.store.TryDeleteScopeAsync(scope.ScopeKey, scope.ScopeId, scope.Version, cancellationToken);
+            }
+
+            return;
+        }
+
+        var claimed = await this.store.InsertClaimedAsync(
+            run, Guid.NewGuid().ToString("N"), now, cancellationToken);
+
+        if (claimed is null)
+        {
+            // A run for this coalesce key is still outstanding, so the scope stays as the accumulator.
+            return;
+        }
+
+        await this.store.TryDeleteScopeAsync(scope.ScopeKey, scope.ScopeId, scope.Version, cancellationToken);
+        this.executor.Start(claimed);
     }
 
     private static JobScope BuildScope(

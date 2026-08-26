@@ -83,7 +83,15 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
         {
             // Coalescing work goes to the scope table, not straight to a run: the run materializes
             // when the work starts, so the ledger holds one row per real execution.
-            await this.coalescer.MergeAsync(trigger, instance, now, cancellationToken);
+            var scope = await this.coalescer.MergeAsync(trigger, instance, now, cancellationToken);
+
+            // An undelayed trigger picks up here rather than waiting for the sweep, preserving the
+            // non-coalescing path's latency: this host received the event, so this host runs it.
+            if (scope is not null && scope.DueAt <= now)
+            {
+                await this.coalescer.PickUpAsync(scope, now, runInline: true, cancellationToken);
+            }
+
             return;
         }
 

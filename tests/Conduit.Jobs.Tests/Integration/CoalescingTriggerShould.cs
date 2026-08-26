@@ -86,11 +86,100 @@ public class CoalescingTriggerShould
             .From.Should().Be(Start.AddHours(8), "whichever host won the insert, the earlier window survives");
     }
 
+    [TestMethod]
+    public async Task RunAnImmediateCoalescingTriggerOnTheReceivingHost()
+    {
+        // Arrange
+        var spy = new WorkstationSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartImmediateHostAsync(database, new FakeTimeProvider(Start), spy);
+
+        // Act
+        await host.GetRequiredService<IMediator>()
+            .PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+
+        // Assert — latency matters: the host that received the event runs it, without waiting a sweep
+        await spy.WaitForCountAsync(1);
+        spy.Rebuilds.Should().ContainSingle().Which.LocationId.Should().Be("loc-1");
+    }
+
+    [TestMethod]
+    public async Task ProduceASecondRunForEventsArrivingDuringOne()
+    {
+        // Arrange — the first rebuild blocks, so the burst behind it has somewhere to accumulate
+        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        var timeProvider = new FakeTimeProvider(Start);
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartImmediateHostAsync(database, timeProvider, spy);
+        var mediator = host.GetRequiredService<IMediator>();
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await spy.WaitForCountAsync(1);
+
+        // Act — three more punches while the first rebuild is in flight
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(7)));
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(11)));
+
+        // Assert — a claimed run's scope is fixed, so the three form ONE new scope, not three runs
+        var scope = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
+        scope.Version.Should().Be(2);
+        JsonSerializer.Deserialize<RecomputeWorkstation>(scope.Payload, ConduitRuntime.JsonOptions)!
+            .From.Should().Be(Start.AddHours(7));
+
+        spy.Count.Should().Be(1, "the second run starts only once the first releases");
+
+        // The waiting scope becomes the second run once the sweep drains scopes — see Task 6's
+        // RunTheWaitingScopeOnceTheRunAheadOfItClears.
+        spy.BlockUntilReleased = false;
+        spy.ReleaseOne();
+    }
+
+    [TestMethod]
+    public async Task CollapseASecondPickupOfOneScopeVersion()
+    {
+        // Arrange — a host dying between materializing a run and deleting its scope leaves the scope
+        // alive, so the next sweep picks the same version up again. That retry must not double-run.
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        static JobRun Run() => new()
+        {
+            JobKey = "rebuild@loc-1",
+            ScheduleName = "rebuild",
+            MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
+            Payload = """{"locationId":"loc-1"}""",
+            RunAt = Start,
+            Status = JobRunStatus.Pending,
+        };
+
+        // Act — the run key is the scope key alone, so both attempts compute the same key
+        var first = await store.TryMaterializeAsync(Run(), CancellationToken.None);
+        var second = await store.TryMaterializeAsync(Run(), CancellationToken.None);
+
+        // Assert
+        first.Should().BeTrue();
+        second.Should().BeFalse();
+        (await JobsDatabaseProbe.CountRunsAsync(database)).Should().Be(1);
+    }
+
     private static Task<TestHost> StartDelayedHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, WorkstationSpy spy)
         => JobsTestHost.StartAsync(
             jobs => jobs.On<PunchChanged>("rebuild")
                 .After(TimeSpan.FromMinutes(30))
+                .CoalesceBy(punch => punch.LocationId)
+                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+                .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
+            timeProvider: timeProvider,
+            connectionString: database.ConnectionString,
+            workstationSpy: spy);
+
+    private static Task<TestHost> StartImmediateHostAsync(
+        SharedSqliteDatabase database, FakeTimeProvider timeProvider, WorkstationSpy spy)
+        => JobsTestHost.StartAsync(
+            jobs => jobs.On<PunchChanged>("rebuild")
                 .CoalesceBy(punch => punch.LocationId)
                 .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
                 .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
