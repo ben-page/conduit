@@ -20,10 +20,10 @@ but `IJobStore` is not, naming the fix.
 
 ## Directory layout
 
-- `Configuration/` — `JobsBuilder`, `JobsOptions`, `ScheduleBuilder`, `EventTriggerBuilder<TEvent>`, `MisfirePolicy`
-- `Runtime/` — `JobSchedule`, `JobTrigger`, `ScheduleRegistry`, `DurableJobScheduler`, `InMemoryJobScheduler`, `ClaimedJobExecutor`, `JobRunner`, `ClaimHeartbeat`, `EventTriggerListener<TEvent>`, `JobCleanup`, `DurableJobs`, `InMemoryJobs`, `InMemoryJobState`, `JobSchedulerReadiness`, `JobOutcome`, `JobAttempt`
-- `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema`, `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobScheduleRow`, `HeartbeatResult`
-- root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobFilter`, `CancellationOutcome`
+- `Configuration/` — `JobsBuilder`, `JobsOptions`, `ScheduleBuilder`, `EventTriggerBuilder<TEvent>`, `CoalescingTriggerBuilder<TEvent>` and `CoalescingTriggerBuilder<TEvent, TCommand>`, `MisfirePolicy`
+- `Runtime/` — `JobSchedule`, `JobTrigger`, `ScheduleRegistry`, `DurableJobScheduler`, `InMemoryJobScheduler`, `ClaimedJobExecutor`, `JobRunner`, `ClaimHeartbeat`, `EventTriggerListener<TEvent>`, `ScopeCoalescer`, `JobCleanup`, `DurableJobs`, `InMemoryJobs`, `InMemoryJobState`, `JobSchedulerReadiness`, `JobOutcome`, `JobAttempt`
+- `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema` (`conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`), `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobScheduleRow`, `JobScope`, `HeartbeatResult`
+- root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobScopeInfo`, `JobFilter`, `CancellationOutcome`
 
 ## Time
 
@@ -47,6 +47,7 @@ order and both schedulers read the tables on their first pass). Then, depending 
 |---|---|
 | `IJobStore` → `DbJobStore` (scoped) | — |
 | `IJobs` → `DurableJobs` (scoped) | `IJobs` → `InMemoryJobs` (singleton) |
+| `ScopeCoalescer` (scoped) | — |
 | `JobRunner`, `ClaimedJobExecutor` (singletons) | `InMemoryJobState` (singleton) |
 | `DurableJobScheduler`, `JobCleanup` (hosted) | `InMemoryJobScheduler` (hosted) |
 | One closed `EventTriggerListener<T>` per declared trigger's event type | — |
@@ -69,6 +70,13 @@ EXISTS` is unsupported on MySQL and SQL Server.
 **`claimToken` must be unique per `ClaimDueAsync` call.** Claimed rows are read back by token, so
 reusing one while an earlier claim is still in flight would hand the caller the earlier claim's rows
 too. `DurableJobScheduler` generates a fresh GUID per sweep.
+
+**Coalescing adds no new per-engine SQL either, and does not touch `BuildClaimPendingSql`.**
+`ScopeCoalescer.PickUpAsync` writes the run with the existing `TryMaterializeAsync` (or
+`InsertClaimedAsync` on the receiving host), so hosts collapse on the existing insert-or-ignore and
+the existing `ClaimDueAsync` elects the runner. The scopes table itself is composed from the same
+`ISqlDialect` type vocabulary as the other two, and `git diff main -- src/Conduit.Persistence*` over
+this work is empty by design.
 
 ## Rejected alternatives
 
@@ -105,6 +113,30 @@ certainly not the one holding the claim — and the self-published-event filter 
 that delivery, since the publishing application's own stamp matches. Fanning out to every replica
 needs per-instance topology Conduit does not have, and would work only with a broker configured,
 while durable jobs are perfectly viable with a database and none.
+
+**The scope version in the run key** (`{ScopeKey}@{Version}`) — the design this implementation
+started from. It looks like it makes pickup idempotent, and it does, but a scope's version restarts
+at 0 for every new generation, so a version-suffixed key does *not* collide with the run already in
+flight for that key. A fresh scope opened at `Version = 0` while a run was in flight either collided
+with it and had its work dropped, or — with the delete made conditional — a burst of ten events
+during one rebuild started four concurrent rebuilds. Keying on the scope key alone gives the
+idempotence *and* the mutex.
+
+**Detach the `JobKey` on claim** — make the coalescing key be the `JobKey` and rewrite it to
+something unique in the transaction that claims the run, freeing the slot the moment the scope
+becomes fixed. There is no such transaction: `ClaimDueAsync` is three statements (the shared claim
+`UPDATE`, the jobs-owned `StartedAt` `UPDATE`, the read-back `SELECT`), so a detach in the second
+leaves a window where the row is `Claiming` but still holds the key, and an insert-or-ignore landing
+in it is silently swallowed. A retry rides that out; a host *dying* in the window strands the
+coalescing slot until `ClaimTimeout`, which is the wrong failure shape for a hot path. Closing the
+window properly means folding the detach into `BuildClaimPendingSql` on all four engines, forfeiting
+the zero-new-per-engine-SQL property outright.
+
+**A generation counter in the key** (`{trigger}@{coalesceKey}@{generation}`, incremented when the
+previous run is claimed). It avoids the claim path, but needs the current generation read before
+every materialization — a round trip on the hot path, and a race of its own about who increments.
+The scope row keeps the good half of the idea: its version lives on a row whose only job is to hold
+it, so reading it is the same round trip that reads the payload to merge.
 
 **Imperative one-shot scheduling** (`ScheduleAsync(command, runAt)`) and the handle/cancellation API
 it implies. Declined deliberately; a delayed *event trigger* covers the declarative version of the
@@ -145,6 +177,42 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
 - **Purge covers `Cancelled` as well as `Failed`.** Both are terminal history kept only for an
   operator to look at, and neither is ever retried, so leaving cancelled rows grows the ledger
   without bound.
+- **A scope's run key is the scope key, with no version suffix.** `JobKey` is unique, so the coalesce
+  key doubles as a per-key mutex: a refused insert means "a run for this key is already outstanding",
+  which is what turns "one in flight, one accumulating" into a guarantee. It is also what makes a
+  repeated pickup after a crash collapse instead of running twice.
+- **`ScopeKey` is one column, not a composite PK.** `BuildInsertOrIgnoreSql` takes a single conflict
+  identifier and Postgres/SQL Server bake it in as one; a composite key is not expressible through
+  it.
+- **`Version` does exactly two jobs**, and being part of the run key is not one of them: it is the
+  compare-and-set on merge, and it makes the delete at pickup conditional so a merge landing between
+  materialize and delete survives as the next scope.
+- **`ScopeId` exists because `Version` resets to 0** on every new generation of a scope row. A guard
+  on `(ScopeKey, Version)` alone could match the row that *replaced* its target and clobber it —
+  narrowing the scope, which is the failure the guard exists to prevent.
+- **Pickup supersedes a terminal run holding its key.** Only `CompleteAsync` deletes on success, so a
+  `Failed` or `Cancelled` row sits in the ledger for `FailedRetention`; since the run key is the
+  coalesce key, that would freeze every later scope for the key. `TryClearTerminalRunAsync` deletes
+  it (guarded on the same status pair `PurgeTerminalAsync` targets, so live work is never touched)
+  and logs at Warning. The consequence is deliberate: a permanently failing coalescing job retries
+  whenever new events arrive rather than stopping at `MaxAttempts`.
+- **`DueAt` is never moved by a merge.** Leading edge; trailing edge starves under a steady stream.
+- **`ComputeSweepDelayAsync` must include `GetNextScopeDueAsync`.** Without it a delayed coalescing
+  scope runs up to a full `ClaimTimeout` late. A scope that is due but *blocked* behind an in-flight
+  run falls through to the ceiling instead, deliberately — treating its past due time as "wake now"
+  would spin the sweep on work it cannot take. The cost is the accepted follow-on latency.
+- **Merging is read-modify-write in the host**, because the merge is caller-supplied C# and cannot be
+  expressed in SQL without restricting merges to a fixed vocabulary. The retry is bounded
+  (`MaxMergeAttempts`); past it the coalescer logs an Error naming the key and that event's work is
+  not merged. Unbounded retry would hang the dispatch that published the event.
+- **Merging captures `CommandType` at declaration** rather than resolving through
+  `ConduitTypeRegistry` as `JobRunner` does, because merging always happens on a host holding the
+  declaration. `BuildScope` writes `MessageType` from that same declared type, so a `Run` lambda
+  returning a subtype does not leave `MessageType` naming the derived type while the first merge
+  rewrites the payload as the base type.
+- **The coalescing path is not keyed on the event's `MessageId`**, so unlike a plain trigger it gets
+  no redelivery dedup from the unique run key. That is why the merge function has to be idempotent as
+  well as widening, and why the user guide says so.
 
 ## Source generator dependency
 
@@ -165,8 +233,10 @@ that does not exist.
 `Integration/` for the store and the end-to-end scheduler behaviours, `Support/` for
 `JobsTestHost` (awaits readiness before returning), `SharedSqliteDatabase` (several hosts, one
 database, as replicas of one application), `JobsDatabaseProbe` (ledger assertions), `JobSpy`,
-`RecordedJobHandler` (honours the spy's duration and failure script on the injected `TimeProvider`)
-and `FakeClock.AdvanceUntilAsync` (loops re-arm asynchronously, so one large jump is not enough).
+`RecordedJobHandler` (honours the spy's duration and failure script on the injected `TimeProvider`),
+`WorkstationSpy` (the coalescing tests' spy — `BlockUntilReleased` is what holds a run in flight
+while a burst accumulates behind it) and `FakeClock.AdvanceUntilAsync` (loops re-arm
+asynchronously, so one large jump is not enough).
 
 The claim protocol itself is covered against real Postgres, SQL Server and MySQL in
 `tests/Conduit.Persistence.IntegrationTests/PersistenceEngineTestBase.cs` — SQLite exercises none of
