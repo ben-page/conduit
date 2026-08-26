@@ -2,7 +2,12 @@ using Conduit.Messages;
 
 namespace Conduit.Jobs.Runtime;
 
-/// <summary>An immutable, code-declared mapping from an event type to a job command.</summary>
+/// <summary>
+/// A code-declared mapping from an event type to a job command, immutable once <c>AddJobs</c> has
+/// validated it. The single exception is <see cref="Merge"/>, which the fluent builder sets
+/// immediately after construction — a merge function is declared one call later than the trigger it
+/// belongs to, and nothing writes it after that.
+/// </summary>
 public sealed class JobTrigger
 {
     /// <summary>Initializes a new trigger.</summary>

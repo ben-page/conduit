@@ -28,13 +28,17 @@ public interface IJobs
     /// <param name="filter">Narrows the result to one schedule or trigger.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The waiting runs.</returns>
-    public Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(JobFilter filter, CancellationToken cancellationToken);
+    public Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(
+        JobFilter filter, CancellationToken cancellationToken);
 
     /// <summary>
     /// Coalesced work waiting to become a run, soonest first. For a projection this is queue depth:
     /// every key that changed while a run is in flight parks a scope until it finishes.
     /// </summary>
-    /// <param name="filter">Narrows the result to one trigger.</param>
+    /// <param name="filter">
+    /// Narrows the result to one schedule or trigger. Only a trigger coalesces, so a schedule name
+    /// matches nothing here.
+    /// </param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The waiting scopes.</returns>
     public Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(

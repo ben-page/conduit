@@ -179,8 +179,14 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   without bound.
 - **A scope's run key is the scope key, with no version suffix.** `JobKey` is unique, so the coalesce
   key doubles as a per-key mutex: a refused insert means "a run for this key is already outstanding",
-  which is what turns "one in flight, one accumulating" into a guarantee. It is also what makes a
-  repeated pickup after a crash collapse instead of running twice.
+  which is what turns "one in flight, one accumulating" into a guarantee. It also collapses a
+  repeated pickup **while that run is still outstanding**: a host dying between materializing the run
+  and deleting the scope leaves the scope alive, and the next sweep's insert is refused by the same
+  unique key. That is the whole of the property — it does not reach past the run. Once the run
+  completes, `CompleteAsync` deletes its row and frees the key, so an orphaned scope re-materializes
+  and the same merged command runs a second time; a transient failure of the scope delete lands in
+  exactly the same place. At-least-once is the contract, and this is the direction every window in
+  this design is resolved: duplicate rather than drop.
 - **`ScopeKey` is one column, not a composite PK.** `BuildInsertOrIgnoreSql` takes a single conflict
   identifier and Postgres/SQL Server bake it in as one; a composite key is not expressible through
   it.
@@ -203,8 +209,16 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   would spin the sweep on work it cannot take. The cost is the accepted follow-on latency.
 - **Merging is read-modify-write in the host**, because the merge is caller-supplied C# and cannot be
   expressed in SQL without restricting merges to a fixed vocabulary. The retry is bounded
-  (`MaxMergeAttempts`); past it the coalescer logs an Error naming the key and that event's work is
-  not merged. Unbounded retry would hang the dispatch that published the event.
+  (`MaxMergeAttempts`); past it the coalescer logs an Error naming the key and **throws**, so the
+  listener failure propagates as an `EventListenerException` and the transport retries or
+  dead-letters the event. Returning quietly would let the dispatch complete — and the broker ack —
+  with that event's work in no scope at all, which is a drop, the one outcome this module never
+  resolves toward. Unbounded retry would instead hang the dispatch that published the event.
+- **The sweep's scope drain isolates each pickup.** `PickUpDueScopesAsync` runs *ahead of*
+  `ClaimAndRunDueAsync` inside one `try`, so an exception escaping one scope would abort every scope
+  behind it and the pass's claim with it, idling the sweep for a full `ClaimTimeout`. Each pickup is
+  therefore wrapped, logging at Error and moving on, the same shape `MaterializeAndClaimAsync` uses
+  for one schedule's database error.
 - **Merging captures `CommandType` at declaration** rather than resolving through
   `ConduitTypeRegistry` as `JobRunner` does, because merging always happens on a host holding the
   declaration. `BuildScope` writes `MessageType` from that same declared type, so a `Run` lambda
