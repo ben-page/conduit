@@ -288,11 +288,15 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     /// </summary>
     /// <remarks>
     /// A scope that is due but blocked behind an in-flight run for the same key is left alone by
-    /// <see cref="PickUpDueScopesAsync"/> and stays due, so this keeps returning a near-zero delay for
-    /// it rather than the ceiling — nothing here distinguishes "due and pickable" from "due and
-    /// blocked". The follow-on run therefore starts only once the sweep happens to run after the
-    /// blocking run clears, up to <c>ClaimTimeout</c> later. That latency is accepted, not fixed here:
-    /// no nudge or shorter poll is added for it.
+    /// <see cref="PickUpDueScopesAsync"/> — its coalesce key is still held, so the run cannot
+    /// materialize — but the scope's due time has already passed and stays in the past. That makes
+    /// <c>untilDue</c> zero or negative, which fails the "still in the future" check below and falls
+    /// through to the ceiling, exactly as it does when nothing at all is due. This is deliberate: the
+    /// alternative, treating a blocked scope's past due time as "wake up immediately," would spin the
+    /// sweep at zero delay on work it cannot yet take. The cost is that nothing nudges the sweep when
+    /// the blocking run finally clears, so the follow-on run starts only on the next sweep pass — up to
+    /// <c>ClaimTimeout</c> after the run ahead of it clears. That latency is a known, accepted
+    /// limitation; no nudge mechanism or shorter poll is added to close it.
     /// </remarks>
     private async Task<TimeSpan> ComputeSweepDelayAsync(CancellationToken stoppingToken)
     {
