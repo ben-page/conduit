@@ -326,13 +326,15 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     /// <summary>
     /// Turns due coalescing scopes into runs. Runs before the claim in each sweep so a scope that has
-    /// just come due is claimed in the same pass rather than waiting for the next one.
+    /// just come due is claimed in the same pass rather than waiting for the next one — which is also
+    /// why each pickup is isolated: an exception escaping here would abort the claim behind it and
+    /// idle the whole sweep for a full <c>ClaimTimeout</c>.
     /// </summary>
-    private async Task<int> PickUpDueScopesAsync(CancellationToken stoppingToken)
+    private async Task PickUpDueScopesAsync(CancellationToken stoppingToken)
     {
         if (stoppingToken.IsCancellationRequested)
         {
-            return 0;
+            return;
         }
 
         await using var scope = this.scopeFactory.CreateAsyncScope();
@@ -343,10 +345,21 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         var due = await store.GetDueScopesAsync(now, ScopeBatchSize, stoppingToken);
         foreach (var pending in due)
         {
-            await coalescer.PickUpAsync(pending, now, runInline: false, stoppingToken);
+            try
+            {
+                await coalescer.PickUpAsync(pending, now, runInline: false, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+#pragma warning disable CA1031 // One scope's database error must not stop every other scope, nor the claim.
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                LogScopePickUpFailed(this.logger, pending.ScopeKey, exception);
+            }
         }
-
-        return due.Count;
     }
 
     private async Task<int> ClaimAndRunDueAsync(CancellationToken stoppingToken)
@@ -484,5 +497,11 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job claim sweep failed")]
     private static partial void LogSweepFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Coalescing scope '{ScopeKey}' could not be picked up into a run")]
+    private static partial void LogScopePickUpFailed(
+        ILogger logger, string scopeKey, Exception exception);
 
 }
