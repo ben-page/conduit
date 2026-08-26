@@ -13,4 +13,10 @@ public static class JobTableSchema
 
     /// <summary>The work-in-flight run ledger. Holds in-flight and failed rows only, never history.</summary>
     public const string RunsTable = "conduit_job_runs";
+
+    /// <summary>
+    /// The coalescing buffer. One row per distinct coalesce key with work waiting; deleted when that
+    /// work becomes a run.
+    /// </summary>
+    public const string ScopesTable = "conduit_job_scopes";
 }

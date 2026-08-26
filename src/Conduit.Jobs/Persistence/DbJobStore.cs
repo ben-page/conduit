@@ -35,6 +35,11 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     private static readonly string[] ReconcileScheduleColumns = ["Name", "IsPaused"];
 
+    private const string ScopeColumns = "ScopeKey, TriggerName, MessageType, Payload, DueAt, Version";
+
+    private static readonly string[] InsertScopeColumns =
+        ["ScopeKey", "TriggerName", "MessageType", "Payload", "DueAt", "Version"];
+
     private readonly IOptions<JobsOptions> options;
     private readonly string createRunsTableSql;
     private readonly string createSchedulesTableSql;
@@ -42,6 +47,9 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     private readonly string materializeSql;
     private readonly string insertClaimedSql;
     private readonly string reconcileScheduleSql;
+    private readonly string createScopesTableSql;
+    private readonly string insertScopeSql;
+    private readonly string dueScopesSql;
 
     /// <summary>Initializes a new instance of <see cref="DbJobStore"/>.</summary>
     /// <param name="connectionFactory">The connection factory used to open per-method connections.</param>
@@ -67,6 +75,12 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             JobTableSchema.RunsTable, InsertClaimedColumns, "JobKey");
         this.reconcileScheduleSql = dialect.BuildInsertOrIgnoreSql(
             JobTableSchema.SchedulesTable, ReconcileScheduleColumns, "Name");
+        this.createScopesTableSql = BuildCreateScopesTableSql(dialect);
+        this.insertScopeSql = dialect.BuildInsertOrIgnoreSql(
+            JobTableSchema.ScopesTable, InsertScopeColumns, "ScopeKey");
+        this.dueScopesSql =
+            $"SELECT {ScopeColumns} FROM {JobTableSchema.ScopesTable} " +
+            $"WHERE DueAt <= @Now ORDER BY DueAt {dialect.PaginationSuffix}";
     }
 
     /// <inheritdoc/>
@@ -74,6 +88,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     {
         await this.ExecuteNonQueryAsync(this.createSchedulesTableSql, configureParameters: null, cancellationToken);
         await this.ExecuteNonQueryAsync(this.createRunsTableSql, configureParameters: null, cancellationToken);
+        await this.ExecuteNonQueryAsync(this.createScopesTableSql, configureParameters: null, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -404,6 +419,121 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
+    public async Task<bool> TryInsertScopeAsync(JobScope scope, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var inserted = await this.ExecuteNonQueryAsync(
+            this.insertScopeSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@ScopeKey", scope.ScopeKey);
+                DbParameterHelper.Add(command, "@TriggerName", scope.TriggerName);
+                DbParameterHelper.Add(command, "@MessageType", scope.MessageType);
+                DbParameterHelper.Add(command, "@Payload", scope.Payload);
+                DbParameterHelper.Add(command, "@DueAt", FormatTimestamp(scope.DueAt));
+                DbParameterHelper.Add(command, "@Version", scope.Version);
+            },
+            cancellationToken);
+
+        return inserted > 0;
+    }
+
+    /// <inheritdoc/>
+    public async Task<JobScope?> GetScopeAsync(string scopeKey, CancellationToken cancellationToken)
+    {
+        var rows = await this.ExecuteReaderAsync(
+            $"SELECT {ScopeColumns} FROM {JobTableSchema.ScopesTable} WHERE ScopeKey = @ScopeKey",
+            command => DbParameterHelper.Add(command, "@ScopeKey", scopeKey),
+            ReadScope,
+            cancellationToken);
+
+        return rows.Count > 0 ? rows[0] : null;
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> TryMergeScopeAsync(
+        string scopeKey, string payload, int version, CancellationToken cancellationToken)
+    {
+        // DueAt is untouched on purpose: merging is leading-edge, so a steady stream of events cannot
+        // keep pushing the run away.
+        var merged = await this.ExecuteNonQueryAsync(
+            $"""
+            UPDATE {JobTableSchema.ScopesTable}
+            SET Payload = @Payload, Version = Version + 1
+            WHERE ScopeKey = @ScopeKey AND Version = @Version
+            """,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Payload", payload);
+                DbParameterHelper.Add(command, "@ScopeKey", scopeKey);
+                DbParameterHelper.Add(command, "@Version", version);
+            },
+            cancellationToken);
+
+        return merged > 0;
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> TryDeleteScopeAsync(
+        string scopeKey, int version, CancellationToken cancellationToken)
+    {
+        var deleted = await this.ExecuteNonQueryAsync(
+            $"DELETE FROM {JobTableSchema.ScopesTable} WHERE ScopeKey = @ScopeKey AND Version = @Version",
+            command =>
+            {
+                DbParameterHelper.Add(command, "@ScopeKey", scopeKey);
+                DbParameterHelper.Add(command, "@Version", version);
+            },
+            cancellationToken);
+
+        return deleted > 0;
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<JobScope>> GetDueScopesAsync(
+        DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
+        => await this.ExecuteReaderAsync(
+            this.dueScopesSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Now", FormatTimestamp(now));
+                DbParameterHelper.Add(command, "@PageSize", batchSize);
+                DbParameterHelper.Add(command, "@Offset", 0);
+            },
+            ReadScope,
+            cancellationToken);
+
+    /// <inheritdoc/>
+    public async Task<DateTimeOffset?> GetNextScopeDueAsync(CancellationToken cancellationToken)
+    {
+        var earliest = await this.ExecuteScalarAsync(
+            $"SELECT MIN(DueAt) FROM {JobTableSchema.ScopesTable}",
+            configureParameters: null,
+            cancellationToken);
+
+        return earliest is string raw ? ParseTimestamp(raw) : null;
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<JobScope>> GetScopesAsync(
+        string? triggerName, CancellationToken cancellationToken)
+    {
+        var filter = triggerName is null ? string.Empty : " WHERE TriggerName = @TriggerName";
+        return await this.ExecuteReaderAsync(
+            $"SELECT {ScopeColumns} FROM {JobTableSchema.ScopesTable}{filter} ORDER BY DueAt",
+            command =>
+            {
+                if (triggerName is not null)
+                {
+                    DbParameterHelper.Add(command, "@TriggerName", triggerName);
+                }
+            },
+            ReadScope,
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<JobRun>> GetInFlightAsync(CancellationToken cancellationToken)
         => await this.ExecuteReaderAsync(
             $"SELECT {RunColumns} FROM {JobTableSchema.RunsTable} WHERE Status = @Claiming ORDER BY Id",
@@ -505,6 +635,18 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 LastCompletedOccurrence {dialect.NullableTimestampType},
                 IsPaused {dialect.SmallIntType} NOT NULL DEFAULT 0,
                 PausedAt {dialect.NullableTimestampType}
+            """);
+
+    private static string BuildCreateScopesTableSql(ISqlDialect dialect)
+        => dialect.BuildCreateTableIfNotExistsSql(
+            JobTableSchema.ScopesTable,
+            $"""
+                ScopeKey {dialect.KeyTextType} NOT NULL PRIMARY KEY,
+                TriggerName {dialect.KeyTextType} NOT NULL,
+                MessageType {dialect.TextType} NOT NULL,
+                Payload {dialect.TextType} NOT NULL,
+                DueAt {dialect.TimestampType} NOT NULL,
+                Version {dialect.IntegerType} NOT NULL DEFAULT 0
             """);
 
     private static void BindMaterializeParameters(
@@ -625,4 +767,15 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 : ParseTimestamp(reader.GetString(startedAtOrdinal)),
         };
     }
+
+    private static JobScope ReadScope(DbDataReader reader)
+        => new()
+        {
+            ScopeKey = reader.GetString(reader.GetOrdinal("ScopeKey")),
+            TriggerName = reader.GetString(reader.GetOrdinal("TriggerName")),
+            MessageType = reader.GetString(reader.GetOrdinal("MessageType")),
+            Payload = reader.GetString(reader.GetOrdinal("Payload")),
+            DueAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("DueAt"))),
+            Version = reader.GetInt32(reader.GetOrdinal("Version")),
+        };
 }

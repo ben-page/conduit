@@ -204,4 +204,67 @@ public interface IJobStore
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The number of rows deleted.</returns>
     public Task<int> PurgeTerminalAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Opens a scope unless one with the same key already exists. Two hosts racing to open a scope for
+    /// one coalesce key produce exactly one row, exactly as occurrence materialization does.
+    /// </summary>
+    /// <param name="scope">The scope to open.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns><see langword="true"/> when this caller wrote the row.</returns>
+    public Task<bool> TryInsertScopeAsync(JobScope scope, CancellationToken cancellationToken);
+
+    /// <summary>Reads one scope by its key.</summary>
+    /// <param name="scopeKey">The scope key.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The scope, or <see langword="null"/> when no row has that key.</returns>
+    public Task<JobScope?> GetScopeAsync(string scopeKey, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replaces a scope's payload and bumps its version, conditional on the version the caller read.
+    /// <see langword="false"/> means another host merged first or the scope was picked up, and the
+    /// caller must re-read rather than retry blindly — a lost merge narrows the scope and loses work.
+    /// <c>DueAt</c> is deliberately untouched: merging is leading-edge.
+    /// </summary>
+    /// <param name="scopeKey">The scope key.</param>
+    /// <param name="payload">The merged, reserialized command.</param>
+    /// <param name="version">The version the caller read.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns><see langword="true"/> when the merge was applied.</returns>
+    public Task<bool> TryMergeScopeAsync(
+        string scopeKey, string payload, int version, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes a scope, conditional on the version pickup materialized from. A merge that landed since
+    /// leaves the row alive at a higher version, so the newer scope becomes its own run rather than
+    /// being discarded.
+    /// </summary>
+    /// <param name="scopeKey">The scope key.</param>
+    /// <param name="version">The version pickup read.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns><see langword="true"/> when the row was deleted.</returns>
+    public Task<bool> TryDeleteScopeAsync(string scopeKey, int version, CancellationToken cancellationToken);
+
+    /// <summary>Reads scopes whose due time has arrived, soonest first.</summary>
+    /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
+    /// <param name="batchSize">The maximum number of scopes to read.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The due scopes.</returns>
+    public Task<IReadOnlyList<JobScope>> GetDueScopesAsync(
+        DateTimeOffset now, int batchSize, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// When the earliest scope becomes due. The sweep takes the minimum of this and the earliest
+    /// pending run, or a delayed coalescing scope would run up to a claim timeout late.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The earliest scope due time, or <see langword="null"/> when there are none.</returns>
+    public Task<DateTimeOffset?> GetNextScopeDueAsync(CancellationToken cancellationToken);
+
+    /// <summary>Reads every waiting scope, soonest first.</summary>
+    /// <param name="triggerName">Restricts the result to one trigger when supplied.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The waiting scopes.</returns>
+    public Task<IReadOnlyList<JobScope>> GetScopesAsync(
+        string? triggerName, CancellationToken cancellationToken);
 }
