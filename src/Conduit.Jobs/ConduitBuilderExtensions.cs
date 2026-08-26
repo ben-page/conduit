@@ -66,6 +66,16 @@ public static class ConduitBuilderExtensions
                 "silently discarded by the idempotent insert. Name them with jobs.On<TEvent>(\"name\").");
         }
 
+        var unmerged = jobsBuilder.Triggers
+            .FirstOrDefault(trigger => trigger.CoalesceKey is not null && trigger.Merge is null);
+        if (unmerged is not null)
+        {
+            throw new InvalidOperationException(
+                $"Event trigger '{unmerged.Name}' declares CoalesceBy but no Merge. There is no safe " +
+                "default: keeping the newest command and discarding the rest narrows the scope, which " +
+                "silently loses work. Add .Merge((pending, incoming) => ...) that widens.");
+        }
+
         var collision = jobsBuilder.Triggers
             .Select(trigger => trigger.Name)
             .Intersect(jobsBuilder.Schedules.Select(schedule => schedule.Name), StringComparer.Ordinal)
