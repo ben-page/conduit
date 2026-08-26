@@ -37,14 +37,20 @@ internal sealed partial class ScopeCoalescer
     }
 
     /// <summary>
-    /// Merges the event's command into the trigger's scope, opening one if there is none.
+    /// Merges the event's command into the trigger's scope, opening one if there is none. Either the
+    /// work is in a scope when this returns, or it throws.
     /// </summary>
     /// <param name="trigger">The coalescing trigger.</param>
     /// <param name="eventInstance">The triggering event.</param>
     /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>The scope now holding the work, or <see langword="null"/> when contention was not resolved.</returns>
-    public async Task<JobScope?> MergeAsync(
+    /// <returns>The scope now holding the work.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Contention was not resolved within <c>MaxMergeAttempts</c>. Returning quietly would ack the
+    /// event with its work nowhere, which drops work; throwing lets the listener failure surface as
+    /// an <c>EventListenerException</c> so the transport can retry or dead-letter it.
+    /// </exception>
+    public async Task<JobScope> MergeAsync(
         JobTrigger trigger,
         object eventInstance,
         DateTimeOffset now,
@@ -70,8 +76,16 @@ internal sealed partial class ScopeCoalescer
                 continue;
             }
 
+            // Not reachable through the write path — BuildScope and the merge below both serialize a
+            // non-null command — but a payload of "null" deserializes to null, and a bare
+            // NullReferenceException out of the merge lambda would say nothing about which scope it
+            // came from.
             var pending = JsonSerializer.Deserialize(
-                existing.Payload, trigger.CommandType!, ConduitRuntime.JsonOptions)!;
+                existing.Payload, trigger.CommandType!, ConduitRuntime.JsonOptions)
+                ?? throw new InvalidOperationException(
+                    $"Coalescing scope '{scopeKey}' holds a payload that deserializes to null as " +
+                    $"'{trigger.CommandType!.FullName}', so there is nothing to merge into.");
+
             var incoming = trigger.CreateCommand(eventInstance);
             var merged = trigger.Merge!(pending, incoming);
             var payload = JsonSerializer.Serialize(merged, trigger.CommandType!, ConduitRuntime.JsonOptions);
@@ -93,7 +107,14 @@ internal sealed partial class ScopeCoalescer
         }
 
         LogMergeContended(this.logger, scopeKey, MaxMergeAttempts);
-        return null;
+
+        // Never returned quietly: the caller is an event listener, and returning would let the
+        // dispatch complete — and the broker ack — with this event's work in no scope at all. Losing
+        // work is the one outcome this module resolves every window against, so the failure
+        // propagates as an EventListenerException and the transport retries or dead-letters it.
+        throw new InvalidOperationException(
+            $"Coalescing scope '{scopeKey}' was still contended after {MaxMergeAttempts} attempts, " +
+            "so this event's work was not merged.");
     }
 
     /// <summary>Turns a due scope into a run and frees the coalescing slot.</summary>

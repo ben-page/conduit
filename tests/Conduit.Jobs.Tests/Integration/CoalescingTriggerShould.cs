@@ -1,10 +1,12 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Jobs.Persistence;
+using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Jobs.Tests.Integration;
@@ -138,10 +140,15 @@ public class CoalescingTriggerShould
     }
 
     [TestMethod]
-    public async Task CollapseASecondPickupOfOneScopeVersion()
+    public async Task CollapseASecondPickupOfOneScope()
     {
         // Arrange — a host dying between materializing a run and deleting its scope leaves the scope
-        // alive, so the next sweep picks the same version up again. That retry must not double-run.
+        // alive, so the next sweep picks it up again. The window pinned here is the one where the
+        // first run is still OUTSTANDING: its row holds the key, the second materialize is refused,
+        // and nothing double-runs. The property does not reach past that — once the run completes,
+        // CompleteAsync deletes its row, the key is free, and an orphaned scope re-materializes and
+        // runs the same merged command a second time. At-least-once is the contract, and this design
+        // resolves every such window toward a duplicate rather than a drop.
         await using var database = SharedSqliteDatabase.Create();
         var store = JobsDatabaseProbe.StoreFor(database);
         await store.EnsureTablesExistAsync(CancellationToken.None);
@@ -292,6 +299,76 @@ public class CoalescingTriggerShould
         spy.Count.Should().Be(2);
         spy.Rebuilds[1].From.Should().Be(Start.AddHours(7));
     }
+
+    [TestMethod]
+    public async Task FailTheEventWhenMergeContentionIsNeverResolved()
+    {
+        // Arrange — a hot key that several replicas keep colliding on. Every compare-and-set is
+        // refused, so the bounded retry runs out. Returning quietly there would let the listener
+        // complete and the broker ack the event with its work in no scope at all — a drop, the one
+        // outcome this design never resolves toward.
+        await using var database = SharedSqliteDatabase.Create();
+        var real = JobsDatabaseProbe.StoreFor(database);
+        await real.EnsureTablesExistAsync(CancellationToken.None);
+
+        // A scope has to exist already, or the first attempt opens one and never reaches the merge.
+        // Due an hour out, so the running host's sweep leaves it alone.
+        await real.TryInsertScopeAsync(
+            new JobScope
+            {
+                ScopeKey = "rebuild@loc-1",
+                ScopeId = Guid.NewGuid().ToString("N"),
+                TriggerName = "rebuild",
+                MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
+                Payload = """{"locationId":"loc-1","from":"2026-08-26T10:59:00+00:00"}""",
+                DueAt = Start.AddHours(1),
+                Version = 0,
+            },
+            CancellationToken.None);
+
+        await using var host = await StartDelayedHostAsync(
+            database, new FakeTimeProvider(Start), new WorkstationSpy());
+
+        var coalescer = new ScopeCoalescer(
+            new ContendedJobStore(real),
+            host.GetRequiredService<ClaimedJobExecutor>(),
+            NullLogger<ScopeCoalescer>.Instance);
+
+        // Act
+        var merge = async () => await coalescer.MergeAsync(
+            CoalescingTrigger(),
+            new PunchChanged("loc-1", Start.AddHours(8)),
+            Start,
+            CancellationToken.None);
+
+        // Assert — the failure has to reach the transport, which can then retry or dead-letter it
+        var thrown = await merge.Should().ThrowAsync<InvalidOperationException>();
+        thrown.Which.Message.Should().Contain("rebuild@loc-1", "the operator needs the key named");
+        thrown.Which.Message.Should().Contain("not merged");
+    }
+
+    /// <summary>
+    /// The same trigger <see cref="StartDelayedHostAsync"/> declares, built directly so a test can
+    /// drive <see cref="ScopeCoalescer"/> without going through a publish.
+    /// </summary>
+    private static JobTrigger CoalescingTrigger()
+        => new(
+            "rebuild",
+            typeof(PunchChanged),
+            delay: TimeSpan.FromMinutes(30),
+            maxRuntime: null,
+            createCommand: instance => ToCommand((PunchChanged)instance),
+            coalesceKey: instance => ((PunchChanged)instance).LocationId,
+            commandType: typeof(RecomputeWorkstation))
+        {
+            Merge = (pending, incoming) =>
+                ((RecomputeWorkstation)pending).From <= ((RecomputeWorkstation)incoming).From
+                    ? pending
+                    : incoming,
+        };
+
+    private static RecomputeWorkstation ToCommand(PunchChanged punch)
+        => new(punch.LocationId, punch.From);
 
     private static Task<TestHost> StartDelayedHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, WorkstationSpy spy)
