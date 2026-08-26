@@ -33,6 +33,7 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
     private readonly ScheduleRegistry registry;
     private readonly IJobStore store;
     private readonly ClaimedJobExecutor executor;
+    private readonly ScopeCoalescer coalescer;
     private readonly TimeProvider timeProvider;
     private readonly ILogger<EventTriggerListener<TEvent>> logger;
 
@@ -40,12 +41,14 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
         ScheduleRegistry registry,
         IJobStore store,
         ClaimedJobExecutor executor,
+        ScopeCoalescer coalescer,
         TimeProvider timeProvider,
         ILogger<EventTriggerListener<TEvent>> logger)
     {
         this.registry = registry;
         this.store = store;
         this.executor = executor;
+        this.coalescer = coalescer;
         this.timeProvider = timeProvider;
         this.logger = logger;
     }
@@ -76,6 +79,14 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        if (trigger.CoalesceKey is not null)
+        {
+            // Coalescing work goes to the scope table, not straight to a run: the run materializes
+            // when the work starts, so the ledger holds one row per real execution.
+            await this.coalescer.MergeAsync(trigger, instance, now, cancellationToken);
+            return;
+        }
+
         var command = trigger.CreateCommand(instance);
         var run = new JobRun
         {
