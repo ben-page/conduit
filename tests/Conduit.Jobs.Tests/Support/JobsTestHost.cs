@@ -26,7 +26,8 @@ public static class JobsTestHost
         JobSpy? spy = null,
         TimeProvider? timeProvider = null,
         string? connectionString = null,
-        CapturingLoggerProvider? logs = null)
+        CapturingLoggerProvider? logs = null,
+        WorkstationSpy? workstationSpy = null)
     {
         ArgumentNullException.ThrowIfNull(configureJobs);
 
@@ -45,6 +46,7 @@ public static class JobsTestHost
             // does not win: nothing in the scheduler may read the ambient clock.
             builder.Services.AddSingleton(resolvedTime);
             builder.Services.AddSingleton(resolvedSpy);
+            builder.Services.AddSingleton(workstationSpy ?? new WorkstationSpy());
 
             builder.Services.AddConduit(conduit =>
             {
