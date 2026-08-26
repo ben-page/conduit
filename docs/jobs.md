@@ -181,7 +181,9 @@ and nothing nudges the sweep when the blocking run finally clears, so the follow
 `ClaimTimeout` (2 minutes by default) afterwards. An undelayed trigger also retries the pickup on
 every event it receives, so a busy key rarely waits that long — but `ClaimTimeout` is the bound, and
 it is a known, accepted limitation rather than a bug. Size it accordingly if a projection's staleness
-is what you are tuning.
+is what you are tuning. Each sweep also drains a bounded batch of scopes, oldest due time first, so
+if a whole batch of them is blocked behind in-flight runs a newer, unblocked scope waits for the next
+pass — self-resolving, since the blocked ones clear and stop crowding the batch.
 
 **A run that gave up does not wedge its key.** Because the run key is the coalesce key, a terminal
 run — attempts exhausted, or cancelled by an operator — still holds that key while it waits out
@@ -191,6 +193,15 @@ naming the key. The attempts that were exhausted belonged to *that* unit of work
 waiting behind it is different work that must not inherit the give-up. Stated honestly, the
 consequence is that a permanently failing coalescing job does not stop at `MaxAttempts` — it tries
 again whenever new events arrive for the key, logging that Warning each time.
+
+Superseding is a delete, so the failed run also leaves `GetFailedAsync`. On a busy key that can
+happen before anyone looks, and the Warning in the log is then the only surviving record that the
+occurrence failed at all. Alert on it if you need to know.
+
+**A merge that cannot land fails the event rather than dropping it.** The merge is a compare-and-set
+retried a bounded number of times; if hosts are still colliding on one key past that, the listener
+throws instead of returning quietly, so the transport can retry or dead-letter the event. Returning
+would have acked it with its work in no scope at all.
 
 The coalesce key is formatted with the invariant culture and must be stable across hosts and
 processes — no `GetHashCode()`, nothing seeded per process, or hosts stop agreeing on one scope and
@@ -295,9 +306,11 @@ two minutes. Delayed triggers therefore cost three writes, and are the one case 
 host is not necessarily the running host.
 
 **Coalescing trigger (`CoalesceBy`).** The receiving host merges the event into the trigger's scope
-row instead of writing a run. An undelayed trigger then picks that scope up immediately, on the same
-host, so its latency matches the immediate path above; a delayed one is left for the sweep. Pickup is
-what writes the run, and it deletes the scope in the same breath.
+row instead of writing a run, then picks that scope up itself whenever the scope is **already due** —
+which covers an undelayed trigger, and equally a delayed one whose scope opened earlier and whose
+delay has since elapsed. Either way the latency matches the immediate path above. Only a scope still
+in the future is left for the sweep. Pickup is what writes the run, and it deletes the scope in the
+same breath.
 
 A non-coalescing trigger's run key is `{trigger}@{event MessageId}`, which makes it idempotent
 against broker redelivery for free — no dedup store, no inbox required. A coalescing trigger keys on
