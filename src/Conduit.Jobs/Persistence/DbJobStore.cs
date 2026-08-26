@@ -569,6 +569,27 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
+    public async Task<IReadOnlyList<JobRun>> GetPendingAsync(
+        string? scheduleName, CancellationToken cancellationToken)
+    {
+        var filter = scheduleName is null ? string.Empty : " AND ScheduleName = @ScheduleName";
+
+        // Ordered by RunAt, not Id: a queue reads soonest-first, where history reads newest-first.
+        return await this.ExecuteReaderAsync(
+            $"SELECT {RunColumns} FROM {JobTableSchema.RunsTable} WHERE Status = @Pending{filter} ORDER BY RunAt",
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending);
+                if (scheduleName is not null)
+                {
+                    DbParameterHelper.Add(command, "@ScheduleName", scheduleName);
+                }
+            },
+            ReadRun,
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public async Task<bool> RequestCancellationAsync(string jobKey, CancellationToken cancellationToken)
     {
         var flagged = await this.ExecuteNonQueryAsync(

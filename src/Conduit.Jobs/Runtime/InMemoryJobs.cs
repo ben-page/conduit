@@ -52,6 +52,15 @@ internal sealed class InMemoryJobs : IJobs
         => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Always empty. The in-memory scheduler dispatches straight through <see cref="IMediator"/> with
+    /// no ledger for a run to be pending in, so this is truthful rather than a stub.
+    /// </remarks>
+    public Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(
+        JobFilter filter, CancellationToken cancellationToken)
+        => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
+
+    /// <inheritdoc/>
     public Task PauseAsync(string scheduleName, CancellationToken cancellationToken)
     {
         this.state.SetPaused(scheduleName, value: true);

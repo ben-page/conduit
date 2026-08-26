@@ -57,6 +57,16 @@ internal sealed class DurableJobs : IJobs
     }
 
     /// <inheritdoc/>
+    public async Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(
+        JobFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var runs = await this.store.GetPendingAsync(filter.ScheduleName, cancellationToken);
+        return [.. runs.Select(ToInfo)];
+    }
+
+    /// <inheritdoc/>
     public Task PauseAsync(string scheduleName, CancellationToken cancellationToken)
         => this.store.SetPausedAsync(
             scheduleName, paused: true, this.timeProvider.GetUtcNow(), cancellationToken);

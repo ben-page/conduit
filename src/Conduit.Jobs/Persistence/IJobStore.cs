@@ -181,6 +181,17 @@ public interface IJobStore
     public Task<IReadOnlyList<JobRun>> GetFailedAsync(
         string? scheduleName, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Reads runs that are waiting rather than running: a delayed trigger not yet due, an occurrence
+    /// materialized but unclaimed, and — the case that matters most — a run between attempts, whose
+    /// <c>RunAt</c> is when the next attempt falls due. Soonest first.
+    /// </summary>
+    /// <param name="scheduleName">Restricts the result to one schedule or trigger when supplied.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The waiting runs.</returns>
+    public Task<IReadOnlyList<JobRun>> GetPendingAsync(
+        string? scheduleName, CancellationToken cancellationToken);
+
     /// <summary>Flags a run for cancellation, to be observed by the running host's next heartbeat.</summary>
     /// <param name="jobKey">The run key.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
