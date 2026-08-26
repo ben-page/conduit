@@ -8,12 +8,14 @@ namespace Conduit.Jobs.Configuration;
 public sealed class EventTriggerBuilder<TEvent>
     where TEvent : IEvent
 {
+    private readonly string name;
     private readonly Action<JobTrigger> onBuilt;
     private TimeSpan? delay;
     private TimeSpan? maxRuntime;
 
-    internal EventTriggerBuilder(Action<JobTrigger> onBuilt)
+    internal EventTriggerBuilder(string name, Action<JobTrigger> onBuilt)
     {
+        this.name = name;
         this.onBuilt = onBuilt;
     }
 
@@ -42,7 +44,7 @@ public sealed class EventTriggerBuilder<TEvent>
         ArgumentNullException.ThrowIfNull(createCommand);
 
         this.onBuilt(new JobTrigger(
-            typeof(TEvent).Name,
+            this.name,
             typeof(TEvent),
             this.delay,
             this.maxRuntime,
