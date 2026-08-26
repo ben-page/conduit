@@ -24,6 +24,7 @@ namespace Conduit.Jobs.Runtime;
 internal sealed partial class DurableJobScheduler : BackgroundService
 {
     private const int ClaimBatchSize = 32;
+    private const int ScopeBatchSize = 32;
 
     // A schedule down for long enough to miss this many occurrences has no meaningful catch-up left
     // to run, and walking every one of them would stall startup.
@@ -233,6 +234,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             TimeSpan delay;
             try
             {
+                await this.PickUpDueScopesAsync(stoppingToken);
+
                 if (await this.ClaimAndRunDueAsync(stoppingToken) > 0)
                 {
                     // More may be due in the same instant; go round again before sleeping.
@@ -278,16 +281,35 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     }
 
     /// <summary>
-    /// The sweep sleeps until the earliest pending run is due, capped at the claim timeout so a
-    /// claim abandoned by a crashed host is still recovered when nothing else is scheduled.
+    /// The sweep sleeps until the earliest pending run or waiting scope is due, capped at the claim
+    /// timeout so a claim abandoned by a crashed host is still recovered when nothing else is
+    /// scheduled. Scopes must be in this minimum: without them a delayed coalescing trigger would
+    /// wait out the whole claim timeout past its due time.
     /// </summary>
+    /// <remarks>
+    /// A scope that is due but blocked behind an in-flight run for the same key is left alone by
+    /// <see cref="PickUpDueScopesAsync"/> and stays due, so this keeps returning a near-zero delay for
+    /// it rather than the ceiling — nothing here distinguishes "due and pickable" from "due and
+    /// blocked". The follow-on run therefore starts only once the sweep happens to run after the
+    /// blocking run clears, up to <c>ClaimTimeout</c> later. That latency is accepted, not fixed here:
+    /// no nudge or shorter poll is added for it.
+    /// </remarks>
     private async Task<TimeSpan> ComputeSweepDelayAsync(CancellationToken stoppingToken)
     {
         var ceiling = this.options.Value.ClaimTimeout;
 
         await using var scope = this.scopeFactory.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
-        var nextDue = await store.GetNextPendingDueAsync(stoppingToken);
+        var nextRun = await store.GetNextPendingDueAsync(stoppingToken);
+        var nextScope = await store.GetNextScopeDueAsync(stoppingToken);
+
+        var nextDue = (nextRun, nextScope) switch
+        {
+            ({ } run, { } waiting) => run < waiting ? run : waiting,
+            ({ } run, null) => run,
+            (null, { } waiting) => waiting,
+            _ => (DateTimeOffset?)null,
+        };
 
         if (nextDue is not { } due)
         {
@@ -296,6 +318,31 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
         var untilDue = due - this.timeProvider.GetUtcNow();
         return untilDue > TimeSpan.Zero && untilDue < ceiling ? untilDue : ceiling;
+    }
+
+    /// <summary>
+    /// Turns due coalescing scopes into runs. Runs before the claim in each sweep so a scope that has
+    /// just come due is claimed in the same pass rather than waiting for the next one.
+    /// </summary>
+    private async Task<int> PickUpDueScopesAsync(CancellationToken stoppingToken)
+    {
+        if (stoppingToken.IsCancellationRequested)
+        {
+            return 0;
+        }
+
+        await using var scope = this.scopeFactory.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
+        var coalescer = scope.ServiceProvider.GetRequiredService<ScopeCoalescer>();
+        var now = this.timeProvider.GetUtcNow();
+
+        var due = await store.GetDueScopesAsync(now, ScopeBatchSize, stoppingToken);
+        foreach (var pending in due)
+        {
+            await coalescer.PickUpAsync(pending, now, runInline: false, stoppingToken);
+        }
+
+        return due.Count;
     }
 
     private async Task<int> ClaimAndRunDueAsync(CancellationToken stoppingToken)

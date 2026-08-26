@@ -215,6 +215,84 @@ public class CoalescingTriggerShould
         spy.ReleaseOne();
     }
 
+    [TestMethod]
+    public async Task RunADelayedScopeWhenItComesDue()
+    {
+        // Arrange
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new WorkstationSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartDelayedHostAsync(database, timeProvider, spy);
+        var mediator = host.GetRequiredService<IMediator>();
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+        await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
+
+        // Act — the sweep, not the publishing host, is what eventually runs it
+        await FakeClock.AdvanceUntilAsync(
+            timeProvider, TimeSpan.FromMinutes(5), () => Task.FromResult(spy.Count > 0));
+
+        // Assert — one run for two events, carrying the widened window
+        spy.Count.Should().Be(1);
+        spy.Rebuilds[0].From.Should().Be(Start.AddHours(8));
+    }
+
+    [TestMethod]
+    public async Task NotMoveTheDueTimeWhenALaterEventMergesIn()
+    {
+        // Arrange — leading edge. Trailing edge would let a steady stream starve the run forever,
+        // and the merge already widens the scope so the run still covers everything.
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new WorkstationSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartDelayedHostAsync(database, timeProvider, spy);
+        var mediator = host.GetRequiredService<IMediator>();
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        var opened = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
+
+        // Act
+        timeProvider.Advance(TimeSpan.FromMinutes(10));
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+
+        // Assert
+        var merged = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
+        merged.Version.Should().Be(1, "the merge landed");
+        merged.DueAt.Should().Be(opened.DueAt, "merging is leading-edge and must not reset the timer");
+    }
+
+    [TestMethod]
+    public async Task RunTheWaitingScopeOnceTheRunAheadOfItClears()
+    {
+        // Arrange — a burst arriving during a rebuild parks in one scope. It cannot become a run
+        // while the first still holds the coalesce key, so the sweep is what eventually starts it:
+        // one in flight and one accumulating, never one run per event.
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartImmediateHostAsync(database, timeProvider, spy);
+        var mediator = host.GetRequiredService<IMediator>();
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await spy.WaitForCountAsync(1);
+
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(7)));
+        await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
+
+        // Act
+        spy.BlockUntilReleased = false;
+        spy.ReleaseOne();
+
+        // Assert — three events, two runs, and the second carries the widened window
+        await FakeClock.AdvanceUntilAsync(
+            timeProvider, TimeSpan.FromMinutes(1), () => Task.FromResult(spy.Count >= 2));
+
+        spy.Count.Should().Be(2);
+        spy.Rebuilds[1].From.Should().Be(Start.AddHours(7));
+    }
+
     private static Task<TestHost> StartDelayedHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, WorkstationSpy spy)
         => JobsTestHost.StartAsync(
