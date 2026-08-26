@@ -291,6 +291,42 @@ public class JobStoreShould
     }
 
     [TestMethod]
+    public async Task ClearATerminalRunHeldByAKey()
+    {
+        // Arrange — a coalescing trigger's run key is its coalesce key, so a Failed row must not be
+        // able to hold that key until the retention purge; the scope waiting behind it is different work
+        await using var fixture = await SqliteJobStoreFixture.CreateAsync();
+        await fixture.Store.TryMaterializeAsync(NewRun(Key, Now), CancellationToken.None);
+        var claimed = await fixture.Store.ClaimDueAsync("worker-a", Now, 10, CancellationToken.None);
+        await fixture.Store.MarkTerminalAsync(
+            claimed[0].Id, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null,
+            CancellationToken.None);
+
+        // Act
+        var cleared = await fixture.Store.TryClearTerminalRunAsync(Key, CancellationToken.None);
+
+        // Assert
+        cleared.Should().BeTrue();
+        (await fixture.Store.GetRunAsync(Key, CancellationToken.None)).Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task RefuseToClearAPendingRun()
+    {
+        // Arrange — only a row that has stopped attempting may be cleared; a pending or claimed run is
+        // live work and must never be deleted out from under it
+        await using var fixture = await SqliteJobStoreFixture.CreateAsync();
+        await fixture.Store.TryMaterializeAsync(NewRun(Key, Now), CancellationToken.None);
+
+        // Act
+        var cleared = await fixture.Store.TryClearTerminalRunAsync(Key, CancellationToken.None);
+
+        // Assert
+        cleared.Should().BeFalse();
+        (await fixture.Store.GetRunAsync(Key, CancellationToken.None)).Should().NotBeNull();
+    }
+
+    [TestMethod]
     public async Task MergeAScopeOnlyWhenTheVersionStillMatches()
     {
         // Arrange — the version guard is what stops two hosts losing one another's merge, and a lost

@@ -608,6 +608,24 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             },
             cancellationToken);
 
+    /// <inheritdoc/>
+    public async Task<bool> TryClearTerminalRunAsync(string jobKey, CancellationToken cancellationToken)
+    {
+        // Guarded on Status IN (Failed, Cancelled), the same pair PurgeTerminalAsync targets: a
+        // Pending or claimed row is live work and must never be deleted out from under it.
+        var cleared = await this.ExecuteNonQueryAsync(
+            $"DELETE FROM {JobTableSchema.RunsTable} WHERE JobKey = @JobKey AND Status IN (@Failed, @Cancelled)",
+            command =>
+            {
+                DbParameterHelper.Add(command, "@JobKey", jobKey);
+                DbParameterHelper.Add(command, "@Failed", (int)JobRunStatus.Failed);
+                DbParameterHelper.Add(command, "@Cancelled", (int)JobRunStatus.Cancelled);
+            },
+            cancellationToken);
+
+        return cleared > 0;
+    }
+
     private static string MarkTerminalSql =>
         $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
 

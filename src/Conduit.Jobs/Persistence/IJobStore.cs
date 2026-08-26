@@ -206,6 +206,17 @@ public interface IJobStore
     public Task<int> PurgeTerminalAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Deletes a terminal run holding this key, so newer work can take it. A coalescing trigger's run
+    /// key is its coalesce key, so a failed or cancelled row would otherwise hold that key for the
+    /// whole retention window and every later scope for it would silently never run. The attempts that
+    /// were exhausted belonged to that unit of work; the scope waiting behind it is a different one.
+    /// </summary>
+    /// <param name="jobKey">The run key to free.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns><see langword="true"/> when a terminal row was removed.</returns>
+    public Task<bool> TryClearTerminalRunAsync(string jobKey, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Opens a scope unless one with the same key already exists. Two hosts racing to open a scope for
     /// one coalesce key produce exactly one row, exactly as occurrence materialization does.
     /// </summary>

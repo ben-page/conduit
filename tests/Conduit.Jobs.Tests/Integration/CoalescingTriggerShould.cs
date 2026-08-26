@@ -104,7 +104,7 @@ public class CoalescingTriggerShould
     }
 
     [TestMethod]
-    public async Task ProduceASecondRunForEventsArrivingDuringOne()
+    public async Task ParkASecondScopeForEventsArrivingDuringARun()
     {
         // Arrange — the first rebuild blocks, so the burst behind it has somewhere to accumulate
         var spy = new WorkstationSpy { BlockUntilReleased = true };
@@ -128,6 +128,8 @@ public class CoalescingTriggerShould
             .From.Should().Be(Start.AddHours(7));
 
         spy.Count.Should().Be(1, "the second run starts only once the first releases");
+        (await JobsDatabaseProbe.CountRunsAsync(database)).Should().Be(
+            1, "the two-row promise is about the ledger, not the handler");
 
         // The waiting scope becomes the second run once the sweep drains scopes — see Task 6's
         // RunTheWaitingScopeOnceTheRunAheadOfItClears.
@@ -162,6 +164,55 @@ public class CoalescingTriggerShould
         first.Should().BeTrue();
         second.Should().BeFalse();
         (await JobsDatabaseProbe.CountRunsAsync(database)).Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task RunCoalescedWorkAfterATerminalRunHasHeldItsKey()
+    {
+        // Arrange — a run that exhausts its attempts (or is cancelled) goes terminal but stays in the
+        // ledger until the retention purge, days later by default. The run key IS the coalesce key, so
+        // that row must not be able to wedge every later unit of work behind it. Driven through the
+        // store rather than a genuinely failing handler, so this stays fast and deterministic.
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        await store.TryMaterializeAsync(
+            new JobRun
+            {
+                JobKey = "rebuild@loc-1",
+                ScheduleName = "rebuild",
+                MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
+                Payload = """{"locationId":"loc-1","from":"2026-08-25T10:59:00+00:00"}""",
+                RunAt = Start,
+                Status = JobRunStatus.Pending,
+            },
+            CancellationToken.None);
+        var stuck = await store.GetRunAsync("rebuild@loc-1", CancellationToken.None);
+        await store.MarkTerminalAsync(
+            stuck!.Id, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null,
+            CancellationToken.None);
+
+        // Blocked, so the assertion below observes the new run in flight rather than racing its own
+        // completion — CompleteAsync deletes the row on success, which would make "gone" ambiguous.
+        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        await using var host = await StartImmediateHostAsync(database, new FakeTimeProvider(Start), spy);
+
+        // Act — a different unit of work arrives for the same coalesce key
+        await host.GetRequiredService<IMediator>()
+            .PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+
+        // Assert — the exhausted occurrence must not stall a scope that is different work
+        await spy.WaitForCountAsync(1);
+        spy.Rebuilds.Should().ContainSingle().Which.LocationId.Should().Be("loc-1");
+
+        // JobKey is unique, so one row existing at Claiming means the Failed row is gone, superseded
+        // by this new, already-running run rather than merely left in place beside it.
+        var run = await store.GetRunAsync("rebuild@loc-1", CancellationToken.None);
+        run.Should().NotBeNull("the terminal row was superseded by the new, already-running run");
+        run!.Status.Should().Be(JobRunStatus.Claiming, "this is the new run, not the failed one left in place");
+
+        spy.ReleaseOne();
     }
 
     private static Task<TestHost> StartDelayedHostAsync(
