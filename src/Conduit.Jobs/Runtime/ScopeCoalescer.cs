@@ -74,11 +74,12 @@ internal sealed partial class ScopeCoalescer
             var payload = JsonSerializer.Serialize(merged, trigger.CommandType!, ConduitRuntime.JsonOptions);
 
             if (await this.store.TryMergeScopeAsync(
-                scopeKey, payload, existing.Version, cancellationToken))
+                scopeKey, existing.ScopeId, payload, existing.Version, cancellationToken))
             {
                 return new JobScope
                 {
                     ScopeKey = existing.ScopeKey,
+                    ScopeId = existing.ScopeId,
                     TriggerName = existing.TriggerName,
                     MessageType = existing.MessageType,
                     Payload = payload,
@@ -96,12 +97,24 @@ internal sealed partial class ScopeCoalescer
         JobTrigger trigger, object eventInstance, string scopeKey, DateTimeOffset now)
     {
         var command = trigger.CreateCommand(eventInstance);
+
+        // The declared command type when the trigger has one, not the runtime type of this one
+        // instance: the merge path always (de)serializes as trigger.CommandType, so the insert must
+        // agree with it by construction, or a caller-widened type argument would leave MessageType
+        // naming the derived type while the first merge silently rewrites the payload as the base type.
+        var messageType = trigger.CommandType ?? command.GetType();
+
         return new JobScope
         {
             ScopeKey = scopeKey,
+
+            // A fresh generation identity every time a scope is (re)opened. Version alone cannot
+            // guard a compare-and-set that straddles a pickup, because Version resets to 0 on every
+            // new generation — ScopeId is what lets a stale merge be told apart from a live one.
+            ScopeId = Guid.NewGuid().ToString("N"),
             TriggerName = trigger.Name,
-            MessageType = command.GetType().FullName!,
-            Payload = JsonSerializer.Serialize(command, command.GetType(), ConduitRuntime.JsonOptions),
+            MessageType = messageType.FullName!,
+            Payload = JsonSerializer.Serialize(command, messageType, ConduitRuntime.JsonOptions),
 
             // Written once and never moved by a merge: leading edge, so a steady stream of events
             // cannot keep pushing the run away.

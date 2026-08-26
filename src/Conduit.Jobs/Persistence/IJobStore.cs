@@ -221,29 +221,38 @@ public interface IJobStore
     public Task<JobScope?> GetScopeAsync(string scopeKey, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Replaces a scope's payload and bumps its version, conditional on the version the caller read.
-    /// <see langword="false"/> means another host merged first or the scope was picked up, and the
-    /// caller must re-read rather than retry blindly — a lost merge narrows the scope and loses work.
-    /// <c>DueAt</c> is deliberately untouched: merging is leading-edge.
+    /// Replaces a scope's payload and bumps its version, conditional on the generation and version the
+    /// caller read. <see langword="false"/> means another host merged first, or the scope was picked
+    /// up and a fresh generation opened under the same key, and the caller must re-read rather than
+    /// retry blindly — a lost merge narrows the scope and loses work. The guard is on the pair — the
+    /// generation (<paramref name="scopeId"/>) and the version within it — because <c>Version</c>
+    /// alone resets to 0 on every new generation and cannot by itself tell one generation from the
+    /// next. <c>DueAt</c> is deliberately untouched: merging is leading-edge.
     /// </summary>
     /// <param name="scopeKey">The scope key.</param>
+    /// <param name="scopeId">The generation identity the caller read.</param>
     /// <param name="payload">The merged, reserialized command.</param>
     /// <param name="version">The version the caller read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns><see langword="true"/> when the merge was applied.</returns>
     public Task<bool> TryMergeScopeAsync(
-        string scopeKey, string payload, int version, CancellationToken cancellationToken);
+        string scopeKey, string scopeId, string payload, int version, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Deletes a scope, conditional on the version pickup materialized from. A merge that landed since
-    /// leaves the row alive at a higher version, so the newer scope becomes its own run rather than
-    /// being discarded.
+    /// Deletes a scope, conditional on the generation and version pickup materialized from. A merge
+    /// that landed since, or a fresh generation opened after a prior one was already picked up, leaves
+    /// the row alive under a guard this call will not match, so the newer scope becomes its own run
+    /// rather than being discarded. The guard is on the pair — the generation
+    /// (<paramref name="scopeId"/>) and the version within it — because <c>Version</c> alone resets to
+    /// 0 on every new generation and cannot by itself tell one generation from the next.
     /// </summary>
     /// <param name="scopeKey">The scope key.</param>
+    /// <param name="scopeId">The generation identity pickup read.</param>
     /// <param name="version">The version pickup read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns><see langword="true"/> when the row was deleted.</returns>
-    public Task<bool> TryDeleteScopeAsync(string scopeKey, int version, CancellationToken cancellationToken);
+    public Task<bool> TryDeleteScopeAsync(
+        string scopeKey, string scopeId, int version, CancellationToken cancellationToken);
 
     /// <summary>Reads scopes whose due time has arrived, soonest first.</summary>
     /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>

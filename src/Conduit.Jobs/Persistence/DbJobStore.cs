@@ -35,10 +35,10 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     private static readonly string[] ReconcileScheduleColumns = ["Name", "IsPaused"];
 
-    private const string ScopeColumns = "ScopeKey, TriggerName, MessageType, Payload, DueAt, Version";
+    private const string ScopeColumns = "ScopeKey, ScopeId, TriggerName, MessageType, Payload, DueAt, Version";
 
     private static readonly string[] InsertScopeColumns =
-        ["ScopeKey", "TriggerName", "MessageType", "Payload", "DueAt", "Version"];
+        ["ScopeKey", "ScopeId", "TriggerName", "MessageType", "Payload", "DueAt", "Version"];
 
     private readonly IOptions<JobsOptions> options;
     private readonly string createRunsTableSql;
@@ -428,6 +428,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             command =>
             {
                 DbParameterHelper.Add(command, "@ScopeKey", scope.ScopeKey);
+                DbParameterHelper.Add(command, "@ScopeId", scope.ScopeId);
                 DbParameterHelper.Add(command, "@TriggerName", scope.TriggerName);
                 DbParameterHelper.Add(command, "@MessageType", scope.MessageType);
                 DbParameterHelper.Add(command, "@Payload", scope.Payload);
@@ -453,20 +454,23 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     /// <inheritdoc/>
     public async Task<bool> TryMergeScopeAsync(
-        string scopeKey, string payload, int version, CancellationToken cancellationToken)
+        string scopeKey, string scopeId, string payload, int version, CancellationToken cancellationToken)
     {
         // DueAt is untouched on purpose: merging is leading-edge, so a steady stream of events cannot
-        // keep pushing the run away.
+        // keep pushing the run away. The guard is on (ScopeId, Version), not Version alone: Version
+        // resets to 0 every time a scope is deleted and reopened, so a merge that straddles a pickup
+        // could otherwise match the row that replaced its target.
         var merged = await this.ExecuteNonQueryAsync(
             $"""
             UPDATE {JobTableSchema.ScopesTable}
             SET Payload = @Payload, Version = Version + 1
-            WHERE ScopeKey = @ScopeKey AND Version = @Version
+            WHERE ScopeKey = @ScopeKey AND ScopeId = @ScopeId AND Version = @Version
             """,
             command =>
             {
                 DbParameterHelper.Add(command, "@Payload", payload);
                 DbParameterHelper.Add(command, "@ScopeKey", scopeKey);
+                DbParameterHelper.Add(command, "@ScopeId", scopeId);
                 DbParameterHelper.Add(command, "@Version", version);
             },
             cancellationToken);
@@ -476,13 +480,17 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     /// <inheritdoc/>
     public async Task<bool> TryDeleteScopeAsync(
-        string scopeKey, int version, CancellationToken cancellationToken)
+        string scopeKey, string scopeId, int version, CancellationToken cancellationToken)
     {
         var deleted = await this.ExecuteNonQueryAsync(
-            $"DELETE FROM {JobTableSchema.ScopesTable} WHERE ScopeKey = @ScopeKey AND Version = @Version",
+            $"""
+            DELETE FROM {JobTableSchema.ScopesTable}
+            WHERE ScopeKey = @ScopeKey AND ScopeId = @ScopeId AND Version = @Version
+            """,
             command =>
             {
                 DbParameterHelper.Add(command, "@ScopeKey", scopeKey);
+                DbParameterHelper.Add(command, "@ScopeId", scopeId);
                 DbParameterHelper.Add(command, "@Version", version);
             },
             cancellationToken);
@@ -642,6 +650,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             JobTableSchema.ScopesTable,
             $"""
                 ScopeKey {dialect.KeyTextType} NOT NULL PRIMARY KEY,
+                ScopeId {dialect.KeyTextType} NOT NULL,
                 TriggerName {dialect.KeyTextType} NOT NULL,
                 MessageType {dialect.TextType} NOT NULL,
                 Payload {dialect.TextType} NOT NULL,
@@ -772,6 +781,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         => new()
         {
             ScopeKey = reader.GetString(reader.GetOrdinal("ScopeKey")),
+            ScopeId = reader.GetString(reader.GetOrdinal("ScopeId")),
             TriggerName = reader.GetString(reader.GetOrdinal("TriggerName")),
             MessageType = reader.GetString(reader.GetOrdinal("MessageType")),
             Payload = reader.GetString(reader.GetOrdinal("Payload")),
