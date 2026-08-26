@@ -4,6 +4,7 @@
 - [Declaring jobs](#declaring-jobs)
   - [Recurring schedules](#recurring-schedules)
   - [Event triggers](#event-triggers)
+  - [Coalescing a burst into the work it represents](#coalescing-a-burst-into-the-work-it-represents)
 - [Durability is inferred, not declared](#durability-is-inferred-not-declared)
 - [How a scheduled job runs](#how-a-scheduled-job-runs)
   - [Why occurrences are computed in memory](#why-occurrences-are-computed-in-memory)
@@ -116,10 +117,86 @@ jobs.On<CartAbandoned>()
     .Run(cart => new SendAbandonmentReminder(cart.CartId));
 ```
 
+Triggers can be named, and must be if two of them react to one event type. The name defaults to the
+event's type name and forms half of every run's database key, so two unnamed triggers on one event
+collide:
+
+```csharp
+jobs.On<CartAbandoned>("reminder").Run(cart => new SendAbandonmentReminder(cart.CartId));
+jobs.On<CartAbandoned>("analytics").Run(cart => new RecordAbandonment(cart.CartId));
+```
+
 Event triggers are **always durable** and require a persistence engine — configuring one without an
 engine fails at startup. There is no non-durable variant because an ordinary `IEventListener<T>`
 already is one, at zero cost; a second non-durable path through the jobs engine would duplicate it
 and earn nothing.
+
+### Coalescing a burst into the work it represents
+
+Ten punch corrections at one workstation mean **one** rebuild, not ten. A trigger can say so:
+`CoalesceBy` declares what makes two units of work the same, and `Merge` declares how they combine.
+
+```csharp
+jobs.On<PunchChanged>("workstation-rebuild")
+    .CoalesceBy(punch => punch.LocationId)
+    .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+    .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming);
+```
+
+`Merge` comes after `Run` so the command type is inferred from the lambda rather than written twice.
+
+**Widen, never narrow.** A merge that loses window is silent staleness; doing the work twice is the
+cheaper mistake. That is why there is no default merge and `AddJobs` rejects a `CoalesceBy` without
+one — "keep the newest and discard the rest" is exactly the narrowing this exists to prevent.
+
+**And be idempotent.** A non-coalescing trigger keys its run on the event's `MessageId`, so a broker
+redelivering one event collapses on the run key for free. A coalescing trigger keys on the coalesce
+key instead and inherits none of that: a redelivered event is merged twice. Widening merges — keep
+the earlier instant, union a set, take a max — are idempotent by construction. An accumulating one is
+not, and will over-count:
+
+```csharp
+// Wrong: a redelivered event is counted twice.
+.Merge((pending, incoming) => pending with { Count = pending.Count + incoming.Count });
+```
+
+Coalesced work accumulates in `conduit_job_scopes`, one row per distinct key, and becomes a run only
+when the work starts. So the ledger holds **one row per real execution**, which is the point: without
+this, ten events produce ten runs, nine of them no-ops that drag the reported average down and make a
+struggling projection look fast.
+
+**A key's work yields at most two rows at a time: one run in flight, one scope accumulating behind
+it.** That is a guarantee rather than a typical case, and the run key is what enforces it — a scope's
+run is keyed on the scope key itself, and `JobKey` is unique, so a second run for one key cannot be
+written. A pickup whose insert is refused therefore means "a run for this key is already outstanding",
+and the scope stays where it is, still accumulating, to become the next run once the one ahead of it
+clears. A run between attempts holds its key the same way, so a retry does not fan out either.
+
+**Merging is leading-edge.** With `.After(delay)` the due time is set when the scope opens and a
+later event never moves it, so a steady stream cannot starve the run. The merge has already widened
+the scope, so the run still covers everything that arrived while it waited.
+
+**A follow-on run waits for the sweep.** A scope parked behind an in-flight run is due but blocked,
+and nothing nudges the sweep when the blocking run finally clears, so the follow-on starts up to
+`ClaimTimeout` (2 minutes by default) afterwards. An undelayed trigger also retries the pickup on
+every event it receives, so a busy key rarely waits that long — but `ClaimTimeout` is the bound, and
+it is a known, accepted limitation rather than a bug. Size it accordingly if a projection's staleness
+is what you are tuning.
+
+**A run that gave up does not wedge its key.** Because the run key is the coalesce key, a terminal
+run — attempts exhausted, or cancelled by an operator — still holds that key while it waits out
+`FailedRetention` (7 days by default). Left alone it would silently freeze every later unit of work
+on the key for a week, so a pickup **supersedes** it: the row is deleted and a Warning is logged
+naming the key. The attempts that were exhausted belonged to *that* unit of work, and the scope
+waiting behind it is different work that must not inherit the give-up. Stated honestly, the
+consequence is that a permanently failing coalescing job does not stop at `MaxAttempts` — it tries
+again whenever new events arrive for the key, logging that Warning each time.
+
+The coalesce key is formatted with the invariant culture and must be stable across hosts and
+processes — no `GetHashCode()`, nothing seeded per process, or hosts stop agreeing on one scope and
+coalescing silently stops coalescing. A key that formats to null or whitespace is rejected, because
+every scope for the trigger would collapse into one and merge unrelated work. And `{trigger}@{key}`
+must fit 200 characters, so key on an id rather than on a composite of several fields.
 
 ## Durability is inferred, not declared
 
@@ -217,8 +294,15 @@ abandoned after `ClaimTimeout` and another host would take it, collapsing a thir
 two minutes. Delayed triggers therefore cost three writes, and are the one case where the triggering
 host is not necessarily the running host.
 
-The run key is `{trigger}@{event MessageId}`, which makes the trigger idempotent against broker
-redelivery for free — no dedup store, no inbox required.
+**Coalescing trigger (`CoalesceBy`).** The receiving host merges the event into the trigger's scope
+row instead of writing a run. An undelayed trigger then picks that scope up immediately, on the same
+host, so its latency matches the immediate path above; a delayed one is left for the sweep. Pickup is
+what writes the run, and it deletes the scope in the same breath.
+
+A non-coalescing trigger's run key is `{trigger}@{event MessageId}`, which makes it idempotent
+against broker redelivery for free — no dedup store, no inbox required. A coalescing trigger keys on
+the coalesce key instead, which is why its merge has to be idempotent as well as widening; see
+[Coalescing a burst](#coalescing-a-burst-into-the-work-it-represents).
 
 ## Failure handling: two layers, in order
 
@@ -237,6 +321,10 @@ restart, which is the thing Polly alone cannot give you.
 After `MaxAttempts` (default 3) the row is marked `Failed`, kept for `FailedRetention` (default 7
 days) so `IJobs` can surface it, and **the cursor advances** — one permanently broken occurrence must
 not block every later one.
+
+A coalescing trigger is the one case where a terminal row is not the end of it: its run key is the
+coalesce key, so the row is superseded when new coalesced work arrives for that key rather than
+holding it for the retention period.
 
 Cancellation bypasses both layers: see below.
 
@@ -328,6 +416,8 @@ public interface IJobs
 {
     Task<IReadOnlyList<JobScheduleInfo>> GetSchedulesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<JobRunInfo>> GetInFlightAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(JobFilter filter, CancellationToken cancellationToken);
+    Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(JobFilter filter, CancellationToken cancellationToken);
     Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(JobFilter filter, CancellationToken cancellationToken);
     Task PauseAsync(string scheduleName, CancellationToken cancellationToken);
     Task ResumeAsync(string scheduleName, CancellationToken cancellationToken);
@@ -337,6 +427,17 @@ public interface IJobs
 ```
 
 Inject `IJobs` anywhere — an admin endpoint, a diagnostics page, a CLI.
+
+- `GetPendingAsync(filter)` — runs that are waiting rather than running, soonest first. This is where
+  a run **between attempts** appears: it is `Pending` with `RunAt` set to when the next attempt falls
+  due, so it shows in neither `GetInFlightAsync` nor `GetFailedAsync`, the latter listing only runs
+  whose attempts are exhausted.
+- `GetPendingScopesAsync(filter)` — coalesced work waiting to become a run. For a projection this is
+  queue depth. `Version` climbing while `DueAt` holds still means a scope is absorbing a steady
+  stream, which is coalescing working as intended.
+
+There is no way to cancel a waiting scope: `CancelAsync` flags a run row and a scope has none. A
+scope always runs, does its work, and clears.
 
 **Pause** stops future occurrences; an in-flight run completes. Its state lives in
 `conduit_job_schedules`, so it survives restarts and applies cluster-wide — a pause affecting only
@@ -369,7 +470,7 @@ the ADO.NET store; Hangfire likewise requires a storage backend.
 
 ## Tables
 
-Both are created at startup if absent.
+All three are created at startup if absent.
 
 **`conduit_job_schedules`** — one row per declared schedule, reconciled at boot.
 
@@ -384,7 +485,7 @@ Both are created at startup if absent.
 | Column | Purpose |
 |---|---|
 | `Id` (PK, auto-increment) | Claim ordering |
-| `JobKey` (unique) | `{schedule}@{occurrenceUtcIso}` or `{trigger}@{eventMessageId}` |
+| `JobKey` (unique) | `{schedule}@{occurrenceUtcIso}`, `{trigger}@{eventMessageId}`, or `{trigger}@{coalesceKey}` for a coalescing trigger |
 | `ScheduleName` | The declaring schedule or trigger; drives overlap and the cursor |
 | `Occurrence` | The occurrence this run is for, on schedule runs |
 | `MessageType`, `Payload` | The command to dispatch |
@@ -399,6 +500,33 @@ conflicts on it.
 
 `Occurrence` is separate from `RunAt` because a retry moves `RunAt` to the backoff time while the
 cursor must still advance to the occurrence.
+
+**`conduit_job_scopes`** — coalesced work waiting to become a run. Empty unless a coalescing trigger
+is declared.
+
+| Column | Purpose |
+|---|---|
+| `ScopeKey` (PK) | `{trigger}@{coalesceKey}` — one row per distinct unit of coalesced work |
+| `ScopeId` | The row's generation identity: minted when the scope is opened, never changed by a merge |
+| `TriggerName` | The declaring trigger; the pickup sweep and `GetPendingScopesAsync` group by it |
+| `MessageType`, `Payload` | The merged command this scope will dispatch |
+| `DueAt` | When the work becomes due. Written once — merging is leading-edge and never moves it |
+| `Version` | Bumped by every merge; the optimistic guard on the read-modify-write |
+
+`ScopeKey` is a single column rather than a composite `(TriggerName, CoalesceKey)` key because the
+shared insert-or-ignore builder takes one conflict column, and two engines bake it into their SQL as
+a single identifier.
+
+`Version` is the compare-and-set that stops one host's merge clobbering another's — a lost merge
+would *narrow* the scope, losing work rather than duplicating it — and it is what makes the delete at
+pickup conditional, so a merge landing between writing the run and deleting the scope survives as the
+next scope instead of vanishing. `ScopeId` is there because `Version` restarts at 0 every time a
+scope row is deleted and reopened: a compare-and-set on the version alone could match the row that
+*replaced* its target and narrow it, which is the exact failure the guard exists to prevent.
+
+The run a scope becomes is keyed on the scope key itself, with no version suffix. That is what makes
+the two-row guarantee hold: `JobKey` is unique, so the coalesce key doubles as a mutex and a refused
+insert means the key is already outstanding.
 
 ## Configuration reference
 
@@ -428,6 +556,8 @@ conduit.AddJobs(jobs =>
 - **No imperative one-shot scheduling.** There is no `ScheduleAsync(command, runAt)`. A delayed
   *event trigger* covers the declarative version of that need.
 - **No backfill.** Misfire offers skip or one catch-up, and nothing else.
+- **A coalesced follow-on run waits for the sweep**, so it starts up to `ClaimTimeout` after the
+  run ahead of it clears. Nothing nudges the sweep when a blocking run finishes.
 - **No runtime-defined schedules.** Schedules are code-declared; that is what lets every host agree
   on occurrences without coordinating.
 - **Cancellation is not guaranteed.** It is cooperative, and partial work stays done.
