@@ -61,8 +61,12 @@ public sealed class JobsBuilder
 
     /// <summary>Begins declaring a job triggered by an event.</summary>
     /// <typeparam name="TEvent">The event type to react to.</typeparam>
+    /// <param name="name">
+    /// The trigger's unique name, forming half of each run's database key. Defaults to the event's
+    /// type name, which is why two unnamed triggers on one event type collide.
+    /// </param>
     /// <returns>A builder for the trigger.</returns>
-    public EventTriggerBuilder<TEvent> On<TEvent>()
+    public EventTriggerBuilder<TEvent> On<TEvent>(string? name = null)
         where TEvent : IEvent
-        => new(this.triggers.Add);
+        => new(name ?? typeof(TEvent).Name, this.triggers.Add);
 }

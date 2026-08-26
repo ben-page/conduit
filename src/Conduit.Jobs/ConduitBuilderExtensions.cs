@@ -55,6 +55,17 @@ public static class ConduitBuilderExtensions
                 $"Duplicate job schedule name '{duplicate.Key}'. Schedule names are database keys and must be unique.");
         }
 
+        var duplicateTrigger = jobsBuilder.Triggers
+            .GroupBy(trigger => trigger.Name, StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateTrigger is not null)
+        {
+            throw new InvalidOperationException(
+                $"Duplicate event trigger name '{duplicateTrigger.Key}'. Trigger names are database keys " +
+                "and must be unique: two triggers of one name write the same run key, and the second is " +
+                "silently discarded by the idempotent insert. Name them with jobs.On<TEvent>(\"name\").");
+        }
+
         var collision = jobsBuilder.Triggers
             .Select(trigger => trigger.Name)
             .Intersect(jobsBuilder.Schedules.Select(schedule => schedule.Name), StringComparer.Ordinal)

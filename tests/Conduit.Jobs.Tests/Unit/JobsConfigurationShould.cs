@@ -58,6 +58,41 @@ public class JobsConfigurationShould
         act.Should().Throw<InvalidOperationException>().WithMessage("*Choose one*");
     }
 
+    [TestMethod]
+    public void RejectDuplicateTriggerNames()
+    {
+        // Arrange — two triggers on one event type both default to the event's type name, so they
+        // would write the identical run key and insert-or-ignore would silently drop the second
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.On<ThingHappened>().Run(thing => new RecordedJob(thing.Label));
+            jobs.On<ThingHappened>().Run(thing => new RecordedJob(thing.Label));
+        }
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*must be unique*");
+    }
+
+    [TestMethod]
+    public void AllowTwoTriggersOnOneEventTypeWhenTheyAreNamed()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.On<ThingHappened>("rebuild").Run(thing => new RecordedJob(thing.Label));
+            jobs.On<ThingHappened>("notify").Run(thing => new RecordedJob(thing.Label));
+        }
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
     private static void AddJobsForTest(Action<JobsBuilder> configure)
     {
         var builder = new ConduitBuilder(new ServiceCollection());
