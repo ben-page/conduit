@@ -4,6 +4,7 @@ using Conduit.Persistence;
 using Conduit.Persistence.Sqlite;
 using Microsoft.Extensions.Options;
 using System.Data.Common;
+using System.Globalization;
 
 namespace Conduit.Jobs.Tests.Support;
 
@@ -151,6 +152,41 @@ public static class JobsDatabaseProbe
 
             await Task.Delay(10);
         }
+    }
+
+    /// <summary>Waits until the scopes table holds exactly one row and returns it.</summary>
+    public static async Task<JobScope> WaitForOnlyScopeAsync(
+        SharedSqliteDatabase database, TimeSpan? timeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            var scopes = await StoreFor(database).GetScopesAsync(null, CancellationToken.None);
+            if (scopes.Count == 1)
+            {
+                return scopes[0];
+            }
+
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException($"Expected one scope row; saw {scopes.Count}.");
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>Counts the rows currently in the run ledger, whatever their status.</summary>
+    public static async Task<int> CountRunsAsync(SharedSqliteDatabase database)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+
+        await using var connection = await database.OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {JobTableSchema.RunsTable}";
+        return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     }
 
     private sealed class ProbeConnectionFactory : IConduitConnectionFactory
