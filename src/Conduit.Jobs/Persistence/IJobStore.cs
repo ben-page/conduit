@@ -78,17 +78,20 @@ public interface IJobStore
         long id, string claimToken, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Records success: deletes the run row and, for a schedule run, advances the cursor — in one
-    /// transaction, so a deleted row can never be re-materialized by a host that has not yet seen
-    /// the new cursor.
+    /// Records success: writes a <see cref="JobRunOutcome.Completed"/> history row, deletes the run
+    /// row, and — for a schedule run — advances the cursor, all in one transaction. A deleted row can
+    /// never be re-materialized by a host that has not yet seen the new cursor, and the history row
+    /// cannot be written without the deletion landing alongside it.
     /// </summary>
-    /// <param name="id">The run's primary key.</param>
+    /// <param name="run">The completed run, read before this call.</param>
     /// <param name="scheduleName">The schedule to advance, or <see langword="null"/> for a trigger run.</param>
     /// <param name="occurrence">The occurrence to advance the cursor to.</param>
+    /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public Task CompleteAsync(
-        long id, string? scheduleName, DateTimeOffset? occurrence, CancellationToken cancellationToken);
+        JobRun run, string? scheduleName, DateTimeOffset? occurrence, DateTimeOffset now,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Releases a claim back to pending without recording an outcome and <b>without</b> touching the
@@ -117,24 +120,27 @@ public interface IJobStore
         long id, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Moves a run to a terminal status, releases its claim and, for a schedule run, advances the
-    /// cursor past the occurrence — in one transaction. Both halves are needed and neither is safe
-    /// alone: without the cursor the occurrence is re-materialized once the row is purged, and a
-    /// crash between two separate writes leaves exactly that state behind.
+    /// Writes a matching history row, moves a run to a terminal status, releases its claim and, for a
+    /// schedule run, advances the cursor past the occurrence — all in one transaction. The cursor
+    /// advance and the ledger transition are needed for the reasons <see cref="CompleteAsync"/>
+    /// documents; the history row is needed so the outcome survives whatever later happens to the
+    /// ledger row (a coalescing pickup superseding it, or the retention purge).
     /// </summary>
-    /// <param name="id">The run's primary key.</param>
+    /// <param name="run">The run reaching this terminal status, read before this call.</param>
     /// <param name="status">The terminal status.</param>
     /// <param name="error">The failure message, when there is one.</param>
     /// <param name="scheduleName">The schedule to advance, or <see langword="null"/> for a trigger run.</param>
     /// <param name="occurrence">The occurrence to advance the cursor to.</param>
+    /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public Task MarkTerminalAsync(
-        long id,
+        JobRun run,
         JobRunStatus status,
         string? error,
         string? scheduleName,
         DateTimeOffset? occurrence,
+        DateTimeOffset now,
         CancellationToken cancellationToken);
 
     /// <summary>Advances a schedule's cursor past an occurrence that will not be run again.</summary>
@@ -226,6 +232,22 @@ public interface IJobStore
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns><see langword="true"/> when a terminal row was removed.</returns>
     public Task<bool> TryClearTerminalRunAsync(string jobKey, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Browses run history with optional filtering and pagination. Unlike the ledger queries above,
+    /// history is never superseded or cleared — every terminal outcome a run ever reached stays
+    /// queryable here until <see cref="PurgeHistoryAsync"/> removes it.
+    /// </summary>
+    /// <param name="filter">Narrows and pages the result.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The matching page of history entries.</returns>
+    public Task<JobHistoryPage> QueryHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken);
+
+    /// <summary>Deletes history entries older than the retention cutoff.</summary>
+    /// <param name="olderThan">The cutoff; entries completed before it are deleted.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The number of rows deleted.</returns>
+    public Task<int> PurgeHistoryAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 
     /// <summary>
     /// Opens a scope unless one with the same key already exists. Two hosts racing to open a scope for

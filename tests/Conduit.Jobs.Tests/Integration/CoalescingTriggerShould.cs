@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using Conduit.Jobs;
 using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
@@ -197,7 +198,7 @@ public class CoalescingTriggerShould
             CancellationToken.None);
         var stuck = await store.GetRunAsync("rebuild@loc-1", CancellationToken.None);
         await store.MarkTerminalAsync(
-            stuck!.Id, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null,
+            stuck!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
             CancellationToken.None);
 
         // Blocked, so the assertion below observes the new run in flight rather than racing its own
@@ -218,6 +219,13 @@ public class CoalescingTriggerShould
         var run = await store.GetRunAsync("rebuild@loc-1", CancellationToken.None);
         run.Should().NotBeNull("the terminal row was superseded by the new, already-running run");
         run!.Status.Should().Be(JobRunStatus.Claiming, "this is the new run, not the failed one left in place");
+
+        // The superseded row is gone from the ledger, but its failure is not gone from history — this
+        // is the fix for the data-loss bug TryClearTerminalRunAsync's delete used to cause: the
+        // Warning log was the only surviving record that the occurrence ever failed at all.
+        var history = await store.QueryHistoryAsync(
+            new JobHistoryFilter { JobKey = "rebuild@loc-1" }, CancellationToken.None);
+        history.Entries.Should().ContainSingle().Which.Outcome.Should().Be(JobRunOutcome.Failed);
 
         spy.ReleaseOne();
     }

@@ -4,8 +4,9 @@ namespace Conduit.Jobs;
 
 /// <summary>
 /// One run in the ledger. The ledger holds work, not history — a successful run's row is deleted —
-/// so this shows what is in flight or has failed. Per-dispatch history is <c>Conduit.Audit</c>,
-/// which already records every dispatch a job makes.
+/// so this shows what is in flight or has failed. A run's terminal outcome, independent of whatever
+/// later happens to this ledger row, is <see cref="JobRunHistoryInfo"/> via
+/// <see cref="IJobs.GetHistoryAsync"/>.
 /// </summary>
 /// <param name="JobKey">The run's unique key.</param>
 /// <param name="ScheduleName">The declaring schedule or trigger.</param>

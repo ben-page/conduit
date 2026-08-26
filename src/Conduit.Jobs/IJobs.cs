@@ -51,6 +51,16 @@ public interface IJobs
     public Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(JobFilter filter, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Browses the durable outcome of every run that has ever gone terminal — success included, not
+    /// just failure. Unlike <see cref="GetFailedAsync"/>, an entry here is never superseded or cleared
+    /// by later work for the same key, so it is what backs a dashboard rather than a live queue.
+    /// </summary>
+    /// <param name="filter">Narrows and pages the result.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The matching page of history entries.</returns>
+    public Task<JobHistoryPage> GetHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Stops future occurrences of a schedule. An in-flight run is left alone — pause is about what
     /// happens next, not about stopping work already under way. The state lives in the database, so
     /// it survives a restart and applies cluster-wide.

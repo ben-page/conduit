@@ -52,6 +52,11 @@ internal sealed class InMemoryJobs : IJobs
         => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
 
     /// <inheritdoc/>
+    /// <remarks>Always an empty page. There is no ledger, so there is nothing to have a history of.</remarks>
+    public Task<JobHistoryPage> GetHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken)
+        => Task.FromResult(new JobHistoryPage { Entries = [], NextPageToken = null, TotalCount = 0 });
+
+    /// <inheritdoc/>
     /// <remarks>
     /// Always empty. The in-memory scheduler dispatches straight through <see cref="IMediator"/> with
     /// no ledger for a run to be pending in, so this is truthful rather than a stub.

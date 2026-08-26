@@ -6,6 +6,7 @@ using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;
+using Conduit.Jobs;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
 using Microsoft.Extensions.Options;
@@ -449,7 +450,7 @@ public abstract class PersistenceEngineTestBase
         var claimed = await store.ClaimDueAsync(
             "worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
         await store.CompleteAsync(
-            claimed[0].Id, "nightly", claimed[0].Occurrence, CancellationToken.None);
+            claimed[0], "nightly", claimed[0].Occurrence, DateTimeOffset.UtcNow, CancellationToken.None);
 
         // Assert — the delete and the cursor advance land together, on the live engine
         claimed[0].RunAt.Should().Be(occurrence);
@@ -538,6 +539,70 @@ public abstract class PersistenceEngineTestBase
         deleteRefused.Should().BeFalse();
         deleted.Should().BeTrue();
         (await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None)).Should().BeNull();
+    }
+
+    // 8) Jobs run history -------------------------------------------------------------------------
+    //
+    // A table decoupled from the run ledger's own uniqueness, an optional-filter WHERE clause
+    // (JobKey/ScheduleName/Outcome/Since/Until, each `@Param IS NULL OR ...`) paired with the
+    // engine's pagination suffix, and a COUNT over the same filter for TotalCount. SQLite exercises
+    // none of that divergence — OFFSET/FETCH on SqlServer vs LIMIT/OFFSET elsewhere, and whether an
+    // untyped int bound against a SMALLINT `Outcome` column resolves on every provider.
+
+    [TestMethod]
+    public async Task PageFilterAndPurgeRunHistory()
+    {
+        // Arrange — a failed run, a completed run, and an older completed run to purge
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        var now = DateTimeOffset.UtcNow;
+
+        await store.TryMaterializeAsync(NewJobRun("nightly@failed", now), CancellationToken.None);
+        var failedClaim = await store.ClaimDueAsync("worker-failed", now, 10, CancellationToken.None);
+        await store.MarkTerminalAsync(
+            failedClaim[0], JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, now,
+            CancellationToken.None);
+
+        await store.TryMaterializeAsync(NewJobRun("nightly@completed", now), CancellationToken.None);
+        var completedClaim = await store.ClaimDueAsync("worker-completed", now, 10, CancellationToken.None);
+        await store.CompleteAsync(
+            completedClaim[0], null, null, now.AddMinutes(1), CancellationToken.None);
+
+        await store.TryMaterializeAsync(NewJobRun("nightly@old", now), CancellationToken.None);
+        var oldClaim = await store.ClaimDueAsync("worker-old", now, 10, CancellationToken.None);
+        await store.CompleteAsync(oldClaim[0], null, null, now.AddDays(-60), CancellationToken.None);
+
+        // Act — filter by outcome, comparing a bound int parameter against the real SMALLINT column
+        var failedOnly = await store.QueryHistoryAsync(
+            new JobHistoryFilter { Outcome = JobRunOutcome.Failed }, CancellationToken.None);
+
+        // Assert
+        var failedEntry = failedOnly.Entries.Should().ContainSingle().Subject;
+        failedEntry.JobKey.Should().Be("nightly@failed");
+        failedEntry.LastError.Should().Be("boom");
+
+        // Act — page size 2 over all 3 rows, newest CompletedAt first
+        var page1 = await store.QueryHistoryAsync(new JobHistoryFilter { PageSize = 2 }, CancellationToken.None);
+        var page2 = await store.QueryHistoryAsync(
+            new JobHistoryFilter { PageSize = 2, PageToken = page1.NextPageToken }, CancellationToken.None);
+
+        // Assert — count + pagination (OFFSET/FETCH on SqlServer, LIMIT/OFFSET elsewhere)
+        page1.TotalCount.Should().Be(3);
+        page1.Entries.Should().HaveCount(2);
+        page2.Entries.Should().ContainSingle();
+        page1.Entries.Concat(page2.Entries).Select(entry => entry.JobKey).Should().OnlyHaveUniqueItems();
+        page2.Entries[0].JobKey.Should().Be("nightly@old", "the oldest CompletedAt sorts last");
+
+        // Act — purge past a 30-day cutoff
+        var purged = await store.PurgeHistoryAsync(now.AddDays(-30), CancellationToken.None);
+        var remaining = await store.QueryHistoryAsync(
+            new JobHistoryFilter { PageSize = 10 }, CancellationToken.None);
+
+        // Assert
+        purged.Should().Be(1);
+        remaining.Entries.Select(entry => entry.JobKey).Should().NotContain("nightly@old");
     }
 
     // Helpers -----------------------------------------------------------------------------------

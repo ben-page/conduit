@@ -22,8 +22,8 @@ but `IJobStore` is not, naming the fix.
 
 - `Configuration/` — `JobsBuilder`, `JobsOptions`, `ScheduleBuilder`, `EventTriggerBuilder<TEvent>`, `CoalescingTriggerBuilder<TEvent>` and `CoalescingTriggerBuilder<TEvent, TCommand>`, `MisfirePolicy`
 - `Runtime/` — `JobSchedule`, `JobTrigger`, `ScheduleRegistry`, `DurableJobScheduler`, `InMemoryJobScheduler`, `ClaimedJobExecutor`, `JobRunner`, `ClaimHeartbeat`, `EventTriggerListener<TEvent>`, `ScopeCoalescer`, `JobCleanup`, `DurableJobs`, `InMemoryJobs`, `InMemoryJobState`, `JobSchedulerReadiness`, `JobOutcome`, `JobAttempt`
-- `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema` (`conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`), `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobScheduleRow`, `JobScope`, `HeartbeatResult`
-- root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobScopeInfo`, `JobFilter`, `CancellationOutcome`
+- `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema` (`conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`, `conduit_job_run_history`), `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobRunOutcome`, `JobScheduleRow`, `JobScope`, `HeartbeatResult`
+- root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobRunHistoryInfo`, `JobScopeInfo`, `JobFilter`, `JobHistoryFilter`, `JobHistoryPage`, `CancellationOutcome`
 
 ## Time
 
@@ -201,7 +201,28 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   coalesce key, that would freeze every later scope for the key. `TryClearTerminalRunAsync` deletes
   it (guarded on the same status pair `PurgeTerminalAsync` targets, so live work is never touched)
   and logs at Warning. The consequence is deliberate: a permanently failing coalescing job retries
-  whenever new events arrive rather than stopping at `MaxAttempts`.
+  whenever new events arrive rather than stopping at `MaxAttempts`. This used to also mean the
+  superseded row's failure had no surviving record but that Warning — history (below) closes that
+  gap without touching the retry policy itself.
+- **Run history is a separate, append-only table, not a status.** `CompleteAsync` and
+  `MarkTerminalAsync` both write a `conduit_job_run_history` row — `Completed`, `Failed`, or
+  `Cancelled` — in the same transaction as the ledger transition, before the ledger row is deleted or
+  marked terminal. That ordering is what makes `TryClearTerminalRunAsync` and `PurgeTerminalAsync`
+  safe to keep deleting exactly as before: whatever they remove from the ledger was already durably
+  recorded. Both methods now take the full `JobRun` (not just its `Id`) plus a `DateTimeOffset now`,
+  because writing the history row needs the run's data and a timestamp for `CompletedAt`. A composite
+  `UNIQUE(JobKey, TerminalId)`-style scheme on `conduit_job_runs` itself was considered and rejected:
+  it would have widened `ISqlDialect.BuildInsertOrIgnoreSql`'s single-column conflict-target
+  signature (shared with Durability's outbox and Audit), broken Postgres's `ON CONFLICT (JobKey)`
+  target match, and needed `GetRunAsync` and everything depending on it to filter out terminal rows a
+  new query has no reason to see. A decoupled table — the same shape `Conduit.Durability`'s dead
+  letter queue already uses — needs none of that: no dialect changes, no relaxed uniqueness
+  invariant, and a schema actually shaped for the queries a dashboard runs (`JobHistoryFilter`/
+  `JobHistoryPage` mirror `DeadLetterFilter`/`DeadLetterPage` exactly). `JobRunHistoryInfo`
+  deliberately omits `Payload`, matching `JobRunInfo`'s existing precedent — history's retention
+  (`HistoryRetention`, default 30 days) is meant to be materially longer than the ledger's, and there
+  is no reason to extend how long a command payload stays persisted just because its outcome is kept
+  longer.
 - **`DueAt` is never moved by a merge.** Leading edge; trailing edge starves under a steady stream.
 - **`ComputeSweepDelayAsync` must include `GetNextScopeDueAsync`.** Without it a delayed coalescing
   scope runs up to a full `ClaimTimeout` late. A scope that is due but *blocked* behind an in-flight

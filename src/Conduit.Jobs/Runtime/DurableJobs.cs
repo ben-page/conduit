@@ -57,6 +57,14 @@ internal sealed class DurableJobs : IJobs
     }
 
     /// <inheritdoc/>
+    public Task<JobHistoryPage> GetHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        return this.store.QueryHistoryAsync(filter, cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(
         JobFilter filter, CancellationToken cancellationToken)
     {
