@@ -21,6 +21,15 @@ public interface IJobs
     /// <returns>The in-flight runs.</returns>
     public Task<IReadOnlyList<JobRunInfo>> GetInFlightAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Runs that are waiting rather than running — including one between attempts, which appears in
+    /// neither <see cref="GetInFlightAsync"/> nor <see cref="GetFailedAsync"/>. Soonest first.
+    /// </summary>
+    /// <param name="filter">Narrows the result to one schedule or trigger.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The waiting runs.</returns>
+    public Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(JobFilter filter, CancellationToken cancellationToken);
+
     /// <summary>Lists runs whose attempts are exhausted.</summary>
     /// <param name="filter">Narrows the result.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>

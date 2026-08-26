@@ -212,6 +212,55 @@ public class JobsApiShould
             .ContainSingle(schedule => schedule.Name == "warm" && schedule.IsPaused);
     }
 
+    [TestMethod]
+    public async Task ListARunAwaitingItsNextAttempt()
+    {
+        // Arrange — the sharpest blind spot: between attempts a run is Pending, so it appears in
+        // neither GetInFlightAsync nor GetFailedAsync, and looks to an operator like nothing happened
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        var run = new JobRun
+        {
+            JobKey = "rollup@2026-08-26T02:00:00.0000000Z",
+            ScheduleName = "rollup",
+            MessageType = "Tests.RecordedJob",
+            Payload = """{"label":"job"}""",
+            RunAt = Start,
+            Status = JobRunStatus.Pending,
+        };
+        await store.TryMaterializeAsync(run, CancellationToken.None);
+        var stored = await store.GetRunAsync(run.JobKey, CancellationToken.None);
+        await store.IncrementAttemptAsync(
+            stored!.Id, Start.AddMinutes(1), "boom", CancellationToken.None);
+
+        // Act
+        var pending = await store.GetPendingAsync(null, CancellationToken.None);
+
+        // Assert
+        var awaiting = pending.Should().ContainSingle().Subject;
+        awaiting.JobKey.Should().Be(run.JobKey);
+        awaiting.AttemptCount.Should().Be(1);
+        awaiting.LastError.Should().Be("boom");
+        awaiting.RunAt.Should().Be(Start.AddMinutes(1), "RunAt is when the next attempt is due");
+    }
+
+    [TestMethod]
+    public async Task ReturnNoPendingRunsWithoutAnEngine()
+    {
+        // Arrange — InMemoryJobs has no ledger to be pending in, so empty is truthful, not a stub
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("rollup").Every(TimeSpan.FromHours(1)).Run(() => new NoopJob()));
+
+        // Act
+        var pending = await host.GetRequiredService<IJobs>()
+            .GetPendingAsync(JobFilter.All, CancellationToken.None);
+
+        // Assert
+        pending.Should().BeEmpty();
+    }
+
     private static Task<TestHost> StartHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, JobSpy spy)
         => JobsTestHost.StartAsync(
