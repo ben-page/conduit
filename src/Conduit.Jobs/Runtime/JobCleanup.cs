@@ -7,10 +7,12 @@ using Microsoft.Extensions.Options;
 namespace Conduit.Jobs.Runtime;
 
 /// <summary>
-/// Deletes terminal runs once they are past retention. Successful runs are already gone — their rows
-/// are deleted on completion, which is what keeps the ledger's size proportional to work in flight
-/// rather than to job volume. Failed and cancelled rows are the exception: they are kept so an
-/// operator can see them, so something has to remove them eventually.
+/// Deletes terminal runs once they are past retention, and history entries once they are past their
+/// own (longer) retention. Successful runs are already gone from the ledger — their rows are deleted
+/// on completion, which is what keeps the ledger's size proportional to work in flight rather than to
+/// job volume. Failed and cancelled rows are the ledger's exception: they are kept so an operator can
+/// see them, so something has to remove them eventually. History is unbounded by design until this
+/// runs — every terminal run writes a row there, independent of the ledger's own retention.
 /// </summary>
 internal sealed class JobCleanup : PeriodicCleanupServiceBase
 {
@@ -29,10 +31,13 @@ internal sealed class JobCleanup : PeriodicCleanupServiceBase
 
     protected override TimeSpan Interval => TimeSpan.FromHours(1);
 
-    protected override Task CleanupAsync(IServiceProvider scopedProvider, CancellationToken cancellationToken)
+    protected override async Task CleanupAsync(
+        IServiceProvider scopedProvider, CancellationToken cancellationToken)
     {
         var store = scopedProvider.GetRequiredService<IJobStore>();
-        var cutoff = this.timeProvider.GetUtcNow() - this.options.Value.FailedRetention;
-        return store.PurgeTerminalAsync(cutoff, cancellationToken);
+        var now = this.timeProvider.GetUtcNow();
+
+        await store.PurgeTerminalAsync(now - this.options.Value.FailedRetention, cancellationToken);
+        await store.PurgeHistoryAsync(now - this.options.Value.HistoryRetention, cancellationToken);
     }
 }

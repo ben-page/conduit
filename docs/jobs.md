@@ -18,6 +18,7 @@
   - [MaxRuntime](#maxruntime)
   - [Shutdown](#shutdown)
 - [Operating jobs with IJobs](#operating-jobs-with-ijobs)
+- [Run history](#run-history)
 - [Without a database](#without-a-database)
 - [Tables](#tables)
 - [Configuration reference](#configuration-reference)
@@ -194,9 +195,11 @@ waiting behind it is different work that must not inherit the give-up. Stated ho
 consequence is that a permanently failing coalescing job does not stop at `MaxAttempts` — it tries
 again whenever new events arrive for the key, logging that Warning each time.
 
-Superseding is a delete, so the failed run also leaves `GetFailedAsync`. On a busy key that can
-happen before anyone looks, and the Warning in the log is then the only surviving record that the
-occurrence failed at all. Alert on it if you need to know.
+Superseding is a delete, but it is not a loss: the outcome was already written to
+[run history](#run-history) the moment the run went terminal, before anything ever supersedes or
+purges the ledger row. A busy key can supersede before anyone looks at `GetFailedAsync`, but the
+failure stays queryable in history regardless — the Warning in the log is a notification, not the
+only surviving record.
 
 **A merge that cannot land fails the event rather than dropping it.** The merge is a compare-and-set
 retried a bounded number of times; if hosts are still colliding on one key past that, the listener
@@ -220,7 +223,7 @@ No engine, so every schedule is non-durable.** That is the whole model.
 | Event triggers | Available | Rejected at startup |
 | Misfire policy | Honoured | Rejected at startup |
 | Pause, trigger-now, cancel | Cluster-wide, survive a restart | This host only, lost on restart |
-| Failed-run history | In the ledger | Not recorded |
+| Run history | Every outcome, in `conduit_job_run_history` | Not recorded |
 
 The accepted cost of that simplicity: an application with a database cannot have a genuinely
 per-host job.
@@ -258,7 +261,8 @@ so an abandoned claim is still recovered when nothing else is scheduled.
 
 Deleting on success rather than marking complete is what keeps the ledger's size proportional to
 work in flight rather than to job volume. The table holds in-flight and failed runs, never history —
-history is `Conduit.Audit`, which already records every dispatch.
+every terminal outcome is written to [run history](#run-history) first, in the same transaction as
+the ledger transition, so nothing is lost when the ledger row is later deleted.
 
 That creates one problem, which the second table solves. A deleted row cannot answer "did we already
 run 02:00 today?", and insert-or-ignore on the run key only prevents duplicates while the row
@@ -335,9 +339,10 @@ After `MaxAttempts` (default 3) the row is marked `Failed`, kept for `FailedRete
 days) so `IJobs` can surface it, and **the cursor advances** — one permanently broken occurrence must
 not block every later one.
 
-A coalescing trigger is the one case where a terminal row is not the end of it: its run key is the
-coalesce key, so the row is superseded when new coalesced work arrives for that key rather than
-holding it for the retention period.
+A coalescing trigger is the one case where a terminal ledger row is not the end of it: its run key is
+the coalesce key, so the row is superseded when new coalesced work arrives for that key rather than
+holding it for the retention period. The outcome itself is unaffected — it was already written to
+[run history](#run-history) when the run went terminal, independent of the ledger row's fate.
 
 Cancellation bypasses both layers: see below.
 
@@ -432,6 +437,7 @@ public interface IJobs
     Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(JobFilter filter, CancellationToken cancellationToken);
     Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(JobFilter filter, CancellationToken cancellationToken);
     Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(JobFilter filter, CancellationToken cancellationToken);
+    Task<JobHistoryPage> GetHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken);
     Task PauseAsync(string scheduleName, CancellationToken cancellationToken);
     Task ResumeAsync(string scheduleName, CancellationToken cancellationToken);
     Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken);
@@ -460,8 +466,46 @@ resuming picks up from the next occurrence.
 **Trigger-now** queues an extra run immediately, with no occurrence attached, so running a job by
 hand cannot swallow the occurrence the schedule was already waiting for.
 
-Detailed per-run history is **not** here. That is `Conduit.Audit`, which already captures every
-dispatch with its full observation trail.
+`GetHistoryAsync(filter)` is different in kind from the queries above it: it does not read the
+ledger at all. See [Run history](#run-history).
+
+## Run history
+
+`GetFailedAsync` and the ledger it reads from answer "what is currently outstanding or stuck" — a
+row disappears the moment it succeeds, is superseded, or ages out past `FailedRetention`.
+`GetHistoryAsync` answers a different question — "what actually happened" — from a separate,
+append-only table that nothing ever supersedes:
+
+```csharp
+var page = await jobs.GetHistoryAsync(
+    new JobHistoryFilter { ScheduleName = "nightly-rollup", Outcome = JobRunOutcome.Failed },
+    cancellationToken);
+
+foreach (var entry in page.Entries)
+{
+    Console.WriteLine($"{entry.JobKey}: {entry.Outcome} at {entry.CompletedAt} — {entry.LastError}");
+}
+```
+
+A row is written to `conduit_job_run_history` at the exact moment a run reaches **any** terminal
+outcome — `Completed`, `Failed`, or `Cancelled` — in the same transaction as the ledger transition
+that records it. That is what makes it durable in a way the ledger itself is not: a coalescing
+pickup superseding a terminal run, or `PurgeTerminalAsync` reclaiming a failed row past
+`FailedRetention`, both delete only the ledger row. The history row was already written before either
+could run, so the outcome survives regardless of what the ledger does to its own copy afterward.
+
+`JobHistoryFilter` narrows and pages the result — `ScheduleName`, `JobKey`, `Outcome`, `Since`/
+`Until`, plus `PageSize` and an opaque `PageToken` for the next page — mirroring
+`Conduit.Durability`'s dead letter queue filter. `JobHistoryPage.TotalCount` and `NextPageToken` come
+back with every query, so a caller can page through a large result set without a second round trip
+to count it.
+
+History has its own retention, `HistoryRetention` (default 30 days) — longer than `FailedRetention`,
+because it is meant to answer "how has this job been doing" over a window wider than "what needs
+attention right now". `JobCleanup`'s hourly sweep purges both independently.
+
+Without a persistence engine there is no ledger and no history either — `GetHistoryAsync` returns an
+empty page, the same honest degradation `GetFailedAsync` and `GetPendingAsync` use.
 
 ## Without a database
 
@@ -483,7 +527,7 @@ the ADO.NET store; Hangfire likewise requires a storage backend.
 
 ## Tables
 
-All three are created at startup if absent.
+All four are created at startup if absent, unless `AutoCreateTable` is `false`.
 
 **`conduit_job_schedules`** — one row per declared schedule, reconciled at boot.
 
@@ -541,6 +585,28 @@ The run a scope becomes is keyed on the scope key itself, with no version suffix
 the two-row guarantee hold: `JobKey` is unique, so the coalesce key doubles as a mutex and a refused
 insert means the key is already outstanding.
 
+**`conduit_job_run_history`** — every terminal outcome a run has ever reached. Unlike the other three
+tables, nothing ever deletes a row here except the retention purge — not a coalescing pickup, not a
+successful completion, not anything else.
+
+| Column | Purpose |
+|---|---|
+| `Id` (PK, auto-increment) | Row identity, unrelated to `conduit_job_runs.Id` |
+| `JobKey` | The run's key at the time it went terminal — **not unique**, unlike the ledger |
+| `ScheduleName` | The declaring schedule or trigger |
+| `MessageType` | The command that was dispatched |
+| `Outcome` | `Completed`, `Failed`, or `Cancelled` |
+| `RunAt` | When the run was due |
+| `StartedAt` | When the final attempt began |
+| `CompletedAt` | When the run reached this outcome — what history is ordered and purged by |
+| `AttemptCount` | How many attempts had run by this point |
+| `LastError` | The failure message, for `Failed` |
+
+`JobKey` is deliberately not unique here: a coalescing key superseded and retried five times over a
+bad afternoon leaves five rows, one per attempt at the underlying work, which is the whole point —
+the ledger enforces "at most one row per key", history has no such constraint because superseding
+never reaches it.
+
 ## Configuration reference
 
 | Property | Default | Purpose |
@@ -548,7 +614,9 @@ insert means the key is already outstanding.
 | `HeartbeatInterval` | 30 seconds | How often a running host renews its claim |
 | `ClaimTimeout` | 2 minutes | How stale a claim must be before another host may take it |
 | `MaxAttempts` | 3 | Durable attempts before a run is marked failed |
-| `FailedRetention` | 7 days | How long terminal runs are kept for inspection |
+| `FailedRetention` | 7 days | How long terminal ledger rows are kept for inspection |
+| `AutoCreateTable` | `true` | Whether to create the jobs tables (including run history) on startup |
+| `HistoryRetention` | 30 days | How long run history is kept |
 
 ```csharp
 conduit.AddJobs(jobs =>
@@ -557,6 +625,7 @@ conduit.AddJobs(jobs =>
     jobs.ClaimTimeout = TimeSpan.FromMinutes(1);
     jobs.MaxAttempts = 5;
     jobs.FailedRetention = TimeSpan.FromDays(30);
+    jobs.HistoryRetention = TimeSpan.FromDays(90);
 
     // schedules and triggers...
 });

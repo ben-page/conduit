@@ -3,14 +3,16 @@ using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Runtime;
 using Conduit.Persistence;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Jobs;
 
 /// <summary>
-/// Creates both jobs tables on startup and reconciles a cursor row per declared schedule. Fails fast
-/// on the two configurations that would otherwise appear to work: an event trigger without an engine
-/// (triggers are always durable, so there would be nowhere to write the run) and a misfire policy
-/// without an engine (an in-memory timer has no record of what it missed).
+/// Creates the jobs tables on startup (unless <see cref="JobsOptions.AutoCreateTable"/> is disabled)
+/// and reconciles a cursor row per declared schedule. Fails fast on the two configurations that would
+/// otherwise appear to work: an event trigger without an engine (triggers are always durable, so
+/// there would be nowhere to write the run) and a misfire policy without an engine (an in-memory
+/// timer has no record of what it missed).
 /// </summary>
 internal sealed class JobTableInitializer : TableInitializerBase
 {
@@ -69,8 +71,13 @@ internal sealed class JobTableInitializer : TableInitializerBase
         }
 
         var registry = scopedProvider.GetRequiredService<ScheduleRegistry>();
+        var options = scopedProvider.GetRequiredService<IOptions<JobsOptions>>().Value;
 
-        await store.EnsureTablesExistAsync(cancellationToken);
+        if (options.AutoCreateTable)
+        {
+            await store.EnsureTablesExistAsync(cancellationToken);
+        }
+
         await store.ReconcileSchedulesAsync(
             [.. registry.Schedules.Select(schedule => schedule.Name)], cancellationToken);
     }

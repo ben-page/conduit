@@ -19,4 +19,12 @@ public static class JobTableSchema
     /// work becomes a run.
     /// </summary>
     public const string ScopesTable = "conduit_job_scopes";
+
+    /// <summary>
+    /// The durable run-outcome record. One row per terminal run (Completed, Failed, or Cancelled),
+    /// written at the moment the outcome is reached — independent of the live ledger row's later
+    /// fate. A coalescing pickup superseding a terminal run, or the retention purge, deletes only the
+    /// ledger row; the outcome already recorded here is untouched.
+    /// </summary>
+    public const string HistoryTable = "conduit_job_run_history";
 }

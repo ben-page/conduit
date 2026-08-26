@@ -131,7 +131,7 @@ public class JobsApiShould
             CancellationToken.None);
         var run = await store.GetRunAsync("warm@done", CancellationToken.None);
         await store.MarkTerminalAsync(
-            run!.Id, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null,
+            run!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
             CancellationToken.None);
 
         // Act
@@ -172,6 +172,40 @@ public class JobsApiShould
         failed.Should().ContainSingle();
         failed[0].LastError.Should().Contain("on purpose");
         failed[0].ScheduleName.Should().Be("warm");
+    }
+
+    [TestMethod]
+    public async Task ListHistoryForInspection()
+    {
+        // Arrange
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { FailuresRemaining = int.MaxValue };
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs =>
+            {
+                jobs.MaxAttempts = 1;
+                jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).Run(() => new RecordedJob("warm"));
+            },
+            spy,
+            timeProvider,
+            database.ConnectionString);
+        var jobsApi = host.GetRequiredService<IJobs>();
+
+        // Act — the same occurrence that lands in GetFailedAsync also lands in history, permanently
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await FakeClock.AdvanceUntilAsync(
+            timeProvider,
+            TimeSpan.FromMinutes(1),
+            async () => (await jobsApi.GetHistoryAsync(new JobHistoryFilter(), CancellationToken.None))
+                .Entries.Count > 0);
+
+        // Assert
+        var history = await jobsApi.GetHistoryAsync(new JobHistoryFilter(), CancellationToken.None);
+        var entry = history.Entries.Should().ContainSingle().Subject;
+        entry.Outcome.Should().Be(JobRunOutcome.Failed);
+        entry.LastError.Should().Contain("on purpose");
+        entry.ScheduleName.Should().Be("warm");
     }
 
     [TestMethod]
@@ -259,6 +293,22 @@ public class JobsApiShould
 
         // Assert
         pending.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task ReturnAnEmptyHistoryPageWithoutAnEngine()
+    {
+        // Arrange — InMemoryJobs has no ledger to have a history of, so empty is truthful, not a stub
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("rollup").Every(TimeSpan.FromHours(1)).Run(() => new NoopJob()));
+
+        // Act
+        var history = await host.GetRequiredService<IJobs>()
+            .GetHistoryAsync(new JobHistoryFilter(), CancellationToken.None);
+
+        // Assert
+        history.Entries.Should().BeEmpty();
+        history.TotalCount.Should().Be(0);
     }
 
     [TestMethod]

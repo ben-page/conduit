@@ -1,3 +1,4 @@
+using Conduit.Jobs;
 using Conduit.Jobs.Persistence;
 
 namespace Conduit.Jobs.Tests.Support;
@@ -68,8 +69,9 @@ public sealed class ContendedJobStore : IJobStore
 
     /// <inheritdoc/>
     public Task CompleteAsync(
-        long id, string? scheduleName, DateTimeOffset? occurrence, CancellationToken cancellationToken)
-        => this.inner.CompleteAsync(id, scheduleName, occurrence, cancellationToken);
+        JobRun run, string? scheduleName, DateTimeOffset? occurrence, DateTimeOffset now,
+        CancellationToken cancellationToken)
+        => this.inner.CompleteAsync(run, scheduleName, occurrence, now, cancellationToken);
 
     /// <inheritdoc/>
     public Task ReleaseAsync(long id, string claimToken, CancellationToken cancellationToken)
@@ -82,13 +84,14 @@ public sealed class ContendedJobStore : IJobStore
 
     /// <inheritdoc/>
     public Task MarkTerminalAsync(
-        long id,
+        JobRun run,
         JobRunStatus status,
         string? error,
         string? scheduleName,
         DateTimeOffset? occurrence,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
-        => this.inner.MarkTerminalAsync(id, status, error, scheduleName, occurrence, cancellationToken);
+        => this.inner.MarkTerminalAsync(run, status, error, scheduleName, occurrence, now, cancellationToken);
 
     /// <inheritdoc/>
     public Task AdvanceCursorAsync(
@@ -137,6 +140,14 @@ public sealed class ContendedJobStore : IJobStore
     /// <inheritdoc/>
     public Task<bool> TryClearTerminalRunAsync(string jobKey, CancellationToken cancellationToken)
         => this.inner.TryClearTerminalRunAsync(jobKey, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<JobHistoryPage> QueryHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken)
+        => this.inner.QueryHistoryAsync(filter, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<int> PurgeHistoryAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+        => this.inner.PurgeHistoryAsync(olderThan, cancellationToken);
 
     /// <inheritdoc/>
     public Task<bool> TryInsertScopeAsync(JobScope scope, CancellationToken cancellationToken)

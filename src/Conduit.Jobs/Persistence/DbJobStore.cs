@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using Conduit.Jobs.Configuration;
@@ -40,6 +41,9 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     private static readonly string[] InsertScopeColumns =
         ["ScopeKey", "ScopeId", "TriggerName", "MessageType", "Payload", "DueAt", "Version"];
 
+    private const string HistoryColumns =
+        "JobKey, ScheduleName, MessageType, Outcome, RunAt, StartedAt, CompletedAt, AttemptCount, LastError";
+
     private readonly IOptions<JobsOptions> options;
     private readonly string createRunsTableSql;
     private readonly string createSchedulesTableSql;
@@ -50,6 +54,8 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     private readonly string createScopesTableSql;
     private readonly string insertScopeSql;
     private readonly string dueScopesSql;
+    private readonly string createHistoryTableSql;
+    private readonly string queryHistoryPageSql;
 
     /// <summary>Initializes a new instance of <see cref="DbJobStore"/>.</summary>
     /// <param name="connectionFactory">The connection factory used to open per-method connections.</param>
@@ -81,6 +87,18 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         this.dueScopesSql =
             $"SELECT {ScopeColumns} FROM {JobTableSchema.ScopesTable} " +
             $"WHERE DueAt <= @Now ORDER BY DueAt {dialect.PaginationSuffix}";
+        this.createHistoryTableSql = BuildCreateHistoryTableSql(dialect);
+        this.queryHistoryPageSql =
+            $"""
+            SELECT {HistoryColumns} FROM {JobTableSchema.HistoryTable}
+            WHERE (@JobKey IS NULL OR JobKey = @JobKey)
+              AND (@ScheduleName IS NULL OR ScheduleName = @ScheduleName)
+              AND (@Outcome IS NULL OR Outcome = @Outcome)
+              AND (@Since IS NULL OR CompletedAt >= @Since)
+              AND (@Until IS NULL OR CompletedAt <= @Until)
+            ORDER BY CompletedAt DESC
+            {dialect.PaginationSuffix}
+            """;
     }
 
     /// <inheritdoc/>
@@ -89,6 +107,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         await this.ExecuteNonQueryAsync(this.createSchedulesTableSql, configureParameters: null, cancellationToken);
         await this.ExecuteNonQueryAsync(this.createRunsTableSql, configureParameters: null, cancellationToken);
         await this.ExecuteNonQueryAsync(this.createScopesTableSql, configureParameters: null, cancellationToken);
+        await this.ExecuteNonQueryAsync(this.createHistoryTableSql, configureParameters: null, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -249,18 +268,26 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     /// <inheritdoc/>
     public async Task CompleteAsync(
-        long id, string? scheduleName, DateTimeOffset? occurrence, CancellationToken cancellationToken)
+        JobRun run, string? scheduleName, DateTimeOffset? occurrence, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(run);
+
         // Deleting the row and advancing the cursor must be atomic. The row is what stops a
         // concurrent replica materializing this occurrence again; once it is gone, only the cursor
-        // does. A crash between the two would re-run a completed occurrence.
+        // does. A crash between the two would re-run a completed occurrence. The history row is
+        // written in the same transaction: a crash cannot land the ledger row deleted with no
+        // permanent record of the outcome, or a history record whose run was never actually deleted.
         await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await WriteHistoryAsync(
+            connection, transaction, run, JobRunOutcome.Completed, error: null, now, cancellationToken);
 
         await ExecuteNonQueryOnAsync(
             connection,
             $"DELETE FROM {JobTableSchema.RunsTable} WHERE Id = @Id",
-            command => DbParameterHelper.Add(command, "@Id", id),
+            command => DbParameterHelper.Add(command, "@Id", run.Id),
             cancellationToken,
             transaction);
 
@@ -327,15 +354,21 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     /// <inheritdoc/>
     public async Task MarkTerminalAsync(
-        long id,
+        JobRun run,
         JobRunStatus status,
         string? error,
         string? scheduleName,
         DateTimeOffset? occurrence,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(run);
+
         await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await WriteHistoryAsync(
+            connection, transaction, run, ToOutcome(status), error, now, cancellationToken);
 
         await ExecuteNonQueryOnAsync(
             connection,
@@ -344,7 +377,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             {
                 DbParameterHelper.Add(command, "@Status", (int)status);
                 DbParameterHelper.Add(command, "@LastError", error is null ? DBNull.Value : Truncate(error));
-                DbParameterHelper.Add(command, "@Id", id);
+                DbParameterHelper.Add(command, "@Id", run.Id);
             },
             cancellationToken,
             transaction);
@@ -647,11 +680,140 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         return cleared > 0;
     }
 
+    /// <inheritdoc/>
+    public async Task<JobHistoryPage> QueryHistoryAsync(
+        JobHistoryFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var offset = 0;
+        if (filter.PageToken is not null
+            && int.TryParse(filter.PageToken, CultureInfo.InvariantCulture, out var parsedOffset))
+        {
+            offset = parsedOffset;
+        }
+
+        var countResult = await this.ExecuteScalarAsync(
+            CountHistorySql,
+            command => AddHistoryFilterParameters(command, filter),
+            cancellationToken);
+        var totalCount = Convert.ToInt32(countResult, CultureInfo.InvariantCulture);
+
+        var entries = await this.ExecuteReaderAsync(
+            this.queryHistoryPageSql,
+            command =>
+            {
+                AddHistoryFilterParameters(command, filter);
+                DbParameterHelper.Add(command, "@PageSize", filter.PageSize);
+                DbParameterHelper.Add(command, "@Offset", offset);
+            },
+            ReadHistory,
+            cancellationToken);
+
+        var nextOffset = offset + entries.Count;
+        var nextPageToken = nextOffset < totalCount
+            ? nextOffset.ToString(CultureInfo.InvariantCulture)
+            : null;
+
+        return new JobHistoryPage
+        {
+            Entries = entries,
+            NextPageToken = nextPageToken,
+            TotalCount = totalCount,
+        };
+    }
+
+    /// <inheritdoc/>
+    public Task<int> PurgeHistoryAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            PurgeHistorySql,
+            command => DbParameterHelper.Add(command, "@Cutoff", FormatTimestamp(olderThan)),
+            cancellationToken);
+
     private static string MarkTerminalSql =>
         $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
 
     private static string AdvanceCursorSql =>
         $"UPDATE {JobTableSchema.SchedulesTable} SET LastCompletedOccurrence = @LastCompletedOccurrence WHERE Name = @Name";
+
+    private static string InsertHistorySql =>
+        $"""
+        INSERT INTO {JobTableSchema.HistoryTable}
+            (JobKey, ScheduleName, MessageType, Outcome, RunAt, StartedAt, CompletedAt, AttemptCount, LastError)
+        VALUES
+            (@JobKey, @ScheduleName, @MessageType, @Outcome, @RunAt, @StartedAt, @CompletedAt, @AttemptCount, @LastError)
+        """;
+
+    private static string CountHistorySql =>
+        $"""
+        SELECT COUNT(*) FROM {JobTableSchema.HistoryTable}
+        WHERE (@JobKey IS NULL OR JobKey = @JobKey)
+          AND (@ScheduleName IS NULL OR ScheduleName = @ScheduleName)
+          AND (@Outcome IS NULL OR Outcome = @Outcome)
+          AND (@Since IS NULL OR CompletedAt >= @Since)
+          AND (@Until IS NULL OR CompletedAt <= @Until)
+        """;
+
+    private static string PurgeHistorySql =>
+        $"DELETE FROM {JobTableSchema.HistoryTable} WHERE CompletedAt <= @Cutoff";
+
+    /// <summary>
+    /// Writes a history row on the same connection/transaction as the caller's terminal-state write,
+    /// so the outcome is captured atomically with — and therefore cannot outlive or be outlived by —
+    /// the ledger transition it records.
+    /// </summary>
+    private static Task<int> WriteHistoryAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        JobRun run,
+        JobRunOutcome outcome,
+        string? error,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+        => ExecuteNonQueryOnAsync(
+            connection,
+            InsertHistorySql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@JobKey", run.JobKey);
+                DbParameterHelper.Add(command, "@ScheduleName", (object?)run.ScheduleName ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@MessageType", run.MessageType);
+                DbParameterHelper.Add(command, "@Outcome", (int)outcome);
+                DbParameterHelper.Add(command, "@RunAt", FormatTimestamp(run.RunAt));
+                DbParameterHelper.Add(command, "@StartedAt",
+                    run.StartedAt is { } startedAt ? FormatTimestamp(startedAt) : DBNull.Value);
+                DbParameterHelper.Add(command, "@CompletedAt", FormatTimestamp(now));
+                DbParameterHelper.Add(command, "@AttemptCount", run.AttemptCount);
+                DbParameterHelper.Add(command, "@LastError", error is null ? DBNull.Value : Truncate(error));
+            },
+            cancellationToken,
+            transaction);
+
+    private static JobRunOutcome ToOutcome(JobRunStatus status) => status switch
+    {
+        JobRunStatus.Failed => JobRunOutcome.Failed,
+        JobRunStatus.Cancelled => JobRunOutcome.Cancelled,
+        JobRunStatus.Pending or JobRunStatus.Claiming => throw new ArgumentOutOfRangeException(
+            nameof(status), status, "MarkTerminalAsync only accepts Failed or Cancelled."),
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unrecognized JobRunStatus."),
+    };
+
+    private static void AddHistoryFilterParameters(DbCommand command, JobHistoryFilter filter)
+    {
+        // Explicit DbType on every optional filter, even when null: some providers (Npgsql) cannot
+        // infer the type of an untyped DBNull used in an `IS NULL` predicate and fail with
+        // "could not determine data type of parameter".
+        DbParameterHelper.Add(command, "@JobKey", (object?)filter.JobKey ?? DBNull.Value, DbType.String);
+        DbParameterHelper.Add(command, "@ScheduleName", (object?)filter.ScheduleName ?? DBNull.Value, DbType.String);
+        DbParameterHelper.Add(
+            command, "@Outcome", filter.Outcome is { } outcome ? (int)outcome : DBNull.Value, DbType.Int32);
+        DbParameterHelper.Add(command, "@Since", filter.Since is { } since
+            ? FormatTimestamp(since)
+            : DBNull.Value, DbType.String);
+        DbParameterHelper.Add(command, "@Until", filter.Until is { } until
+            ? FormatTimestamp(until)
+            : DBNull.Value, DbType.String);
+    }
 
     private static string BuildCreateRunsTableSql(ISqlDialect dialect)
         => dialect.BuildCreateTableIfNotExistsSql(
@@ -695,6 +857,22 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 Payload {dialect.TextType} NOT NULL,
                 DueAt {dialect.TimestampType} NOT NULL,
                 Version {dialect.IntegerType} NOT NULL DEFAULT 0
+            """);
+
+    private static string BuildCreateHistoryTableSql(ISqlDialect dialect)
+        => dialect.BuildCreateTableIfNotExistsSql(
+            JobTableSchema.HistoryTable,
+            $"""
+                Id {dialect.BigIntAutoIncrementPrimaryKey},
+                JobKey {dialect.KeyTextType} NOT NULL,
+                ScheduleName {dialect.KeyTextType},
+                MessageType {dialect.TextType} NOT NULL,
+                Outcome {dialect.SmallIntType} NOT NULL,
+                RunAt {dialect.TimestampType} NOT NULL,
+                StartedAt {dialect.NullableTimestampType},
+                CompletedAt {dialect.TimestampType} NOT NULL,
+                AttemptCount {dialect.IntegerType} NOT NULL DEFAULT 0,
+                LastError {dialect.NullableTextType}
             """);
 
     private static void BindMaterializeParameters(
@@ -827,4 +1005,25 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             DueAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("DueAt"))),
             Version = reader.GetInt32(reader.GetOrdinal("Version")),
         };
+
+    private static JobRunHistoryInfo ReadHistory(DbDataReader reader)
+    {
+        var scheduleNameOrdinal = reader.GetOrdinal("ScheduleName");
+        var startedAtOrdinal = reader.GetOrdinal("StartedAt");
+        var lastErrorOrdinal = reader.GetOrdinal("LastError");
+
+        return new JobRunHistoryInfo(
+            reader.GetString(reader.GetOrdinal("JobKey")),
+            reader.IsDBNull(scheduleNameOrdinal) ? null : reader.GetString(scheduleNameOrdinal),
+            reader.GetString(reader.GetOrdinal("MessageType")),
+            // Outcome maps to the engine's small-int type, whose native CLR width varies (SQL Server
+            // TINYINT -> byte, Postgres SMALLINT -> short), so convert provider-agnostically.
+            (JobRunOutcome)Convert.ToInt32(
+                reader.GetValue(reader.GetOrdinal("Outcome")), CultureInfo.InvariantCulture),
+            ParseTimestamp(reader.GetString(reader.GetOrdinal("RunAt"))),
+            reader.IsDBNull(startedAtOrdinal) ? null : ParseTimestamp(reader.GetString(startedAtOrdinal)),
+            ParseTimestamp(reader.GetString(reader.GetOrdinal("CompletedAt"))),
+            reader.GetInt32(reader.GetOrdinal("AttemptCount")),
+            reader.IsDBNull(lastErrorOrdinal) ? null : reader.GetString(lastErrorOrdinal));
+    }
 }

@@ -114,7 +114,8 @@ internal sealed partial class ClaimedJobExecutor
             {
                 case JobOutcome.Completed:
                     await store.CompleteAsync(
-                        run.Id, this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
+                        run, this.CursorScheduleFor(run), run.Occurrence, this.timeProvider.GetUtcNow(),
+                        CancellationToken.None);
                     break;
 
                 case JobOutcome.Cancelled:
@@ -122,8 +123,9 @@ internal sealed partial class ClaimedJobExecutor
                     // still advances, or the occurrence would be re-materialized and cancelling would
                     // loop forever.
                     await store.MarkTerminalAsync(
-                        run.Id, JobRunStatus.Cancelled, null,
-                        this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
+                        run, JobRunStatus.Cancelled, null,
+                        this.CursorScheduleFor(run), run.Occurrence, this.timeProvider.GetUtcNow(),
+                        CancellationToken.None);
                     break;
 
                 case JobOutcome.HandedOver:
@@ -166,8 +168,9 @@ internal sealed partial class ClaimedJobExecutor
             // occurrence must not block every later one, and the failed row keeps it visible.
             LogAttemptsExhausted(this.logger, run.JobKey, attempts);
             await store.MarkTerminalAsync(
-                run.Id, JobRunStatus.Failed, message,
-                this.CursorScheduleFor(run), run.Occurrence, CancellationToken.None);
+                run, JobRunStatus.Failed, message,
+                this.CursorScheduleFor(run), run.Occurrence, this.timeProvider.GetUtcNow(),
+                CancellationToken.None);
             return;
         }
 

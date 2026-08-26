@@ -18,4 +18,13 @@ public sealed class JobsOptions
 
     /// <summary>How long failed runs are retained for inspection. Default 7 days.</summary>
     public TimeSpan FailedRetention { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Whether to auto-create the jobs tables (schedules, runs, scopes, and run history) on startup.
+    /// Default: true.
+    /// </summary>
+    public bool AutoCreateTable { get; set; } = true;
+
+    /// <summary>How long run history is retained. Default 30 days.</summary>
+    public TimeSpan HistoryRetention { get; set; } = TimeSpan.FromDays(30);
 }
