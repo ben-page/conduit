@@ -8,6 +8,7 @@ namespace Conduit.Jobs.Tests.Integration;
 public class JobStoreShould
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 25, 2, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Start = new(2026, 8, 26, 1, 59, 0, TimeSpan.Zero);
     private const string Key = "nightly@2026-08-25T02:00:00Z";
 
     [TestMethod]
@@ -287,6 +288,153 @@ public class JobStoreShould
         // Assert
         purged.Should().Be(2, "cancelled runs are terminal history too and would otherwise never go");
         (await fixture.Store.GetRunAsync("nightly@new", CancellationToken.None)).Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public async Task MergeAScopeOnlyWhenTheVersionStillMatches()
+    {
+        // Arrange — the version guard is what stops two hosts losing one another's merge, and a lost
+        // merge here narrows the window rather than merely duplicating work
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        var scope = new JobScope
+        {
+            ScopeKey = "rebuild@loc-1",
+            TriggerName = "rebuild",
+            MessageType = "Tests.RecomputeWorkstation",
+            Payload = """{"from":"09:00"}""",
+            DueAt = Start,
+            Version = 0,
+        };
+        (await store.TryInsertScopeAsync(scope, CancellationToken.None)).Should().BeTrue();
+
+        // Act
+        var first = await store.TryMergeScopeAsync(
+            "rebuild@loc-1", """{"from":"08:00"}""", version: 0, CancellationToken.None);
+        var stale = await store.TryMergeScopeAsync(
+            "rebuild@loc-1", """{"from":"10:00"}""", version: 0, CancellationToken.None);
+
+        // Assert — the stale writer is refused and must re-read rather than clobber
+        first.Should().BeTrue();
+        stale.Should().BeFalse();
+
+        var stored = await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None);
+        stored!.Payload.Should().Be("""{"from":"08:00"}""");
+        stored.Version.Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task LeaveAScopeAloneWhenTheDeleteVersionIsStale()
+    {
+        // Arrange — pickup deletes conditionally, so a merge landing mid-pickup survives and produces
+        // a second run rather than being discarded
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.TryInsertScopeAsync(
+            new JobScope
+            {
+                ScopeKey = "rebuild@loc-1",
+                TriggerName = "rebuild",
+                MessageType = "Tests.RecomputeWorkstation",
+                Payload = """{"from":"09:00"}""",
+                DueAt = Start,
+                Version = 0,
+            },
+            CancellationToken.None);
+        await store.TryMergeScopeAsync(
+            "rebuild@loc-1", """{"from":"08:00"}""", version: 0, CancellationToken.None);
+
+        // Act — pickup read version 0, but a merge has since moved it to 1
+        var deleted = await store.TryDeleteScopeAsync("rebuild@loc-1", version: 0, CancellationToken.None);
+
+        // Assert
+        deleted.Should().BeFalse();
+        (await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None)).Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public async Task IgnoreASecondInsertOfOneScopeKey()
+    {
+        // Arrange — two hosts racing to open a scope for one key must produce exactly one row
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        static JobScope Scope(string payload) => new()
+        {
+            ScopeKey = "rebuild@loc-1",
+            TriggerName = "rebuild",
+            MessageType = "Tests.RecomputeWorkstation",
+            Payload = payload,
+            DueAt = Start,
+            Version = 0,
+        };
+
+        // Act
+        var first = await store.TryInsertScopeAsync(Scope("""{"from":"09:00"}"""), CancellationToken.None);
+        var second = await store.TryInsertScopeAsync(Scope("""{"from":"10:00"}"""), CancellationToken.None);
+
+        // Assert
+        first.Should().BeTrue();
+        second.Should().BeFalse();
+        (await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None))!
+            .Payload.Should().Be("""{"from":"09:00"}""");
+    }
+
+    [TestMethod]
+    public async Task ReadOnlyScopesThatAreDueAndReportTheNextDueTime()
+    {
+        // Arrange
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        await store.TryInsertScopeAsync(
+            new JobScope
+            {
+                ScopeKey = "rebuild@now",
+                TriggerName = "rebuild",
+                MessageType = "Tests.RecomputeWorkstation",
+                Payload = "{}",
+                DueAt = Start,
+                Version = 0,
+            },
+            CancellationToken.None);
+        await store.TryInsertScopeAsync(
+            new JobScope
+            {
+                ScopeKey = "rebuild@later",
+                TriggerName = "rebuild",
+                MessageType = "Tests.RecomputeWorkstation",
+                Payload = "{}",
+                DueAt = Start.AddMinutes(30),
+                Version = 0,
+            },
+            CancellationToken.None);
+
+        // Act
+        var due = await store.GetDueScopesAsync(Start, batchSize: 32, CancellationToken.None);
+        var next = await store.GetNextScopeDueAsync(CancellationToken.None);
+
+        // Assert — the sweep must sleep until the earliest scope, not merely until ClaimTimeout
+        due.Should().ContainSingle().Which.ScopeKey.Should().Be("rebuild@now");
+        next.Should().Be(Start);
+    }
+
+    [TestMethod]
+    public void RejectAScopeKeyLongerThanTheIndexableColumn()
+    {
+        // Arrange — KeyTextType is bounded on the engines that cannot index unbounded text
+        var oversized = new string('x', 250);
+
+        // Act
+        var act = () => JobScope.ComposeKey("rebuild", oversized);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*200*");
     }
 
     private static JobRun NewRun(string jobKey, DateTimeOffset runAt) => new()
