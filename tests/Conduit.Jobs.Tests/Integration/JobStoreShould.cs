@@ -302,6 +302,7 @@ public class JobStoreShould
         var scope = new JobScope
         {
             ScopeKey = "rebuild@loc-1",
+            ScopeId = "gen-1",
             TriggerName = "rebuild",
             MessageType = "Tests.RecomputeWorkstation",
             Payload = """{"from":"09:00"}""",
@@ -312,9 +313,9 @@ public class JobStoreShould
 
         // Act
         var first = await store.TryMergeScopeAsync(
-            "rebuild@loc-1", """{"from":"08:00"}""", version: 0, CancellationToken.None);
+            "rebuild@loc-1", "gen-1", """{"from":"08:00"}""", version: 0, CancellationToken.None);
         var stale = await store.TryMergeScopeAsync(
-            "rebuild@loc-1", """{"from":"10:00"}""", version: 0, CancellationToken.None);
+            "rebuild@loc-1", "gen-1", """{"from":"10:00"}""", version: 0, CancellationToken.None);
 
         // Assert — the stale writer is refused and must re-read rather than clobber
         first.Should().BeTrue();
@@ -337,6 +338,7 @@ public class JobStoreShould
             new JobScope
             {
                 ScopeKey = "rebuild@loc-1",
+                ScopeId = "gen-1",
                 TriggerName = "rebuild",
                 MessageType = "Tests.RecomputeWorkstation",
                 Payload = """{"from":"09:00"}""",
@@ -345,14 +347,50 @@ public class JobStoreShould
             },
             CancellationToken.None);
         await store.TryMergeScopeAsync(
-            "rebuild@loc-1", """{"from":"08:00"}""", version: 0, CancellationToken.None);
+            "rebuild@loc-1", "gen-1", """{"from":"08:00"}""", version: 0, CancellationToken.None);
 
         // Act — pickup read version 0, but a merge has since moved it to 1
-        var deleted = await store.TryDeleteScopeAsync("rebuild@loc-1", version: 0, CancellationToken.None);
+        var deleted = await store.TryDeleteScopeAsync(
+            "rebuild@loc-1", "gen-1", version: 0, CancellationToken.None);
 
         // Assert
         deleted.Should().BeFalse();
         (await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None)).Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public async Task RefuseAMergeAimedAtAReplacedScopeGeneration()
+    {
+        // Arrange — a scope's Version resets to 0 when the row is deleted and reopened, so a merge
+        // that straddles a pickup would otherwise match the row that REPLACED its target and clobber
+        // it. That narrows the scope, which loses work rather than duplicating it.
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+
+        static JobScope Generation(string scopeId, string payload) => new()
+        {
+            ScopeKey = "rebuild@loc-1",
+            ScopeId = scopeId,
+            TriggerName = "rebuild",
+            MessageType = "Tests.RecomputeWorkstation",
+            Payload = payload,
+            DueAt = Start,
+            Version = 0,
+        };
+
+        await store.TryInsertScopeAsync(Generation("first", """{"from":"09:00"}"""), CancellationToken.None);
+        await store.TryDeleteScopeAsync("rebuild@loc-1", "first", version: 0, CancellationToken.None);
+        await store.TryInsertScopeAsync(Generation("second", """{"from":"11:00"}"""), CancellationToken.None);
+
+        // Act — a merge still holding the first generation's identity, at the same version number
+        var merged = await store.TryMergeScopeAsync(
+            "rebuild@loc-1", "first", """{"from":"08:00"}""", version: 0, CancellationToken.None);
+
+        // Assert — refused, and the live generation's payload is untouched
+        merged.Should().BeFalse();
+        (await store.GetScopeAsync("rebuild@loc-1", CancellationToken.None))!
+            .Payload.Should().Be("""{"from":"11:00"}""");
     }
 
     [TestMethod]
@@ -363,9 +401,10 @@ public class JobStoreShould
         var store = JobsDatabaseProbe.StoreFor(database);
         await store.EnsureTablesExistAsync(CancellationToken.None);
 
-        static JobScope Scope(string payload) => new()
+        static JobScope Scope(string scopeId, string payload) => new()
         {
             ScopeKey = "rebuild@loc-1",
+            ScopeId = scopeId,
             TriggerName = "rebuild",
             MessageType = "Tests.RecomputeWorkstation",
             Payload = payload,
@@ -374,8 +413,8 @@ public class JobStoreShould
         };
 
         // Act
-        var first = await store.TryInsertScopeAsync(Scope("""{"from":"09:00"}"""), CancellationToken.None);
-        var second = await store.TryInsertScopeAsync(Scope("""{"from":"10:00"}"""), CancellationToken.None);
+        var first = await store.TryInsertScopeAsync(Scope("first", """{"from":"09:00"}"""), CancellationToken.None);
+        var second = await store.TryInsertScopeAsync(Scope("second", """{"from":"10:00"}"""), CancellationToken.None);
 
         // Assert
         first.Should().BeTrue();
@@ -396,6 +435,7 @@ public class JobStoreShould
             new JobScope
             {
                 ScopeKey = "rebuild@now",
+                ScopeId = "gen-now",
                 TriggerName = "rebuild",
                 MessageType = "Tests.RecomputeWorkstation",
                 Payload = "{}",
@@ -407,6 +447,7 @@ public class JobStoreShould
             new JobScope
             {
                 ScopeKey = "rebuild@later",
+                ScopeId = "gen-later",
                 TriggerName = "rebuild",
                 MessageType = "Tests.RecomputeWorkstation",
                 Payload = "{}",

@@ -32,6 +32,7 @@ public class CoalescingTriggerShould
         var scope = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
         scope.ScopeKey.Should().Be("rebuild@loc-1");
         scope.Version.Should().Be(2, "three events are one insert and two merges");
+        scope.DueAt.Should().Be(Start.AddMinutes(30), "merging is leading-edge and never moves the due time");
 
         var merged = JsonSerializer.Deserialize<RecomputeWorkstation>(
             scope.Payload, ConduitRuntime.JsonOptions);

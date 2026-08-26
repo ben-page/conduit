@@ -16,6 +16,15 @@ public sealed class JobScope
     /// <summary><c>{trigger}@{coalesceKey}</c>. Unique, and the reason two hosts opening one scope produce one row.</summary>
     public required string ScopeKey { get; init; }
 
+    /// <summary>
+    /// The row's generation identity: a fresh value minted when the scope is opened, and never
+    /// changed by a merge. <see cref="Version"/> alone cannot guard a compare-and-set that straddles
+    /// a pickup, because a scope's version resets to 0 every time its row is deleted and a new one is
+    /// opened under the same <see cref="ScopeKey"/> — two different generations can share a version
+    /// number, so the version guard needs <see cref="ScopeId"/> alongside it to tell them apart.
+    /// </summary>
+    public required string ScopeId { get; init; }
+
     /// <summary>The declaring trigger. Its own column so the pickup sweep and an operator can group by it.</summary>
     public required string TriggerName { get; init; }
 
