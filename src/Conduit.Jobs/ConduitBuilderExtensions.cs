@@ -6,6 +6,7 @@ using Conduit.Jobs.Runtime;
 using Conduit.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Jobs;
 
@@ -89,13 +90,11 @@ public static class ConduitBuilderExtensions
         }
 
         builder.Services.AddSingleton(new ScheduleRegistry(jobsBuilder.Schedules, jobsBuilder.Triggers));
-        builder.Services.Configure<JobsOptions>(target =>
-        {
-            target.HeartbeatInterval = options.HeartbeatInterval;
-            target.ClaimTimeout = options.ClaimTimeout;
-            target.MaxAttempts = options.MaxAttempts;
-            target.FailedRetention = options.FailedRetention;
-        });
+        // The builder's own instance, registered whole rather than copied property by property: a
+        // knob added to JobsOptions and surfaced on JobsBuilder would otherwise have to be added to
+        // a copy list too, and forgetting that turns it into a silent no-op that still reads as
+        // configured at the call site. AddJobs is the only writer of these options.
+        builder.Services.AddSingleton(Options.Create(options));
 
         // Never the ambient clock: every scheduling decision reads this, so occurrence computation,
         // misfire detection, backoff and MaxRuntime stay deterministically testable.

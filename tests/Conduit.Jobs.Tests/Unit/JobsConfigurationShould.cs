@@ -6,6 +6,7 @@ using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Jobs.Tests.Unit;
 
@@ -181,6 +182,37 @@ public class JobsConfigurationShould
 
         // Assert
         act.Should().Throw<InvalidOperationException>().WithMessage("*coalesce key*");
+    }
+
+    [TestMethod]
+    public void CarryEveryTuningKnobDeclaredOnTheBuilderIntoTheResolvedOptions()
+    {
+        // Arrange — every value differs from its default, so a knob the registration forgets to
+        // carry shows up as the default rather than as what was declared
+        var services = new ServiceCollection();
+        var builder = new ConduitBuilder(services);
+
+        // Act
+        builder.AddJobs(jobs =>
+        {
+            jobs.HeartbeatInterval = TimeSpan.FromSeconds(15);
+            jobs.ClaimTimeout = TimeSpan.FromMinutes(1);
+            jobs.MaxAttempts = 5;
+            jobs.FailedRetention = TimeSpan.FromDays(30);
+            jobs.AutoCreateTable = false;
+            jobs.HistoryRetention = TimeSpan.FromDays(90);
+        });
+
+        // Assert
+        using var serviceProvider = services.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<IOptions<JobsOptions>>().Value;
+
+        options.HeartbeatInterval.Should().Be(TimeSpan.FromSeconds(15));
+        options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(1));
+        options.MaxAttempts.Should().Be(5);
+        options.FailedRetention.Should().Be(TimeSpan.FromDays(30));
+        options.AutoCreateTable.Should().BeFalse();
+        options.HistoryRetention.Should().Be(TimeSpan.FromDays(90));
     }
 
     private static void AddJobsForTest(Action<JobsBuilder> configure)
