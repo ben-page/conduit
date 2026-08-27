@@ -49,7 +49,7 @@ A background `InboxCleanup` service periodically deletes records older than the 
 
 ## Setup
 
-The inbox is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, DLQ, and audit), then call `AddInbox()` (alongside `AddOutbox()` / `AddDeadLetterQueue()` if you use them):
+The inbox is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, DLQ, audit trail, and jobs), then call `AddInbox()` (alongside `AddOutbox()` / `AddDeadLetterQueue()` if you use them):
 
 ```xml
 <PackageReference Include="Conduit.Durability" />
@@ -71,7 +71,7 @@ builder.Services.AddConduit(conduit =>
 
 ## Database dialects
 
-The inbox uses the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, and audit alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
+The inbox uses the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, audit trail, and jobs alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
 
 | Engine package | Method |
 |---|---|

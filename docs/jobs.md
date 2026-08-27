@@ -215,7 +215,10 @@ must fit 200 characters, so key on an id rather than on a composite of several f
 ## Durability is inferred, not declared
 
 There is no per-schedule durability switch. **An engine is configured, so every schedule is durable.
-No engine, so every schedule is non-durable.** That is the whole model.
+No engine, so every schedule is non-durable.** That is the whole model. The engine is the one
+registered on the builder with `UseSqlite`/`UsePostgres`/`UseSqlServer`/`UseMySql` — the same one the
+outbox, inbox, dead-letter queue and audit trail use, and configured the same way. See
+[persistence](persistence.md).
 
 | | Engine configured | No engine |
 |---|---|---|
@@ -626,12 +629,17 @@ conduit.AddJobs(jobs =>
     jobs.MaxAttempts = 5;
     jobs.FailedRetention = TimeSpan.FromDays(30);
     jobs.HistoryRetention = TimeSpan.FromDays(90);
+    jobs.AutoCreateTable = false;                 // you manage schema through migrations
 
     // schedules and triggers...
 });
 ```
 
 `ClaimTimeout` must be more than twice `HeartbeatInterval`, or startup fails.
+
+Every knob here describes the durable path. [Without a database](#without-a-database) none of them
+apply — there are no tables to create, no claim to renew or time out, no ledger rows to retain, and
+no history to purge.
 
 ## Limitations
 

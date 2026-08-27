@@ -1,6 +1,6 @@
 # Persistence
 
-Conduit's durable features — the [outbox](outbox.md), [inbox](inbox.md), [dead-letter queue](dead-letter-queue.md), and [audit trail](audit.md) — store data in a relational database through a shared persistence layer. You choose a database **once**, and every durable feature uses it.
+Conduit's durable features — the [outbox](outbox.md), [inbox](inbox.md), [dead-letter queue](dead-letter-queue.md), [audit trail](audit.md), and [background jobs](jobs.md) — store data in a relational database through a shared persistence layer. You choose a database **once**, and every durable feature uses it.
 
 ## Choosing an engine
 
@@ -23,10 +23,17 @@ builder.Services.AddConduit(conduit =>
     });
 
     conduit.AddAuditListener();                   // uses the same database
+
+    conduit.AddJobs(jobs =>                       // must come *after* UseSqlite — see below
+    {
+        jobs.Schedule("nightly-rollup").Cron("0 2 * * *").Run(() => new RunNightlyRollup());
+    });
 });
 ```
 
 `Use*` registers an `IConduitConnectionFactory` (scoped) and the engine's `ISqlDialect` (singleton) into DI. The durable features resolve those from DI and never reference a specific engine.
+
+Registration order matters for [background jobs](jobs.md) alone. `AddJobs` inspects the service collection to decide whether schedules are durable at all, so `Use*` has to be called before it; every other feature resolves the engine at startup and can be registered in any order. Getting it wrong fails at startup with a message naming the fix, rather than quietly leaving you with a cluster that runs each schedule on every host.
 
 ## Supported engines
 
@@ -41,15 +48,25 @@ The driver ships inside the engine package, so there is **no generic connection-
 
 ## Tables
 
-Each feature creates its table on startup (`conduit_outbox`, `conduit_inbox`, `conduit_dead_letters`, and the audit table). Disable auto-creation per feature (e.g. `AddOutbox(o => o.AutoCreateTable = false)`) if you manage schema through migrations.
+Each feature creates its tables on startup if they are absent:
+
+| Feature | Tables |
+|---|---|
+| [Outbox](outbox.md) | `conduit_outbox` |
+| [Inbox](inbox.md) | `conduit_inbox` |
+| [Dead-letter queue](dead-letter-queue.md) | `conduit_dead_letters` |
+| [Audit trail](audit.md) | `conduit_audit` |
+| [Background jobs](jobs.md) | `conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`, `conduit_job_run_history` |
+
+Three of the five can opt out if you manage schema through migrations — `AddOutbox(o => o.AutoCreateTable = false)`, `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)`, and `AddJobs(jobs => jobs.AutoCreateTable = false)`. The inbox and the audit trail have no such flag and always create their table.
 
 ## The outbox needs a transaction-aware factory
 
-The connection factory supplied by an engine package is **non-transactional** — it opens fresh connections and cannot see your handler's ambient transaction. That is fine for the inbox, dead-letter queue, and audit, but the [transactional outbox](outbox.md) must write its entry in the *same* transaction as your business data. Enabling `AddOutbox()` against the built-in factory **fails fast at startup**; supply your own transaction-aware `IConduitConnectionFactory` as shown in the [outbox guide](outbox.md#providing-a-transaction).
+The connection factory supplied by an engine package is **non-transactional** — it opens fresh connections and cannot see your handler's ambient transaction. That is fine for the inbox, dead-letter queue, audit trail, and jobs, but the [transactional outbox](outbox.md) must write its entry in the *same* transaction as your business data. Enabling `AddOutbox()` against the built-in factory **fails fast at startup**; supply your own transaction-aware `IConduitConnectionFactory` as shown in the [outbox guide](outbox.md#providing-a-transaction).
 
 ## One database for all features
 
-Durability and audit share the single engine registered via `Use*`. Pointing them at *different* databases is not supported today — register one engine, and the outbox, inbox, DLQ, and audit all use it.
+Durability, audit, and jobs share the single engine registered via `Use*`. Pointing them at *different* databases is not supported today — register one engine, and the outbox, inbox, DLQ, audit trail, and job ledger all use it.
 
 ## Under the hood
 

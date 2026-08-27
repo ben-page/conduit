@@ -110,7 +110,7 @@ local-then-transport delivery contract in detail.
 
 ## Setup
 
-Add the `Conduit.Durability` package and configure inside `AddConduit`. The persistence engine is registered once on the `ConduitBuilder` (shared with the inbox, DLQ, and audit), then `AddOutbox()` enables the outbox on it:
+Add the `Conduit.Durability` package and configure inside `AddConduit`. The persistence engine is registered once on the `ConduitBuilder` (shared with the inbox, DLQ, audit trail, and jobs), then `AddOutbox()` enables the outbox on it:
 
 ```xml
 <PackageReference Include="Conduit.Durability" />
@@ -176,7 +176,7 @@ Each `Use*` method registers the appropriate SQL dialect and connection factory.
 
 The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`.
 
-These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, and audit). Each engine ships in its own `Conduit.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
+These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, audit trail, and jobs). Each engine ships in its own `Conduit.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
 
 ```csharp
 // SQL Server (Conduit.Persistence.SqlServer package)

@@ -72,7 +72,7 @@ Discard removes a message from the dead letter store without replaying. Use this
 
 ## Setup
 
-The dead letter queue is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, inbox, and audit), then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them):
+The dead letter queue is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, inbox, audit trail, and jobs), then call `AddDeadLetterQueue()` (alongside `AddOutbox()` / `AddInbox()` if you use them):
 
 ```csharp
 services.AddConduit(conduit =>
@@ -89,7 +89,7 @@ The dead letter table (`conduit_dead_letters`) is created automatically on start
 
 ### Database dialects
 
-The dialect is the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, and audit alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
+The dialect is the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, audit trail, and jobs alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
 
 | Engine package | Method |
 |---|---|
