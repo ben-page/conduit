@@ -50,6 +50,20 @@ public sealed class JobsBuilder
         set => this.Options.FailedRetention = value;
     }
 
+    /// <inheritdoc cref="JobsOptions.AutoCreateTable"/>
+    public bool AutoCreateTable
+    {
+        get => this.Options.AutoCreateTable;
+        set => this.Options.AutoCreateTable = value;
+    }
+
+    /// <inheritdoc cref="JobsOptions.HistoryRetention"/>
+    public TimeSpan HistoryRetention
+    {
+        get => this.Options.HistoryRetention;
+        set => this.Options.HistoryRetention = value;
+    }
+
     /// <summary>Begins declaring a recurring schedule.</summary>
     /// <param name="name">The schedule's unique name. Used as its database key.</param>
     /// <returns>A builder for the schedule.</returns>
