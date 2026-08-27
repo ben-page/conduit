@@ -176,6 +176,7 @@ onboarding or answering "how does X work" questions:
 - [`docs/pipeline-behaviors.md`](docs/pipeline-behaviors.md) — `IPipelineBehavior<,>` ordering and usage
 - [`docs/error-handling.md`](docs/error-handling.md) — `ConduitException`, `ErrorCode`, Problem Details
 - [`docs/modular-monolith.md`](docs/modular-monolith.md) — handler composition across modules in one process
+- [`docs/persistence.md`](docs/persistence.md) — choosing an engine, the tables each durable feature creates, one database for all of them
 - [`docs/audit.md`](docs/audit.md) — audit trail / observer subsystem
 - [`docs/jobs.md`](docs/jobs.md) — background jobs: schedules, event triggers, durability, cancellation
 - [`docs/outbox.md`](docs/outbox.md) — transactional outbox (`IOutboundInterceptor`)
