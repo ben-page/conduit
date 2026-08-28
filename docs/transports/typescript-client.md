@@ -173,6 +173,49 @@ sub.unsubscribe();
 
 All methods are fully typed. The type key autocompletes and request/response types are inferred from the maps.
 
+## Known defect — the SignalR transport wedges after a permanent close
+
+**Status: open as of 2026-08-28. Affects every consumer of the generated `SignalRTransport`.**
+
+`connect()` memoises `this.started`. Once `start()` resolves, that promise stays resolved for the
+life of the object:
+
+```typescript
+connect(): Promise<void> {
+  if (!this.started) this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });
+  return this.started;
+}
+```
+
+`withAutomaticReconnect()` is emitted with no arguments, so it uses SignalR's stock
+`[0, 2s, 10s, 30s]` schedule and then **stops retrying for good**. After that, `connect()` returns
+the stale resolved promise, `invoke()` runs against a closed connection, and every dispatch throws:
+
+```
+Cannot send data if the connection is not in the 'Connected' State.
+```
+
+Nothing clears `started` except `stop()`. In practice that means **an app that loses its network for
+roughly 45 seconds is dead until the page is reloaded** — which is fine for a desktop tab someone is
+sitting in front of, and not fine at all for an unattended screen.
+
+Two fixes, both in `Conduit.TypeGen/BaseFileEmitter.cs` (`EmitSignalRTransport`):
+
+1. `connect()` must clear `started` when `connection.state === HubConnectionState.Disconnected`,
+   so a dispatch restarts a dead connection instead of wedging on it.
+2. The default retry policy should be unbounded with a capped interval, with the stock schedule
+   available via an explicit option. An unattended client must recover after an outage of any length.
+
+Worked design and a task-by-task fix, including a behavioural regression test driving a fake
+`HubConnection` past a permanent close:
+`ManagementSystem/docs/superpowers/plans/2026-08-28-connection-awareness.md` (Tasks 1–3).
+
+**Why the fix needs a test outside this repo.** The transport is emitted as C# string literals and
+there is no TypeScript test project here, so `Conduit.TypeGen.Tests` can only assert on emitted
+*text* — a test that greps the output for a line passes whether or not the logic around it is
+correct. Giving the sample `ClientApp` a real test runner, or extracting the transport into a
+hand-written TS package the emitter references, would let this be tested at its source.
+
 ## HTTP transport
 
 For projects that do not need real-time push, use `HttpTransport`:
