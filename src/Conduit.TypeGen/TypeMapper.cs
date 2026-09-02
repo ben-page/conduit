@@ -16,6 +16,7 @@ public static class TypeMapper
         ["Int32"] = "number",
         ["Int64"] = "number",
         ["Int16"] = "number",
+        ["UInt32"] = "number",
         ["Byte"] = "number",
         ["Decimal"] = "number",
         ["Double"] = "number",

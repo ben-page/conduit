@@ -22,6 +22,10 @@ public class TypeMapperShould
         TypeMapper.MapType(typeof(long)).Should().Be("number");
 
     [TestMethod]
+    public void MapUIntToNumber() =>
+        TypeMapper.MapType(typeof(uint)).Should().Be("number");
+
+    [TestMethod]
     public void MapDecimalToNumber() =>
         TypeMapper.MapType(typeof(decimal)).Should().Be("number");
 
