@@ -55,10 +55,3 @@ public sealed record DispatchError(
     string Code,
     string Message,
     IReadOnlyList<DispatchErrorDetail>? Details = null);
-
-/// <summary>
-/// A single field-level error detail within a <see cref="DispatchError"/>.
-/// </summary>
-/// <param name="Field">The field that caused the error, or <see langword="null"/> for object-level errors.</param>
-/// <param name="Message">A human-readable description of the error.</param>
-public sealed record DispatchErrorDetail(string? Field, string Message);

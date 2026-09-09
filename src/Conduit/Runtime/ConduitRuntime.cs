@@ -233,7 +233,10 @@ public static class ConduitRuntime
         catch (ConduitException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            return DispatchResult<object>.Fail(ex.Code.Value, ex.Message);
+            // Operands, not prose: a refusal that named its subject in the message alone forced every
+            // client to render server text verbatim. The Fail overload has always taken details
+            // (DispatchResult.cs:34) -- the exception simply had nothing to hand it until now.
+            return DispatchResult<object>.Fail(ex.Code.Value, ex.Message, ex.Details);
         }
 #pragma warning disable CA1031
         catch (Exception ex)

@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Exceptions;
+using Conduit.Runtime;
 
 namespace Conduit.Tests.Unit;
 
@@ -46,4 +47,33 @@ public class ConduitExceptionShould
         // Assert
         ex.Should().BeAssignableTo<Exception>();
     }
+
+    [TestMethod]
+    public void CarryNullDetailsByDefault()
+    {
+        // Arrange & Act
+        var ex = new BadRequestException("no operands");
+
+        // Assert -- every existing subclass and throw site keeps compiling and keeps meaning null.
+        ex.Details.Should().BeNull();
+    }
+
+    [TestMethod]
+    public void CarryTheDetailsItWasConstructedWith()
+    {
+        // Arrange & Act
+        var ex = new DetailedTestException(
+            new ErrorCode("PunchContradicted", 400),
+            "refused",
+            [new DispatchErrorDetail(null, "16:10")]);
+
+        // Assert
+        ex.Code.Value.Should().Be("PunchContradicted");
+        ex.Code.HttpStatusCode.Should().Be(400);
+        ex.Details.Should().ContainSingle().Which.Should().Be(new DispatchErrorDetail(null, "16:10"));
+    }
+
+    private sealed class DetailedTestException(
+        ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail> details)
+        : ConduitException(code, message, details);
 }
