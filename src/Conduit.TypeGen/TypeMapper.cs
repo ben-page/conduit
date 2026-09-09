@@ -201,6 +201,18 @@ public static class TypeMapper
         var outerShortName = GetShortName(outerFullName);
         var innerContent = fullTypeName[(angleBracketIndex + 1)..^1]; // strip < and >
 
+        // Nullable<T> -> "T | null", mirroring MapType's reflection branch above. Without this the
+        // name falls through to the generic emitter at the end of this method and yields
+        // "Nullable<number>" -- a type the emitted client never declares, so the whole file fails to
+        // typecheck. The reflection path has always handled this; the string path is what a handler's
+        // DECLARED response type goes through, which is why the gap only surfaces for a nullable VALUE
+        // type used directly as a response (IQuery<int?>). A nullable REFERENCE type is erased at the
+        // CLR level and never reaches here, which is why it went unnoticed. Found by DMS, 2026-09-09.
+        if (StripArity(outerShortName) == "Nullable")
+        {
+            return $"{MapArg(innerContent, assemblies)} | null";
+        }
+
         // Collection types → T[]
         if (CollectionShortNames.Contains(outerShortName))
         {

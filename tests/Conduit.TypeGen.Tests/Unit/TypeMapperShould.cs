@@ -65,6 +65,18 @@ public class TypeMapperShould
     public void MapNullableToUnion() =>
         TypeMapper.MapType(typeof(int?)).Should().Be("number | null");
 
+    // The STRING path's twin of MapNullableToUnion above. It lacked this case, so a handler declaring
+    // IQuery<int?> emitted "Nullable<number>" -- undeclared in the generated file, so the client did not
+    // compile. Reported by DMS 2026-09-09, which had to wrap the response in a record to work around it.
+    [TestMethod]
+    public void MapFullTypeNameNullableToUnion() =>
+        TypeMapper.MapFullTypeName("System.Nullable<System.Int32>").Should().Be("number | null");
+
+    [TestMethod]
+    public void MapFullTypeNameNullableCollectionElement() =>
+        TypeMapper.MapFullTypeName("System.Collections.Generic.List<System.Nullable<System.Int32>>")
+            .Should().Be("(number | null)[]");
+
     [TestMethod]
     public void MapEnumToStringLiteralUnion()
     {
