@@ -71,7 +71,8 @@ public class BaseFileEmitterShould
         var result = BaseFileEmitter.Emit();
 
         // Assert
-        result.Should().Contain("import { HubConnectionBuilder, HubConnection } from '@microsoft/signalr';");
+        result.Should().Contain("import { HubConnectionBuilder, HubConnection, HubConnectionState } from '@microsoft/signalr';");
+        result.Should().Contain("import type { IRetryPolicy, RetryContext } from '@microsoft/signalr';");
         result.Should().Contain("export class SignalRTransport implements ConduitTransport");
     }
 
@@ -86,7 +87,7 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("export class SignalRTransport");
-        result.Should().Contain("import { HubConnectionBuilder, HubConnection }");
+        result.Should().Contain("import { HubConnectionBuilder, HubConnection, HubConnectionState }");
     }
 
     [TestMethod]
@@ -102,6 +103,7 @@ public class BaseFileEmitterShould
         result.Should().NotContain("export class SignalRTransport");
         result.Should().NotContain("@microsoft/signalr");
         result.Should().NotContain("HubConnection");
+        result.Should().NotContain("DEFAULT_RETRY_POLICY");
     }
 
     [TestMethod]
@@ -148,6 +150,7 @@ public class BaseFileEmitterShould
         result.Should().Contain("export interface SignalRTransportOptions {");
         result.Should().Contain("accessTokenFactory?: () => string | Promise<string>;");
         result.Should().Contain("automaticReconnect?: boolean;");
+        result.Should().Contain("retryPolicy?: IRetryPolicy;");
         result.Should().Contain("configure?: (builder: HubConnectionBuilder) => void;");
     }
 
@@ -172,7 +175,7 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain(
             ".withUrl(pathOrConnection, { accessTokenFactory: options?.accessTokenFactory });");
-        result.Should().Contain("if (options?.automaticReconnect !== false) builder.withAutomaticReconnect();");
+        result.Should().Contain("if (options?.automaticReconnect !== false) builder.withAutomaticReconnect(options?.retryPolicy ?? DEFAULT_RETRY_POLICY);");
         result.Should().Contain("options?.configure?.(builder);");
         result.Should().Contain("this.connection = builder.build();");
     }
@@ -196,8 +199,7 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain("private started?: Promise<void>;");
         result.Should().Contain("connect(): Promise<void> {");
-        result.Should().Contain(
-            "if (!this.started) this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });");
+        result.Should().Contain("this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });");
         result.Should().Contain("return this.started;");
     }
 
@@ -223,5 +225,32 @@ public class BaseFileEmitterShould
         result.Should().Contain("await this.connection.invoke('Publish', type, data, null, headers ?? null);");
         result.Should().Contain("this.connection.on(eventName, handler);");
         result.Should().Contain("return { unsubscribe: () => this.connection.off(eventName, handler) };");
+    }
+
+    // B1: an unattended screen must recover from an outage of any length. SignalR's stock
+    // withAutomaticReconnect() schedule stops for good after about 42 seconds, so the default is a policy.
+    [TestMethod]
+    public void EmitAnUnboundedDefaultRetryPolicy()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("export const DEFAULT_RETRY_POLICY: IRetryPolicy = {");
+        result.Should().Contain("const schedule = [0, 2000, 5000, 10000, 30000];");
+        result.Should().Contain("return schedule[Math.min(retryContext.previousRetryCount, schedule.length - 1)] ?? 30000;");
+        result.Should().NotContain("builder.withAutomaticReconnect();");
+    }
+
+    // B1: connect() trusted a resolved start forever, so a connection that closed for good wedged every
+    // later dispatch. Text only -- ManagementSystem's signalr-transport.spec.ts pins the behavior.
+    [TestMethod]
+    public void EmitSignalRTransportRestartingADisconnectedConnection()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("if (this.started && this.connection.state === HubConnectionState.Disconnected) {");
     }
 }

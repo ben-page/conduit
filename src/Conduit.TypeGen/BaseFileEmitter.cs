@@ -36,7 +36,8 @@ public static class BaseFileEmitter
 
         if (includeSignalR)
         {
-            sb.AppendLine("import { HubConnectionBuilder, HubConnection } from '@microsoft/signalr';");
+            sb.AppendLine("import { HubConnectionBuilder, HubConnection, HubConnectionState } from '@microsoft/signalr';");
+            sb.AppendLine("import type { IRetryPolicy, RetryContext } from '@microsoft/signalr';");
             sb.AppendLine();
         }
 
@@ -125,9 +126,26 @@ public static class BaseFileEmitter
 
     private static void EmitSignalRTransport(StringBuilder sb, string hubPath)
     {
+        sb.AppendLine("/**");
+        sb.AppendLine(" * The reconnect schedule a SignalRTransport uses unless its options supply another: 0 s, 2 s,");
+        sb.AppendLine(" * 5 s, 10 s, then every 30 s for as long as the outage lasts.");
+        sb.AppendLine(" *");
+        sb.AppendLine(" * Unbounded on purpose. SignalR's stock withAutomaticReconnect() schedule is [0, 2 s, 10 s, 30 s],");
+        sb.AppendLine(" * and then it stops for good. That suits a desktop tab and bricks an unattended screen: a wall-mounted");
+        sb.AppendLine(" * kiosk that loses its network for a minute has nobody standing there to reload it.");
+        sb.AppendLine(" */");
+        sb.AppendLine("export const DEFAULT_RETRY_POLICY: IRetryPolicy = {");
+        sb.AppendLine("  nextRetryDelayInMilliseconds(retryContext: RetryContext): number {");
+        sb.AppendLine("    const schedule = [0, 2000, 5000, 10000, 30000];");
+        sb.AppendLine("    return schedule[Math.min(retryContext.previousRetryCount, schedule.length - 1)] ?? 30000;");
+        sb.AppendLine("  },");
+        sb.AppendLine("};");
+        sb.AppendLine();
         sb.AppendLine("export interface SignalRTransportOptions {");
         sb.AppendLine("  accessTokenFactory?: () => string | Promise<string>;");
         sb.AppendLine("  automaticReconnect?: boolean;");
+        sb.AppendLine("  /** Replaces DEFAULT_RETRY_POLICY. Ignored when automaticReconnect is false. */");
+        sb.AppendLine("  retryPolicy?: IRetryPolicy;");
         sb.AppendLine("  configure?: (builder: HubConnectionBuilder) => void;");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -139,7 +157,7 @@ public static class BaseFileEmitter
         sb.AppendLine("    if (typeof pathOrConnection === 'string') {");
         sb.AppendLine("      const builder = new HubConnectionBuilder()");
         sb.AppendLine("        .withUrl(pathOrConnection, { accessTokenFactory: options?.accessTokenFactory });");
-        sb.AppendLine("      if (options?.automaticReconnect !== false) builder.withAutomaticReconnect();");
+        sb.AppendLine("      if (options?.automaticReconnect !== false) builder.withAutomaticReconnect(options?.retryPolicy ?? DEFAULT_RETRY_POLICY);");
         sb.AppendLine("      options?.configure?.(builder);");
         sb.AppendLine("      this.connection = builder.build();");
         sb.AppendLine("    } else {");
@@ -147,10 +165,21 @@ public static class BaseFileEmitter
         sb.AppendLine("    }");
         sb.AppendLine("  }");
         sb.AppendLine();
-        sb.AppendLine("  /** Starts the hub on first use (or call eagerly after login to warm it). Resilient: a failed");
-        sb.AppendLine("   *  start is not cached, so the next dispatch retries rather than wedging permanently. */");
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Starts the hub on first use (or call eagerly after login to warm it), and starts it again after it died.");
+        sb.AppendLine("   *");
+        sb.AppendLine("   * A failed start is not cached, so the next dispatch retries. A resolved start is not trusted either:");
+        sb.AppendLine("   * once the connection is Disconnected (the retry policy stopped, or the server closed it without");
+        sb.AppendLine("   * allowing a reconnect) a memoized promise would stay resolved while every invoke() threw, so the");
+        sb.AppendLine("   * live state decides.");
+        sb.AppendLine("   */");
         sb.AppendLine("  connect(): Promise<void> {");
-        sb.AppendLine("    if (!this.started) this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });");
+        sb.AppendLine("    if (this.started && this.connection.state === HubConnectionState.Disconnected) {");
+        sb.AppendLine("      this.started = undefined;");
+        sb.AppendLine("    }");
+        sb.AppendLine("    if (!this.started) {");
+        sb.AppendLine("      this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });");
+        sb.AppendLine("    }");
         sb.AppendLine("    return this.started;");
         sb.AppendLine("  }");
         sb.AppendLine();
