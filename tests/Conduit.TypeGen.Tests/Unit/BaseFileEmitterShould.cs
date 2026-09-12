@@ -199,7 +199,8 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain("private started?: Promise<void>;");
         result.Should().Contain("connect(): Promise<void> {");
-        result.Should().Contain("this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });");
+        result.Should().Contain("this.started = this.connection.start()");
+        result.Should().Contain(".catch(e => {");
         result.Should().Contain("return this.started;");
     }
 
@@ -252,5 +253,78 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("if (this.started && this.connection.state === HubConnectionState.Disconnected) {");
+    }
+
+    // The five states a consumer presents. 'stopped' is what lets an app tell a logout from an outage.
+    [TestMethod]
+    public void EmitTheTransportConnectionStateUnion()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain(
+            "export type TransportConnectionState = 'stopped' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';");
+    }
+
+    // A late subscriber is told the current state at once, rather than waiting for the next change.
+    [TestMethod]
+    public void EmitOnStateChangeReplayingTheCurrentState()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("onStateChange(handler: (state: TransportConnectionState) => void): Subscription {");
+        result.Should().Contain("handler(this.connectionState);");
+    }
+
+    // All three hub lifecycle hooks must report, or a consumer never hears about an outage.
+    [TestMethod]
+    public void EmitSignalRTransportReportingEveryHubLifecycleHook()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("this.connection.onreconnecting(() => this.setConnectionState('reconnecting'));");
+        result.Should().Contain("this.connection.onreconnected(() => this.setConnectionState('connected'));");
+        result.Should().Contain("this.connection.onclose(() => {");
+    }
+
+    // stop() is intentional (logout, re-login, device re-attest), so the close it causes must not read as a loss.
+    [TestMethod]
+    public void EmitSignalRTransportReportingAnIntentionalStopAsStopped()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("this.setConnectionState('stopped');");
+        result.Should().Contain("if (this.connectionState !== 'stopped') this.setConnectionState('disconnected');");
+    }
+
+    [TestMethod]
+    public void EmitSignalRTransportReportingConnectingAndConnectedAroundAStart()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("this.setConnectionState('connecting');");
+        result.Should().Contain(".then(() => { this.setConnectionState('connected'); })");
+    }
+
+    // HttpTransport has no connection to report on. Widening the shared interface would force it to lie.
+    [TestMethod]
+    public void KeepConnectionStateOffTheSharedTransportInterface()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        var start = result.IndexOf("export interface ConduitTransport {", StringComparison.Ordinal);
+        var transportInterface = result[start..result.IndexOf('}', start)];
+        transportInterface.Should().NotContain("onStateChange");
     }
 }
