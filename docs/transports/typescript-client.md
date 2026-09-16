@@ -173,48 +173,55 @@ sub.unsubscribe();
 
 All methods are fully typed. The type key autocompletes and request/response types are inferred from the maps.
 
-## Known defect — the SignalR transport wedges after a permanent close
+## Connection recovery and state
 
-**Status: open as of 2026-08-28. Affects every consumer of the generated `SignalRTransport`.**
+**Fixed 2026-09-16** — this replaces the known defect recorded here on 2026-08-28. A consumer has the fix once it
+regenerates `conduit.ts` from a `Conduit.TypeGen` that contains it.
 
-`connect()` memoises `this.started`. Once `start()` resolves, that promise stays resolved for the
-life of the object:
+`SignalRTransport` recovers from an outage of any length without a page reload:
 
-```typescript
-connect(): Promise<void> {
-  if (!this.started) this.started = this.connection.start().catch(e => { this.started = undefined; throw e; });
-  return this.started;
-}
-```
+- **The default retry policy never gives up.** `DEFAULT_RETRY_POLICY` (exported) waits 0 s, 2 s, 5 s, 10 s, then
+  every 30 s. SignalR's stock `withAutomaticReconnect()` schedule is `[0, 2s, 10s, 30s]` and then stops for good,
+  which bricked an unattended screen roughly 45 seconds into an outage. Pass `retryPolicy` in
+  `SignalRTransportOptions` to use another; `automaticReconnect: false` still turns reconnection off.
+- **`connect()` starts a dead connection again.** It used to memoize its resolved `start()` forever, so once the
+  connection closed for good every dispatch threw *"Cannot send data if the connection is not in the 'Connected'
+  State."* It now checks `connection.state` and starts again when the connection is `Disconnected`. A failed start
+  is still not cached.
+- **A close nobody asked for restarts itself.** `withAutomaticReconnect` only retries a connection that dropped, or
+  one the server closed *with* `allowReconnect`. A server close without it, a first `start()` that fails, and a
+  retry policy that gave up all used to end in `disconnected` with nothing retrying until the next dispatch. They
+  now schedule a restart on the same retry policy, so a kiosk left unattended through a graceful server shutdown
+  recovers exactly like one left unattended through a crash. The attempt count resets only after a connection has
+  stayed up 30 seconds, so a server that accepts and immediately closes a connection is retried on the schedule,
+  not in a tight loop.
 
-`withAutomaticReconnect()` is emitted with no arguments, so it uses SignalR's stock
-`[0, 2s, 10s, 30s]` schedule and then **stops retrying for good**. After that, `connect()` returns
-the stale resolved promise, `invoke()` runs against a closed connection, and every dispatch throws:
+`onStateChange(handler)` reports the socket's lifecycle as a `TransportConnectionState`, and calls the handler at
+once with the current state:
 
-```
-Cannot send data if the connection is not in the 'Connected' State.
-```
+| State | Meaning |
+|---|---|
+| `stopped` | Not started yet, or the app called `stop()`. Never a loss. |
+| `connecting` | A start is in flight, before any connection has succeeded. |
+| `connected` | Up. |
+| `reconnecting` | A connection was up before; it dropped or closed and the retry policy is working on it. |
+| `disconnected` | Closed, and nothing is retrying. Reachable only by a transport built with `automaticReconnect: false`, or whose retry policy itself gives up (returns `null`). |
 
-Nothing clears `started` except `stop()`. In practice that means **an app that loses its network for
-roughly 45 seconds is dead until the page is reloaded** — which is fine for a desktop tab someone is
-sitting in front of, and not fine at all for an unattended screen.
+`stop()` reports `stopped` before it closes the socket, so the close it causes is never reported as `reconnecting`
+or `disconnected` — an app can tell a logout from an outage. `onStateChange` is deliberately not on
+`ConduitTransport`: `HttpTransport` has no connection to report on.
 
-Two fixes, both in `Conduit.TypeGen/BaseFileEmitter.cs` (`EmitSignalRTransport`):
+**Where the behavior is tested.** The transport is emitted as C# string literals and this repository has no
+TypeScript test project, so `Conduit.TypeGen.Tests` pins only the emitted text. The behavioral tests — a fake
+`HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional
+stop and a failed start, and the retry policy the restart loop is built with — live in ManagementSystem's
+`src/ManagementSystem.Web/Client/src/app/core/conduit/signalr-transport.spec.ts`, and protect that consumer only.
 
-1. `connect()` must clear `started` when `connection.state === HubConnectionState.Disconnected`,
-   so a dispatch restarts a dead connection instead of wedging on it.
-2. The default retry policy should be unbounded with a capped interval, with the stock schedule
-   available via an explicit option. An unattended client must recover after an outage of any length.
-
-Worked design and a task-by-task fix, including a behavioural regression test driving a fake
-`HubConnection` past a permanent close:
-`ManagementSystem/docs/superpowers/plans/2026-08-28-connection-awareness.md` (Tasks 1–3).
-
-**Why the fix needs a test outside this repo.** The transport is emitted as C# string literals and
-there is no TypeScript test project here, so `Conduit.TypeGen.Tests` can only assert on emitted
-*text* — a test that greps the output for a line passes whether or not the logic around it is
-correct. Giving the sample `ClientApp` a real test runner, or extracting the transport into a
-hand-written TS package the emitter references, would let this be tested at its source.
+**Who has this fix.** ManagementSystem regenerated `conduit.ts` against it and observed a kiosk recover from two
+five-minute outages unattended. **GtlHmi does not have it yet.** It pins `Conduit.TypeGen` 1.0.1 from NuGet, so it
+keeps the old behavior until it takes a package that contains this fix — and its `StartAwareTransport` subclass
+overrides a `start()` method the current emitter no longer emits in the same shape, so that upgrade needs its own
+look, not a version bump alone.
 
 ## HTTP transport
 
