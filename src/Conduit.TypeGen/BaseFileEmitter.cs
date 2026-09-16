@@ -150,7 +150,8 @@ public static class BaseFileEmitter
         sb.AppendLine(" * - reconnecting: the socket dropped and the retry policy is working on it.");
         sb.AppendLine(" * - disconnected: the socket closed and nothing is retrying. Only a transport built with");
         sb.AppendLine(" *   automaticReconnect: false, or one whose retry policy gave up, reaches it; otherwise a close");
-        sb.AppendLine(" *   nobody asked for is followed by restarts on the policy's schedule, reported as reconnecting.");
+        sb.AppendLine(" *   nobody asked for is followed by restarts on the policy's schedule -- reported as reconnecting");
+        sb.AppendLine(" *   once the socket has been up, and as connecting before it ever was.");
         sb.AppendLine(" */");
         sb.AppendLine("export type TransportConnectionState = 'stopped' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';");
         sb.AppendLine();
