@@ -313,6 +313,12 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain("if (this.connectionState !== 'reconnecting') this.setConnectionState('connecting');");
         result.Should().Contain(".then(() => { this.reportConnected(); })");
+        // What reportConnected() does, not just that it is called: a start that succeeded records the
+        // connection (both fields) and reports it. Without this the body is unpinned here.
+        result.Should().Contain("  private reportConnected(): void {");
+        result.Should().Contain("    this.hasConnected = true;");
+        result.Should().Contain("    this.connectedAt = Date.now();");
+        result.Should().Contain("    this.setConnectionState('connected');");
     }
 
     // 4.4a: SignalR's own reconnect covers only a drop, or a close the server allowed a reconnect after. A close
@@ -379,6 +385,9 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain("  private cancelRestart(): void {");
         result.Should().Contain("clearTimeout(this.restartTimer);");
+        // stop() also forgets the schedule -- a logout is not an outage, so the next start begins at 0 s.
+        result.Should().Contain("    this.restartAttempt = 0;");
+        result.Should().Contain("    this.connectedAt = 0;");
         result.Split("this.cancelRestart();").Length.Should().Be(3);
     }
 
