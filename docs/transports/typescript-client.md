@@ -223,6 +223,14 @@ keeps the old behavior until it takes a package that contains this fix — and i
 overrides a `start()` method the current emitter no longer emits in the same shape, so that upgrade needs its own
 look, not a version bump alone.
 
+## Server identity
+
+`SignalRTransport.onServerInfo(handler)` registers a handler for the `ConduitServerInfo` a host sends on every
+connect and reconnect (`docs/transports/signalr.md` → "Server identity on connect").
+- It does **not** start the connection, so a consumer can register it at construction — before anyone signs in —
+  and still hear the first connect.
+- It is not on `ConduitTransport`, because `HttpTransport` has no connection.
+
 ## HTTP transport
 
 For projects that do not need real-time push, use `HttpTransport`:
