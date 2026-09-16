@@ -288,8 +288,8 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("this.connection.onreconnecting(() => this.setConnectionState('reconnecting'));");
-        result.Should().Contain("this.connection.onreconnected(() => this.setConnectionState('connected'));");
-        result.Should().Contain("this.connection.onclose(() => {");
+        result.Should().Contain("this.connection.onreconnected(() => this.reportConnected());");
+        result.Should().Contain("this.connection.onclose(error => {");
     }
 
     // stop() is intentional (logout, re-login, device re-attest), so the close it causes must not read as a loss.
@@ -301,7 +301,7 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("this.setConnectionState('stopped');");
-        result.Should().Contain("if (this.connectionState !== 'stopped') this.setConnectionState('disconnected');");
+        result.Should().Contain("if (this.connectionState === 'stopped') return;");
     }
 
     [TestMethod]
@@ -311,8 +311,75 @@ public class BaseFileEmitterShould
         var result = BaseFileEmitter.Emit();
 
         // Assert
-        result.Should().Contain("this.setConnectionState('connecting');");
-        result.Should().Contain(".then(() => { this.setConnectionState('connected'); })");
+        result.Should().Contain("if (this.connectionState !== 'reconnecting') this.setConnectionState('connecting');");
+        result.Should().Contain(".then(() => { this.reportConnected(); })");
+    }
+
+    // 4.4a: SignalR's own reconnect covers only a drop, or a close the server allowed a reconnect after. A close
+    // without allowReconnect used to end in 'disconnected', where nothing retried until the next dispatch.
+    [TestMethod]
+    public void EmitSignalRTransportSchedulingARestartAfterACloseNobodyAskedFor()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("this.connection.onclose(error => {");
+        result.Should().Contain("if (this.connectionState === 'stopped') return;");
+        result.Should().Contain("this.scheduleRestart(error);");
+    }
+
+    // The waits come from the same policy the hub reconnects with: one schedule, one option, for both paths.
+    [TestMethod]
+    public void EmitRestartsThatWaitOnTheRetryPolicy()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("this.restartPolicy = options?.retryPolicy ?? DEFAULT_RETRY_POLICY;");
+        result.Should().Contain("const delay = this.restartPolicy.nextRetryDelayInMilliseconds({");
+        result.Should().Contain("previousRetryCount: this.restartAttempt,");
+        result.Should().Contain("}, delay);");
+    }
+
+    // A server that accepts a connection and closes it at once must be retried on the schedule, not in a loop.
+    [TestMethod]
+    public void EmitABackoffThatResetsOnlyAfterAStableConnection()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("private static readonly STABLE_CONNECTION_MS = 30000;");
+        result.Should().Contain(
+            "if (this.connectedAt !== 0 && Date.now() - this.connectedAt >= SignalRTransport.STABLE_CONNECTION_MS) {");
+    }
+
+    // 'disconnected' survives for the apps that asked for it: opted out of reconnects, or a policy that gave up.
+    [TestMethod]
+    public void EmitDisconnectedOnlyWhenNothingIsRetrying()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("if (!this.restartsEnabled) { this.setConnectionState('disconnected'); return; }");
+        result.Should().Contain("if (delay === null) { this.setConnectionState('disconnected'); return; }");
+    }
+
+    // Both entry points cancel a pending restart: an intentional stop, and a dispatch during a wait. Counted by
+    // splitting rather than matched with a line break, because the emitter writes Environment.NewLine.
+    [TestMethod]
+    public void EmitRestartsThatAreCancelledByStopAndByADispatch()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("  private cancelRestart(): void {");
+        result.Should().Contain("clearTimeout(this.restartTimer);");
+        result.Split("this.cancelRestart();").Length.Should().Be(3);
     }
 
     // HttpTransport has no connection to report on. Widening the shared interface would force it to lie.
