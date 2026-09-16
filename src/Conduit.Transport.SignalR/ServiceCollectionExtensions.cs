@@ -34,4 +34,19 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConduitTransport>(sp => sp.GetRequiredService<SignalRTransport>());
         return services;
     }
+
+    /// <summary>
+    /// Adds SignalR transport for Conduit, and has <see cref="ConduitHub"/> send <paramref name="serverInfo"/> to every
+    /// client as it connects and reconnects. Conduit carries the value and never derives it.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="serverInfo">What the hub tells each client about this server.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddConduitSignalR(this IServiceCollection services, ConduitServerInfo serverInfo)
+    {
+        ArgumentNullException.ThrowIfNull(serverInfo);
+        services.AddConduitSignalR();
+        services.AddSingleton(serverInfo);
+        return services;
+    }
 }

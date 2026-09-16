@@ -118,4 +118,63 @@ public class ConduitHubShould
         // Assert — exception propagates to the caller
         await act.Should().ThrowAsync<Exception>();
     }
+
+    private static TestWebHost CreateHost(ConduitServerInfo serverInfo)
+    {
+        return TestWebHost.Start(
+            builder =>
+            {
+                builder.Services.AddSingleton<ItemStore>();
+                builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+                builder.Services.AddConduit();
+                builder.Services.AddConduitSignalR(serverInfo);
+            },
+            app => app.MapHub<ConduitHub>("/conduit"));
+    }
+
+    // Sent on connect rather than broadcast on restart: a restart broadcast reaches the clients connected to that pod,
+    // which at startup is nobody, and events do not replay. Every client that needs the id necessarily connects.
+    [TestMethod]
+    public async Task SendTheRegisteredServerInfoToACallerOnConnect()
+    {
+        // Arrange
+        await using var host = CreateHost(new ConduitServerInfo("build-123"));
+        var received = new TaskCompletionSource<ConduitServerInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var connection = new HubConnectionBuilder()
+            .WithUrl($"{host.Address}/conduit")
+            .Build();
+        connection.On<ConduitServerInfo>(ConduitHub.ServerInfoMethod, info => received.TrySetResult(info));
+
+        // Act
+        await connection.StartAsync();
+
+        // Assert
+        var info = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        info.Should().Be(new ConduitServerInfo("build-123"));
+    }
+
+    // Carried, never derived: a host that registers no ConduitServerInfo sends nothing.
+    [TestMethod]
+    public async Task SendNoServerInfoWhenTheHostRegistersNone()
+    {
+        // Arrange
+        await using var host = CreateHost();
+        var received = new TaskCompletionSource<ConduitServerInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var connection = new HubConnectionBuilder()
+            .WithUrl($"{host.Address}/conduit")
+            .Build();
+        connection.On<ConduitServerInfo>(ConduitHub.ServerInfoMethod, info => received.TrySetResult(info));
+        await connection.StartAsync();
+        var payload = JsonSerializer.SerializeToElement(new { Name = "After connect" });
+
+        // Act: a round trip on the same connection. The server reads nothing from a connection until its
+        // OnConnectedAsync has returned, and messages arrive in order, so anything it sent would already be here.
+        Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
+        await connection.InvokeAsync<DispatchResult<JsonElement?>>(
+            "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext, noHeaders);
+
+        // Assert
+        received.Task.IsCompleted.Should().BeFalse();
+    }
 }

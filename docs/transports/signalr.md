@@ -28,6 +28,22 @@ app.Run();
 
 `MapHub<ConduitHub>` maps the inbound hub. It exposes two methods: `Dispatch` for commands/queries and `Publish` for events.
 
+## Server identity on connect
+
+A host can have `ConduitHub` tell every client about itself the moment it connects:
+
+~~~csharp
+builder.Services.AddConduitSignalR(new ConduitServerInfo(buildId));
+~~~
+
+`OnConnectedAsync` then invokes the client method `ConduitServerInfo` (`ConduitHub.ServerInfoMethod`) with
+`{ buildId }` on every connect and every reconnect. Conduit carries the value and never derives it: a host that
+registers none sends nothing.
+
+**On connect, not broadcast on restart.** A restart broadcast reaches the clients connected to that pod, which at
+startup is nobody. The clients that need to know are still on the old pod, and events do not replay. Every client that
+needs the id necessarily connects to the new pod.
+
 ## Bidirectional communication
 
 A single SignalR connection carries traffic in both directions.

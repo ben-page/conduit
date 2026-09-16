@@ -11,11 +11,35 @@ namespace Conduit.Transport.SignalR;
 /// <see cref="MessageContext"/>. C# clients pass context for cross-service propagation.
 /// Registered <see cref="IDispatchContextEnricher"/> instances contribute server-trusted
 /// properties (e.g. the authenticated user id) over the client-supplied headers.
+/// A host that registers a <see cref="ConduitServerInfo"/> has it sent to each client as it connects.
 /// </summary>
 public class ConduitHub(
     IWireMediator mediator,
-    IEnumerable<IDispatchContextEnricher> enrichers) : Hub
+    IEnumerable<IDispatchContextEnricher> enrichers,
+    IEnumerable<ConduitServerInfo> serverInfo) : Hub
 {
+    /// <summary>The client method <see cref="OnConnectedAsync"/> invokes with the <see cref="ConduitServerInfo"/>.</summary>
+    public const string ServerInfoMethod = "ConduitServerInfo";
+
+    /// <summary>
+    /// Sends the caller this server's <see cref="ConduitServerInfo"/> when the host registered one, and nothing otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Sent on connect, not broadcast on restart: a restart broadcast reaches the clients connected to that pod, which at
+    /// startup is nobody, while the clients that need it are still on the old pod and events do not replay. Every client
+    /// that needs it necessarily connects, and this runs again on every reconnect.
+    /// </remarks>
+    /// <returns>A task that completes once the message is sent.</returns>
+    public override async Task OnConnectedAsync()
+    {
+        await base.OnConnectedAsync();
+        var info = serverInfo.LastOrDefault();
+        if (info is not null)
+        {
+            await this.Clients.Caller.SendAsync(ServerInfoMethod, info, this.Context.ConnectionAborted);
+        }
+    }
+
     /// <summary>
     /// Dispatches a command or query received from a SignalR client.
     /// </summary>
