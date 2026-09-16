@@ -38,7 +38,8 @@ builder.Services.AddConduitSignalR(new ConduitServerInfo(buildId));
 
 `OnConnectedAsync` then invokes the client method `ConduitServerInfo` (`ConduitHub.ServerInfoMethod`) with
 `{ buildId }` on every connect and every reconnect. Conduit carries the value and never derives it: a host that
-registers none sends nothing.
+registers none sends nothing. The TypeScript transport surfaces it as `SignalRTransport.onServerInfo`
+(`docs/transports/typescript-client.md` → "Server identity").
 
 **On connect, not broadcast on restart.** A restart broadcast reaches the clients connected to that pod, which at
 startup is nobody. The clients that need to know are still on the old pod, and events do not replay. Every client that

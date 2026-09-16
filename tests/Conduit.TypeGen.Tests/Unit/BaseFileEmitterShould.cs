@@ -403,4 +403,35 @@ public class BaseFileEmitterShould
         var transportInterface = result[start..result.IndexOf('}', start)];
         transportInterface.Should().NotContain("onStateChange");
     }
+
+    // Registering the handler must not start the connection: a consumer registers it at construction, before anyone has
+    // signed in, and the hub requires authorization. A handler registered early still hears the first connect.
+    [TestMethod]
+    public void EmitOnServerInfoWithoutStartingTheConnection()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().Contain("export interface ConduitServerInfo {");
+        var start = result.IndexOf(
+            "  onServerInfo(handler: (info: ConduitServerInfo) => void): Subscription {", StringComparison.Ordinal);
+        start.Should().BeGreaterThan(-1);
+        var body = result[start..result.IndexOf("\n  }", start, StringComparison.Ordinal)];
+        body.Should().Contain("this.connection.on('ConduitServerInfo', handler);");
+        body.Should().NotContain("connect()");
+    }
+
+    // HttpTransport has no connection, so the handler stays off the shared interface.
+    [TestMethod]
+    public void KeepServerInfoOffTheSharedTransportInterface()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        var start = result.IndexOf("export interface ConduitTransport {", StringComparison.Ordinal);
+        var transportInterface = result[start..result.IndexOf('}', start)];
+        transportInterface.Should().NotContain("onServerInfo");
+    }
 }
