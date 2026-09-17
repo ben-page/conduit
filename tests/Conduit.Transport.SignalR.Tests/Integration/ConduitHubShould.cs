@@ -167,14 +167,18 @@ public class ConduitHubShould
         await connection.StartAsync();
         var payload = JsonSerializer.SerializeToElement(new { Name = "After connect" });
 
-        // Act: a round trip on the same connection. The server reads nothing from a connection until its
-        // OnConnectedAsync has returned, and messages arrive in order, so anything it sent would already be here.
+        // Act: a round trip on the same connection, then a bounded wait. The server reads nothing from a connection
+        // until its OnConnectedAsync has returned, so anything it sent arrived before the round trip's result — but the
+        // client runs On handlers on a queue separate from invocation completions, so the round trip alone does not
+        // prove a handler would have run by now. The wait gives one the time to.
         Dictionary<string, string>? noContext = null;
         Dictionary<string, string>? noHeaders = null;
         await connection.InvokeAsync<DispatchResult<JsonElement?>>(
             "Dispatch", "Conduit.Transport.SignalR.Tests.Support.CreateItemCommand", payload, noContext, noHeaders);
+        var first = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromMilliseconds(500)));
 
         // Assert
+        first.Should().NotBeSameAs(received.Task);
         received.Task.IsCompleted.Should().BeFalse();
     }
 }
