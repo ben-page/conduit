@@ -42,6 +42,9 @@ public record ErrorCode
     /// <summary>HTTP 409 — conflicting state.</summary>
     public static readonly ErrorCode Conflict = new("Conflict", 409);
 
+    /// <summary>HTTP 412 — the version the caller acted on is no longer current (a stale ETag).</summary>
+    public static readonly ErrorCode PreconditionFailed = new("PreconditionFailed", 412);
+
     /// <summary>HTTP 500 — unhandled server error.</summary>
     public static readonly ErrorCode InternalError = new("InternalError", 500);
 
@@ -54,6 +57,7 @@ public record ErrorCode
         [Unauthorized.Value] = Unauthorized.HttpStatusCode,
         [Forbidden.Value] = Forbidden.HttpStatusCode,
         [Conflict.Value] = Conflict.HttpStatusCode,
+        [PreconditionFailed.Value] = PreconditionFailed.HttpStatusCode,
         [InternalError.Value] = InternalError.HttpStatusCode,
         [BadRequest.Value] = BadRequest.HttpStatusCode,
     };

@@ -14,8 +14,8 @@ public static class ConduitPredicates
     /// Handles transient infrastructure failures (<see cref="TimeoutException"/> and
     /// <see cref="InvalidOperationException"/>) that are safe to retry.
     /// Does not handle <see cref="ConduitException"/> subtypes — those are business
-    /// outcomes (<see cref="NotFoundException"/>, <see cref="UnauthorizedException"/>,
-    /// <see cref="ConflictException"/>) and should not be retried.
+    /// outcomes (<see cref="NotFoundException"/>, <see cref="UnauthorizedException"/>, <see cref="ConflictException"/>,
+    /// <see cref="PreconditionFailedException"/>) and should not be retried.
     /// </summary>
     /// <typeparam name="T">
     /// The result type of the resilience pipeline. For exception-only predicates the

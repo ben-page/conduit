@@ -22,6 +22,9 @@ public class ErrorCodeShould
         ErrorCode.Conflict.Value.Should().Be("Conflict");
         ErrorCode.Conflict.HttpStatusCode.Should().Be(409);
 
+        ErrorCode.PreconditionFailed.Value.Should().Be("PreconditionFailed");
+        ErrorCode.PreconditionFailed.HttpStatusCode.Should().Be(412);
+
         ErrorCode.InternalError.Value.Should().Be("InternalError");
         ErrorCode.InternalError.HttpStatusCode.Should().Be(500);
 
@@ -64,5 +67,13 @@ public class ErrorCodeShould
     {
         // Arrange & Act & Assert
         ErrorCode.NotFound.Should().NotBe(ErrorCode.Conflict);
+    }
+
+    [TestMethod]
+    public void MapPreconditionFailedWireCodeTo412()
+    {
+        // Arrange & Act & Assert — the dispatch endpoint and a DMS batch both resolve the status from the
+        // wire STRING, and an unknown string maps to 400. A stale version must come out as 412.
+        ErrorCode.ToHttpStatusCode("PreconditionFailed").Should().Be(412);
     }
 }

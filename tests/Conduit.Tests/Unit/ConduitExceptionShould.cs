@@ -39,6 +39,17 @@ public class ConduitExceptionShould
     }
 
     [TestMethod]
+    public void HavePreconditionFailedCode()
+    {
+        // Arrange & Act
+        var ex = new PreconditionFailedException("stale");
+
+        // Assert
+        ex.Code.Should().Be(ErrorCode.PreconditionFailed);
+        ex.Message.Should().Be("stale");
+    }
+
+    [TestMethod]
     public void BeAssignableToException()
     {
         // Arrange & Act
