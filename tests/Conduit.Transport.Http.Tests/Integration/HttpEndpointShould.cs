@@ -207,6 +207,27 @@ public class HttpEndpointShould
     }
 
     [TestMethod]
+    public async Task Return412ForPreconditionFailedException()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.ThrowPreconditionFailedCommand",
+                new { });
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            json.GetProperty("error").GetProperty("code").GetString().Should().Be("PreconditionFailed");
+        }
+    }
+
+    [TestMethod]
     public async Task Return401ForUnauthorizedException()
     {
         // Arrange
