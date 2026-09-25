@@ -30,6 +30,7 @@ Built-in codes:
 | `ErrorCode.NotFound` | `"NotFound"` | 404 |
 | `ErrorCode.Unauthorized` | `"Unauthorized"` | 401 |
 | `ErrorCode.Conflict` | `"Conflict"` | 409 |
+| `ErrorCode.PreconditionFailed` | `"PreconditionFailed"` | 412 |
 | `ErrorCode.InternalError` | `"InternalError"` | 500 |
 | `ErrorCode.BadRequest` | `"BadRequest"` | 400 |
 
@@ -41,7 +42,12 @@ Each maps to its corresponding `ErrorCode`:
 throw new NotFoundException("Order 42 was not found");
 throw new UnauthorizedException("API key is invalid");
 throw new ConflictException("Order was already shipped");
+throw new PreconditionFailedException("Order was modified by someone else. Refresh and try again.");
 ```
+
+`ConflictException` is for the resource's current state refusing the request — a refresh would show the
+same refusal. `PreconditionFailedException` is for a stale version: the caller's ETag no longer matches,
+and a refresh gives them a live one to retry with.
 
 All three are sealed subclasses of `ConduitException`:
 
