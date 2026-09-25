@@ -163,7 +163,7 @@ builder.Services.AddConduit(conduit =>
 
 `ConduitPredicates` provides pre-built predicates that understand Conduit's exception hierarchy:
 
-- **`TransientErrors<T>()`** — `TimeoutException`, `InvalidOperationException`. Does NOT handle `NotFoundException`, `UnauthorizedException`, `ConflictException` (business errors).
+- **`TransientErrors<T>()`** — `TimeoutException`, `InvalidOperationException`. Does NOT handle `NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException` (business errors).
 - **`AllErrors<T>()`** — everything except `OperationCanceledException`.
 
 Compose with your own: chain additional `.Handle<MyException>()` calls on the returned builder.

@@ -65,7 +65,7 @@ keep their original `Conduit.*` names):
 - `Conduit.Messages` — spans **two assemblies**. `ICommand`, `IQuery`, `IEvent`, `Unit` live in `src/Conduit.Contracts/Messages/`. `ConduitFile` stays behind in `src/Conduit/Messages/` (core) — it holds a `BinaryData` field, which needs the `System.Memory.Data` package, and `Conduit.Contracts` must carry zero package references (a downstream domain project references it alone, precisely to avoid pulling in packages). This is deliberate, not an oversight — do not "fix" it by moving `ConduitFile` into `Conduit.Contracts`.
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
 - `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute` (`src/Conduit.Contracts/Attributes/`)
-- `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException` (`src/Conduit.Contracts/Exceptions/`)
+- `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException` (`src/Conduit.Contracts/Exceptions/`)
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
 **Key design decisions:**

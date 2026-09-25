@@ -11,7 +11,7 @@ Polly v8 resilience for the Conduit dispatch pipeline. Wraps command/query/event
   - `AddPipelineForType<T>(configure)` — registers under `typeof(T).FullName` (takes precedence over the default).
   - `AddPipelineForNamespace(namespacePrefix, configure)` — registers under the namespace prefix string.
 - `ConduitPredicates` — pre-built Polly `PredicateBuilder<T>` factories that understand Conduit's exception hierarchy. Each call returns a fresh builder (safe to chain `.Handle<T>()` without mutating shared state):
-  - `TransientErrors<T>()` — handles `TimeoutException` and `InvalidOperationException`. Deliberately does NOT handle `ConduitException` subtypes (`NotFoundException`, `UnauthorizedException`, `ConflictException`) — those are business outcomes and must not be retried.
+  - `TransientErrors<T>()` — handles `TimeoutException` and `InvalidOperationException`. Deliberately does NOT handle `ConduitException` subtypes (`NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException`) — those are business outcomes and must not be retried.
   - `AllErrors<T>()` — handles every exception except `OperationCanceledException`.
 
 ## Configuration
