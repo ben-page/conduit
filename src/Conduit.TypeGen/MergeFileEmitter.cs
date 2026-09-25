@@ -14,6 +14,28 @@ namespace Conduit.TypeGen;
 public static class MergeFileEmitter
 {
     /// <summary>
+    /// Every fixed top-level identifier <see cref="Emit"/> declares, imports, or re-exports besides the
+    /// dynamic DTO/command/query/event interfaces (tracked as they're emitted) and <c>CommandMap</c>/
+    /// <c>QueryMap</c>/<c>EventMap</c> (returned by <see cref="TypeMapEmitter.EmitMaps"/> — derived, not
+    /// hand-listed). These have no single emission point to derive from: they're string literals scattered
+    /// across <see cref="Emit"/>, <see cref="EmitConduitClient"/>, and <see cref="EmitErrorTypes"/>. Kept as
+    /// one list, right above <see cref="Emit"/> where it's consumed, so a literal added there is one glance
+    /// away from this list. If a name below changes or a literal is added, update both.
+    /// </summary>
+    internal static readonly string[] FixedMergeFileNames =
+    [
+        // The static "import type { ... } from './conduit';" line.
+        "ConduitTransport", "DispatchResult", "Subscription",
+        // EmitConduitClient's class, and the AllCommands/AllQueries/AllEvents type aliases.
+        "ConduitClient", "AllCommands", "AllQueries", "AllEvents",
+        // The bottom re-export line: "export { HttpTransport }", conditionally "export { SignalRTransport }",
+        // and "export type { ConduitTransport, DispatchResult, ConduitError, ConduitErrorDetail, Subscription }".
+        "HttpTransport", "SignalRTransport", "ConduitError", "ConduitErrorDetail",
+        // EmitErrorTypes's own fixed output: the ErrorMap interface and the isError function.
+        "ErrorMap", "isError",
+    ];
+
+    /// <summary>
     /// Generates the merge file content for the given types.
     /// </summary>
     /// <param name="types">The dispatchable types.</param>
@@ -30,9 +52,58 @@ public static class MergeFileEmitter
         sb.AppendLine("import type { ConduitTransport, DispatchResult, Subscription } from './conduit';");
         sb.AppendLine();
 
+        var emittedTypeNames = EmitInterfacesAndMaps(sb, types, assemblies);
+
+        EmitErrorTypes(sb, assemblies is null ? [] : ErrorTypeScanner.Scan(assemblies), emittedTypeNames);
+
+        // Emit type aliases
+        var hasCommands = types.Any(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand);
+        var hasQueries = types.Any(t => t.Kind == DispatchableKind.Query);
+        var hasEvents = types.Any(t => t.Kind == DispatchableKind.Event);
+
+        sb.AppendLine(hasCommands ? "export type AllCommands = CommandMap;" : "export type AllCommands = {};");
+        sb.AppendLine(hasQueries ? "export type AllQueries = QueryMap;" : "export type AllQueries = {};");
+        sb.AppendLine(hasEvents ? "export type AllEvents = EventMap;" : "export type AllEvents = {};");
+        sb.AppendLine();
+
+        // Emit ConduitClient class
+        EmitConduitClient(sb);
+
+        // Re-exports
+        sb.AppendLine("export { HttpTransport } from './conduit';");
+        if (includeSignalR)
+        {
+            sb.AppendLine("export { SignalRTransport } from './conduit';");
+        }
+
+        sb.AppendLine("export type { ConduitTransport, DispatchResult, ConduitError, ConduitErrorDetail, Subscription } from './conduit';");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Emits every interface <see cref="Emit"/> declares before <see cref="EmitErrorTypes"/> runs -- the root
+    /// <c>[ClientVisible]</c> types, <see cref="TypeCollector"/>-discovered referenced types, and the
+    /// <c>CommandMap</c>/<c>QueryMap</c>/<c>EventMap</c> type maps -- and returns every identifier emitted
+    /// that way, plus <see cref="FixedMergeFileNames"/>, as one reserved-name set.
+    /// </summary>
+    /// <returns>
+    /// Every TypeScript identifier this file has already emitted or will always emit regardless of input,
+    /// keyed by that identifier and valued by a description of where it came from — what
+    /// <see cref="EmitErrorTypes"/> checks a would-be error-type name against via
+    /// <see cref="ThrowIfErrorTypeNameCollides"/>, so an error type can never silently collide with one.
+    /// </returns>
+    /// <remarks>
+    /// Pulled out of <see cref="Emit"/> (rather than left inline) so this reserved-name set — the actual
+    /// wiring the collision guard depends on — is itself directly callable from a test with real inputs
+    /// (<c>MergeFileEmitterShould.ThrowWhenAnErrorTypeNameCollidesWithAFixedMergeFileName</c>), not just
+    /// reconstructed by hand there.
+    /// </remarks>
+    internal static Dictionary<string, string> EmitInterfacesAndMaps(
+        StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types, IReadOnlyList<Assembly>? assemblies)
+    {
         // Every TypeScript interface identifier emitted so far, keyed by that identifier, valued by the full
-        // type name it came from. EmitErrorTypes checks a would-be error-type name against this so an error
-        // type can never silently collide with an already-emitted DTO/command/query/event interface.
+        // type name (or a description, for a fixed name) it came from.
         var emittedTypeNames = new Dictionary<string, string>(StringComparer.Ordinal);
 
         // Emit type interfaces for [ClientVisible] types
@@ -66,34 +137,22 @@ public static class MergeFileEmitter
             }
         }
 
-        // Emit type maps
-        TypeMapEmitter.EmitMaps(sb, types, assemblies);
-
-        EmitErrorTypes(sb, assemblies is null ? [] : ErrorTypeScanner.Scan(assemblies), emittedTypeNames);
-
-        // Emit type aliases
-        var hasCommands = types.Any(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand);
-        var hasQueries = types.Any(t => t.Kind == DispatchableKind.Query);
-        var hasEvents = types.Any(t => t.Kind == DispatchableKind.Event);
-
-        sb.AppendLine(hasCommands ? "export type AllCommands = CommandMap;" : "export type AllCommands = {};");
-        sb.AppendLine(hasQueries ? "export type AllQueries = QueryMap;" : "export type AllQueries = {};");
-        sb.AppendLine(hasEvents ? "export type AllEvents = EventMap;" : "export type AllEvents = {};");
-        sb.AppendLine();
-
-        // Emit ConduitClient class
-        EmitConduitClient(sb);
-
-        // Re-exports
-        sb.AppendLine("export { HttpTransport } from './conduit';");
-        if (includeSignalR)
+        // Emit type maps. EmitMaps' return -- the names it actually decided to emit, not a guess mirroring
+        // its "Count > 0" conditionals -- is the source of truth for those three names too.
+        var mapNames = TypeMapEmitter.EmitMaps(sb, types, assemblies);
+        foreach (var mapName in mapNames)
         {
-            sb.AppendLine("export { SignalRTransport } from './conduit';");
+            emittedTypeNames[mapName] = $"the {mapName} type map TypeMapEmitter just emitted";
         }
 
-        sb.AppendLine("export type { ConduitTransport, DispatchResult, ConduitError, ConduitErrorDetail, Subscription } from './conduit';");
+        // Every other fixed name this file always declares/imports/re-exports, regardless of what types
+        // were passed in -- see FixedMergeFileNames' doc comment for why this can't be derived the same way.
+        foreach (var fixedName in FixedMergeFileNames)
+        {
+            emittedTypeNames[fixedName] = "a fixed identifier this file always imports, declares, or re-exports";
+        }
 
-        return sb.ToString();
+        return emittedTypeNames;
     }
 
     /// <summary>
@@ -283,9 +342,10 @@ public static class MergeFileEmitter
     /// <param name="sb">The output being built.</param>
     /// <param name="errors">The error types to emit, from <see cref="ErrorTypeScanner.Scan"/>.</param>
     /// <param name="emittedTypeNames">
-    /// Every TypeScript interface identifier this file has already emitted (DTOs, commands, queries, events),
-    /// keyed by that identifier and valued by the full type name it came from — see
-    /// <see cref="ThrowIfErrorTypeNameCollides"/>.
+    /// Every TypeScript identifier this file has already emitted or will always emit regardless of input —
+    /// the dynamic DTO/command/query/event interfaces, <c>CommandMap</c>/<c>QueryMap</c>/<c>EventMap</c>, and
+    /// <see cref="FixedMergeFileNames"/> — keyed by that identifier and valued by a description of where it
+    /// came from, for <see cref="ThrowIfErrorTypeNameCollides"/>.
     /// </param>
     private static void EmitErrorTypes(
         StringBuilder sb, IReadOnlyList<ErrorTypeInfo> errors, IReadOnlyDictionary<string, string> emittedTypeNames)
@@ -340,10 +400,12 @@ public static class MergeFileEmitter
     /// <c>export interface {ShortName}</c> identifier — TypeScript either silently merges the two declarations
     /// (masking a real type mismatch) or fails the consumer's compile, neither of which is a build-time signal
     /// here. The same collision is possible against a DTO/command/query/event interface this file already
-    /// emitted (<paramref name="emittedTypeNames"/> — built from that emission, the cheap source of truth
-    /// already at hand; there is no other one, since these names are computed as they're emitted, not tracked
-    /// anywhere ahead of time). Throws <see cref="InvalidOperationException"/> naming both colliding full type
-    /// names — TypeGen has no dedicated exception type; every hard generation error surfaces this way, since
+    /// emitted, against <c>CommandMap</c>/<c>QueryMap</c>/<c>EventMap</c>, or against any other fixed name this
+    /// file always declares/imports/re-exports (<paramref name="emittedTypeNames"/> covers all three — see
+    /// <see cref="Emit"/>, where it's built from each of those sources in turn, and
+    /// <see cref="FixedMergeFileNames"/> for the third). Throws <see cref="InvalidOperationException"/> naming
+    /// both colliding full type names (or a description, for a fixed name with no full type name of its own)
+    /// — TypeGen has no dedicated exception type; every hard generation error surfaces this way, since
     /// <see cref="TypeGenTask.Execute"/> catches any <see cref="Exception"/> and reports it via
     /// <c>Log.LogError</c>.
     /// </summary>

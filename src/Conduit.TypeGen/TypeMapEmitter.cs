@@ -19,7 +19,14 @@ public static class TypeMapEmitter
     /// <param name="sb">The string builder to append to.</param>
     /// <param name="types">The dispatchable types to map.</param>
     /// <param name="assemblies">Optional assemblies for type resolution (may be from MetadataLoadContext).</param>
-    public static void EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types, IReadOnlyList<Assembly>? assemblies = null)
+    /// <returns>
+    /// The TypeScript interface names actually emitted this call — a subset of <c>CommandMap</c>,
+    /// <c>QueryMap</c>, <c>EventMap</c>, each present only when <paramref name="types"/> has at least one
+    /// type of that kind. This is <see cref="MergeFileEmitter"/>'s source of truth for those three names when
+    /// it guards against an error type colliding with one of them — derived from the actual emission
+    /// decision here rather than a name hand-copied elsewhere, so the two can't drift.
+    /// </returns>
+    public static IReadOnlyList<string> EmitMaps(StringBuilder sb, IReadOnlyList<DispatchableTypeInfo> types, IReadOnlyList<Assembly>? assemblies = null)
     {
         ArgumentNullException.ThrowIfNull(sb);
         ArgumentNullException.ThrowIfNull(types);
@@ -27,6 +34,7 @@ public static class TypeMapEmitter
         var commands = types.Where(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand).ToList();
         var queries = types.Where(t => t.Kind == DispatchableKind.Query).ToList();
         var events = types.Where(t => t.Kind == DispatchableKind.Event).ToList();
+        var emitted = new List<string>();
 
         if (commands.Count > 0)
         {
@@ -42,6 +50,7 @@ public static class TypeMapEmitter
 
             sb.AppendLine("}");
             sb.AppendLine();
+            emitted.Add("CommandMap");
         }
 
         if (queries.Count > 0)
@@ -56,6 +65,7 @@ public static class TypeMapEmitter
 
             sb.AppendLine("}");
             sb.AppendLine();
+            emitted.Add("QueryMap");
         }
 
         if (events.Count > 0)
@@ -69,7 +79,10 @@ public static class TypeMapEmitter
 
             sb.AppendLine("}");
             sb.AppendLine();
+            emitted.Add("EventMap");
         }
+
+        return emitted;
     }
 
     private static string ResolveResultType(DispatchableTypeInfo typeInfo, IReadOnlyList<Assembly>? assemblies)

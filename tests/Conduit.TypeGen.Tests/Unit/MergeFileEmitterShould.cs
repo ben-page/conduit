@@ -1,3 +1,4 @@
+using System.Text;
 using AwesomeAssertions;
 using Conduit.Analysis;
 
@@ -243,5 +244,46 @@ public class MergeFileEmitterShould
         var thrown = act.Should().Throw<InvalidOperationException>();
         thrown.Which.Message.Should().Contain("Conduit.TypeGen.Tests.Sample.SampleBlockedException");
         thrown.Which.Message.Should().Contain("MyApp.Commands.SampleBlockedException");
+    }
+
+    // Neither a real error type named "CommandMap" nor "ConduitError" is reachable through Emit(): both would
+    // need adding to Sample/, tripping this same guard for every OTHER test that scans that assembly (see
+    // the tests above). So this calls MergeFileEmitter.EmitInterfacesAndMaps -- the actual method Emit() uses
+    // to build emittedTypeNames, not a hand reconstruction of it -- with SampleTypes (which has a command,
+    // so TypeMapEmitter.EmitMaps must return "CommandMap" through it), then feeds its real return to
+    // ThrowIfErrorTypeNameCollides with two synthetic error types: one colliding with a map name
+    // (the Important finding) and one with a FixedMergeFileNames entry (the Minor, re-export-line finding).
+    // Before this fix, emittedTypeNames only held the DYNAMIC DTO/command/query/event names, so an error type
+    // named exactly "CommandMap"/"QueryMap"/"EventMap"/"ErrorMap"/"isError"/or anything on the re-export line
+    // went undetected.
+    [TestMethod]
+    public void ThrowWhenAnErrorTypeNameCollidesWithAFixedMergeFileName()
+    {
+        // Arrange -- the real wiring Emit() uses, not a reconstruction of it.
+        var emittedTypeNames = MergeFileEmitter.EmitInterfacesAndMaps(new StringBuilder(), SampleTypes, null);
+        emittedTypeNames.Should().ContainKey("CommandMap", "SampleTypes has a command, so EmitMaps must emit it");
+        emittedTypeNames.Should().ContainKey("ConduitError", "it is on the bottom re-export line");
+
+        var collidesWithMapName = new List<ErrorTypeInfo>
+        {
+            new(TypeName: "CommandMap", FullTypeName: "Ns.Errors.CommandMap", Type: typeof(object), Properties: []),
+        };
+        var collidesWithReExportedName = new List<ErrorTypeInfo>
+        {
+            new(TypeName: "ConduitError", FullTypeName: "Ns.Errors.ConduitError", Type: typeof(object), Properties: []),
+        };
+
+        // Act
+        var actMapName = () => MergeFileEmitter.ThrowIfErrorTypeNameCollides(collidesWithMapName, emittedTypeNames);
+        var actReExportedName = () => MergeFileEmitter.ThrowIfErrorTypeNameCollides(collidesWithReExportedName, emittedTypeNames);
+
+        // Assert
+        var thrownForMapName = actMapName.Should().Throw<InvalidOperationException>();
+        thrownForMapName.Which.Message.Should().Contain("Ns.Errors.CommandMap");
+        thrownForMapName.Which.Message.Should().Contain("CommandMap");
+
+        var thrownForReExportedName = actReExportedName.Should().Throw<InvalidOperationException>();
+        thrownForReExportedName.Which.Message.Should().Contain("Ns.Errors.ConduitError");
+        thrownForReExportedName.Which.Message.Should().Contain("ConduitError");
     }
 }
