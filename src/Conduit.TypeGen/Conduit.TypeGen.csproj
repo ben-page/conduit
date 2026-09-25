@@ -35,6 +35,14 @@
     <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- So Conduit.TypeGen.Tests can unit-test MergeFileEmitter.ThrowIfErrorTypeNameCollides directly: a real
+         name collision can only be constructed with two same-short-named types, and adding those permanently
+         to the shared test assembly would trip the guard for every OTHER test that scans it (see that
+         method's doc comment). -->
+    <InternalsVisibleTo Include="Conduit.TypeGen.Tests" />
+  </ItemGroup>
+
   <!-- Bundle everything the task needs at runtime into tasks/net10.0/. -->
   <ItemGroup>
     <None Include="$(OutputPath)\Conduit.TypeGen.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
