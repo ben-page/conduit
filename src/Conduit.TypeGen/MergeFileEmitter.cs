@@ -30,13 +30,19 @@ public static class MergeFileEmitter
         sb.AppendLine("import type { ConduitTransport, DispatchResult, Subscription } from './conduit';");
         sb.AppendLine();
 
+        // Every TypeScript interface identifier emitted so far, keyed by that identifier, valued by the full
+        // type name it came from. EmitErrorTypes checks a would-be error-type name against this so an error
+        // type can never silently collide with an already-emitted DTO/command/query/event interface.
+        var emittedTypeNames = new Dictionary<string, string>(StringComparer.Ordinal);
+
         // Emit type interfaces for [ClientVisible] types
         foreach (var typeInfo in types)
         {
             var resolvedType = assemblies != null
                 ? TypeCollector.ResolveType(assemblies, typeInfo.FullTypeName)
                 : null;
-            EmitInterface(sb, typeInfo.TypeName, resolvedType, typeInfo.BaseTypeName);
+            var tsName = EmitInterface(sb, typeInfo.TypeName, resolvedType, typeInfo.BaseTypeName);
+            emittedTypeNames[tsName] = typeInfo.FullTypeName;
             sb.AppendLine();
         }
 
@@ -54,7 +60,8 @@ public static class MergeFileEmitter
             var referencedTypes = TypeCollector.CollectReferencedTypes(rootNames, resultTypes, assemblies);
             foreach (var collected in referencedTypes)
             {
-                EmitInterface(sb, collected.Type.Name, collected.Type, collected.BaseTypeName);
+                var tsName = EmitInterface(sb, collected.Type.Name, collected.Type, collected.BaseTypeName);
+                emittedTypeNames[tsName] = collected.Type.FullName ?? collected.Type.Name;
                 sb.AppendLine();
             }
         }
@@ -62,7 +69,7 @@ public static class MergeFileEmitter
         // Emit type maps
         TypeMapEmitter.EmitMaps(sb, types, assemblies);
 
-        EmitErrorTypes(sb, assemblies is null ? [] : ErrorTypeScanner.Scan(assemblies));
+        EmitErrorTypes(sb, assemblies is null ? [] : ErrorTypeScanner.Scan(assemblies), emittedTypeNames);
 
         // Emit type aliases
         var hasCommands = types.Any(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand);
@@ -158,7 +165,8 @@ public static class MergeFileEmitter
         return -1;
     }
 
-    private static void EmitInterface(StringBuilder sb, string typeName, Type? type, string? baseTypeName = null)
+    /// <returns>The TypeScript interface identifier this emitted (the generic-stripped name for a generic type).</returns>
+    private static string EmitInterface(StringBuilder sb, string typeName, Type? type, string? baseTypeName = null)
     {
         var tsName = type is not null && type.IsGenericType ? GenericTsName(type) : typeName;
 
@@ -189,6 +197,7 @@ public static class MergeFileEmitter
         }
 
         sb.AppendLine("}");
+        return tsName;
     }
 
     /// <summary>TS name for a generic type definition: <c>PagedResult`1</c> → <c>PagedResult&lt;T&gt;</c>.</summary>
@@ -271,8 +280,18 @@ public static class MergeFileEmitter
     /// feed <see cref="TypeCollector"/>). An un-emitted type name here fails the CONSUMER'S compile — visible
     /// and cheap to fix — so keep refusal data to primitives, strings, and collections of them.
     /// </remarks>
-    private static void EmitErrorTypes(StringBuilder sb, IReadOnlyList<ErrorTypeInfo> errors)
+    /// <param name="sb">The output being built.</param>
+    /// <param name="errors">The error types to emit, from <see cref="ErrorTypeScanner.Scan"/>.</param>
+    /// <param name="emittedTypeNames">
+    /// Every TypeScript interface identifier this file has already emitted (DTOs, commands, queries, events),
+    /// keyed by that identifier and valued by the full type name it came from — see
+    /// <see cref="ThrowIfErrorTypeNameCollides"/>.
+    /// </param>
+    private static void EmitErrorTypes(
+        StringBuilder sb, IReadOnlyList<ErrorTypeInfo> errors, IReadOnlyDictionary<string, string> emittedTypeNames)
     {
+        ThrowIfErrorTypeNameCollides(errors, emittedTypeNames);
+
         foreach (var error in errors)
         {
             sb.Append(CultureInfo.InvariantCulture, $"export interface {error.TypeName} {{").AppendLine();
@@ -312,6 +331,51 @@ public static class MergeFileEmitter
         sb.AppendLine("  return typeof error === 'object' && error !== null && (error as { type?: unknown }).type === type;");
         sb.AppendLine("}");
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Guards the identifiers <see cref="EmitErrorTypes"/> is about to emit. <see cref="ErrorTypeScanner.Scan"/>
+    /// dedupes only by FULL type name, so two <c>ConduitException</c> subclasses in different namespaces that
+    /// happen to share a short name would each get their own <c>ErrorMap</c> entry but collide on the same
+    /// <c>export interface {ShortName}</c> identifier — TypeScript either silently merges the two declarations
+    /// (masking a real type mismatch) or fails the consumer's compile, neither of which is a build-time signal
+    /// here. The same collision is possible against a DTO/command/query/event interface this file already
+    /// emitted (<paramref name="emittedTypeNames"/> — built from that emission, the cheap source of truth
+    /// already at hand; there is no other one, since these names are computed as they're emitted, not tracked
+    /// anywhere ahead of time). Throws <see cref="InvalidOperationException"/> naming both colliding full type
+    /// names — TypeGen has no dedicated exception type; every hard generation error surfaces this way, since
+    /// <see cref="TypeGenTask.Execute"/> catches any <see cref="Exception"/> and reports it via
+    /// <c>Log.LogError</c>.
+    /// </summary>
+    /// <remarks>
+    /// Internal, and unit-tested directly (<c>MergeFileEmitterShould</c>) rather than through
+    /// <see cref="Emit"/>: constructing a real collision needs two same-short-named public types in the SAME
+    /// scanned assembly, and <see cref="ErrorTypeScanner.Scan"/> always scans the whole assembly — adding such
+    /// a pair permanently to the shared test project would trip this guard for every OTHER test that scans it
+    /// (e.g. <c>EmitTheErrorMapAndDataInterfaces</c>), not just a test that wants to see it fire.
+    /// </remarks>
+    internal static void ThrowIfErrorTypeNameCollides(
+        IReadOnlyList<ErrorTypeInfo> errors, IReadOnlyDictionary<string, string> emittedTypeNames)
+    {
+        var seenErrorTypeNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var error in errors)
+        {
+            if (seenErrorTypeNames.TryGetValue(error.TypeName, out var otherErrorFullName))
+            {
+                throw new InvalidOperationException(
+                    $"Conduit TypeGen: '{otherErrorFullName}' and '{error.FullTypeName}' both declare client " +
+                    $"data and would both emit 'export interface {error.TypeName}'. Rename one of them.");
+            }
+
+            seenErrorTypeNames[error.TypeName] = error.FullTypeName;
+
+            if (emittedTypeNames.TryGetValue(error.TypeName, out var otherFullName))
+            {
+                throw new InvalidOperationException(
+                    $"Conduit TypeGen: '{error.FullTypeName}' would emit 'export interface {error.TypeName}', " +
+                    $"which this file already emits for '{otherFullName}'. Rename one of them.");
+            }
+        }
     }
 
     private static void EmitConduitClient(StringBuilder sb)

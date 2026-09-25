@@ -171,4 +171,77 @@ public class MergeFileEmitterShould
     [TestMethod]
     public void EmitAnEmptyErrorMapWithNoAssemblies() =>
         MergeFileEmitter.Emit(SampleTypes).Should().Contain("export interface ErrorMap {}");
+
+    // A real collision needs two same-short-named public error types in the SAME scanned assembly, and
+    // Scan always scans the whole assembly — adding that pair permanently to this project's Sample/ folder
+    // would trip the guard for EmitTheErrorMapAndDataInterfaces above (and any other test that scans this
+    // assembly), not just this one. So this tests ThrowIfErrorTypeNameCollides directly (internal, exposed
+    // to this project via InternalsVisibleTo).
+    [TestMethod]
+    public void ThrowWhenTwoErrorTypesShareATypeScriptInterfaceName()
+    {
+        // Arrange
+        static ErrorTypeInfo Error(string fullTypeName) => new(
+            TypeName: "Blocked", FullTypeName: fullTypeName, Type: typeof(object), Properties: []);
+        var errors = new List<ErrorTypeInfo> { Error("Ns.A.Blocked"), Error("Ns.B.Blocked") };
+
+        // Act
+        var act = () => MergeFileEmitter.ThrowIfErrorTypeNameCollides(
+            errors, new Dictionary<string, string>(StringComparer.Ordinal));
+
+        // Assert
+        var thrown = act.Should().Throw<InvalidOperationException>();
+        thrown.Which.Message.Should().Contain("Ns.A.Blocked");
+        thrown.Which.Message.Should().Contain("Ns.B.Blocked");
+    }
+
+    [TestMethod]
+    public void ThrowWhenAnErrorTypeCollidesWithAnAlreadyEmittedInterfaceName()
+    {
+        // Arrange
+        var errors = new List<ErrorTypeInfo>
+        {
+            new(TypeName: "Blocked", FullTypeName: "Ns.Errors.Blocked", Type: typeof(object), Properties: []),
+        };
+        var emittedTypeNames = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Blocked"] = "Ns.Dtos.Blocked",
+        };
+
+        // Act
+        var act = () => MergeFileEmitter.ThrowIfErrorTypeNameCollides(errors, emittedTypeNames);
+
+        // Assert
+        var thrown = act.Should().Throw<InvalidOperationException>();
+        thrown.Which.Message.Should().Contain("Ns.Errors.Blocked");
+        thrown.Which.Message.Should().Contain("Ns.Dtos.Blocked");
+    }
+
+    // End-to-end through the public API: no colliding types were added to Sample/ for this — it reuses the
+    // real SampleBlockedException (which always emits 'export interface SampleBlockedException') and gives
+    // it a same-named, fake ROOT type (a caller-supplied DispatchableTypeInfo is never assembly-scanned, so
+    // this can't affect any other test).
+    [TestMethod]
+    public void ThrowThroughEmitWhenARootTypeCollidesWithAnErrorType()
+    {
+        // Arrange
+        List<DispatchableTypeInfo> typesWithCollidingName =
+        [
+            new()
+            {
+                TypeName = "SampleBlockedException",
+                FullTypeName = "MyApp.Commands.SampleBlockedException",
+                Namespace = "MyApp.Commands",
+                Kind = DispatchableKind.Model,
+            },
+        ];
+
+        // Act
+        var act = () => MergeFileEmitter.Emit(typesWithCollidingName, [typeof(MergeFileEmitterShould).Assembly]);
+
+        // Assert
+        var thrown = act.Should().Throw<InvalidOperationException>();
+        thrown.Which.Message.Should().Contain("Conduit.TypeGen.Tests.Sample.SampleBlockedException");
+        thrown.Which.Message.Should().Contain("MyApp.Commands.SampleBlockedException");
+    }
 }
