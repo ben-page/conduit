@@ -28,6 +28,23 @@ public class BaseFileEmitterShould
         result.Should().Contain("export interface ConduitErrorDetail");
     }
 
+    // A dispatch error now carries its HTTP-status category and, for a declared refusal, the type name
+    // to narrow on (isError) and its data. status is required: 0 from a server that predates it.
+    [TestMethod]
+    public void EmitConduitErrorStatusTypeAndData()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        var start = result.IndexOf("export interface ConduitError {", StringComparison.Ordinal);
+        start.Should().BeGreaterThan(-1);
+        var conduitError = result[start..result.IndexOf("\n}", start, StringComparison.Ordinal)];
+        conduitError.Should().Contain("  status: number;");
+        conduitError.Should().Contain("  type?: string;");
+        conduitError.Should().Contain("  data?: unknown;");
+    }
+
     [TestMethod]
     public void EmitConduitTransportInterface()
     {

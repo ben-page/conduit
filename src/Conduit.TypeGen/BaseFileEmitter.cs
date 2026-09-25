@@ -64,6 +64,11 @@ public static class BaseFileEmitter
         sb.AppendLine("  code: string;");
         sb.AppendLine("  message: string;");
         sb.AppendLine("  details?: ConduitErrorDetail[];");
+        sb.AppendLine("  /** The error's HTTP-status category. 0 from a server that predates it. */");
+        sb.AppendLine("  status: number;");
+        sb.AppendLine("  /** A declared refusal's full type name; narrow with `isError`. */");
+        sb.AppendLine("  type?: string;");
+        sb.AppendLine("  data?: unknown;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("export interface ConduitErrorDetail {");
