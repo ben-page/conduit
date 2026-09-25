@@ -45,14 +45,21 @@
     type name, so two `ConduitException` subclasses in different namespaces that share a short name would each
     get their own `ErrorMap` entry but collide on the same `export interface {ShortName}` — TypeScript would
     silently merge the two declarations (masking a real mismatch) or fail the consumer's compile, neither of
-    which is a signal at generation time. Symmetrically, an error type's short name can collide with a
-    DTO/command/query/event interface this file already emitted. `MergeFileEmitter.Emit` tracks every
-    interface identifier it emits (name → full type name) as it goes and hands that to
-    `MergeFileEmitter.ThrowIfErrorTypeNameCollides` (called from `EmitErrorTypes`), which throws
-    `InvalidOperationException` naming both colliding full type names for either case. TypeGen has no
-    dedicated exception type for a hard generation error — every one surfaces this way, since
-    `TypeGenTask.Execute` catches any `Exception` and reports it via `Log.LogError`. `ThrowIfErrorTypeNameCollides`
-    is `internal` (`InternalsVisibleTo` → `Conduit.TypeGen.Tests`) and unit-tested directly rather than by
-    adding a colliding pair of sample types to the shared test project: `Scan` always scans the whole
-    assembly, so a permanent collision anywhere in it would trip this guard for every OTHER test that scans
-    that assembly too, not just the one that wants to see it fire.
+    which is a signal at generation time. The same collision is possible against: a DTO/command/query/event
+    interface this file already emitted; `CommandMap`/`QueryMap`/`EventMap` (present only when that kind has
+    at least one type — `TypeMapEmitter.EmitMaps` now RETURNS the names it actually emitted, the source of
+    truth for those three, rather than a second guess mirroring its own conditionals); or any other fixed
+    name this file always declares, imports, or re-exports regardless of input — the static import line,
+    `ConduitClient`, `AllCommands`/`AllQueries`/`AllEvents`, the bottom re-export line, `ErrorMap`, `isError`
+    (`MergeFileEmitter.FixedMergeFileNames` — necessarily a hand list, since these are string literals with
+    no single emission point to derive from; kept right above `Emit`, next to the literals it mirrors).
+    `MergeFileEmitter.EmitInterfacesAndMaps` builds one reserved-name set from all of these (name → full type
+    name, or a description for a fixed name) and hands it to `MergeFileEmitter.ThrowIfErrorTypeNameCollides`
+    (called from `EmitErrorTypes`), which throws `InvalidOperationException` naming both colliding full type
+    names (or descriptions) for any of these cases. TypeGen has no dedicated exception type for a hard
+    generation error — every one surfaces this way, since `TypeGenTask.Execute` catches any `Exception` and
+    reports it via `Log.LogError`. Both `EmitInterfacesAndMaps` and `ThrowIfErrorTypeNameCollides` are
+    `internal` (`InternalsVisibleTo` → `Conduit.TypeGen.Tests`) and unit-tested directly with real production
+    inputs rather than by adding a colliding pair of sample types to the shared test project: `Scan` always
+    scans the whole assembly, so a permanent collision anywhere in it would trip this guard for every OTHER
+    test that scans that assembly too, not just the one that wants to see it fire.
