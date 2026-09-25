@@ -62,6 +62,8 @@ public static class MergeFileEmitter
         // Emit type maps
         TypeMapEmitter.EmitMaps(sb, types, assemblies);
 
+        EmitErrorTypes(sb, assemblies is null ? [] : ErrorTypeScanner.Scan(assemblies));
+
         // Emit type aliases
         var hasCommands = types.Any(t => t.Kind is DispatchableKind.Command or DispatchableKind.VoidCommand);
         var hasQueries = types.Any(t => t.Kind == DispatchableKind.Query);
@@ -251,6 +253,65 @@ public static class MergeFileEmitter
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Emits one TypeScript interface per <c>ConduitException</c> subclass that declares client data, then
+    /// <c>ErrorMap</c> (keyed by full type name) and the <c>isError</c> narrowing helper.
+    /// </summary>
+    /// <remarks>
+    /// Property names are camelCased with <see cref="TypeScriptEmitter.ToCamelCase"/> here, not
+    /// <c>JsonNamingPolicy.CamelCase.ConvertName</c> (what <c>ConduitException.GetClientData</c> uses on the
+    /// wire) — the two agree on every valid C# identifier (verified exhaustively; both only ever special-case
+    /// runs of uppercase letters), so the generated interface's keys always match what the server sends.
+    /// </remarks>
+    /// <remarks>
+    /// A data property of a complex type is mapped by <see cref="TypeMapper"/> to its type name, but that type
+    /// only gets an emitted interface when something else makes it <c>[ClientVisible]</c> (this walk does not
+    /// feed <see cref="TypeCollector"/>). An un-emitted type name here fails the CONSUMER'S compile — visible
+    /// and cheap to fix — so keep refusal data to primitives, strings, and collections of them.
+    /// </remarks>
+    private static void EmitErrorTypes(StringBuilder sb, IReadOnlyList<ErrorTypeInfo> errors)
+    {
+        foreach (var error in errors)
+        {
+            sb.Append(CultureInfo.InvariantCulture, $"export interface {error.TypeName} {{").AppendLine();
+            foreach (var property in error.Properties)
+            {
+                var tsType = TypeMapper.MapType(property.PropertyType);
+                if (IsNullableReference(property) && !tsType.EndsWith(" | null", StringComparison.Ordinal))
+                {
+                    tsType = $"{tsType} | null";
+                }
+
+                sb.Append(CultureInfo.InvariantCulture, $"  {TypeScriptEmitter.ToCamelCase(property.Name)}: {tsType};").AppendLine();
+            }
+
+            sb.AppendLine("}");
+            sb.AppendLine();
+        }
+
+        if (errors.Count == 0)
+        {
+            sb.AppendLine("export interface ErrorMap {}");
+        }
+        else
+        {
+            sb.AppendLine("export interface ErrorMap {");
+            foreach (var error in errors)
+            {
+                sb.Append(CultureInfo.InvariantCulture, $"  '{error.FullTypeName}': {error.TypeName};").AppendLine();
+            }
+
+            sb.AppendLine("}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("/** Narrows a dispatch error (or a client exception carrying `type`/`data`) to a declared refusal. */");
+        sb.AppendLine("export function isError<K extends keyof ErrorMap>(error: unknown, type: K): error is { type: K; data: ErrorMap[K] } {");
+        sb.AppendLine("  return typeof error === 'object' && error !== null && (error as { type?: unknown }).type === type;");
+        sb.AppendLine("}");
+        sb.AppendLine();
     }
 
     private static void EmitConduitClient(StringBuilder sb)

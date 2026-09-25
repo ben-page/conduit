@@ -153,4 +153,22 @@ public class MergeFileEmitterShould
         withSignalR.Should().Contain("export { SignalRTransport } from './conduit';");
         withoutSignalR.Should().NotContain("export { SignalRTransport }");
     }
+
+    [TestMethod]
+    public void EmitTheErrorMapAndDataInterfaces()
+    {
+        var result = MergeFileEmitter.Emit(SampleTypes, [typeof(MergeFileEmitterShould).Assembly]);
+
+        result.Should().Contain("export interface SampleBlockedException {");
+        result.Should().Contain("  total: number;");
+        result.Should().Contain("  names: string[];");
+        result.Should().Contain("export interface ErrorMap {");
+        result.Should().Contain("  'Conduit.TypeGen.Tests.Sample.SampleBlockedException': SampleBlockedException;");
+        result.Should().Contain("export function isError<K extends keyof ErrorMap>(");
+        result.Should().NotContain("SamplePlainException");
+    }
+
+    [TestMethod]
+    public void EmitAnEmptyErrorMapWithNoAssemblies() =>
+        MergeFileEmitter.Emit(SampleTypes).Should().Contain("export interface ErrorMap {}");
 }
