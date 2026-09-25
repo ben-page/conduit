@@ -82,6 +82,6 @@ The generated `DispatchRequestAsync` checks routes before the local type switch.
 ## Exceptions
 
 - `ErrorCode` — enumeration class pairing a machine-readable code string with HTTP status code. Value-based equality. Built-in codes: `NotFound`, `Unauthorized`, `Conflict`, `InternalError`, `BadRequest`. `ErrorCode.ToHttpStatusCode(string)` maps wire code strings to HTTP status codes (single source of truth for both RESTful and envelope endpoints). Consumers define their own.
-- `ConduitException` — abstract base with `ErrorCode Code` property
-- Concrete: `NotFoundException`, `UnauthorizedException`, `ConflictException` — all sealed
+- `ConduitException` — abstract base with `ErrorCode Code` property. `GetClientData()`/`GetClientType()` expose a subclass's own public properties (declared below `ConduitException`, via `ClientDataProperties(Type)`) to the wire; `null` for a plain status exception. `DispatchResult<T>.Fail(ConduitException)` carries that onto `DispatchError.Status`/`Type`/`Data`.
+- Concrete: `NotFoundException`, `UnauthorizedException`, `ConflictException` — not sealed; subclass to declare a refusal's client-facing data as public properties
 - `EventListenerException` — infrastructure exception (not a `ConduitException`) thrown when event listeners fail during wire dispatch. Carries `IReadOnlyList<Exception> ListenerExceptions`. Transports catch this to decide complete vs abandon.

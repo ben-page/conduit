@@ -37,7 +37,9 @@ public static class EndpointRouteBuilderExtensions
 
             if (result.Error is not null)
             {
-                return Results.Json(result, statusCode: ErrorCode.ToHttpStatusCode(result.Error.Code));
+                return Results.Json(result, statusCode: result.Error.Status > 0
+                    ? result.Error.Status
+                    : ErrorCode.ToHttpStatusCode(result.Error.Code));
             }
 
             return Results.Ok(result);
