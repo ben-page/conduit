@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Conduit.Runtime;
 
@@ -32,7 +33,7 @@ public sealed record DispatchResult<T>
     /// Creates a failed result with the given error.
     /// </summary>
     public static DispatchResult<T> Fail(string code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
-        => new() { Error = new DispatchError(code, message, details) };
+        => new() { Error = new DispatchError(code, message, details) { Status = Exceptions.ErrorCode.ToHttpStatusCode(code) } };
 
     /// <summary>
     /// Creates a failed result from an <see cref="Exceptions.ErrorCode"/>.
@@ -40,7 +41,24 @@ public sealed record DispatchResult<T>
     public static DispatchResult<T> Fail(Exceptions.ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
     {
         ArgumentNullException.ThrowIfNull(code);
-        return new() { Error = new DispatchError(code.Value, message, details) };
+        return new() { Error = new DispatchError(code.Value, message, details) { Status = code.HttpStatusCode } };
+    }
+
+    /// <summary>Creates a failed result from a thrown <see cref="Exceptions.ConduitException"/>: code, message,
+    /// details, status, and the subclass's type and data.</summary>
+    public static DispatchResult<T> Fail(Exceptions.ConduitException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        var data = exception.GetClientData();
+        return new()
+        {
+            Error = new DispatchError(exception.Code.Value, exception.Message, exception.Details)
+            {
+                Status = exception.Code.HttpStatusCode,
+                Type = data is null ? null : exception.GetClientType(),
+                Data = data is null ? null : JsonSerializer.SerializeToElement(data, ConduitRuntime.JsonOptions),
+            },
+        };
     }
 #pragma warning restore CA1000
 }
@@ -54,4 +72,14 @@ public sealed record DispatchResult<T>
 public sealed record DispatchError(
     string Code,
     string Message,
-    IReadOnlyList<DispatchErrorDetail>? Details = null);
+    IReadOnlyList<DispatchErrorDetail>? Details = null)
+{
+    /// <summary>The HTTP status the error's <c>ErrorCode</c> declares: its CATEGORY. 0 from a server that predates it.</summary>
+    public int Status { get; init; }
+
+    /// <summary>The <c>ConduitException</c> subclass's full type name when it declares data; otherwise null.</summary>
+    public string? Type { get; init; }
+
+    /// <summary>That subclass's declared data (<c>ConduitException.GetClientData</c>); otherwise null.</summary>
+    public JsonElement? Data { get; init; }
+}

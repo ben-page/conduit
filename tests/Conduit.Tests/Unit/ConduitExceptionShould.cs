@@ -84,6 +84,22 @@ public class ConduitExceptionShould
         ex.Details.Should().ContainSingle().Which.Should().Be(new DispatchErrorDetail(null, "16:10"));
     }
 
+    [TestMethod]
+    public void ExposeNoClientDataForAPlainStatusException()
+    {
+        var ex = new ConflictException("x");
+
+        ex.GetClientData().Should().BeNull();
+        ex.GetClientType().Should().BeNull();
+    }
+
+    [TestMethod]
+    public void ExposeOnlyPropertiesDeclaredBelowConduitException()
+    {
+        ConduitException.ClientDataProperties(typeof(WireRequestFailureShould.BlockedRefusal))
+            .Select(p => p.Name).Should().BeEquivalentTo(["Total", "Names"]);
+    }
+
     private sealed class DetailedTestException(
         ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail> details)
         : ConduitException(code, message, details);
