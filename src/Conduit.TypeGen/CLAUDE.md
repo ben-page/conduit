@@ -17,18 +17,27 @@
 - Void commands merged into `CommandMap` with `response: void` (no separate `VoidCommandMap`)
 - **Inheritance**: abstract `[ClientVisible]` base types emit plain TypeScript `extends` — the derived interface extends the base and declares only its own properties. Concrete derived types are auto-discovered with no extra attribute (including types reached only through abstract-typed properties); multi-level chains work. `[LocalOnly]` on a derived type excludes it. `DispatchableTypeInfo` carries `BaseFullTypeName`/`BaseTypeName`; `ScanClientVisible` lets abstract `[ClientVisible]` bases through; `MergeFileEmitter` emits the `extends` clause and declared-only properties. Intentionally NOT supported: discriminated-union type aliases, literal discriminator fields, runtime type-guard helpers, open-generic inheritance.
 - **Declared refusals (`ErrorMap`, `isError`)**: `ErrorTypeScanner.Scan(assemblies)` finds concrete `ConduitException`
-  subclasses that declare at least one public instance property on themselves or an ancestor below
-  `ConduitException` — the same walk as `Conduit.Exceptions.ConduitException.ClientDataProperties`, but
-  re-implemented by full NAME (`type.FullName != "Conduit.Exceptions.ConduitException"`) because TypeGen runs
-  under `MetadataLoadContext`, where a `typeof(ConduitException)` comparison against a `MetadataLoadContext`
-  type is always false. Like `ReflectionScanner`/`TypeCollector`, it calls `assembly.GetExportedTypes()`
-  directly — no `ReflectionTypeLoadException` guard.
+  subclasses that are CLIENT-TYPED — `ConduitException.IsClientTyped`'s rule, re-stated by name because TypeGen
+  runs under `MetadataLoadContext`: declared in any assembly OTHER than `Conduit.Contracts` (a consumer's own
+  refusal — data-less or not; the assembly-name check is `ErrorTypeScanner.ConduitContractsAssemblyName`, `internal`
+  so `Conduit.TypeGen.Tests` can pin it to the real assembly name and catch a rename), OR declaring at least one
+  public instance property on themselves or an ancestor below `ConduitException` (the same walk as
+  `Conduit.Exceptions.ConduitException.ClientDataProperties`, re-implemented by full NAME —
+  `type.FullName != "Conduit.Exceptions.ConduitException"` — because a `typeof(ConduitException)` comparison
+  against a `MetadataLoadContext` type is always false). A data-less consumer refusal (outside Conduit.Contracts,
+  declares nothing) is still found by the first half of the OR and gets an empty `export interface {}` and an
+  `ErrorMap` entry — same treatment as one that declares data, just with no properties. Like
+  `ReflectionScanner`/`TypeCollector`, it calls `assembly.GetExportedTypes()` directly — no
+  `ReflectionTypeLoadException` guard, **and no non-exported types**: a `private` or nested `ConduitException`
+  subclass can be `IsClientTyped` (typed on the wire, `Type`/`Data` sent) yet never reach `ErrorMap` or get an
+  interface, because `GetExportedTypes()` never surfaces it to the scanner — see `docs/error-handling.md` §
+  "Client-typed refusals".
   - `MergeFileEmitter.Emit` calls it right after `TypeMapEmitter.EmitMaps`, and emits, into
     `conduit.generated.ts`: one `export interface <ExceptionTypeName> { ... }` per found type (properties
-    camelCased and mapped by `TypeMapper`, same as any other emitted interface); `export interface ErrorMap {
-    '<Full.Type.Name>': <ExceptionTypeName>; ... }` (`{}` when nothing was found); and the narrowing helper
-    `export function isError<K extends keyof ErrorMap>(error: unknown, type: K): error is { type: K; data:
-    ErrorMap[K] }`.
+    camelCased and mapped by `TypeMapper`, same as any other emitted interface; `{}` when the type declares no
+    properties); `export interface ErrorMap { '<Full.Type.Name>': <ExceptionTypeName>; ... }` (`{}` when nothing
+    was found); and the narrowing helper `export function isError<K extends keyof ErrorMap>(error: unknown, type:
+    K): error is { type: K; data: ErrorMap[K] }`.
   - `conduit.ts`'s `ConduitError` carries `status: number` (the HTTP-status category; 0 from a server that
     predates it), `type?: string` (a declared refusal's full type name), and `data?: unknown`.
   - **camelCase parity with the wire**: the emitted interface keys use `TypeScriptEmitter.ToCamelCase`; the
