@@ -10,5 +10,6 @@ public sealed class SampleBlockedException(int total, IReadOnlyList<string> name
     public IReadOnlyList<string> Names => names;
 }
 
-/// <summary>Declares nothing, so it is NOT in the ErrorMap.</summary>
+/// <summary>Declares no client data but is still a consumer refusal (this assembly isn't Conduit.Contracts), so
+/// it IS in the ErrorMap, with an empty <c>export interface</c>.</summary>
 public sealed class SamplePlainException(string message) : ConflictException(message);

@@ -425,8 +425,8 @@ public static class MergeFileEmitter
             if (seenErrorTypeNames.TryGetValue(error.TypeName, out var otherErrorFullName))
             {
                 throw new InvalidOperationException(
-                    $"Conduit TypeGen: '{otherErrorFullName}' and '{error.FullTypeName}' both declare client " +
-                    $"data and would both emit 'export interface {error.TypeName}'. Rename one of them.");
+                    $"Conduit TypeGen: '{otherErrorFullName}' and '{error.FullTypeName}' are both client-typed " +
+                    $"refusals and would both emit 'export interface {error.TypeName}'. Rename one of them.");
             }
 
             seenErrorTypeNames[error.TypeName] = error.FullTypeName;

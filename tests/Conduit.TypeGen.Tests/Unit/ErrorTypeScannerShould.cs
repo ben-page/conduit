@@ -14,8 +14,9 @@ public class ErrorTypeScannerShould
             .Which.Properties.Select(p => p.Name).Should().BeEquivalentTo(["Total", "Names"]);
 
     [TestMethod]
-    public void SkipASubclassThatDeclaresNothing() =>
-        Found.Should().NotContain(e => e.TypeName == "SamplePlainException");
+    public void FindAConsumerSubclassThatDeclaresNothing_WithNoProperties() =>
+        Found.Should().ContainSingle(e => e.FullTypeName == "Conduit.TypeGen.Tests.Sample.SamplePlainException")
+            .Which.Properties.Should().BeEmpty();
 
     [TestMethod]
     public void SkipTheBuiltInStatusExceptions() =>
