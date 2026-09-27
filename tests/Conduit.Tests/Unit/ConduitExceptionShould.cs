@@ -100,6 +100,30 @@ public class ConduitExceptionShould
             .Select(p => p.Name).Should().BeEquivalentTo(["Total", "Names"]);
     }
 
+    [TestMethod]
+    public void TypeAConsumerSubclassThatDeclaresNoData()
+    {
+        var ex = new DatalessConsumerRefusal();
+
+        ex.GetClientType().Should().Be(typeof(DatalessConsumerRefusal).FullName);
+        ex.GetClientData().Should().BeAssignableTo<IDictionary<string, object?>>()
+            .Which.Should().BeEmpty("a typed refusal's data is an empty object, never null");
+    }
+
+    [TestMethod]
+    public void LeaveTheBuiltInStatusExceptionsUntyped()
+    {
+        new ConflictException("x").GetClientType().Should().BeNull();
+        new ConflictException("x").GetClientData().Should().BeNull();
+        ConduitException.IsClientTyped(typeof(ConflictException)).Should().BeFalse();
+    }
+
+    [TestMethod]
+    public void TypeAConsumerSubclassWithData_AsBefore() =>
+        ConduitException.IsClientTyped(typeof(WireRequestFailureShould.BlockedRefusal)).Should().BeTrue();
+
+    private sealed class DatalessConsumerRefusal() : ConflictException("refused");
+
     private sealed class DetailedTestException(
         ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail> details)
         : ConduitException(code, message, details);

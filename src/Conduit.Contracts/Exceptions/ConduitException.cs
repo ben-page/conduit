@@ -32,9 +32,11 @@ public abstract class ConduitException(
     public IReadOnlyList<DispatchErrorDetail>? Details => details;
 
     /// <summary>
-    /// The typed data a client reads for this refusal: by default, the public instance properties a SUBCLASS
-    /// declares (on itself or on an ancestor below <see cref="ConduitException"/>), keyed by property name.
-    /// <see langword="null"/> when there are none — every plain status exception. Override to shape it yourself.
+    /// The typed data a client reads for this refusal: the public instance properties a SUBCLASS declares (on
+    /// itself or on an ancestor below <see cref="ConduitException"/>), keyed by property name. An EMPTY dictionary
+    /// when <see cref="IsClientTyped"/> is true for this type but it declares no properties — a typed refusal's
+    /// data is an empty object, never null. <see langword="null"/> when this type is not client-typed at all —
+    /// every plain built-in status exception. Override to shape it yourself.
     /// </summary>
     /// <remarks>Never includes <see cref="Exception"/>'s or this type's own members: a refusal's data is what
     /// its author declared, never a stack trace.</remarks>
@@ -42,14 +44,33 @@ public abstract class ConduitException(
     {
         var properties = ClientDataProperties(this.GetType());
         return properties.Count == 0
-            ? null
+            ? (IsClientTyped(this.GetType()) ? new Dictionary<string, object?>(StringComparer.Ordinal) : null)
             : properties.ToDictionary(
                 p => JsonNamingPolicy.CamelCase.ConvertName(p.Name), p => p.GetValue(this), StringComparer.Ordinal);
     }
 
-    /// <summary>The type name a client narrows on, or <see langword="null"/> when <see cref="GetClientData"/> is.</summary>
-    public virtual string? GetClientType() =>
-        ClientDataProperties(this.GetType()).Count == 0 ? null : this.GetType().FullName;
+    /// <summary>The type name a client narrows on, or <see langword="null"/> when <see cref="IsClientTyped"/> is
+    /// false for this type.</summary>
+    public virtual string? GetClientType() => IsClientTyped(this.GetType()) ? this.GetType().FullName : null;
+
+    /// <summary>
+    /// Whether <paramref name="type"/> reaches a client as a TYPED refusal — named on the wire and in TypeGen's
+    /// <c>ErrorMap</c>, so the client can narrow it with <c>isError</c>. True for any non-abstract subclass declared
+    /// OUTSIDE Conduit's own assembly (a consumer's refusal, with or without data), and for any subclass that declares
+    /// data. Conduit's built-in status exceptions are untyped: a plain <c>ConflictException</c> is a category, not a
+    /// refusal a screen acts on. TypeGen re-states this rule by name (<c>ErrorTypeScanner</c>) because it reflects
+    /// under a metadata context and cannot call it.
+    /// </summary>
+    public static bool IsClientTyped(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        if (type.IsAbstract || !typeof(ConduitException).IsAssignableFrom(type) || type == typeof(ConduitException))
+        {
+            return false;
+        }
+
+        return type.Assembly != typeof(ConduitException).Assembly || ClientDataProperties(type).Count > 0;
+    }
 
     /// <summary>
     /// The properties <see cref="GetClientData"/> serializes and TypeGen emits — ONE rule for both, so the wire and

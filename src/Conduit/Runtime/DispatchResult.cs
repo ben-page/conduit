@@ -49,17 +49,25 @@ public sealed record DispatchResult<T>
     public static DispatchResult<T> Fail(Exceptions.ConduitException exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        var type = exception.GetClientType();
         var data = exception.GetClientData();
         return new()
         {
             Error = new DispatchError(exception.Code.Value, exception.Message, exception.Details)
             {
                 Status = exception.Code.HttpStatusCode,
-                Type = data is null ? null : exception.GetClientType(),
-                Data = data is null ? null : JsonSerializer.SerializeToElement(data, ConduitRuntime.JsonOptions),
+                Type = type,
+                // A typed refusal's data is never null on the wire -- even when a consumer's GetClientData
+                // override returns null -- because the client narrows on Type alone and expects an object.
+                Data = data is null
+                    ? (type is null ? null : EmptyObject())
+                    : JsonSerializer.SerializeToElement(data, ConduitRuntime.JsonOptions),
             },
         };
     }
+
+    private static JsonElement EmptyObject() =>
+        JsonSerializer.SerializeToElement(new Dictionary<string, object?>(), ConduitRuntime.JsonOptions);
 #pragma warning restore CA1000
 }
 
@@ -77,9 +85,12 @@ public sealed record DispatchError(
     /// <summary>The HTTP status the error's <c>ErrorCode</c> declares: its CATEGORY. 0 from a server that predates it.</summary>
     public int Status { get; init; }
 
-    /// <summary>The <c>ConduitException</c> subclass's full type name when it declares data; otherwise null.</summary>
+    /// <summary>The <c>ConduitException</c> subclass's full type name when <c>ConduitException.IsClientTyped</c> is
+    /// true for it (a consumer's refusal, or any subclass that declares data); otherwise null.</summary>
     public string? Type { get; init; }
 
-    /// <summary>That subclass's declared data (<c>ConduitException.GetClientData</c>); otherwise null.</summary>
+    /// <summary>That subclass's declared data (<c>ConduitException.GetClientData</c>) when <see cref="Type"/> is
+    /// set -- an empty object when the refusal declares no data (or its override returns null); otherwise
+    /// null.</summary>
     public JsonElement? Data { get; init; }
 }

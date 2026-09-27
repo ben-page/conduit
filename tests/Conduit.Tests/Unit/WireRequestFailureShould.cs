@@ -88,6 +88,30 @@ public sealed class WireRequestFailureShould
     }
 
     [TestMethod]
+    public async Task CarryADatalessConsumerRefusalsTypeAndEmptyData()
+    {
+        var result = await DispatchThrowing(new DatalessRefusal());
+
+        result.Error!.Type.Should().Be(typeof(DatalessRefusal).FullName);
+        result.Error.Data.Should().NotBeNull();
+        result.Error.Data!.Value.ValueKind.Should().Be(JsonValueKind.Object);
+        result.Error.Data.Value.EnumerateObject().Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task CarryEmptyDataWhenATypedRefusalsOverrideReturnsNull()
+    {
+        // A typed refusal whose GetClientData override returns null must still send {} on the wire --
+        // the client narrows on Type alone and always expects an object, never a missing Data.
+        var result = await DispatchThrowing(new OverriddenNullDataRefusal());
+
+        result.Error!.Type.Should().Be(typeof(OverriddenNullDataRefusal).FullName);
+        result.Error.Data.Should().NotBeNull();
+        result.Error.Data!.Value.ValueKind.Should().Be(JsonValueKind.Object);
+        result.Error.Data.Value.EnumerateObject().Should().BeEmpty();
+    }
+
+    [TestMethod]
     public async Task HideEverythingForAForeignException()
     {
         var result = await DispatchThrowing(new InvalidOperationException("SELECT * FROM secrets"));
@@ -115,4 +139,11 @@ public sealed class WireRequestFailureShould
     private sealed class DetailedRefusal(
         ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail> details)
         : ConduitException(code, message, details);
+
+    private sealed class DatalessRefusal() : ConflictException("refused");
+
+    private sealed class OverriddenNullDataRefusal() : ConflictException("refused")
+    {
+        public override object? GetClientData() => null;
+    }
 }
