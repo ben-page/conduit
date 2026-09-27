@@ -166,7 +166,11 @@ public class MergeFileEmitterShould
         result.Should().Contain("export interface ErrorMap {");
         result.Should().Contain("  'Conduit.TypeGen.Tests.Sample.SampleBlockedException': SampleBlockedException;");
         result.Should().Contain("export function isError<K extends keyof ErrorMap>(");
-        result.Should().NotContain("SamplePlainException");
+        // SamplePlainException declares no client data, but it's a consumer refusal (not declared in
+        // Conduit.Contracts), so it still gets an empty interface and an ErrorMap entry -- the emitter's exact
+        // spacing for an empty body: the opening line, then a lone '}' on the next line (EmitErrorTypes).
+        result.Should().Contain($"export interface SamplePlainException {{{Environment.NewLine}}}");
+        result.Should().Contain("  'Conduit.TypeGen.Tests.Sample.SamplePlainException': SamplePlainException;");
     }
 
     [TestMethod]
@@ -194,6 +198,7 @@ public class MergeFileEmitterShould
         var thrown = act.Should().Throw<InvalidOperationException>();
         thrown.Which.Message.Should().Contain("Ns.A.Blocked");
         thrown.Which.Message.Should().Contain("Ns.B.Blocked");
+        thrown.Which.Message.Should().Contain("are both client-typed refusals");
     }
 
     [TestMethod]
