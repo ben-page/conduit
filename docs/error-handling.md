@@ -4,6 +4,7 @@
 - [ErrorCode](#errorcode)
 - [Built-in exceptions](#built-in-exceptions)
 - [Custom error codes](#custom-error-codes)
+- [Client-typed refusals](#client-typed-refusals)
 - [Error flow](#error-flow)
   - [RESTful endpoints](#restful-endpoints)
   - [Envelope endpoint (wire dispatch)](#envelope-endpoint-wire-dispatch)
@@ -82,29 +83,71 @@ if (command.Amount > currentBalance)
 }
 ```
 
+## Client-typed refusals
+
+A `ConduitException` subclass reaches the client as a **typed refusal** — named on the wire (`DispatchError.Type`)
+and in TypeGen's generated `ErrorMap`, so client code can narrow on it with `isError` — when
+`ConduitException.IsClientTyped(Type)` is true for it. That's any non-abstract subclass declared **outside** the
+`Conduit.Contracts` assembly (a consumer's own refusal, such as `InsufficientCreditException` above), or any
+subclass anywhere that declares at least one public instance property. Conduit's own built-in status exceptions
+(`NotFoundException`, `ConflictException`, etc.) are declared in `Conduit.Contracts` and declare no data, so they
+are untyped — a plain `ConflictException` is a category a client checks by `Code`, not a refusal a screen narrows
+on by type.
+
+A typed refusal's data (`DispatchError.Data`) is **never `null`** on the wire, even for a refusal that declares no
+properties (or whose `GetClientData` override returns `null`): it serializes as an empty object `{}`. The generated
+TypeScript mirrors this — a data-less consumer refusal still gets an `ErrorMap` entry and an `export interface`,
+just an empty one (`export interface SomeRefusal {}`), so `isError` narrows it the same way as a refusal that
+carries fields.
+
+**Only exported types reach `ErrorMap`.** TypeGen's `ErrorTypeScanner` walks each scanned assembly's
+`GetExportedTypes()`. A `private` or nested-`private`/`internal` `ConduitException` subclass can still be
+`IsClientTyped` — it's typed on the wire, with its `Type` and `Data` sent exactly as for any other typed refusal —
+but it never gets an `ErrorMap` entry or an interface, because TypeGen never sees it. A client can still read its
+`type` string and `data` off the envelope, but cannot narrow on it by name with `isError`, and has no generated
+interface for its shape. Keep a refusal a client is meant to narrow on public and exported.
+
 ## Error flow
 
 ### RESTful endpoints
 
-The handler catches the exception and returns an RFC 9457 Problem Details response. The `HttpStatusCode` from `ErrorCode` is used directly, so custom error codes like `InsufficientCredit` with status 422 work automatically.
+The handler catches the exception and returns an RFC 9457 Problem Details response. `ConduitRestHandlers.ToProblem`
+builds it from the exception's status and message **only**:
 
 ```
 Handler throws ConduitException
   -> Results.Problem(detail: ex.Message, statusCode: ex.Code.HttpStatusCode, title: ex.Code.Value)
 ```
 
+The `HttpStatusCode` from `ErrorCode` is used directly, so custom error codes like `InsufficientCredit` with status
+422 work automatically. But `ToProblem` never reads `ex.Details`, `ex.GetClientType()`, or `ex.GetClientData()` — a
+typed refusal's `Type` and `Data` (see [Client-typed refusals](#client-typed-refusals) above), and any structured
+`Details`, do **not** reach a RESTful caller. A screen that needs to narrow on a refusal's type or read its data
+must go through the envelope endpoint below (or DMS's own global exception-handler path, which sends the status
+alone for the same reason).
+
 ### Envelope endpoint (wire dispatch)
 
-`ConduitRuntime.HandleWireRequest` catches the exception and wraps it in a `DispatchResult`:
+`ConduitRuntime.HandleWireRequest` catches the exception and wraps it in a `DispatchResult`, which carries the
+refusal's status, and — for a client-typed refusal — its type name and data too:
 
 ```
 Handler throws ConduitException
-  -> DispatchResult.Fail(ex.Code.Value, ex.Message)
+  -> DispatchResult.Fail(ex)
+     -> DispatchError { Code, Message, Details, Status, Type, Data }
 ```
 
-The HTTP transport's `MapConduitEndpoint` maps the error code string to an HTTP status using a hardcoded switch: `NotFound` to 404, `Unauthorized` to 401, `Conflict` to 409, `InternalError` to 500, everything else to 400.
+`Type` and `Data` are set only when `ConduitException.IsClientTyped` is true for the exception's runtime type;
+otherwise both are `null`. When `Type` is set, `Data` is never `null` on the wire — a data-less typed refusal still
+sends `{}` (see [Client-typed refusals](#client-typed-refusals)).
 
-Custom error codes with non-standard HTTP status fall through to 400 on the envelope endpoint. For accurate status codes on custom errors, use RESTful endpoints.
+The HTTP transport's `MapConduitEndpoint` returns the whole `DispatchResult` as JSON (`Results.Json`), status-coded
+from `DispatchError.Status` when it's set (> 0), else falling back to `ErrorCode.ToHttpStatusCode` — a lookup over
+the built-in codes table above, defaulting to 400 for an unrecognized code. That fallback only matters for a
+`DispatchResult` from a server that predates `Status` being sent; every current `DispatchResult<T>.Fail` overload
+sets it from the exception's (or the passed) `ErrorCode`, so custom error codes with non-standard HTTP status
+resolve correctly on the envelope endpoint too — unlike RESTful endpoints, the envelope endpoint needs no fallback
+caveat for them.
 
 ### Unhandled exceptions
 

@@ -24,9 +24,12 @@ public static class ErrorTypeScanner
     /// The assembly name of Conduit.Contracts, where <c>ConduitException</c> and Conduit's built-in status
     /// exceptions live. A subclass declared in any OTHER assembly -- including another Conduit assembly, such as
     /// <c>src/Conduit</c>, were one ever added there -- is a consumer's refusal and is client-typed regardless of
-    /// whether it declares data.
+    /// whether it declares data. <c>internal</c> (not <c>private</c>) so <c>Conduit.TypeGen.Tests</c> (granted
+    /// <c>InternalsVisibleTo</c> in <c>Conduit.TypeGen.csproj</c>) can pin this hardcoded name to
+    /// <c>typeof(ConduitException).Assembly.GetName().Name</c> -- a rename of the contracts project would
+    /// otherwise drift silently past this re-implementation-by-name.
     /// </summary>
-    private const string ConduitContractsAssemblyName = "Conduit.Contracts";
+    internal const string ConduitContractsAssemblyName = "Conduit.Contracts";
 
     /// <summary>
     /// Scans the given assemblies for client-typed <c>ConduitException</c> subclasses.
