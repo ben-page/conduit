@@ -56,15 +56,20 @@ public abstract class ConduitException(
     /// <summary>
     /// Whether <paramref name="type"/> reaches a client as a TYPED refusal — named on the wire and in TypeGen's
     /// <c>ErrorMap</c>, so the client can narrow it with <c>isError</c>. True for any non-abstract subclass declared
-    /// OUTSIDE Conduit's own assembly (a consumer's refusal, with or without data), and for any subclass that declares
-    /// data. Conduit's built-in status exceptions are untyped: a plain <c>ConflictException</c> is a category, not a
-    /// refusal a screen acts on. TypeGen re-states this rule by name (<c>ErrorTypeScanner</c>) because it reflects
-    /// under a metadata context and cannot call it.
+    /// OUTSIDE the Conduit.Contracts assembly (the one this type itself lives in) — a consumer's refusal, with or
+    /// without data — and for any subclass that declares data. A subclass declared in another Conduit assembly
+    /// (e.g. <c>src/Conduit</c>) would be typed too, by the same rule; none exists today — every built-in status
+    /// exception lives in Conduit.Contracts alongside <see cref="ConduitException"/>. Conduit's built-in status
+    /// exceptions are untyped: a plain <c>ConflictException</c> is a category, not a refusal a screen acts on.
+    /// TypeGen re-states this rule by name (<c>ErrorTypeScanner</c>) because it reflects under a metadata context
+    /// and cannot call it.
     /// </summary>
     public static bool IsClientTyped(Type type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (type.IsAbstract || !typeof(ConduitException).IsAssignableFrom(type) || type == typeof(ConduitException))
+        // No separate `type == typeof(ConduitException)` check: ConduitException is abstract, so
+        // `type.IsAbstract` already excludes it.
+        if (type.IsAbstract || !typeof(ConduitException).IsAssignableFrom(type))
         {
             return false;
         }
