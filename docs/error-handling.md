@@ -92,7 +92,11 @@ and in TypeGen's generated `ErrorMap`, so client code can narrow on it with `isE
 subclass anywhere that declares at least one public instance property. Conduit's own built-in status exceptions
 (`NotFoundException`, `ConflictException`, etc.) are declared in `Conduit.Contracts` and declare no data, so they
 are untyped — a plain `ConflictException` is a category a client checks by `Code`, not a refusal a screen narrows
-on by type.
+on by type. One consequence: a consumer's own category exception — sealed and thrown directly, the same shape as
+Conduit's built-ins — is declared outside `Conduit.Contracts`, so it is client-typed too and gets an `ErrorMap`
+entry; that's harmless (the change is additive — no client branches on a type being *absent* from `ErrorMap`), but
+a consumer that wants a category kept out of `ErrorMap` must declare it inside a non-exported type or behind an
+abstract base that is never thrown directly.
 
 A typed refusal's data (`DispatchError.Data`) is **never `null`** on the wire, even for a refusal that declares no
 properties (or whose `GetClientData` override returns `null`): it serializes as an empty object `{}`. The generated

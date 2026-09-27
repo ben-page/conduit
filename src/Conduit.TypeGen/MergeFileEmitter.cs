@@ -324,7 +324,7 @@ public static class MergeFileEmitter
     }
 
     /// <summary>
-    /// Emits one TypeScript interface per <c>ConduitException</c> subclass that declares client data, then
+    /// Emits one TypeScript interface per client-typed subclass (an empty body when it declares none), then
     /// <c>ErrorMap</c> (keyed by full type name) and the <c>isError</c> narrowing helper.
     /// </summary>
     /// <remarks>

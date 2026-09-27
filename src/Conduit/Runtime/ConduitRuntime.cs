@@ -236,8 +236,8 @@ public static class ConduitRuntime
             // Operands, not prose: a refusal that named its subject in the message alone forced every
             // client to render server text verbatim. The Fail overload has always taken details
             // (DispatchResult.cs:34) -- the exception simply had nothing to hand it until now. This
-            // overload also forwards the declared HTTP status and, when the subclass declares any, its
-            // type name and data (ConduitException.GetClientData).
+            // overload also forwards the declared HTTP status and, when the exception is client-typed
+            // (`ConduitException.IsClientTyped`), its type name and data (ConduitException.GetClientData).
             return DispatchResult<object>.Fail(ex);
         }
 #pragma warning disable CA1031
