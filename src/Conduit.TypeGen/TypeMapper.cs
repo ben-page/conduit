@@ -68,6 +68,13 @@ public static class TypeMapper
         if (type.IsArray)
         {
             var elementType = type.GetElementType()!;
+
+            // System.Text.Json writes byte[] as a base64 string, not a JSON array of numbers.
+            if (elementType.FullName == "System.Byte")
+            {
+                return "string";
+            }
+
             return $"{ToArrayType(MapType(elementType))}";
         }
 

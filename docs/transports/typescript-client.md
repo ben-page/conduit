@@ -272,6 +272,7 @@ C# service-to-service transports (HTTP, SignalR, brokers) propagate `MessageCont
 | `bool` | `boolean` |
 | `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly` | `string` |
 | `T[]`, `List<T>`, `IReadOnlyList<T>` | `T[]` |
+| `byte[]` | `string` (base64, as System.Text.Json writes it; a `List<byte>` stays `number[]`) |
 | `Dictionary<string, T>` | `Record<string, T>` |
 | `T?` (nullable) | `T \| null` |
 | `enum` | string literal union (e.g. `'Active' \| 'Inactive'`) |
