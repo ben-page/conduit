@@ -49,6 +49,20 @@ public class TypeMapperShould
     public void MapArrayToTsArray() =>
         TypeMapper.MapType(typeof(string[])).Should().Be("string[]");
 
+    // System.Text.Json writes byte[] as a base64 string, not a JSON array.
+    [TestMethod]
+    public void MapByteArrayToString() =>
+        TypeMapper.MapType(typeof(byte[])).Should().Be("string");
+
+    [TestMethod]
+    public void MapArrayOfByteArraysToStringArray() =>
+        TypeMapper.MapType(typeof(byte[][])).Should().Be("string[]");
+
+    // Only byte[] gets the base64 converter; a List<byte> is still a JSON array of numbers.
+    [TestMethod]
+    public void MapListOfByteToNumberArray() =>
+        TypeMapper.MapType(typeof(List<byte>)).Should().Be("number[]");
+
     [TestMethod]
     public void MapListToTsArray() =>
         TypeMapper.MapType(typeof(List<int>)).Should().Be("number[]");
