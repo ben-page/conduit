@@ -40,7 +40,7 @@ public sealed partial class OutboxRelay(
             {
                 await this.ProcessPendingAsync(stoppingToken);
 
-                if (options.Value.CompletedRetention > TimeSpan.Zero
+                if (HasCleanup(options.Value)
                     && DateTime.UtcNow - lastCleanup >= options.Value.CleanupInterval)
                 {
                     await this.CleanupCompletedAsync(stoppingToken);
@@ -135,7 +135,8 @@ public sealed partial class OutboxRelay(
 
                 if (entry.RetryCount + 1 >= options.Value.MaxRetries)
                 {
-                    LogRetriesExhausted(logger, entry.Id, null);
+                    LogRetriesExhausted(logger, entry.Id, entry.Type, entry.MessageId, null);
+                    ConduitTelemetry.RecordOutboxRetriesExhausted(entry.Type);
                     await store.MarkFailedAsync(entry.Id, cancellationToken);
                     MessageContext.Observe(new OutboxRetryExhausted(entry.Id));
                 }
@@ -147,19 +148,31 @@ public sealed partial class OutboxRelay(
         }
     }
 
+    private static bool HasCleanup(OutboxOptions o)
+        => o.CompletedRetention > TimeSpan.Zero || (o.FailedRetention ?? o.CompletedRetention) > TimeSpan.Zero;
+
     /// <summary>
-    /// Deletes Sent/Failed entries older than <see cref="OutboxOptions.CompletedRetention"/>,
-    /// resolving the store from its own fresh scope. Exposed as internal for testing. This method
-    /// does not itself check the retention gate — always deletes unconditionally, even when
-    /// <c>CompletedRetention</c> is <see cref="TimeSpan.Zero"/>; it is <see cref="ExecuteAsync"/>
-    /// that only calls it when <c>CompletedRetention</c> is above <see cref="TimeSpan.Zero"/>,
-    /// which is what makes <c>Zero</c> disable cleanup in practice.
+    /// Deletes Sent entries older than <see cref="OutboxOptions.CompletedRetention"/> and Failed entries older than
+    /// <see cref="OutboxOptions.FailedRetention"/> (which defaults to <c>CompletedRetention</c>), resolving the store
+    /// from its own fresh scope. Each retention is applied only when it is above <see cref="TimeSpan.Zero"/>, so
+    /// <c>Zero</c> disables that half of the cleanup. Exposed as internal for testing.
     /// </summary>
     internal async Task CleanupCompletedAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
-        await store.DeleteCompletedAsync(options.Value.CompletedRetention, cancellationToken);
+        var o = options.Value;
+
+        if (o.CompletedRetention > TimeSpan.Zero)
+        {
+            await store.DeleteCompletedAsync(o.CompletedRetention, cancellationToken);
+        }
+
+        var failedRetention = o.FailedRetention ?? o.CompletedRetention;
+        if (failedRetention > TimeSpan.Zero)
+        {
+            await store.DeleteFailedAsync(failedRetention, cancellationToken);
+        }
     }
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Outbox relay sweep failed")]
@@ -168,6 +181,8 @@ public sealed partial class OutboxRelay(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to send outbox entry {EntryId} (type: {Type}, retry: {RetryCount})")]
     private static partial void LogSendFailed(ILogger logger, long entryId, string type, int retryCount, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Outbox entry {EntryId} exhausted retries, marking as failed")]
-    private static partial void LogRetriesExhausted(ILogger logger, long entryId, Exception? exception);
+    // EventId 320 is a contract: deploy alerting keys on it (DMS deploy/README.md). Never renumber it.
+    [LoggerMessage(EventId = 320, EventName = "OutboxRetriesExhausted", Level = LogLevel.Error,
+        Message = "Outbox entry {EntryId} (type: {Type}, message: {MessageId}) exhausted retries, marking as failed")]
+    private static partial void LogRetriesExhausted(ILogger logger, long entryId, string type, string messageId, Exception? exception);
 }

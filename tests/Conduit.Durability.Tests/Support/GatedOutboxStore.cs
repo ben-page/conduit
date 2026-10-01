@@ -37,6 +37,9 @@ internal sealed class GatedOutboxStore(IOutboxStore inner, SemaphoreSlim gate) :
     public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
         => inner.DeleteCompletedAsync(retentionPeriod, cancellationToken);
 
+    public Task DeleteFailedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
+        => inner.DeleteFailedAsync(retentionPeriod, cancellationToken);
+
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
         => inner.EnsureTableExistsAsync(cancellationToken);
 

@@ -34,6 +34,9 @@ public static class ConduitTelemetry
     private static readonly Counter<long> DeadLetteredCount =
         MeterInstance.CreateCounter<long>("conduit.messages.dead_lettered", description: "Number of messages captured to the dead letter queue");
 
+    private static readonly Counter<long> OutboxRetriesExhaustedCount =
+        MeterInstance.CreateCounter<long>("conduit.outbox.retries_exhausted", description: "Number of outbox entries marked Failed after exhausting their retries");
+
     private static readonly Counter<long> ReplayedCount =
         MeterInstance.CreateCounter<long>("conduit.messages.replayed", description: "Number of messages replayed from the dead letter queue");
 
@@ -218,6 +221,14 @@ public static class ConduitTelemetry
         DeadLetteredCount.Add(1,
             new KeyValuePair<string, object?>("conduit.message.type", messageType),
             new KeyValuePair<string, object?>("conduit.source.endpoint", sourceEndpoint));
+    }
+
+    /// <summary>
+    /// Records an outbox entry marked Failed after exhausting its retries.
+    /// </summary>
+    public static void RecordOutboxRetriesExhausted(string messageType)
+    {
+        OutboxRetriesExhaustedCount.Add(1, new KeyValuePair<string, object?>("conduit.message.type", messageType));
     }
 
     /// <summary>

@@ -47,7 +47,10 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     private const string MarkFailedSql = "UPDATE conduit_outbox SET Status = 2 WHERE Id = @Id";
 
     private const string DeleteCompletedSql =
-        "DELETE FROM conduit_outbox WHERE Status IN (1, 2) AND CreatedAt <= @RetentionCutoff";
+        "DELETE FROM conduit_outbox WHERE Status = 1 AND CreatedAt <= @RetentionCutoff";
+
+    private const string DeleteFailedSql =
+        "DELETE FROM conduit_outbox WHERE Status = 2 AND CreatedAt <= @RetentionCutoff";
 
     private readonly string createTableSql;
     private readonly string claimPendingSql;
@@ -158,10 +161,17 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
     /// <inheritdoc/>
     public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
+        => this.DeleteOlderThanAsync(DeleteCompletedSql, retentionPeriod, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task DeleteFailedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
+        => this.DeleteOlderThanAsync(DeleteFailedSql, retentionPeriod, cancellationToken);
+
+    private async Task DeleteOlderThanAsync(string sql, TimeSpan retentionPeriod, CancellationToken cancellationToken)
     {
         var retentionCutoff = DateTime.UtcNow.Subtract(retentionPeriod).ToString("O", CultureInfo.InvariantCulture);
-        return this.ExecuteNonQueryAsync(
-            DeleteCompletedSql,
+        await this.ExecuteNonQueryAsync(
+            sql,
             command => DbParameterHelper.Add(command, "@RetentionCutoff", retentionCutoff),
             cancellationToken);
     }

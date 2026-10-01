@@ -20,8 +20,10 @@ public interface IOutboxStore
     public Task IncrementRetryAsync(long entryId, CancellationToken cancellationToken);
     /// <summary>Marks an entry as permanently failed.</summary>
     public Task MarkFailedAsync(long entryId, CancellationToken cancellationToken);
-    /// <summary>Deletes sent/failed entries older than the retention cutoff.</summary>
+    /// <summary>Deletes sent entries older than the retention cutoff.</summary>
     public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken);
+    /// <summary>Deletes failed (retries-exhausted) entries older than the retention cutoff.</summary>
+    public Task DeleteFailedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken);
     /// <summary>Creates the outbox table if it does not exist.</summary>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken);
     /// <summary>Claims entries by MessageId using row-level locking. Returns only Id and MessageId for entries that are still Pending.</summary>

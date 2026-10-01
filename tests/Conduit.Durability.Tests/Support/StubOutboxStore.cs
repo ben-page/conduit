@@ -44,6 +44,14 @@ public class StubOutboxStore : IOutboxStore
         return Task.CompletedTask;
     }
 
+    public List<TimeSpan> DeletedFailedRetentions { get; } = [];
+
+    public virtual Task DeleteFailedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
+    {
+        this.DeletedFailedRetentions.Add(retentionPeriod);
+        return Task.CompletedTask;
+    }
+
     public virtual Task EnsureTableExistsAsync(CancellationToken cancellationToken)
         => Task.CompletedTask;
 

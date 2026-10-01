@@ -344,4 +344,48 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         var count = await command.ExecuteScalarAsync();
         count.Should().Be(0L);
     }
+
+    [TestMethod]
+    public async Task DeleteCompletedLeavesFailedEntries_DeleteFailedRemovesThem()
+    {
+        // Arrange — save an entry, mark it failed
+        await this.connectionFactory.BeginTransactionAsync();
+        var transaction = this.connectionFactory.GetCurrentTransaction()!;
+
+        var entries = new List<OutboxEntry>
+        {
+            new()
+            {
+                MessageId = "msg-old-failed",
+                ConversationId = "conv-1",
+                Type = "Orders.Commands.CreateOrder",
+                Payload = "{}",
+                CreatedAt = DateTime.UtcNow.AddDays(-8),
+            },
+        };
+
+        await this.store.SaveAsync(entries, transaction, CancellationToken.None);
+        await this.connectionFactory.CommitAsync();
+
+        var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        await this.store.MarkFailedAsync(claimed[0].Id, CancellationToken.None);
+
+        var connection = this.connectionFactory.Connection;
+
+        // Act — delete completed (Sent) entries older than 7 days
+        await this.store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+
+        // Assert — the Failed row survives
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM conduit_outbox WHERE MessageId = 'msg-old-failed'";
+        var survived = await command.ExecuteScalarAsync();
+        survived.Should().Be(1L);
+
+        // Act — delete Failed entries older than 7 days
+        await this.store.DeleteFailedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+
+        // Assert — now it is gone
+        var gone = await command.ExecuteScalarAsync();
+        gone.Should().Be(0L);
+    }
 }
