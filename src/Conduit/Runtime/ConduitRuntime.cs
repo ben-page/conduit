@@ -68,9 +68,9 @@ public static class ConduitRuntime
     }
 
     // Error-level logs
-    private static readonly Action<ILogger, string, Exception?> LogDispatchError =
-        LoggerMessage.Define<string>(LogLevel.Error, new EventId(1, "DispatchError"),
-            "Unhandled exception dispatching '{Type}'");
+    private static readonly Action<ILogger, string, string, Exception?> LogDispatchError =
+        LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(1, "DispatchError"),
+            "Unhandled exception dispatching '{Type}' (reference {Reference})");
 
     private static readonly Action<ILogger, string, Exception?> LogPublishError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(2, "PublishError"),
@@ -267,8 +267,12 @@ public static class ConduitRuntime
 #pragma warning restore CA1031
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            LogDispatchError(logger, messageType, ex);
-            return DispatchResult<object>.Fail("InternalError", "An unexpected error occurred");
+            // A reference the user can quote and support can grep: the dispatch's ConversationId. ConduitHub mints a
+            // fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line,
+            // so finding it needs no log scopes. Refusals (the ConduitException arm above) carry none -- they are not bugs.
+            var reference = MessageContext.Current?.ConversationId ?? Guid.NewGuid().ToString("N");
+            LogDispatchError(logger, messageType, reference, ex);
+            return DispatchResult<object>.Fail("InternalError", $"An unexpected error occurred (reference {reference}).");
         }
         finally
         {
