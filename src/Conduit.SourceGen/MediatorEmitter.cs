@@ -664,7 +664,7 @@ public static class MediatorEmitter
         foreach (var cmd in commands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
-            sb.AppendLine($"                    JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload),");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -676,7 +676,7 @@ public static class MediatorEmitter
             // The background dispatcher path would execute after the DI scope is disposed.
             var method = cmd.IsFireAndForget ? "ExecuteVoidWire" : "ExecuteVoid";
             sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.{method}(");
-            sb.AppendLine($"                    JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload),");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -685,7 +685,7 @@ public static class MediatorEmitter
         foreach (var query in queries.Where(q => handledTypes.Contains(q.FullTypeName)))
         {
             sb.AppendLine($"                \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
-            sb.AppendLine($"                    JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(query.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
+            sb.AppendLine($"                    ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(query.FullTypeName)}>(payload),");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");

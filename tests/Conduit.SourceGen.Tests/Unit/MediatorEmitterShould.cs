@@ -105,6 +105,70 @@ namespace App.Events
     }
 
     [TestMethod]
+    public void ReadWirePayloadsThroughTheRuntimeHelper()
+    {
+        // Arrange -- the same compilation EmitMediatorWithStronglyTypedOverloads uses (CreateOrder/DeleteOrder/GetOrder)
+        var source = @"
+using Conduit.Handlers;
+using Conduit.Messages;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace App.Commands
+{
+    public record CreateOrder(string CustomerId) : ICommand<Guid>;
+
+    public class CreateOrderHandler : ICommandHandler<CreateOrder, Guid>
+    {
+        public Task<Guid> HandleAsync(CreateOrder command, CancellationToken cancellationToken)
+            => Task.FromResult(Guid.NewGuid());
+    }
+
+    public record DeleteOrder(Guid Id) : ICommand;
+
+    public class DeleteOrderHandler : ICommandHandler<DeleteOrder>
+    {
+        public Task HandleAsync(DeleteOrder command, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+}
+
+namespace App.Queries
+{
+    public record GetOrder(Guid Id) : IQuery<string>;
+
+    public class GetOrderHandler : IQueryHandler<GetOrder, string>
+    {
+        public Task<string> HandleAsync(GetOrder query, CancellationToken cancellationToken)
+            => Task.FromResult(""order"");
+    }
+}
+
+namespace App.Events
+{
+    public record OrderCreated(Guid Id) : IEvent;
+
+    public class OrderCreatedListener : IEventListener<OrderCreated>
+    {
+        public Task HandleAsync(OrderCreated @event, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+}
+";
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert -- a raw Deserialize here would turn an unreadable payload into InternalError (a 500)
+        mediatorSource.Should().MatchRegex(@"DeserializeWire<(global::)?App\.Commands\.CreateOrder>\(payload\)");
+        mediatorSource.Should().MatchRegex(@"DeserializeWire<(global::)?App\.Commands\.DeleteOrder>\(payload\)");
+        mediatorSource.Should().MatchRegex(@"DeserializeWire<(global::)?App\.Queries\.GetOrder>\(payload\)");
+        mediatorSource.Should().NotMatchRegex(@"JsonSerializer\.Deserialize<(global::)?App\.(Commands|Queries)\.");
+    }
+
+    [TestMethod]
     public void ResolveListenersForAnEventTypeThatHasNoneAtCompileTime()
     {
         // Arrange — an event nothing in the compilation listens to

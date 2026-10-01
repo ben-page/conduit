@@ -90,6 +90,6 @@ namespace App
         // The wire discriminator string literal uses the metadata ('+') form.
         mediatorSource.Should().Contain("\"App.Outer+CreateThing\"");
         // The deserialize generic argument uses the C# ('.') form.
-        mediatorSource.Should().Contain("Deserialize<App.Outer.CreateThing>");
+        mediatorSource.Should().Contain("DeserializeWire<App.Outer.CreateThing>");
     }
 }
