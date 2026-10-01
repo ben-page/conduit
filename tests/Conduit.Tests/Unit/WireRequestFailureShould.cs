@@ -12,7 +12,7 @@ namespace Conduit.Tests.Unit;
 /// that is the only path a SPA client can read them from.
 /// </summary>
 [TestClass]
-public sealed class WireRequestFailureShould
+public sealed partial class WireRequestFailureShould
 {
     private static Task<DispatchResult<object>> DispatchThrowing(Exception toThrow) =>
         ConduitRuntime.HandleWireRequest(
@@ -118,9 +118,45 @@ public sealed class WireRequestFailureShould
 
         result.Error!.Code.Should().Be("InternalError");
         result.Error.Status.Should().Be(500);
-        result.Error.Message.Should().Be("An unexpected error occurred");
+        result.Error.Message.Should().MatchRegex(@"^An unexpected error occurred \(reference [^\s()]+\)\.$");
+        result.Error.Message.Should().NotContain("secrets");
         result.Error.Type.Should().BeNull();
         result.Error.Data.Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task LogTheSameReferenceItAnswersWith()
+    {
+        // Support gets the reference from the user and greps for it -- DMS logs without scopes, so the id must be IN the line.
+        var logger = new CapturingLogger();
+        var result = await ConduitRuntime.HandleWireRequest(
+            "Test.Refusal",
+            [],
+            () => new DispatchEnvelope("Test.Refusal", JsonSerializer.SerializeToElement(new { })),
+            (_, _, _) => throw new InvalidOperationException("boom"),
+            logger,
+            CancellationToken.None);
+
+        var reference = ReferenceInMessage().Match(result.Error!.Message).Groups[1].Value;
+        reference.Should().NotBeNullOrEmpty();
+        logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Error)
+            .Which.Message.Should().Contain(reference);
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\(reference ([^\s()]+)\)")]
+    private static partial System.Text.RegularExpressions.Regex ReferenceInMessage();
+
+    private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => this.Entries.Add((logLevel, formatter(state, exception)));
     }
 
     // Public (not the usual private-nested-exception pattern in this file) so ConduitExceptionShould
