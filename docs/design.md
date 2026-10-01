@@ -565,7 +565,7 @@ internal static class ConduitDispatch
         IServiceProvider serviceProvider,
         CancellationToken cancellationToken)
     {
-        command.Validate();
+        command.Validate(); // innermost: immediately before the handler (after every behavior, when there are any)
         var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
         return await handler.HandleAsync(command, cancellationToken);
     }
@@ -582,18 +582,25 @@ public static async Task<Guid> Execute(
     IServiceProvider serviceProvider,
     CancellationToken cancellationToken)
 {
-    command.Validate();
     var behavior1 = serviceProvider.GetRequiredService<LoggingBehavior<CreateOrderCommand, Guid>>();
     var behavior2 = serviceProvider.GetRequiredService<AuthBehavior<CreateOrderCommand, Guid>>();
-    var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
 
     return await behavior1.HandleAsync(command,
         () => behavior2.HandleAsync(command,
-            () => handler.HandleAsync(command, cancellationToken),
+            () =>
+            {
+                // Validate() runs INNERMOST -- after every behavior, so a behavior that refuses
+                // (authorization) never runs the caller's input.
+                command.Validate();
+                var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
+                return handler.HandleAsync(command, cancellationToken);
+            },
             cancellationToken),
         cancellationToken);
 }
 ```
+
+`Validate()` is part of the handler step, not a step before the pipeline: every behavior — authorization included — runs before a message's input is validated, and every dispatch path (command, query, void, fire-and-forget, wire) still validates before its handler runs. On the fire-and-forget path the handler step is the enqueue, so `Validate()` runs on the caller's thread and an invalid command is refused to its caller and never enqueued.
 
 ### 3. DI Registration
 
@@ -879,7 +886,7 @@ conduit.on('MyApp.Events.NoteCreatedEvent', event => console.log(event.text));
 
 Two-tier validation:
 
-1. **Command `Validate()` method** — precondition guards. Fast fail on malformed requests. These are developer mistakes, not user errors. Single throw on first failure.
+1. **Command `Validate()` method** — precondition guards. Fast fail on malformed requests: the generated dispatch calls `Validate()` immediately before the handler, so a malformed request never reaches it — and after every pipeline behavior, so authorization refuses a caller before their input is validated. These are developer mistakes, not user errors. Single throw on first failure.
 
 ```csharp
 public record CreateOrderCommand(string CustomerId, List<LineItem> Items) : ICommand<Guid>
