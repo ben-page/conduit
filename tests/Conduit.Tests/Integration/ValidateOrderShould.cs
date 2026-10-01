@@ -102,7 +102,8 @@ public class ValidateOrderShould
         record.Entries.Should().Equal("behavior", "validate");
     }
 
-    // --- Void command (ExecuteVoid -- the wire-inbound entry) ---
+    // --- Void command (ExecuteVoid -- the object-returning wrapper over Execute that the generated mediator's wire
+    //     request dispatch, DispatchRequestAsync, calls for a non-fire-and-forget void command) ---
 
     [TestMethod]
     public async Task VoidCommandExecuteVoid_ABehaviorThatRefuses_RunsBeforeValidate()
@@ -165,7 +166,8 @@ public class ValidateOrderShould
         record.Entries.Should().Equal("behavior", "validate");
     }
 
-    // --- Fire-and-forget void command (ExecuteVoidWire -- the wire-inbound entry, handler inline) ---
+    // --- Fire-and-forget void command (ExecuteVoidWire -- what DispatchRequestAsync calls for a fire-and-forget void
+    //     command: the handler runs inline, not on the background dispatcher) ---
 
     [TestMethod]
     public async Task VoidFireAndForgetCommandExecuteVoidWire_ABehaviorThatRefuses_RunsBeforeValidate()

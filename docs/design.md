@@ -565,7 +565,8 @@ internal static class ConduitDispatch
         IServiceProvider serviceProvider,
         CancellationToken cancellationToken)
     {
-        command.Validate(); // innermost: immediately before the handler (after every behavior, when there are any)
+        // No behaviors registered: the innermost step is the handler step itself, so Validate() runs immediately before the handler.
+        command.Validate();
         var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
         return await handler.HandleAsync(command, cancellationToken);
     }
@@ -589,8 +590,6 @@ public static async Task<Guid> Execute(
         () => behavior2.HandleAsync(command,
             () =>
             {
-                // Validate() runs INNERMOST -- after every behavior, so a behavior that refuses
-                // (authorization) never runs the caller's input.
                 command.Validate();
                 var handler = serviceProvider.GetRequiredService<ICommandHandler<CreateOrderCommand, Guid>>();
                 return handler.HandleAsync(command, cancellationToken);
