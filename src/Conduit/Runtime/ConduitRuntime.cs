@@ -20,14 +20,36 @@ public static class ConduitRuntime
 {
     /// <summary>
     /// Shared JSON serializer options used by the generated mediator for wire serialization.
-    /// Uses camelCase naming and string enum conversion to match TypeGen output.
+    /// Uses camelCase naming and string enum conversion to match TypeGen output. Enums are read by NAME only:
+    /// an integer ordinal is refused, in range or not, because TypeGen emits enums as string unions and an
+    /// ordinal is how an out-of-range value used to reach a foreign-key column as a 500.
     /// </summary>
     public static JsonSerializerOptions JsonOptions { get; } = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
     };
+
+    /// <summary>
+    /// Reads a wire payload into its message type. A payload the contract cannot read -- an integer enum ordinal,
+    /// a wrong-typed field, malformed JSON -- is the caller's fault, so it is a <see cref="BadRequestException"/>
+    /// (400) naming the JSON path, never the InternalError a raw <see cref="JsonException"/> becomes. Called by the
+    /// generated mediator's wire dispatch; only the READ is mapped, so a handler's own serializer failure stays a 500.
+    /// </summary>
+    public static T DeserializeWire<T>(JsonElement payload)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(payload, JsonOptions)!;
+        }
+        catch (JsonException ex)
+        {
+            throw new BadRequestException(string.IsNullOrEmpty(ex.Path)
+                ? "The request could not be read."
+                : $"The request could not be read at '{ex.Path}'.");
+        }
+    }
 
     /// <summary>
     /// Checks a reply <see cref="DispatchResult{T}"/> for errors and returns the data.
