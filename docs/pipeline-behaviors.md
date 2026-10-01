@@ -172,7 +172,7 @@ Compose with your own: chain additional `.Handle<MyException>()` calls on the re
 2. Default pipeline (registered via `AddDefaultPipeline`)
 3. Pass-through (no wrapping — `next()` called directly)
 
-The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors.
+The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors. Because the generated `Validate()` runs innermost, validation failures (400 `ConduitException`s) now reach the resilience behavior: `ConduitPredicates.AllErrors<T>()` or Polly's default `ShouldHandle` would retry them and count them toward a circuit breaker. Use `ConduitPredicates.TransientErrors<T>()`, or exclude 4xx `ConduitException`s in a custom predicate.
 
 ### MessageContext Enrichment
 
