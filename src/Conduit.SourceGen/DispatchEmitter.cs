@@ -279,15 +279,15 @@ public static class DispatchEmitter
     }
 
     /// <summary>
-    /// Emits a message's <c>Validate()</c> call inside the <c>handlerCall</c> lambda -- the innermost step of the
-    /// pipeline, immediately before the handler runs (or, for a fire-and-forget command, immediately before the
-    /// enqueue, still on the caller's thread). Every behavior, authorization included, therefore runs before the
-    /// caller's input is validated; every path still validates.
+    /// Emits a message's <c>Validate()</c> call as the first statement of the <c>handlerCall</c> lambda.
     /// </summary>
+    /// <remarks>
+    /// Validate() runs INNERMOST -- after every behavior, immediately before the handler (or the fire-and-forget
+    /// enqueue, still on the caller's thread), so a behavior that refuses (authorization) never runs the caller's
+    /// input. Every path still validates; nothing is opt-in.
+    /// </remarks>
     private static void EmitValidateInnermost(StringBuilder sb, string validateCall)
     {
-        sb.AppendLine("            // Validate() runs INNERMOST -- after every behavior, so a behavior that refuses (authorization) never runs the");
-        sb.AppendLine("            // caller's input (open:conduit-validates-before-it-authorizes). Every path still validates; nothing is opt-in.");
         sb.AppendLine($"            {validateCall}");
     }
 }
