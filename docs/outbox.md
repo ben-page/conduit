@@ -201,7 +201,7 @@ For non-relational databases (Cosmos DB, MongoDB, DynamoDB), implement `IOutboxS
 public class CosmosOutboxStore : IOutboxStore
 {
     // Implement SaveAsync, ClaimPendingAsync, ClaimByMessageIdsAsync, MarkSentAsync,
-    // IncrementRetryAsync, MarkFailedAsync, DeleteCompletedAsync, EnsureTableExistsAsync
+    // IncrementRetryAsync, MarkFailedAsync, DeleteCompletedAsync, DeleteFailedAsync, EnsureTableExistsAsync
 }
 ```
 
@@ -224,7 +224,8 @@ conduit.AddDurability(durability =>
         outbox.BatchSize = 100;                                // entries per sweep (default: 100)
         outbox.MaxRetries = 10;                                // before marking failed (default: 10)
         outbox.AutoCreateTable = true;                         // create table on startup (default: true)
-        outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent/Failed entries older than this (default: 7d); Zero disables cleanup
+        outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries older than this (default: 7d); Zero disables
+        outbox.FailedRetention = null;                          // delete Failed entries older than this (default: null = follow CompletedRetention); Zero keeps them forever
         outbox.CleanupInterval = TimeSpan.FromHours(1);         // how often cleanup runs (default: 1h)
     });
 });
@@ -234,12 +235,22 @@ The grace period prevents the relay from racing with the handler. After the tran
 
 ### Retention
 
-The relay periodically deletes its own completed history: `Sent` and `Failed` entries older than
-`CompletedRetention` are removed every `CleanupInterval`, checked on the same sweep loop that
-processes pending entries (only when `CompletedRetention > TimeSpan.Zero`). Setting
-`CompletedRetention` to `TimeSpan.Zero` disables cleanup entirely — completed entries then
-accumulate indefinitely, which you may prefer if you query the outbox table for audit or
-observability purposes. Cleanup resolves the store from its own fresh DI scope, same as a sweep.
+The relay periodically deletes its own history every `CleanupInterval`, checked on the same sweep
+loop that processes pending entries. `Sent` entries older than `CompletedRetention` are removed;
+`Failed` entries (retries exhausted) older than `FailedRetention` are removed. `FailedRetention`
+defaults to `null`, which follows `CompletedRetention`. Each retention applies only when it is above
+`TimeSpan.Zero`: `CompletedRetention = TimeSpan.Zero` stops Sent cleanup (and, with the default
+`FailedRetention`, Failed cleanup too), so entries accumulate indefinitely, which you may prefer if
+you query the outbox table for audit or observability purposes. `FailedRetention = TimeSpan.Zero`
+keeps Failed rows forever while Sent rows are still cleaned: a Failed row is the only copy of a side
+effect that never ran. Cleanup resolves the store from its own fresh DI scope, same as a sweep.
+
+### Alerting on exhausted retries
+
+When an entry exhausts `MaxRetries` the relay marks it Failed, logs at Error with
+`EventId` **320** (`OutboxRetriesExhausted`; type, message id and entry id are structured fields),
+and increments the `conduit.outbox.retries_exhausted` counter on the `Conduit` meter (tag
+`conduit.message.type`). Both are stable: alert on either.
 
 ## What gets captured
 

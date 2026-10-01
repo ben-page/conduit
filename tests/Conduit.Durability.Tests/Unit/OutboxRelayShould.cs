@@ -5,7 +5,9 @@ using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -37,7 +39,8 @@ public class OutboxRelayShould
     private static OutboxRelay BuildRelay(
         IOutboxStore store,
         TransportDispatcher dispatcher,
-        OutboxOptions? outboxOptions = null)
+        OutboxOptions? outboxOptions = null,
+        ILogger<OutboxRelay>? logger = null)
     {
         // OutboxRelay resolves IOutboxStore scope-per-sweep (see its class remarks), so tests wire
         // the stub store through a real IServiceScopeFactory rather than constructor-injecting it.
@@ -49,7 +52,75 @@ public class OutboxRelayShould
             provider.GetRequiredService<IServiceScopeFactory>(),
             dispatcher,
             Options.Create(outboxOptions ?? new OutboxOptions { MaxRetries = 3 }),
-            NullLogger<OutboxRelay>.Instance);
+            logger ?? NullLogger<OutboxRelay>.Instance);
+    }
+
+    [TestMethod]
+    public async Task LogExhaustionAtAStableEventId_AndCountIt()
+    {
+        // Arrange -- the alert keys on EventId 320 or the counter; neither may drift.
+        // The Meter is process-global and tests run in parallel, so the counter is filtered to this test's own type.
+        const string type = "Orders.Events.OrderCreated.ExhaustionCounter";
+        var entry = MakeEntry(id: 7, type: type, retryCount: 2);
+        var store = new CapturingStubOutboxStore([entry]);
+        var logger = new EventCapturingLogger();
+        var relay = BuildRelay(store, CreateDispatcher(new ThrowingTransport(new InvalidOperationException("down"))),
+            new OutboxOptions { MaxRetries = 3 }, logger);
+        long counted = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (i, l) =>
+        {
+            if (i.Meter.Name == "Conduit" && i.Name == "conduit.outbox.retries_exhausted")
+            {
+                l.EnableMeasurementEvents(i);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "conduit.message.type" && (string?)tag.Value == type)
+                {
+                    Interlocked.Add(ref counted, value);
+                }
+            }
+        });
+        listener.Start();
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert
+        var exhausted = logger.Entries.Should().ContainSingle(e => e.Id.Id == 320).Which;
+        exhausted.Id.Name.Should().Be("OutboxRetriesExhausted");
+        exhausted.Level.Should().Be(LogLevel.Error);
+        exhausted.Message.Should().Contain(type).And.Contain(entry.MessageId);
+        Interlocked.Read(ref counted).Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task FailedRetention_DefaultsToCompletedRetention()
+    {
+        var store = new StubOutboxStore();
+        var relay = BuildRelay(store, CreateDispatcher(), new OutboxOptions { CompletedRetention = TimeSpan.FromDays(3) });
+
+        await relay.CleanupCompletedAsync(CancellationToken.None);
+
+        store.DeletedRetentions.Should().ContainSingle().Which.Should().Be(TimeSpan.FromDays(3));
+        store.DeletedFailedRetentions.Should().ContainSingle().Which.Should().Be(TimeSpan.FromDays(3));
+    }
+
+    [TestMethod]
+    public async Task FailedRetentionZero_KeepsFailedRowsForever()
+    {
+        var store = new StubOutboxStore();
+        var relay = BuildRelay(store, CreateDispatcher(),
+            new OutboxOptions { CompletedRetention = TimeSpan.FromDays(7), FailedRetention = TimeSpan.Zero });
+
+        await relay.CleanupCompletedAsync(CancellationToken.None);
+
+        store.DeletedRetentions.Should().ContainSingle().Which.Should().Be(TimeSpan.FromDays(7));
+        store.DeletedFailedRetentions.Should().BeEmpty();
     }
 
     [TestMethod]
@@ -223,4 +294,16 @@ file sealed class ThrowingLocalDispatcher : ILocalEnvelopeDispatcher
 
     public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
         => throw new InvalidOperationException("Simulated local dispatch failure");
+}
+
+file sealed class EventCapturingLogger : ILogger<OutboxRelay>
+{
+    public List<(LogLevel Level, EventId Id, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) => this.Entries.Add((logLevel, eventId, formatter(state, exception)));
 }
