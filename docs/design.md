@@ -164,7 +164,7 @@ builder.Services.AddConduit(conduit =>
 {
     conduit.AddBehavior<LoggingBehavior>();   // runs first (outermost)
     conduit.AddBehavior<AuthBehavior>();      // runs second
-    conduit.AddBehavior<ValidationBehavior>(); // runs third (closest to handler)
+    conduit.AddBehavior<ValidationBehavior>(); // runs third (closest to the handler among behaviors)
 });
 ```
 
