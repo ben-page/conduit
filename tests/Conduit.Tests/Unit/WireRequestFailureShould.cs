@@ -143,6 +143,52 @@ public sealed partial class WireRequestFailureShould
             .Which.Message.Should().Contain(reference);
     }
 
+    [TestMethod]
+    public async Task MintAReferenceWhenTheConversationIdIsNotLogSafe()
+    {
+        // The hub accepts a caller-supplied context, so the ConversationId is attacker-controlled: CR/LF would forge log
+        // lines and spaces/parentheses would break the client's reference parse. Anything but [A-Za-z0-9-]{1,64} is replaced.
+        const string injected = "abc\r\n2026-01-01 FAKE (reference x)";
+        MessageContext.StartDispatchFromTransport("m-1", null, injected);
+        try
+        {
+            var logger = new CapturingLogger();
+            var result = await ConduitRuntime.HandleWireRequest(
+                "Test.Refusal",
+                [],
+                () => new DispatchEnvelope("Test.Refusal", JsonSerializer.SerializeToElement(new { })),
+                (_, _, _) => throw new InvalidOperationException("boom"),
+                logger,
+                CancellationToken.None);
+
+            result.Error!.Message.Should().MatchRegex(@"^An unexpected error occurred \(reference [A-Za-z0-9-]+\)\.$");
+            result.Error.Message.Should().NotContain("FAKE").And.NotContain("abc");
+            var reference = ReferenceInMessage().Match(result.Error.Message).Groups[1].Value;
+            logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Error)
+                .Which.Message.Should().Contain(reference).And.NotContain("FAKE");
+        }
+        finally
+        {
+            MessageContext.RestoreContext(null);
+        }
+    }
+
+    [TestMethod]
+    public async Task KeepALogSafeConversationIdAsTheReference()
+    {
+        MessageContext.StartDispatchFromTransport("m-1", null, "conv-123-ABC");
+        try
+        {
+            var result = await DispatchThrowing(new InvalidOperationException("boom"));
+
+            result.Error!.Message.Should().Be("An unexpected error occurred (reference conv-123-ABC).");
+        }
+        finally
+        {
+            MessageContext.RestoreContext(null);
+        }
+    }
+
     [System.Text.RegularExpressions.GeneratedRegex(@"\(reference ([^\s()]+)\)")]
     private static partial System.Text.RegularExpressions.Regex ReferenceInMessage();
 
