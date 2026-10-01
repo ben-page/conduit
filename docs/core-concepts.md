@@ -153,7 +153,7 @@ The method names are intentionally distinct. `ExecuteAsync` performs an action, 
 
 ## Validate()
 
-`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` before dispatch.
+`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` innermost — after every behavior, immediately before the handler — so a behavior that refuses never runs the caller's input.
 
 ```csharp
 public record TransferFunds(

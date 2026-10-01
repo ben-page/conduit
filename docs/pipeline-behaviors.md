@@ -8,7 +8,7 @@
 
 ## Overview
 
-Pipeline behaviors wrap dispatch calls with cross-cutting concerns like logging, validation, or timing. They form a chain: each behavior calls `next()` to continue or short-circuits by returning early. First registered is outermost.
+Pipeline behaviors wrap dispatch calls with cross-cutting concerns like logging, authorization, or timing. They form a chain: each behavior calls `next()` to continue or short-circuits by returning early. First registered is outermost.
 
 ## Defining a behavior
 
@@ -43,7 +43,7 @@ Register behaviors inside `AddConduit` with the open generic type:
 builder.Services.AddConduit(conduit =>
 {
     conduit.AddPipeline(typeof(LoggingBehavior<,>));
-    conduit.AddPipeline(typeof(ValidationBehavior<,>));
+    conduit.AddPipeline(typeof(AuthorizationBehavior<,>));
 });
 ```
 
@@ -51,9 +51,10 @@ Order matters. First registered is outermost:
 
 ```
 LoggingBehavior (enter)
-  ValidationBehavior (enter)
+  AuthorizationBehavior (enter)
+    Validate()
     Handler
-  ValidationBehavior (exit)
+  AuthorizationBehavior (exit)
 LoggingBehavior (exit)
 ```
 
@@ -68,29 +69,26 @@ For void commands and events, `TResult` is `object` and the pipeline returns `Un
 Behaviors are registered globally. To apply logic selectively, filter inside the behavior:
 
 ```csharp
-public class ValidationBehavior<TRequest, TResult> : IPipelineBehavior<TRequest, TResult>
+public class AuthorizationBehavior<TRequest, TResult>(ICurrentUser user) : IPipelineBehavior<TRequest, TResult>
 {
-    public async Task<TResult> HandleAsync(
+    public Task<TResult> HandleAsync(
         TRequest request,
         Func<Task<TResult>> next,
         CancellationToken cancellationToken)
     {
-        if (request is ICommand command)
+        if (request is ICommand && !user.CanWrite)
         {
-            command.Validate();
+            throw new ForbiddenException("Read-only users cannot run commands.");
         }
 
-        if (request is IQuery<TResult> query)
-        {
-            query.Validate();
-        }
-
-        return await next();
+        return next();
     }
 }
 ```
 
 Check `typeof(TRequest)`, cast to an interface, look for attributes. If the behavior does not apply, call `next()` and pass through.
+
+A behavior does not call the message's `Validate()`. The generated dispatch calls it innermost — after every behavior, immediately before the handler — so a behavior that refuses (like the one above) never runs the caller's input, and every message is still validated before its handler runs.
 
 ## OpenTelemetry
 

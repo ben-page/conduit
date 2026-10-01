@@ -93,8 +93,9 @@ public static class DispatchEmitter
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        (({EmitConstants.ICommand}<{type.ResultFullTypeName}>)command).Validate();");
-        EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: false);
+        EmitHandlerAndBehaviorBody(
+            sb, type, handler, isVoid: false,
+            validateCall: $"(({EmitConstants.ICommand}<{type.ResultFullTypeName}>)command).Validate();");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -111,8 +112,9 @@ public static class DispatchEmitter
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
-        EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: true);
+        EmitHandlerAndBehaviorBody(
+            sb, type, handler, isVoid: true,
+            validateCall: $"(({EmitConstants.ICommand})command).Validate();");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -139,8 +141,9 @@ public static class DispatchEmitter
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        (({EmitConstants.IQuery}<{type.ResultFullTypeName}>)query).Validate();");
-        EmitHandlerAndBehaviorBody(sb, type, handler, isVoid: false);
+        EmitHandlerAndBehaviorBody(
+            sb, type, handler, isVoid: false,
+            validateCall: $"(({EmitConstants.IQuery}<{type.ResultFullTypeName}>)query).Validate();");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -161,8 +164,6 @@ public static class DispatchEmitter
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
-        sb.AppendLine();
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
         sb.AppendLine($"        var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
         sb.AppendLine($"        var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();");
@@ -171,6 +172,7 @@ public static class DispatchEmitter
         sb.AppendLine($"        // Pipeline behaviors wrap this — they run in the caller context, the handler runs in the background.");
         sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
         sb.AppendLine("        {");
+        EmitValidateInnermost(sb, $"(({EmitConstants.ICommand})command).Validate();");
         sb.AppendLine($"            dispatcher.Enqueue(async ct =>");
         sb.AppendLine("            {");
         sb.AppendLine($"                // Background work runs after the caller's DI scope is disposed — resolve from a fresh scope.");
@@ -207,10 +209,10 @@ public static class DispatchEmitter
         sb.AppendLine($"        ConduitOptions conduitOptions,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        (({EmitConstants.ICommand})command).Validate();");
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
         sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
         sb.AppendLine("        {");
+        EmitValidateInnermost(sb, $"(({EmitConstants.ICommand})command).Validate();");
         sb.AppendLine($"            var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
         sb.AppendLine($"            return {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync(command, cancellationToken));");
         sb.AppendLine("        };");
@@ -224,7 +226,8 @@ public static class DispatchEmitter
         StringBuilder sb,
         DispatchableTypeInfo type,
         HandlerInfo handler,
-        bool isVoid)
+        bool isVoid,
+        string validateCall)
     {
         var requestParamName = type.Kind == DispatchableKind.Query ? "query" : "command";
         var resultType = isVoid ? "object" : type.ResultFullTypeName;
@@ -248,6 +251,7 @@ public static class DispatchEmitter
         {
             sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
             sb.AppendLine("        {");
+            EmitValidateInnermost(sb, validateCall);
             sb.AppendLine($"            var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
             sb.AppendLine($"            return {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync({requestParamName}, cancellationToken));");
             sb.AppendLine("        };");
@@ -256,6 +260,7 @@ public static class DispatchEmitter
         {
             sb.AppendLine($"        Func<Task<{resultType}>> handlerCall = () =>");
             sb.AppendLine("        {");
+            EmitValidateInnermost(sb, validateCall);
             sb.AppendLine($"            var handler = serviceProvider.GetRequiredService<{handlerInterface}>();");
             sb.AppendLine($"            return handler.HandleAsync({requestParamName}, cancellationToken);");
             sb.AppendLine("        };");
@@ -271,5 +276,18 @@ public static class DispatchEmitter
         {
             sb.AppendLine($"        return await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors({requestParamName}, behaviors, handlerCall, cancellationToken);");
         }
+    }
+
+    /// <summary>
+    /// Emits a message's <c>Validate()</c> call inside the <c>handlerCall</c> lambda -- the innermost step of the
+    /// pipeline, immediately before the handler runs (or, for a fire-and-forget command, immediately before the
+    /// enqueue, still on the caller's thread). Every behavior, authorization included, therefore runs before the
+    /// caller's input is validated; every path still validates.
+    /// </summary>
+    private static void EmitValidateInnermost(StringBuilder sb, string validateCall)
+    {
+        sb.AppendLine("            // Validate() runs INNERMOST -- after every behavior, so a behavior that refuses (authorization) never runs the");
+        sb.AppendLine("            // caller's input (open:conduit-validates-before-it-authorizes). Every path still validates; nothing is opt-in.");
+        sb.AppendLine($"            {validateCall}");
     }
 }
