@@ -56,6 +56,15 @@ public sealed class WirePayloadShould
     }
 
     [TestMethod]
+    public void RefuseANullPayload()
+    {
+        // "null" deserializes to null, which would reach the handler as an NRE and answer InternalError.
+        var act = () => ConduitRuntime.DeserializeWire<Probe>(Json("null"));
+
+        act.Should().Throw<BadRequestException>().Which.Message.Should().Be("The request could not be read.");
+    }
+
+    [TestMethod]
     public void StillWriteEnumsByName()
     {
         JsonSerializer.Serialize(Color.Red, ConduitRuntime.JsonOptions).Should().Be("\"Red\"");

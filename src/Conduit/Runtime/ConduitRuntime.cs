@@ -16,7 +16,7 @@ namespace Conduit.Runtime;
 /// Runtime helpers used by the source-generated mediator. Not intended for direct use.
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
-public static class ConduitRuntime
+public static partial class ConduitRuntime
 {
     /// <summary>
     /// Shared JSON serializer options used by the generated mediator for wire serialization.
@@ -37,11 +37,16 @@ public static class ConduitRuntime
     /// (400) naming the JSON path, never the InternalError a raw <see cref="JsonException"/> becomes. Called by the
     /// generated mediator's wire dispatch; only the READ is mapped, so a handler's own serializer failure stays a 500.
     /// </summary>
+    /// <remarks>
+    /// Event wire paths (<c>DispatchEventAsync</c>, <c>PublishLocalEnvelopeAsync</c>) still read the payload raw, so an
+    /// unreadable event payload is a logged <see cref="JsonException"/>, not a 400.
+    /// </remarks>
     public static T DeserializeWire<T>(JsonElement payload)
     {
+        T? result;
         try
         {
-            return JsonSerializer.Deserialize<T>(payload, JsonOptions)!;
+            result = JsonSerializer.Deserialize<T>(payload, JsonOptions);
         }
         catch (JsonException ex)
         {
@@ -49,7 +54,13 @@ public static class ConduitRuntime
                 ? "The request could not be read."
                 : $"The request could not be read at '{ex.Path}'.");
         }
+
+        // A JSON null deserializes to null; the handler would NRE on it and answer InternalError. It is the caller's fault.
+        return result ?? throw new BadRequestException("The request could not be read.");
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,64}$")]
+    private static partial System.Text.RegularExpressions.Regex SafeReference();
 
     /// <summary>
     /// Checks a reply <see cref="DispatchResult{T}"/> for errors and returns the data.
@@ -270,7 +281,13 @@ public static class ConduitRuntime
             // A reference the user can quote and support can grep: the dispatch's ConversationId. ConduitHub mints a
             // fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line,
             // so finding it needs no log scopes. Refusals (the ConduitException arm above) carry none -- they are not bugs.
-            var reference = MessageContext.Current?.ConversationId ?? Guid.NewGuid().ToString("N");
+            // But the hub accepts a caller-supplied context, so the ConversationId is attacker-controlled: CR/LF would
+            // forge log lines, and spaces or parentheses would make the reference unparseable. Use it only when it is
+            // log-safe; otherwise mint one.
+            var conversationId = MessageContext.Current?.ConversationId;
+            var reference = conversationId is not null && SafeReference().IsMatch(conversationId)
+                ? conversationId
+                : Guid.NewGuid().ToString("N");
             LogDispatchError(logger, messageType, reference, ex);
             return DispatchResult<object>.Fail("InternalError", $"An unexpected error occurred (reference {reference}).");
         }
