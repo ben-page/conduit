@@ -50,6 +50,13 @@ public sealed class JobsBuilder
         set => this.Options.FailedRetention = value;
     }
 
+    /// <inheritdoc cref="JobsOptions.CompletedRetention"/>
+    public TimeSpan CompletedRetention
+    {
+        get => this.Options.CompletedRetention;
+        set => this.Options.CompletedRetention = value;
+    }
+
     /// <inheritdoc cref="JobsOptions.AutoCreateTable"/>
     public bool AutoCreateTable
     {

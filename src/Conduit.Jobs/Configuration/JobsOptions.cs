@@ -20,6 +20,14 @@ public sealed class JobsOptions
     public TimeSpan FailedRetention { get; set; } = TimeSpan.FromDays(7);
 
     /// <summary>
+    /// How long a completed non-coalescing trigger run is kept in the ledger. Default 1 day. This is
+    /// the redelivery window: a broker redelivering the triggering event within it collapses on the
+    /// run key, one redelivering later runs the job again. Schedule runs are unaffected — their
+    /// cursor already records completion — and so are coalescing runs, whose key must be freed.
+    /// </summary>
+    public TimeSpan CompletedRetention { get; set; } = TimeSpan.FromDays(1);
+
+    /// <summary>
     /// Whether to auto-create the jobs tables (schedules, runs, scopes, and run history) on startup.
     /// Default: true.
     /// </summary>

@@ -263,7 +263,8 @@ so an abandoned claim is still recovered when nothing else is scheduled.
 ### Why the runs table is deleted on success
 
 Deleting on success rather than marking complete is what keeps the ledger's size proportional to
-work in flight rather than to job volume. The table holds in-flight and failed runs, never history —
+work in flight rather than to job volume. The table holds in-flight and terminal runs — plus, for a
+short window, completed event-trigger runs (below) — never history —
 every terminal outcome is written to [run history](#run-history) first, in the same transaction as
 the ledger transition, so nothing is lost when the ledger row is later deleted.
 
@@ -273,6 +274,15 @@ exists. The **cursor** in `conduit_job_schedules` closes the gap: an occurrence 
 if it is strictly after `LastCompletedOccurrence`. That is why completion deletes the row and
 advances the cursor in a single transaction — a crash between the two would leave an occurrence that
 has run and looks like it has not.
+
+An event trigger has no cursor to fall back on, so a non-coalescing trigger run is the one success
+that is **not** deleted. Its row is kept with status `Completed` for `CompletedRetention` (default
+1 day) and then purged. Its run key is `{trigger}@{event MessageId}`, and the kept row is what makes a
+broker redelivering that event *after* the job finished — the usual shape, since redelivery follows a
+lost ack — collapse on the key instead of running the job a second time. Deleting it on success would
+only have caught redeliveries that raced the first run. A kept row has no claim and matches none of
+the queries that look for live work; only the unique key sees it. A coalescing trigger's run is still
+deleted on success: its key is the coalesce key, which the next scope needs.
 
 ### Claim renewal
 
@@ -320,7 +330,9 @@ in the future is left for the sweep. Pickup is what writes the run, and it delet
 same breath.
 
 A non-coalescing trigger's run key is `{trigger}@{event MessageId}`, which makes it idempotent
-against broker redelivery for free — no dedup store, no inbox required. A coalescing trigger keys on
+against broker redelivery for free — no dedup store, no inbox required. That holds while the run is
+in flight and for `CompletedRetention` (default 1 day) after it succeeds; a redelivery later than that
+runs the job again. A coalescing trigger keys on
 the coalesce key instead, which is why its merge has to be idempotent as well as widening; see
 [Coalescing a burst](#coalescing-a-burst-into-the-work-it-represents).
 
@@ -540,7 +552,8 @@ All four are created at startup if absent, unless `AutoCreateTable` is `false`.
 | `LastCompletedOccurrence` | The cursor that makes delete-on-success safe |
 | `IsPaused`, `PausedAt` | Durable, cluster-wide pause state |
 
-**`conduit_job_runs`** — in-flight and terminal runs only, never history.
+**`conduit_job_runs`** — in-flight and terminal runs, plus completed non-coalescing trigger runs
+kept for `CompletedRetention`; never history.
 
 | Column | Purpose |
 |---|---|
@@ -618,6 +631,7 @@ never reaches it.
 | `ClaimTimeout` | 2 minutes | How stale a claim must be before another host may take it |
 | `MaxAttempts` | 3 | Durable attempts before a run is marked failed |
 | `FailedRetention` | 7 days | How long terminal ledger rows are kept for inspection |
+| `CompletedRetention` | 1 day | How long a completed event-trigger run is kept, so a late redelivery of its event collapses |
 | `AutoCreateTable` | `true` | Whether to create the jobs tables (including run history) on startup |
 | `HistoryRetention` | 30 days | How long run history is kept |
 
@@ -628,6 +642,7 @@ conduit.AddJobs(jobs =>
     jobs.ClaimTimeout = TimeSpan.FromMinutes(1);
     jobs.MaxAttempts = 5;
     jobs.FailedRetention = TimeSpan.FromDays(30);
+    jobs.CompletedRetention = TimeSpan.FromDays(3);  // the longest redelivery delay you expect
     jobs.HistoryRetention = TimeSpan.FromDays(90);
     jobs.AutoCreateTable = false;                 // you manage schema through migrations
 

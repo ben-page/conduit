@@ -79,18 +79,24 @@ public interface IJobStore
 
     /// <summary>
     /// Records success: writes a <see cref="JobRunOutcome.Completed"/> history row, deletes the run
-    /// row, and — for a schedule run — advances the cursor, all in one transaction. A deleted row can
-    /// never be re-materialized by a host that has not yet seen the new cursor, and the history row
-    /// cannot be written without the deletion landing alongside it.
+    /// row (or keeps it as <see cref="JobRunStatus.Completed"/>), and — for a schedule run — advances
+    /// the cursor, all in one transaction. A deleted row can never be re-materialized by a host that
+    /// has not yet seen the new cursor, and the history row cannot be written without the ledger
+    /// transition landing alongside it.
     /// </summary>
     /// <param name="run">The completed run, read before this call.</param>
     /// <param name="scheduleName">The schedule to advance, or <see langword="null"/> for a trigger run.</param>
     /// <param name="occurrence">The occurrence to advance the cursor to.</param>
+    /// <param name="retainRunKey">
+    /// Keep the row as <see cref="JobRunStatus.Completed"/> instead of deleting it, so its run key
+    /// keeps refusing inserts until <see cref="PurgeCompletedAsync"/> removes it. Set for a
+    /// non-coalescing trigger run, whose key is the event's message id and has no cursor behind it.
+    /// </param>
     /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public Task CompleteAsync(
-        JobRun run, string? scheduleName, DateTimeOffset? occurrence, DateTimeOffset now,
+        JobRun run, string? scheduleName, DateTimeOffset? occurrence, bool retainRunKey, DateTimeOffset now,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -221,6 +227,17 @@ public interface IJobStore
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The number of rows deleted.</returns>
     public Task<int> PurgeTerminalAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes <see cref="JobRunStatus.Completed"/> runs older than the retention cutoff, which ends
+    /// their redelivery window. Separate from <see cref="PurgeTerminalAsync"/> because the two
+    /// retentions answer different questions — how long an operator can inspect a failure, and how
+    /// late a broker may redeliver an event.
+    /// </summary>
+    /// <param name="olderThan">The cutoff; runs due before it are deleted.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The number of rows deleted.</returns>
+    public Task<int> PurgeCompletedAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes a terminal run holding this key, so newer work can take it. A coalescing trigger's run

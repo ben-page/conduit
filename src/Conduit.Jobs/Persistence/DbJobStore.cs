@@ -268,7 +268,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
     /// <inheritdoc/>
     public async Task CompleteAsync(
-        JobRun run, string? scheduleName, DateTimeOffset? occurrence, DateTimeOffset now,
+        JobRun run, string? scheduleName, DateTimeOffset? occurrence, bool retainRunKey, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(run);
@@ -284,10 +284,21 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         await WriteHistoryAsync(
             connection, transaction, run, JobRunOutcome.Completed, error: null, now, cancellationToken);
 
+        // A kept row drops its claim, so it is invisible to every query that looks for live work —
+        // all of them filter on Pending or Claiming — and visible only to the unique key.
         await ExecuteNonQueryOnAsync(
             connection,
-            $"DELETE FROM {JobTableSchema.RunsTable} WHERE Id = @Id",
-            command => DbParameterHelper.Add(command, "@Id", run.Id),
+            retainRunKey
+                ? $"UPDATE {JobTableSchema.RunsTable} SET Status = @Completed, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id"
+                : $"DELETE FROM {JobTableSchema.RunsTable} WHERE Id = @Id",
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", run.Id);
+                if (retainRunKey)
+                {
+                    DbParameterHelper.Add(command, "@Completed", (int)JobRunStatus.Completed);
+                }
+            },
             cancellationToken,
             transaction);
 
@@ -663,6 +674,17 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             cancellationToken);
 
     /// <inheritdoc/>
+    public Task<int> PurgeCompletedAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            $"DELETE FROM {JobTableSchema.RunsTable} WHERE Status = @Completed AND RunAt <= @Cutoff",
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Completed", (int)JobRunStatus.Completed);
+                DbParameterHelper.Add(command, "@Cutoff", FormatTimestamp(olderThan));
+            },
+            cancellationToken);
+
+    /// <inheritdoc/>
     public async Task<bool> TryClearTerminalRunAsync(string jobKey, CancellationToken cancellationToken)
     {
         // Guarded on Status IN (Failed, Cancelled), the same pair PurgeTerminalAsync targets: a
@@ -793,7 +815,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     {
         JobRunStatus.Failed => JobRunOutcome.Failed,
         JobRunStatus.Cancelled => JobRunOutcome.Cancelled,
-        JobRunStatus.Pending or JobRunStatus.Claiming => throw new ArgumentOutOfRangeException(
+        JobRunStatus.Pending or JobRunStatus.Claiming or JobRunStatus.Completed => throw new ArgumentOutOfRangeException(
             nameof(status), status, "MarkTerminalAsync only accepts Failed or Cancelled."),
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unrecognized JobRunStatus."),
     };

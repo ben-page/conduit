@@ -199,6 +199,7 @@ public class JobsConfigurationShould
             jobs.ClaimTimeout = TimeSpan.FromMinutes(1);
             jobs.MaxAttempts = 5;
             jobs.FailedRetention = TimeSpan.FromDays(30);
+            jobs.CompletedRetention = TimeSpan.FromHours(6);
             jobs.AutoCreateTable = false;
             jobs.HistoryRetention = TimeSpan.FromDays(90);
         });
@@ -211,6 +212,7 @@ public class JobsConfigurationShould
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(1));
         options.MaxAttempts.Should().Be(5);
         options.FailedRetention.Should().Be(TimeSpan.FromDays(30));
+        options.CompletedRetention.Should().Be(TimeSpan.FromHours(6));
         options.AutoCreateTable.Should().BeFalse();
         options.HistoryRetention.Should().Be(TimeSpan.FromDays(90));
     }

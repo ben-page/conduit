@@ -450,13 +450,41 @@ public abstract class PersistenceEngineTestBase
         var claimed = await store.ClaimDueAsync(
             "worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
         await store.CompleteAsync(
-            claimed[0], "nightly", claimed[0].Occurrence, DateTimeOffset.UtcNow, CancellationToken.None);
+            claimed[0], "nightly", claimed[0].Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+            CancellationToken.None);
 
         // Assert — the delete and the cursor advance land together, on the live engine
         claimed[0].RunAt.Should().Be(occurrence);
         (await store.GetRunAsync("nightly@precise", CancellationToken.None)).Should().BeNull();
         var schedule = await store.GetScheduleAsync("nightly", CancellationToken.None);
         schedule!.LastCompletedOccurrence.Should().Be(occurrence);
+    }
+
+    [TestMethod]
+    public async Task KeepACompletedTriggerRunsKeyUntilItsRetentionPurge()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+        await store.TryMaterializeAsync(NewJobRun("event@msg-1", now.AddMinutes(-1)), CancellationToken.None);
+        var claimed = await store.ClaimDueAsync("worker", now, 10, CancellationToken.None);
+
+        // Act
+        await store.CompleteAsync(
+            claimed[0], null, null, retainRunKey: true, now, CancellationToken.None);
+        var redelivered = await store.InsertClaimedAsync(
+            NewJobRun("event@msg-1", now), "other-host", now, CancellationToken.None);
+        var purgedEarly = await store.PurgeCompletedAsync(now.AddMinutes(-2), CancellationToken.None);
+        var purged = await store.PurgeCompletedAsync(now, CancellationToken.None);
+
+        // Assert — the kept row refuses the redelivery on the live engine's unique key, survives a
+        // purge whose cutoff it has not reached, and goes once it has
+        redelivered.Should().BeNull();
+        purgedEarly.Should().Be(0);
+        purged.Should().Be(1);
+        (await store.GetRunAsync("event@msg-1", CancellationToken.None)).Should().BeNull();
     }
 
     // 7) Jobs coalescing scopes -----------------------------------------------------------------
@@ -568,11 +596,12 @@ public abstract class PersistenceEngineTestBase
         await store.TryMaterializeAsync(NewJobRun("nightly@completed", now), CancellationToken.None);
         var completedClaim = await store.ClaimDueAsync("worker-completed", now, 10, CancellationToken.None);
         await store.CompleteAsync(
-            completedClaim[0], null, null, now.AddMinutes(1), CancellationToken.None);
+            completedClaim[0], null, null, retainRunKey: false, now.AddMinutes(1), CancellationToken.None);
 
         await store.TryMaterializeAsync(NewJobRun("nightly@old", now), CancellationToken.None);
         var oldClaim = await store.ClaimDueAsync("worker-old", now, 10, CancellationToken.None);
-        await store.CompleteAsync(oldClaim[0], null, null, now.AddDays(-60), CancellationToken.None);
+        await store.CompleteAsync(
+            oldClaim[0], null, null, retainRunKey: false, now.AddDays(-60), CancellationToken.None);
 
         // Act — filter by outcome, comparing a bound int parameter against the real SMALLINT column
         var failedOnly = await store.QueryHistoryAsync(

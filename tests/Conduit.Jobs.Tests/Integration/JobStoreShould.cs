@@ -122,7 +122,7 @@ public class JobStoreShould
         var claimed = await fixture.Store.ClaimDueAsync("worker-a", Now, 10, CancellationToken.None);
 
         // Act
-        await fixture.Store.CompleteAsync(claimed[0], "nightly", Now, Now, CancellationToken.None);
+        await fixture.Store.CompleteAsync(claimed[0], "nightly", Now, retainRunKey: false, Now, CancellationToken.None);
 
         // Assert — once the row is gone the cursor is the only thing preventing a re-run
         (await fixture.Store.GetRunAsync(Key, CancellationToken.None)).Should().BeNull();
@@ -289,6 +289,57 @@ public class JobStoreShould
         // Assert
         purged.Should().Be(2, "cancelled runs are terminal history too and would otherwise never go");
         (await fixture.Store.GetRunAsync("nightly@new", CancellationToken.None)).Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public async Task KeepACompletedRunsKeyWhenAskedTo()
+    {
+        // Arrange
+        await using var fixture = await SqliteJobStoreFixture.CreateAsync();
+        await fixture.Store.TryMaterializeAsync(NewRun(Key, Now), CancellationToken.None);
+        var claimed = await fixture.Store.ClaimDueAsync("worker-a", Now, 10, CancellationToken.None);
+
+        // Act
+        await fixture.Store.CompleteAsync(
+            claimed[0], null, null, retainRunKey: true, Now, CancellationToken.None);
+
+        // Assert — the key keeps refusing both write paths, which is what collapses a redelivery
+        // arriving after the run finished, while nothing that looks for live work sees the row
+        var kept = await fixture.Store.GetRunAsync(Key, CancellationToken.None);
+        kept!.Status.Should().Be(JobRunStatus.Completed);
+        kept.ClaimToken.Should().BeNull();
+        (await fixture.Store.TryMaterializeAsync(NewRun(Key, Now), CancellationToken.None)).Should().BeFalse();
+        (await fixture.Store.InsertClaimedAsync(NewRun(Key, Now), "host-b", Now, CancellationToken.None))
+            .Should().BeNull();
+        (await fixture.Store.ClaimDueAsync("worker-b", Now, 10, CancellationToken.None)).Should().BeEmpty();
+        (await fixture.Store.HasOutstandingAsync("nightly", CancellationToken.None)).Should().BeFalse();
+    }
+
+    [TestMethod]
+    public async Task PurgeOnlyCompletedRunsPastTheirOwnRetention()
+    {
+        // Arrange — two kept completions either side of the cutoff, and a failed run older than both
+        await using var fixture = await SqliteJobStoreFixture.CreateAsync();
+        await fixture.Store.TryMaterializeAsync(NewRun("event@old", Now.AddDays(-3)), CancellationToken.None);
+        await fixture.Store.TryMaterializeAsync(NewRun("event@new", Now), CancellationToken.None);
+        await fixture.Store.TryMaterializeAsync(NewRun("event@failed", Now.AddDays(-30)), CancellationToken.None);
+        var failed = await fixture.Store.GetRunAsync("event@failed", CancellationToken.None);
+        await fixture.Store.MarkTerminalAsync(
+            failed!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Now,
+            CancellationToken.None);
+        foreach (var run in await fixture.Store.ClaimDueAsync("worker-a", Now, 10, CancellationToken.None))
+        {
+            await fixture.Store.CompleteAsync(run, null, null, retainRunKey: true, Now, CancellationToken.None);
+        }
+
+        // Act
+        var purged = await fixture.Store.PurgeCompletedAsync(Now.AddDays(-1), CancellationToken.None);
+
+        // Assert — the failed row answers to FailedRetention, not to this purge
+        purged.Should().Be(1);
+        (await fixture.Store.GetRunAsync("event@old", CancellationToken.None)).Should().BeNull();
+        (await fixture.Store.GetRunAsync("event@new", CancellationToken.None)).Should().NotBeNull();
+        (await fixture.Store.GetRunAsync("event@failed", CancellationToken.None)).Should().NotBeNull();
     }
 
     [TestMethod]
@@ -526,7 +577,7 @@ public class JobStoreShould
         var completedAt = Now.AddMinutes(1);
 
         // Act
-        await fixture.Store.CompleteAsync(claimed[0], "nightly", Now, completedAt, CancellationToken.None);
+        await fixture.Store.CompleteAsync(claimed[0], "nightly", Now, retainRunKey: false, completedAt, CancellationToken.None);
 
         // Assert — the outcome survives even though CompleteAsync just deleted the ledger row
         var page = await fixture.Store.QueryHistoryAsync(
@@ -597,7 +648,7 @@ public class JobStoreShould
 
         await fixture.Store.TryMaterializeAsync(NewRun("nightly@b", Now), CancellationToken.None);
         var completed = await fixture.Store.ClaimDueAsync("worker-b", Now, 10, CancellationToken.None);
-        await fixture.Store.CompleteAsync(completed[0], null, null, Now, CancellationToken.None);
+        await fixture.Store.CompleteAsync(completed[0], null, null, retainRunKey: false, Now, CancellationToken.None);
 
         // Act
         var page = await fixture.Store.QueryHistoryAsync(
@@ -617,7 +668,7 @@ public class JobStoreShould
             var key = $"nightly@run-{i}";
             await fixture.Store.TryMaterializeAsync(NewRun(key, Now), CancellationToken.None);
             var claimed = await fixture.Store.ClaimDueAsync($"worker-{i}", Now, 10, CancellationToken.None);
-            await fixture.Store.CompleteAsync(claimed[0], null, null, Now.AddMinutes(i), CancellationToken.None);
+            await fixture.Store.CompleteAsync(claimed[0], null, null, retainRunKey: false, Now.AddMinutes(i), CancellationToken.None);
         }
 
         // Act — page size 2, so the oldest entry needs a second page
@@ -642,11 +693,11 @@ public class JobStoreShould
         await using var fixture = await SqliteJobStoreFixture.CreateAsync();
         await fixture.Store.TryMaterializeAsync(NewRun("nightly@old", Now), CancellationToken.None);
         var old = await fixture.Store.ClaimDueAsync("worker-old", Now, 10, CancellationToken.None);
-        await fixture.Store.CompleteAsync(old[0], null, null, Now.AddDays(-30), CancellationToken.None);
+        await fixture.Store.CompleteAsync(old[0], null, null, retainRunKey: false, Now.AddDays(-30), CancellationToken.None);
 
         await fixture.Store.TryMaterializeAsync(NewRun("nightly@new", Now), CancellationToken.None);
         var recent = await fixture.Store.ClaimDueAsync("worker-new", Now, 10, CancellationToken.None);
-        await fixture.Store.CompleteAsync(recent[0], null, null, Now, CancellationToken.None);
+        await fixture.Store.CompleteAsync(recent[0], null, null, retainRunKey: false, Now, CancellationToken.None);
 
         // Act
         var purged = await fixture.Store.PurgeHistoryAsync(Now.AddDays(-7), CancellationToken.None);
