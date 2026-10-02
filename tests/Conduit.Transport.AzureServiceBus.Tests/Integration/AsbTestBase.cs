@@ -234,7 +234,7 @@ public abstract class AsbTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseAzureServiceBus(ConnectionString!, options =>
+                    endpoint.UseAzureServiceBus(ConnectionString, options =>
                         options.AdminConnectionString = AdminConnectionString));
             });
 
@@ -273,7 +273,7 @@ public abstract class AsbTestBase
                 conduit.TopologyMode = TopologyMode.Test;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
-                    endpoint.UseAzureServiceBus(ConnectionString!, options =>
+                    endpoint.UseAzureServiceBus(ConnectionString, options =>
                     {
                         options.AdminConnectionString = AdminConnectionString;
                         configureOptions?.Invoke(options);
@@ -320,7 +320,7 @@ public abstract class AsbTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseAzureServiceBus(ConnectionString!, options =>
+                    endpoint.UseAzureServiceBus(ConnectionString, options =>
                         options.AdminConnectionString = AdminConnectionString));
 
                 conduit.UseSqlite(connectionString);

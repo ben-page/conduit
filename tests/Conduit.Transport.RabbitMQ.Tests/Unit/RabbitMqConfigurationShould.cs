@@ -116,7 +116,7 @@ public class RabbitMqConfigurationShould
     }
 
     [TestMethod]
-    public async Task ExplainWhichKeyIsMissingWhenNoConnectionStringIsSupplied()
+    public void ExplainWhichKeyIsMissingWhenNoConnectionStringIsSupplied()
     {
         // Arrange
         var builder = BuilderWith(new Dictionary<string, string?>());

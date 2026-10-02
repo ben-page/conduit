@@ -33,7 +33,7 @@ public class KafkaTopologyModeShould : KafkaTestBase
                 conduit.TopologyMode = topologyMode;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseKafka(BootstrapServers!));
+                    endpoint.UseKafka(BootstrapServers));
             });
         });
     }

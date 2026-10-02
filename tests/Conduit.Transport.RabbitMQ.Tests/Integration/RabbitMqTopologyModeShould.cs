@@ -38,7 +38,7 @@ public class RabbitMqTopologyModeShould : RabbitMqTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(ConnectionString!));
+                    endpoint.UseRabbitMQ(ConnectionString));
             });
         });
     }

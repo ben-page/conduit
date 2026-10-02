@@ -66,7 +66,7 @@ public class KafkaReceiverPoolShould : KafkaTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseKafka(BootstrapServers!, options =>
+                    endpoint.UseKafka(BootstrapServers, options =>
                     {
                         options.DefaultConcurrency = defaultConcurrency;
                         options.AddPool(poolName, pool =>

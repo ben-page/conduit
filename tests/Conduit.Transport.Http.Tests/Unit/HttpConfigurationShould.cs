@@ -38,7 +38,7 @@ public class HttpConfigurationShould
     }
 
     [TestMethod]
-    public async Task ExplainWhichKeyIsMissingWhenNoBaseAddressIsSupplied()
+    public void ExplainWhichKeyIsMissingWhenNoBaseAddressIsSupplied()
     {
         // Arrange
         var builder = new ConduitBuilder(new ServiceCollection());
