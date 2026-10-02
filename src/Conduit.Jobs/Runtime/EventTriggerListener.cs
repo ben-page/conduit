@@ -68,7 +68,7 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
                 continue;
             }
 
-            await this.WriteRunAsync(trigger, @event!, messageId, now, cancellationToken);
+            await this.WriteRunAsync(trigger, @event, messageId, now, cancellationToken);
         }
     }
 

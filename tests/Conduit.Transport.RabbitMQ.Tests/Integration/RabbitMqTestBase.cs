@@ -120,7 +120,7 @@ public abstract class RabbitMqTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(ConnectionString!));
+                    endpoint.UseRabbitMQ(ConnectionString));
             });
 
             if (configureHandling is not null)
@@ -151,7 +151,7 @@ public abstract class RabbitMqTestBase
                 conduit.TopologyMode = TopologyMode.Test;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
-                    endpoint.UseRabbitMQ(ConnectionString!, configureOptions));
+                    endpoint.UseRabbitMQ(ConnectionString, configureOptions));
                 conduit.Options.Routes.Add(new ConduitRoute
                 {
                     Pattern = routeNamespace,
@@ -191,7 +191,7 @@ public abstract class RabbitMqTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(ConnectionString!));
+                    endpoint.UseRabbitMQ(ConnectionString));
 
                 conduit.UseSqlite(connectionString);
                 conduit.AddDurability(durability =>

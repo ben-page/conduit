@@ -44,7 +44,7 @@ public class RabbitMqReceiverPoolShould : RabbitMqTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(ConnectionString!, options =>
+                    endpoint.UseRabbitMQ(ConnectionString, options =>
                     {
                         options.AddPool(poolName, pool =>
                         {

@@ -33,7 +33,7 @@ public class ActiveMQTopologyModeShould : ActiveMQTestBase
                 conduit.TopologyMode = topologyMode;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMQ(ConnectionString!));
+                    endpoint.UseActiveMQ(ConnectionString));
             });
         });
     }

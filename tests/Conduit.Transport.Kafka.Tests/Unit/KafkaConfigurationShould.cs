@@ -84,7 +84,7 @@ public class KafkaConfigurationShould
     }
 
     [TestMethod]
-    public async Task ExplainWhichKeyIsMissingWhenNoBootstrapServersAreSupplied()
+    public void ExplainWhichKeyIsMissingWhenNoBootstrapServersAreSupplied()
     {
         // Arrange
         var builder = BuilderWith(new Dictionary<string, string?>());

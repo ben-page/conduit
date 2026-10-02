@@ -133,7 +133,7 @@ public abstract class KafkaTestBase
                     ?? TestTopologyPrefix.NewForTest(typeof(KafkaTestBase).Assembly);
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseKafka(BootstrapServers!));
+                    endpoint.UseKafka(BootstrapServers));
             });
 
             if (configureHandling is not null)
@@ -164,7 +164,7 @@ public abstract class KafkaTestBase
                 conduit.TopologyMode = TopologyMode.Test;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
-                    endpoint.UseKafka(BootstrapServers!, configureOptions));
+                    endpoint.UseKafka(BootstrapServers, configureOptions));
                 conduit.Options.Routes.Add(new ConduitRoute
                 {
                     Pattern = routeNamespace,
@@ -199,7 +199,7 @@ public abstract class KafkaTestBase
                     ?? TestTopologyPrefix.NewForTest(typeof(KafkaTestBase).Assembly);
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseKafka(BootstrapServers!));
+                    endpoint.UseKafka(BootstrapServers));
 
                 conduit.UseSqlite(connectionString);
                 conduit.AddDurability(durability =>

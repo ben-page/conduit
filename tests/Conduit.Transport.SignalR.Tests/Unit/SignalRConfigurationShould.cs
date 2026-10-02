@@ -36,7 +36,7 @@ public class SignalRConfigurationShould
     }
 
     [TestMethod]
-    public async Task ExplainWhichKeyIsMissingWhenNoHubUriIsSupplied()
+    public void ExplainWhichKeyIsMissingWhenNoHubUriIsSupplied()
     {
         // Arrange
         var builder = new ConduitBuilder(new ServiceCollection());

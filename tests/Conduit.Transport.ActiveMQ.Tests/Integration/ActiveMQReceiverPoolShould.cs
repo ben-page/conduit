@@ -44,7 +44,7 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMQ(ConnectionString!, options =>
+                    endpoint.UseActiveMQ(ConnectionString, options =>
                     {
                         options.AddPool(poolName, pool =>
                         {

@@ -127,7 +127,7 @@ public abstract class ActiveMQTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMQ(ConnectionString!));
+                    endpoint.UseActiveMQ(ConnectionString));
             });
 
             if (configureHandling is not null)
@@ -158,7 +158,7 @@ public abstract class ActiveMQTestBase
                 conduit.TopologyMode = TopologyMode.Test;
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
-                    endpoint.UseActiveMQ(ConnectionString!, configureOptions));
+                    endpoint.UseActiveMQ(ConnectionString, configureOptions));
                 conduit.Options.Routes.Add(new ConduitRoute
                 {
                     Pattern = routeNamespace,
@@ -196,7 +196,7 @@ public abstract class ActiveMQTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMQ(ConnectionString!));
+                    endpoint.UseActiveMQ(ConnectionString));
 
                 conduit.UseSqlite(connectionString);
                 conduit.AddDurability(durability =>

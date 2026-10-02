@@ -44,7 +44,7 @@ public class AsbReceiverPoolShould : AsbTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseAzureServiceBus(ConnectionString!, options =>
+                    endpoint.UseAzureServiceBus(ConnectionString, options =>
                     {
                         options.AdminConnectionString = AdminConnectionString;
                         options.AddPool(poolName, pool =>
