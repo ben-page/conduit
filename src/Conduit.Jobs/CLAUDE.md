@@ -151,6 +151,15 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   02:00 today?". The cursor in `conduit_job_schedules` does. `CompleteAsync` and `MarkTerminalAsync`
   both delete/update **and** advance the cursor in one transaction — a crash between two separate
   writes leaves an occurrence that has run and looks like it has not.
+- **A non-coalescing trigger run is kept on success, as `Completed`.** It has no cursor, so the row
+  is its only memory: deleting it made the `{trigger}@{MessageId}` key collapse only redeliveries that
+  raced the run, while the common redelivery — after a lost ack — arrives once the job has finished.
+  `ClaimedJobExecutor` passes `retainRunKey` from `ScheduleRegistry.IsMessageKeyedTrigger`, and
+  `CompleteAsync` turns the delete into an update that also clears the claim, so the row matches no
+  Pending/Claiming query and only the unique key sees it. `JobCleanup` purges it after
+  `CompletedRetention` via `PurgeCompletedAsync`, separately from `FailedRetention` because the two
+  answer different questions. Coalescing runs are still deleted: their key is the coalesce key, and a
+  kept row would freeze every later scope for it.
 - **`Occurrence` is separate from `RunAt`.** A retry moves `RunAt` to the backoff time; the cursor
   must still advance to the occurrence.
 - **`ScheduleName` holds a schedule *or* trigger name.** `AddJobs` rejects a collision between the

@@ -114,8 +114,9 @@ internal sealed partial class ClaimedJobExecutor
             {
                 case JobOutcome.Completed:
                     await store.CompleteAsync(
-                        run, this.CursorScheduleFor(run), run.Occurrence, this.timeProvider.GetUtcNow(),
-                        CancellationToken.None);
+                        run, this.CursorScheduleFor(run), run.Occurrence,
+                        retainRunKey: this.registry.IsMessageKeyedTrigger(run.ScheduleName),
+                        this.timeProvider.GetUtcNow(), CancellationToken.None);
                     break;
 
                 case JobOutcome.Cancelled:

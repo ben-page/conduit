@@ -50,6 +50,29 @@ public class EventTriggerShould
     }
 
     [TestMethod]
+    public async Task RunOnceWhenTheSameEventIsRedeliveredAfterTheRunCompleted()
+    {
+        // Arrange
+        var spy = new JobSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartHostAsync(database, new FakeTimeProvider(Start), spy);
+        var wireMediator = host.GetRequiredService<IWireMediator>();
+        var envelope = TestEnvelope.For(new ThingHappened("receipt"));
+        await DeliverWithMessageIdAsync(wireMediator, envelope, "msg-1");
+        var first = await JobsDatabaseProbe.WaitForOnlyRunAsync(database);
+        await JobsDatabaseProbe.WaitForRunAsync(
+            database, first.JobKey, run => run.Status == JobRunStatus.Completed);
+
+        // Act — the redelivery a lost ack produces: it arrives after the job has already succeeded
+        await DeliverWithMessageIdAsync(wireMediator, envelope, "msg-1");
+
+        // Assert — a successful run's row is kept rather than deleted, so its key still refuses the
+        // insert; deleting it on success held the guarantee only for redeliveries that raced the run
+        await Task.Delay(200);
+        spy.Count.Should().Be(1);
+    }
+
+    [TestMethod]
     public async Task WriteADelayedTriggerAsPendingRatherThanClaimed()
     {
         // Arrange

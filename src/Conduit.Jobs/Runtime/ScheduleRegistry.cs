@@ -61,4 +61,17 @@ public sealed class ScheduleRegistry
         => declaringName is not null
             && this.Schedules.Any(schedule =>
                 string.Equals(schedule.Name, declaringName, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Whether a run's declaring name refers to a trigger keyed on the event's message id — one that
+    /// does not coalesce. Only those runs keep their row on success: a schedule run has its cursor,
+    /// and a coalescing run's key is the coalesce key, which must be freed for the next scope.
+    /// </summary>
+    /// <param name="declaringName">The run's schedule or trigger name.</param>
+    /// <returns><see langword="true"/> when a non-coalescing trigger of that name is declared.</returns>
+    public bool IsMessageKeyedTrigger(string? declaringName)
+        => declaringName is not null
+            && this.Triggers.Any(trigger =>
+                trigger.CoalesceKey is null
+                && string.Equals(trigger.Name, declaringName, StringComparison.Ordinal));
 }

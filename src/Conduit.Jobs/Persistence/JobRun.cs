@@ -1,6 +1,9 @@
 namespace Conduit.Jobs.Persistence;
 
-/// <summary>One row of the run ledger: a single occurrence or triggered job, in flight or failed.</summary>
+/// <summary>
+/// One row of the run ledger: a single occurrence or triggered job, in flight or terminal — or, for a
+/// non-coalescing trigger run, kept as completed so a redelivered event still collapses on its key.
+/// </summary>
 public sealed class JobRun
 {
     /// <summary>Auto-increment primary key. Claims are ordered by it.</summary>

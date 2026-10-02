@@ -69,9 +69,9 @@ public sealed class ContendedJobStore : IJobStore
 
     /// <inheritdoc/>
     public Task CompleteAsync(
-        JobRun run, string? scheduleName, DateTimeOffset? occurrence, DateTimeOffset now,
+        JobRun run, string? scheduleName, DateTimeOffset? occurrence, bool retainRunKey, DateTimeOffset now,
         CancellationToken cancellationToken)
-        => this.inner.CompleteAsync(run, scheduleName, occurrence, now, cancellationToken);
+        => this.inner.CompleteAsync(run, scheduleName, occurrence, retainRunKey, now, cancellationToken);
 
     /// <inheritdoc/>
     public Task ReleaseAsync(long id, string claimToken, CancellationToken cancellationToken)
@@ -136,6 +136,10 @@ public sealed class ContendedJobStore : IJobStore
     /// <inheritdoc/>
     public Task<int> PurgeTerminalAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
         => this.inner.PurgeTerminalAsync(olderThan, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<int> PurgeCompletedAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+        => this.inner.PurgeCompletedAsync(olderThan, cancellationToken);
 
     /// <inheritdoc/>
     public Task<bool> TryClearTerminalRunAsync(string jobKey, CancellationToken cancellationToken)
