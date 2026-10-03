@@ -70,6 +70,8 @@ public record NoteDto(Guid Id, string Text);
 
 Types referenced by `[ClientVisible]` properties and return types are discovered transitively. If `GetNotesQuery` returns `IReadOnlyList<NoteDto>`, then `NoteDto` gets a TypeScript interface automatically even without `[ClientVisible]`. The attribute is only required on root dispatchable types and standalone DTOs you want exported.
 
+Every generated key of a command or query interface is **required** on the wire: the server refuses a request that omits a primary-constructor parameter (`ContractMismatch`, see [Error handling](../error-handling.md)). A C# default value on the parameter (`int Take = 50`) is how a member becomes optional on the wire; an explicit `null` is always accepted for a nullable member.
+
 ## Enable TypeGen
 
 ```xml

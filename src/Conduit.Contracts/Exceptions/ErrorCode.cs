@@ -51,6 +51,9 @@ public record ErrorCode
     /// <summary>HTTP 400 — invalid request.</summary>
     public static readonly ErrorCode BadRequest = new("BadRequest", 400);
 
+    /// <summary>HTTP 400 — the request is missing a member the contract requires (a sender built against an older contract).</summary>
+    public static readonly ErrorCode ContractMismatch = new("ContractMismatch", 400);
+
     private static readonly Dictionary<string, int> BuiltInCodes = new(StringComparer.Ordinal)
     {
         [NotFound.Value] = NotFound.HttpStatusCode,
@@ -60,6 +63,7 @@ public record ErrorCode
         [PreconditionFailed.Value] = PreconditionFailed.HttpStatusCode,
         [InternalError.Value] = InternalError.HttpStatusCode,
         [BadRequest.Value] = BadRequest.HttpStatusCode,
+        [ContractMismatch.Value] = ContractMismatch.HttpStatusCode,
     };
 
     /// <summary>

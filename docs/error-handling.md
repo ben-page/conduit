@@ -34,6 +34,7 @@ Built-in codes:
 | `ErrorCode.PreconditionFailed` | `"PreconditionFailed"` | 412 |
 | `ErrorCode.InternalError` | `"InternalError"` | 500 |
 | `ErrorCode.BadRequest` | `"BadRequest"` | 400 |
+| `ErrorCode.ContractMismatch` | `"ContractMismatch"` | 400 |
 
 ## Built-in exceptions
 
@@ -58,6 +59,27 @@ public abstract class ConduitException(ErrorCode code, string message) : Excepti
     public ErrorCode Code => code;
 }
 ```
+
+## ContractMismatch: a request missing a member
+
+An inbound wire request that is missing a primary-constructor parameter is refused with `ContractMismatchException`
+(code `"ContractMismatch"`, status 400). It means the sender was built against an older contract -- typically an
+out-of-date browser tab -- and would otherwise silently default (clear) a field it does not know about. The check is
+always on; there is no opt-in flag.
+
+- `Message`: `"This page is out of date: the request is missing {names}. Reload to continue."` (names joined `, `).
+- `Details`: one `DispatchErrorDetail(Field: <wire name>, Message: "missing")` per missing member, in constructor order.
+  The names come from the type's constructor and the naming policy, not from System.Text.Json's exception text.
+- **Explicit `null` is accepted** for a nullable member; only an *absent* key is refused.
+- **A parameter with a C# default may be omitted.** That is the declared opt-out: a default is how a member becomes
+  optional on the wire.
+- **The bound.** The check covers the request type's primary-constructor parameters. A settable property on a
+  non-positional (parameterless-constructor) nested model is NOT checked, and a missing member inside a nested
+  positional model is refused as a plain `BadRequest` naming the JSON path, not as `ContractMismatch`.
+- **Only the wire request read is strict** (`ConduitRuntime.DeserializeWire`). The shared `ConduitRuntime.JsonOptions` stays
+  lenient because it also reads stored `Conduit.Jobs` payloads, remote replies and events: a job stored before a
+  member was added must keep running.
+- A request with any other fault (wrong-typed field, integer enum ordinal) stays a `BadRequest`, even if a member is also missing.
 
 ## Custom error codes
 

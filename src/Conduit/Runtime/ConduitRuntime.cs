@@ -46,10 +46,19 @@ public static partial class ConduitRuntime
         T? result;
         try
         {
-            result = JsonSerializer.Deserialize<T>(payload, JsonOptions);
+            result = JsonSerializer.Deserialize<T>(payload, WireReadOptions);
         }
         catch (JsonException ex)
         {
+            // A missing constructor parameter is a stale sender, not a malformed request. Name the members from the
+            // contract (not from the exception text), and only when the lenient read succeeds -- so the missing
+            // member is the SOLE problem; any other fault stays a plain 400 naming its path.
+            var missing = MissingConstructorMembers(typeof(T), payload);
+            if (missing.Count > 0 && ReadsLeniently<T>(payload))
+            {
+                throw new ContractMismatchException(missing);
+            }
+
             throw new BadRequestException(string.IsNullOrEmpty(ex.Path)
                 ? "The request could not be read."
                 : $"The request could not be read at '{ex.Path}'.");
@@ -57,6 +66,88 @@ public static partial class ConduitRuntime
 
         // A JSON null deserializes to null; the handler would NRE on it and answer InternalError. It is the caller's fault.
         return result ?? throw new BadRequestException("The request could not be read.");
+    }
+
+    /// <summary>
+    /// <see cref="JsonOptions"/> plus <c>RespectRequiredConstructorParameters</c>, used ONLY by
+    /// <see cref="DeserializeWire{T}"/>. The shared <see cref="JsonOptions"/> must stay lenient: it also reads stored
+    /// <c>Conduit.Jobs</c> payloads, remote replies and events, where a record written before a member was added must
+    /// still deserialize.
+    /// </summary>
+    private static JsonSerializerOptions WireReadOptions { get; } =
+        new(JsonOptions) { RespectRequiredConstructorParameters = true };
+
+    private static bool ReadsLeniently<T>(JsonElement payload)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(payload, JsonOptions) is not null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The wire names of the constructor parameters (of the constructor System.Text.Json binds) that have no C# default
+    /// and are absent from <paramref name="payload"/>. Empty when the type has no parameterized constructor or the
+    /// payload is not an object. Checks T's own constructor only: a nested model's missing member is not named.
+    /// </summary>
+    private static List<string> MissingConstructorMembers(Type type, JsonElement payload)
+    {
+        var missing = new List<string>();
+        if (payload.ValueKind != JsonValueKind.Object)
+        {
+            return missing;
+        }
+
+        var ctor = BoundConstructor(type);
+        if (ctor is null)
+        {
+            return missing;
+        }
+
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in payload.EnumerateObject())
+        {
+            present.Add(property.Name);
+        }
+
+        foreach (var parameter in ctor.GetParameters())
+        {
+            if (parameter.HasDefaultValue || parameter.Name is null)
+            {
+                continue;
+            }
+
+            var member = type.GetProperty(parameter.Name,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.IgnoreCase);
+            var wireName = member?.GetCustomAttributes(typeof(JsonPropertyNameAttribute), true)
+                .OfType<JsonPropertyNameAttribute>().FirstOrDefault()?.Name
+                ?? JsonOptions.PropertyNamingPolicy?.ConvertName(parameter.Name) ?? parameter.Name;
+            if (!present.Contains(wireName))
+            {
+                missing.Add(wireName);
+            }
+        }
+
+        return missing;
+    }
+
+    private static System.Reflection.ConstructorInfo? BoundConstructor(Type type)
+    {
+        var ctors = type.GetConstructors();
+        var marked = ctors.FirstOrDefault(c => c.IsDefined(typeof(JsonConstructorAttribute), false));
+        if (marked is not null)
+        {
+            return marked;
+        }
+
+        // A record's copy constructor (one parameter of its own type) is never the bound one.
+        var candidates = ctors.Where(c => c.GetParameters() is not [{ } only] || only.ParameterType != type).ToArray();
+        return candidates.Length == 1 && candidates[0].GetParameters().Length > 0 ? candidates[0] : null;
     }
 
     [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,64}$")]

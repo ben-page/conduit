@@ -18,6 +18,8 @@ public sealed class WirePayloadShould
     public enum Color { Invalid = 0, Red = 1, Blue = 2 }
 
     public sealed record Probe(Color Color, Color? Maybe);
+
+    public sealed record Contract(int Id, string Title, string? Notes, DateOnly? Due, int Take = 50);
 #pragma warning restore CA1034
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
@@ -92,7 +94,7 @@ public sealed class WirePayloadShould
         var result = await ConduitRuntime.HandleWireRequest(
             "Test.Probe",
             [],
-            () => new DispatchEnvelope("Test.Probe", Json("""{"color":"Red"}""")),
+            () => new DispatchEnvelope("Test.Probe", Json("""{"color":"Red","maybe":null}""")),
             (_, payload, _) =>
             {
                 _ = ConduitRuntime.DeserializeWire<Probe>(payload);
@@ -103,5 +105,76 @@ public sealed class WirePayloadShould
 
         result.Error!.Code.Should().Be("InternalError");
         result.Error.Status.Should().Be(500);
+    }
+
+    [TestMethod]
+    public void RefuseAPayloadMissingANullableMember()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Contract>(Json("""{"id":1,"title":"t","due":null}"""));
+
+        var thrown = act.Should().Throw<ContractMismatchException>().Which;
+        thrown.Details!.Select(d => d.Field).Should().Equal("notes");
+        thrown.Details![0].Message.Should().Be("missing");
+        thrown.Code.Value.Should().Be("ContractMismatch");
+        thrown.Code.HttpStatusCode.Should().Be(400);
+        thrown.Message.Should().Be("This page is out of date: the request is missing notes. Reload to continue.");
+    }
+
+    [TestMethod]
+    public void NameEveryMissingMemberInConstructorOrder()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Contract>(Json("""{"title":"t"}"""));
+
+        var thrown = act.Should().Throw<ContractMismatchException>().Which;
+        thrown.Details!.Select(d => d.Field).Should().Equal("id", "notes", "due");
+        thrown.Message.Should().Contain("id, notes, due");
+    }
+
+    [TestMethod]
+    public void AcceptAnExplicitNull() =>
+        ConduitRuntime.DeserializeWire<Contract>(Json("""{"id":1,"title":"t","notes":null,"due":null}""")).Notes.Should().BeNull();
+
+    [TestMethod]
+    public void AcceptAnOmittedDefaultedMember() =>
+        ConduitRuntime.DeserializeWire<Contract>(Json("""{"id":1,"title":"t","notes":null,"due":null}""")).Take.Should().Be(50);
+
+    [TestMethod]
+    public void RefuseAPayloadMissingANonNullableValue()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Contract>(Json("""{"title":"t","notes":null,"due":null}"""));
+
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("id");
+    }
+
+    [TestMethod]
+    public void KeepAWrongTypedFieldABadRequestEvenWhenAMemberIsAlsoMissing()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Contract>(Json("""{"id":"x","title":"t"}"""));
+
+        act.Should().Throw<BadRequestException>().Which.Should().NotBeOfType<ContractMismatchException>();
+    }
+
+    [TestMethod]
+    public void LeaveTheSharedOptionsLenient()
+    {
+        JsonSerializer.Deserialize<Contract>("""{"id":1,"title":"t"}""", ConduitRuntime.JsonOptions)!
+            .Notes.Should().BeNull();
+        ConduitRuntime.JsonOptions.RespectRequiredConstructorParameters.Should().BeFalse();
+    }
+
+    [TestMethod]
+    public async Task AnswerContractMismatchThroughTheWireEntryPoint()
+    {
+        var result = await ConduitRuntime.HandleWireRequest(
+            "Test.Contract",
+            [],
+            () => new DispatchEnvelope("Test.Contract", Json("""{"id":1,"title":"t","due":null}""")),
+            (_, payload, _) => Task.FromResult<object?>(ConduitRuntime.DeserializeWire<Contract>(payload)),
+            NullLogger.Instance,
+            CancellationToken.None);
+
+        result.Error!.Code.Should().Be("ContractMismatch");
+        result.Error.Status.Should().Be(400);
+        result.Error.Details!.Select(d => d.Field).Should().Equal("notes");
     }
 }
