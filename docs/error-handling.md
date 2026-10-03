@@ -67,21 +67,29 @@ An inbound wire request that is missing a primary-constructor parameter is refus
 out-of-date browser tab -- and would otherwise silently default (clear) a field it does not know about. The check is
 always on; there is no opt-in flag.
 
-- `Message`: `"This page is out of date: the request is missing {names}. Reload to continue."` (names joined `, `).
-- `Details`: one `DispatchErrorDetail(Field: <wire path>, Message: "missing")` per missing member: an object's own missing
-  members in constructor order, then those of its nested models in payload order. A top-level member is named by its wire name (`eTag`); a member of a nested
-  positional model is named by its path (`lead.wipLimit`, `columns[1].wipLimit`). The paths come from the type's
-  constructors, its properties' types (a collection's element type, a dictionary's value type) and the naming policy,
-  walked against the payload -- never from System.Text.Json's exception text.
+- `Message`: `"This page is out of date: the request is missing {names}. Reload to continue."` (names joined `, `). At
+  most 20 members are named; the rest are counted (`… and 55 more.`), so a large payload cannot make a large
+  error. It declares no data property, so it stays a plain (not client-typed) refusal: `Type`/`Data` are null.
+- `Details`: one `DispatchErrorDetail(Field: <wire path>, Message: "missing")` per NAMED member: an object's own missing
+  members in constructor order, then those of its nested models in payload order. A top-level member is named by its
+  wire name (`eTag`); a member of a nested positional model by its path (`lead.wipLimit`, `columns[1].wipLimit`). A
+  dictionary value is named by the contract path `byKey[*].wipLimit`, never by its key: the key is client text, and it
+  never enters the message or `Details`. Paths are distinct. They come from the type's bound constructor, its
+  properties' types (a collection's element type, a dictionary's value type) and the naming policy, walked against the
+  payload -- never from System.Text.Json's exception text. The reflection is cached per type.
 - **Explicit `null` is accepted** for a nullable member; only an *absent* key is refused.
 - **A parameter with a C# default may be omitted.** That is the declared opt-out: a default is how a member becomes
   optional on the wire.
-- **The bound.** The check covers constructor parameters at any depth: the request type's own, and those of every
-  positional model nested in a property or inside a list or dictionary. It does NOT cover a settable or `init`
-  property of a non-positional (parameterless-constructor) model, at any depth: an absent one silently keeps its
-  default, as before. Nor does it name members beneath a polymorphic, abstract, interface, `object` or `JsonElement`
+- **The bound.** The check covers the constructor parameters System.Text.Json BINDS, at any depth: the request type's
+  own, and those of every nested model in a property or inside a list or dictionary. A class binds its
+  `[JsonConstructor]`, else its single public parameterized constructor when it has no public parameterless one. A
+  **struct** binds only a `[JsonConstructor]`: without one STJ builds it through its default constructor and setters,
+  so a positional `record struct` is NOT checked -- an absent member silently keeps its default, and the naming does not
+  claim otherwise. Nor is a settable or `init` property of a non-positional (parameterless-constructor) class, at any
+  depth. Nor does it name members beneath a polymorphic, abstract, interface, `object` or `JsonElement`
   member (its declared type does not say which constructor binds); a fault there is a plain `BadRequest` naming the
-  JSON path. A consumer that needs a nested model protected makes it positional.
+  JSON path. A consumer that needs a nested model protected makes it a positional record CLASS (or gives a struct a
+  `[JsonConstructor]`).
 - **Which reads are strict.** Only `ConduitRuntime.DeserializeWire`, which every generated wire dispatch uses: the
   envelope endpoint, the SignalR hub, batch items, and broker-delivered commands, including a dead letter replayed
   from the DLQ. A command queued on a broker (or dead-lettered) before a deploy added a member is therefore refused

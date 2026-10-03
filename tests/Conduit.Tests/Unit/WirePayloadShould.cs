@@ -50,6 +50,35 @@ public sealed class WirePayloadShould
         public int Secret { get; }
         public string? Other { get; }
     }
+    public sealed record Registry(IReadOnlyDictionary<string, Column> ByKey);
+
+    public sealed record Tags(IReadOnlyList<int> Ids, IReadOnlyList<string> Names);
+
+    public readonly record struct Tier(int Months, decimal? Cap);
+
+    public sealed record TierPolicy(IReadOnlyList<Tier> Tiers);
+
+    public sealed record NamedTierPolicy(string Name, IReadOnlyList<Tier> Tiers);
+
+#pragma warning disable CA1815 // a wire fixture, never compared
+    public readonly struct MarkedTier
+    {
+        [System.Text.Json.Serialization.JsonConstructor]
+        public MarkedTier(int months, decimal? cap)
+        {
+            this.Months = months;
+            this.Cap = cap;
+        }
+
+        public int Months { get; }
+
+        public decimal? Cap { get; }
+    }
+#pragma warning restore CA1815
+
+    public sealed record MarkedPolicy(IReadOnlyList<MarkedTier> Tiers);
+
+    public sealed record Many(IReadOnlyList<Column> Columns);
 #pragma warning restore CA1034
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
@@ -220,12 +249,75 @@ public sealed class WirePayloadShould
     }
 
     [TestMethod]
-    public void NameATopLevelAndANestedMissingMemberTogether()
+    public void NameATopLevelMemberWhenTheNestedModelsAreComplete()
     {
         var act = () => ConduitRuntime.DeserializeWire<Board>(Json(
             """{"lead":{"name":"l","wipLimit":null,"done":false},"columns":[]}"""));
 
         act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("title");
+    }
+
+    [TestMethod]
+    public void NameATopLevelAndANestedMissingMemberTogether()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Board>(Json("""{"lead":{"name":"l","done":false},"columns":[]}"""));
+
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("title", "lead.wipLimit");
+    }
+
+    [TestMethod]
+    public void NameADictionaryValuesMissingMemberByTheContractPathNeverByTheClientsKey()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Registry>(Json(
+            """{"byKey":{"a\r\nFAKE (reference x)":{"name":"a","done":true},"b":{"name":"b","done":false}}}"""));
+
+        var thrown = act.Should().Throw<ContractMismatchException>().Which;
+        thrown.Details!.Select(d => d.Field).Should().Equal("byKey[*].wipLimit");
+        thrown.Message.Should().NotContain("FAKE");
+    }
+
+    [TestMethod]
+    public void AcceptAnExplicitNullForANestedModelAndStopTheWalkThere() =>
+        ConduitRuntime.DeserializeWire<Board>(Json("""{"title":"b","lead":null,"columns":[]}""")).Lead.Should().BeNull();
+
+    [TestMethod]
+    public void ReadArraysOfPrimitivesAndNameAMissingArray()
+    {
+        ConduitRuntime.DeserializeWire<Tags>(Json("""{"ids":[1,2],"names":["a"]}""")).Ids.Should().Equal(1, 2);
+
+        var act = () => ConduitRuntime.DeserializeWire<Tags>(Json("""{"ids":[1]}"""));
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("names");
+    }
+
+    [TestMethod]
+    public void LeaveAStructWithoutJsonConstructorUnchecked()
+    {
+        // The documented bound: System.Text.Json builds such a struct through its default constructor and setters, so
+        // nothing is required -- and the naming must not claim otherwise.
+        ConduitRuntime.DeserializeWire<TierPolicy>(Json("""{"tiers":[{"months":1}]}""")).Tiers[0].Cap.Should().BeNull();
+
+        // When a class member IS missing, the struct's members are not named as if they were required.
+        var act = () => ConduitRuntime.DeserializeWire<NamedTierPolicy>(Json("""{"tiers":[{"months":1}]}"""));
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("name");
+    }
+
+    [TestMethod]
+    public void NameAMissingMemberOfAStructThatBindsAJsonConstructor()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<MarkedPolicy>(Json("""{"tiers":[{"months":1}]}"""));
+
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("tiers[0].cap");
+    }
+
+    [TestMethod]
+    public void NameAtMostTwentyMembersAndCountTheRest()
+    {
+        var payload = "{\"columns\":[" + string.Join(",", Enumerable.Repeat("{}", 25)) + "]}";
+
+        var thrown = FluentActions.Invoking(() => ConduitRuntime.DeserializeWire<Many>(Json(payload)))
+            .Should().Throw<ContractMismatchException>().Which;
+        thrown.Details.Should().HaveCount(20);
+        thrown.Message.Should().EndWith(" and 55 more. Reload to continue.");
     }
 
     [TestMethod]

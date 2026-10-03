@@ -53,10 +53,10 @@ public static partial class ConduitRuntime
             // A missing constructor parameter is a stale sender, not a malformed request. Name the members from the
             // contract (not from the exception text), at any depth, and only when the lenient read succeeds -- so the
             // missing member is the SOLE problem; any other fault stays a plain 400 naming its path.
-            var missing = MissingConstructorMembers(typeof(T), payload);
-            if (missing.Count > 0 && ReadsLeniently<T>(payload))
+            var (missing, total) = MissingConstructorMembers(typeof(T), payload);
+            if (total > 0 && ReadsLeniently<T>(payload))
             {
-                throw new ContractMismatchException(missing);
+                throw new ContractMismatchException(missing, total);
             }
 
             throw new BadRequestException(string.IsNullOrEmpty(ex.Path)
@@ -91,20 +91,27 @@ public static partial class ConduitRuntime
         }
     }
 
+    /// <summary>The most members a <see cref="ContractMismatchException"/> names; the rest are counted ("and N more").</summary>
+    internal const int MaxNamedMissingMembers = 20;
+
     /// <summary>
     /// The wire paths of the constructor parameters (of the constructor System.Text.Json binds) that have no C# default
-    /// and are absent from <paramref name="payload"/>, at ANY depth: a positional model nested in a property or inside a
-    /// list is walked too, so a missing member there is named by its path (<c>columns[0].wipLimit</c>), using the naming
-    /// policy. Computed from the contract and the payload, never parsed from the serializer's message. Empty when nothing
-    /// is missing or the contract cannot be named safely (the caller then answers a plain BadRequest).
+    /// and are absent from <paramref name="payload"/>, at ANY depth: a positional model nested in a property, inside a
+    /// list or as a dictionary value is walked too, so a missing member there is named by its path
+    /// (<c>columns[0].wipLimit</c>), using the naming policy. Computed from the contract and the payload, never parsed
+    /// from the serializer's message. Returns the first <see cref="MaxNamedMissingMembers"/> distinct paths and the
+    /// total count; (empty, 0) when nothing is missing or the contract cannot be named safely (the caller then answers a
+    /// plain BadRequest).
     /// </summary>
     /// <remarks>
-    /// Only constructor parameters are checked. A settable or init property of a non-positional model is not: an absent
-    /// one silently keeps its default, as it always has.
+    /// Only constructor parameters STJ binds are checked. A settable or init property of a non-positional model is not,
+    /// and neither is a STRUCT without <see cref="JsonConstructorAttribute"/>: STJ builds a struct through its default
+    /// constructor and setters, so an absent member silently keeps its default. A dictionary value is named under the
+    /// contract path <c>name[*]</c>, never by its client-supplied key.
     /// </remarks>
-    private static List<string> MissingConstructorMembers(Type type, JsonElement payload)
+    private static (IReadOnlyList<string> Named, int Total) MissingConstructorMembers(Type type, JsonElement payload)
     {
-        var missing = new List<string>();
+        var missing = new MissingSet();
         try
         {
             CollectMissing(type, payload, string.Empty, missing);
@@ -113,18 +120,36 @@ public static partial class ConduitRuntime
         catch (Exception)
 #pragma warning restore CA1031
         {
-            missing.Clear();
+            return ([], 0);
         }
 
-        return missing;
+        return (missing.Named, missing.Total);
     }
 
-    private static void CollectMissing(Type type, JsonElement value, string path, List<string> missing)
+    /// <summary>Distinct missing paths: the first <see cref="MaxNamedMissingMembers"/> kept, every one counted.</summary>
+    private sealed class MissingSet
     {
-        type = Nullable.GetUnderlyingType(type) ?? type;
+        private readonly HashSet<string> seen = new(StringComparer.Ordinal);
+
+        public List<string> Named { get; } = [];
+
+        public int Total => this.seen.Count;
+
+        public void Add(string path)
+        {
+            if (this.seen.Add(path) && this.Named.Count < MaxNamedMissingMembers)
+            {
+                this.Named.Add(path);
+            }
+        }
+    }
+
+    private static void CollectMissing(Type type, JsonElement value, string path, MissingSet missing)
+    {
+        var shape = ShapeOf(type);
         if (value.ValueKind == JsonValueKind.Array)
         {
-            if (ElementType(type) is { } elementType)
+            if (shape.ElementType is { } elementType)
             {
                 var index = 0;
                 foreach (var item in value.EnumerateArray())
@@ -142,43 +167,32 @@ public static partial class ConduitRuntime
             return;
         }
 
-        if (DictionaryValueType(type) is { } valueType)
+        if (shape.DictionaryValueType is { } valueType)
         {
+            // The key is the client's text: name the contract path, never the key itself.
             foreach (var entry in value.EnumerateObject())
             {
-                CollectMissing(valueType, entry.Value, Join(path, entry.Name), missing);
+                CollectMissing(valueType, entry.Value, $"{path}[*]", missing);
             }
 
             return;
         }
 
-        // A polymorphic or untyped member is read by a discriminator or not at all: its declared type does not say
-        // which constructor binds, so it is not named (any fault there stays a plain BadRequest).
-        if (type == typeof(object) || type == typeof(JsonElement) || type.IsAbstract || type.IsInterface
-            || type.IsDefined(typeof(JsonPolymorphicAttribute), true) || type.IsDefined(typeof(JsonDerivedTypeAttribute), true))
+        if (shape.Unnamed)
         {
             return;
         }
 
-        var members = WireMembers(type);
-        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var property in value.EnumerateObject())
+        if (shape.Required.Count > 0)
         {
-            present.Add(property.Name);
-        }
-
-        var ctor = BoundConstructor(type);
-        if (ctor is not null)
-        {
-            foreach (var parameter in ctor.GetParameters())
+            var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in value.EnumerateObject())
             {
-                if (parameter.HasDefaultValue || parameter.Name is null)
-                {
-                    continue;
-                }
+                present.Add(property.Name);
+            }
 
-                var wireName = members.FirstOrDefault(m => string.Equals(m.ClrName, parameter.Name, StringComparison.OrdinalIgnoreCase))
-                    .WireName ?? JsonOptions.PropertyNamingPolicy?.ConvertName(parameter.Name) ?? parameter.Name;
+            foreach (var wireName in shape.Required)
+            {
                 if (!present.Contains(wireName))
                 {
                     missing.Add(Join(path, wireName));
@@ -188,25 +202,68 @@ public static partial class ConduitRuntime
 
         foreach (var property in value.EnumerateObject())
         {
-            var member = members.FirstOrDefault(m => string.Equals(m.WireName, property.Name, StringComparison.OrdinalIgnoreCase));
-            if (member.Type is not null)
+            if (shape.Members.TryGetValue(property.Name, out var member))
             {
-                CollectMissing(member.Type, property.Value, Join(path, member.WireName!), missing);
+                CollectMissing(member.Type, property.Value, Join(path, member.WireName), missing);
             }
         }
     }
 
     private static string Join(string path, string name) => path.Length == 0 ? name : $"{path}.{name}";
 
-    /// <summary>A type's public instance properties as (CLR name, wire name, type); the first of any case-only twins wins.</summary>
-    private static List<(string ClrName, string? WireName, Type? Type)> WireMembers(Type type) =>
-        [.. type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-            .Where(p => p.GetIndexParameters().Length == 0 && !p.IsDefined(typeof(JsonIgnoreAttribute), true))
-            .Select(p => (p.Name,
-                (string?)(p.GetCustomAttributes(typeof(JsonPropertyNameAttribute), true)
-                    .OfType<JsonPropertyNameAttribute>().FirstOrDefault()?.Name
-                    ?? JsonOptions.PropertyNamingPolicy?.ConvertName(p.Name) ?? p.Name),
-                (Type?)p.PropertyType))];
+    /// <summary>What the walk needs of a type, reflected once per type.</summary>
+    private sealed record WireShape(
+        bool Unnamed,
+        Type? ElementType,
+        Type? DictionaryValueType,
+        IReadOnlyDictionary<string, (string WireName, Type Type)> Members,
+        IReadOnlyList<string> Required);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, WireShape> WireShapes = new();
+
+    private static WireShape ShapeOf(Type type) => WireShapes.GetOrAdd(Nullable.GetUnderlyingType(type) ?? type, BuildShape);
+
+    private static WireShape BuildShape(Type type)
+    {
+        var members = new Dictionary<string, (string WireName, Type Type)>(StringComparer.OrdinalIgnoreCase);
+        var byClrName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (p.GetIndexParameters().Length != 0 || p.IsDefined(typeof(JsonIgnoreAttribute), true))
+            {
+                continue;
+            }
+
+            var wireName = p.GetCustomAttributes(typeof(JsonPropertyNameAttribute), true)
+                .OfType<JsonPropertyNameAttribute>().FirstOrDefault()?.Name
+                ?? JsonOptions.PropertyNamingPolicy?.ConvertName(p.Name) ?? p.Name;
+            members.TryAdd(wireName, (wireName, p.PropertyType)); // case-only twins: the first wins
+            byClrName.TryAdd(p.Name, wireName);
+        }
+
+        // A polymorphic or untyped member is read by a discriminator or not at all: its declared type does not say
+        // which constructor binds, so it is not named (any fault there stays a plain BadRequest).
+        var unnamed = type == typeof(object) || type == typeof(JsonElement) || type.IsAbstract || type.IsInterface
+            || type.IsDefined(typeof(JsonPolymorphicAttribute), true) || type.IsDefined(typeof(JsonDerivedTypeAttribute), true);
+
+        var required = new List<string>();
+        if (!unnamed && BoundConstructor(type) is { } ctor)
+        {
+            foreach (var parameter in ctor.GetParameters())
+            {
+                if (parameter.HasDefaultValue || parameter.Name is null)
+                {
+                    continue;
+                }
+
+                required.Add(byClrName.TryGetValue(parameter.Name, out var wire)
+                    ? wire
+                    : JsonOptions.PropertyNamingPolicy?.ConvertName(parameter.Name) ?? parameter.Name);
+            }
+        }
+
+        return new WireShape(unnamed, ElementType(type), DictionaryValueType(type), members, required);
+    }
 
     private static Type? ElementType(Type type)
     {
@@ -235,9 +292,14 @@ public static partial class ConduitRuntime
         return dictionary?.GetGenericArguments()[1];
     }
 
+    /// <summary>
+    /// The constructor System.Text.Json binds, mirroring its rule: one marked <see cref="JsonConstructorAttribute"/>
+    /// (any visibility) wins. Otherwise a STRUCT binds none -- STJ builds it through its default constructor and setters,
+    /// so nothing is required -- and a class binds its single public parameterized constructor only when it has no public
+    /// parameterless one (a record's copy constructor never counts).
+    /// </summary>
     private static System.Reflection.ConstructorInfo? BoundConstructor(Type type)
     {
-        // System.Text.Json honours [JsonConstructor] on a non-public constructor too.
         var marked = type.GetConstructors(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
                 | System.Reflection.BindingFlags.Instance)
             .FirstOrDefault(c => c.IsDefined(typeof(JsonConstructorAttribute), false));
@@ -246,7 +308,11 @@ public static partial class ConduitRuntime
             return marked;
         }
 
-        // A record's copy constructor (one parameter of its own type) is never the bound one.
+        if (type.IsValueType)
+        {
+            return null;
+        }
+
         var ctors = type.GetConstructors();
         var candidates = ctors.Where(c => c.GetParameters() is not [{ } only] || only.ParameterType != type).ToArray();
         return candidates.Length == 1 && candidates[0].GetParameters().Length > 0 ? candidates[0] : null;

@@ -70,7 +70,7 @@ public record NoteDto(Guid Id, string Text);
 
 Types referenced by `[ClientVisible]` properties and return types are discovered transitively. If `GetNotesQuery` returns `IReadOnlyList<NoteDto>`, then `NoteDto` gets a TypeScript interface automatically even without `[ClientVisible]`. The attribute is only required on root dispatchable types and standalone DTOs you want exported.
 
-Every generated key of a command or query interface is **required** on the wire: the server's wire dispatch refuses a request that omits a constructor parameter, at any depth of positional models (`ContractMismatch`, see [Error handling](../error-handling.md); the RESTful endpoints stay lenient, and a settable property of a non-positional model is never checked). A C# default value on the parameter (`int Take = 50`) is how a member becomes optional on the wire; an explicit `null` is always accepted for a nullable member.
+Every generated key of a command or query interface is **required** on the wire: the server's wire dispatch refuses a request that omits a constructor parameter, at any depth of positional models (`ContractMismatch`, see [Error handling](../error-handling.md); the RESTful endpoints stay lenient, and neither a settable property of a non-positional model nor a struct without `[JsonConstructor]` is ever checked). A C# default value on the parameter (`int Take = 50`) is how a member becomes optional on the wire; an explicit `null` is always accepted for a nullable member.
 
 ## Enable TypeGen
 
