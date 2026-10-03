@@ -57,6 +57,7 @@ public sealed record DispatchResult<T>
             {
                 Status = exception.Code.HttpStatusCode,
                 Type = type,
+                Reference = exception.Reference,
                 // A typed refusal's data is never null on the wire -- even when a consumer's GetClientData
                 // override returns null -- because the client narrows on Type alone and expects an object.
                 Data = data is null
@@ -93,4 +94,9 @@ public sealed record DispatchError(
     /// set -- an empty object when the refusal declares no data (or its override returns null); otherwise
     /// null.</summary>
     public JsonElement? Data { get; init; }
+
+    /// <summary>The support reference of an UNEXPECTED failure (the <c>InternalError</c> arm): quotable by the user,
+    /// greppable in the log line that carries the same value. Null on a refusal and from a server that predates it.
+    /// <see cref="Exceptions.ConduitException.Reference"/> forwards onto it.</summary>
+    public string? Reference { get; init; }
 }

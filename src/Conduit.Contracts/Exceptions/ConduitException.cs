@@ -32,6 +32,13 @@ public abstract class ConduitException(
     public IReadOnlyList<DispatchErrorDetail>? Details => details;
 
     /// <summary>
+    /// A support reference to carry onto the wire (<c>DispatchError.Reference</c>) when this exception wraps an
+    /// unexpected failure -- e.g. a batch item that failed unexpectedly, so the batch can keep the item's reference.
+    /// <see langword="null"/> for an ordinary refusal. Never part of <see cref="GetClientData"/>.
+    /// </summary>
+    public string? Reference { get; init; }
+
+    /// <summary>
     /// The typed data a client reads for this refusal: the public instance properties a SUBCLASS declares (on
     /// itself or on an ancestor below <see cref="ConduitException"/>), keyed by property name. An EMPTY dictionary
     /// when <see cref="IsClientTyped"/> is true for this type but it declares no properties — a typed refusal's

@@ -118,7 +118,8 @@ public sealed partial class WireRequestFailureShould
 
         result.Error!.Code.Should().Be("InternalError");
         result.Error.Status.Should().Be(500);
-        result.Error.Message.Should().MatchRegex(@"^An unexpected error occurred \(reference [^\s()]+\)\.$");
+        result.Error.Message.Should().Be("An unexpected error occurred.");
+        result.Error.Reference.Should().MatchRegex("^[A-Za-z0-9-]{1,64}$");
         result.Error.Message.Should().NotContain("secrets");
         result.Error.Type.Should().BeNull();
         result.Error.Data.Should().BeNull();
@@ -137,7 +138,7 @@ public sealed partial class WireRequestFailureShould
             logger,
             CancellationToken.None);
 
-        var reference = ReferenceInMessage().Match(result.Error!.Message).Groups[1].Value;
+        var reference = result.Error!.Reference;
         reference.Should().NotBeNullOrEmpty();
         logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Error)
             .Which.Message.Should().Contain(reference);
@@ -161,9 +162,10 @@ public sealed partial class WireRequestFailureShould
                 logger,
                 CancellationToken.None);
 
-            result.Error!.Message.Should().MatchRegex(@"^An unexpected error occurred \(reference [A-Za-z0-9-]+\)\.$");
+            result.Error!.Message.Should().Be("An unexpected error occurred.");
+            result.Error.Reference.Should().MatchRegex("^[0-9a-f]{32}$");
             result.Error.Message.Should().NotContain("FAKE").And.NotContain("abc");
-            var reference = ReferenceInMessage().Match(result.Error.Message).Groups[1].Value;
+            var reference = result.Error.Reference!;
             logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Error)
                 .Which.Message.Should().Contain(reference).And.NotContain("FAKE");
         }
@@ -181,7 +183,8 @@ public sealed partial class WireRequestFailureShould
         {
             var result = await DispatchThrowing(new InvalidOperationException("boom"));
 
-            result.Error!.Message.Should().Be("An unexpected error occurred (reference conv-123-ABC).");
+            result.Error!.Message.Should().Be("An unexpected error occurred.");
+            result.Error.Reference.Should().Be("conv-123-ABC");
         }
         finally
         {
@@ -189,8 +192,49 @@ public sealed partial class WireRequestFailureShould
         }
     }
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\(reference ([^\s()]+)\)")]
-    private static partial System.Text.RegularExpressions.Regex ReferenceInMessage();
+    [TestMethod]
+    public async Task CarryNoReferenceOnARefusal()
+    {
+        var result = await DispatchThrowing(new NotFoundException("gone"));
+
+        result.Error!.Reference.Should().BeNull();
+    }
+
+    [TestMethod]
+    public void KeepAReferenceTheExceptionCarries()
+    {
+        var result = DispatchResult<object>.Fail(new DatalessRefusal { Reference = "abc" });
+
+        result.Error!.Reference.Should().Be("abc");
+    }
+
+    [TestMethod]
+    public void RoundTripTheReferenceThroughJsonAndTolerateItsAbsence()
+    {
+        var failed = DispatchResult<object>.Fail(new DatalessRefusal { Reference = "abc" });
+        var json = JsonSerializer.Serialize(failed, ConduitRuntime.JsonOptions);
+        json.Should().Contain("\"reference\":\"abc\"");
+        JsonSerializer.Deserialize<DispatchResult<object>>(json, ConduitRuntime.JsonOptions)!.Error!.Reference.Should().Be("abc");
+
+        // An older server sends no reference.
+        var old = JsonSerializer.Deserialize<DispatchResult<object>>(
+            "{\"error\":{\"code\":\"InternalError\",\"message\":\"An unexpected error occurred.\",\"status\":500}}",
+            ConduitRuntime.JsonOptions);
+        old!.Error!.Reference.Should().BeNull();
+    }
+
+    [TestMethod]
+    public void PutTheReferenceOnTheExceptionUnwrapReplyThrows()
+    {
+        var reply = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
+            "{\"error\":{\"code\":\"InternalError\",\"message\":\"An unexpected error occurred.\",\"status\":500,\"reference\":\"ref-1\"}}",
+            ConduitRuntime.JsonOptions);
+        var act = () => ConduitRuntime.UnwrapReply(reply);
+
+        var thrown = act.Should().Throw<RemoteDispatchException>().Which;
+        thrown.Reference.Should().Be("ref-1");
+        thrown.Message.Should().Contain("ref-1").And.Contain("InternalError");
+    }
 
     private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
     {

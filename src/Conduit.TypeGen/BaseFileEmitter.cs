@@ -69,6 +69,8 @@ public static class BaseFileEmitter
         sb.AppendLine("  /** A declared refusal's full type name; narrow with `isError`. */");
         sb.AppendLine("  type?: string;");
         sb.AppendLine("  data?: unknown;");
+        sb.AppendLine("  /** An unexpected failure's support reference; absent on refusals and from older servers. */");
+        sb.AppendLine("  reference?: string;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("export interface ConduitErrorDetail {");

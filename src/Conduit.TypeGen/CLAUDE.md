@@ -39,7 +39,8 @@
     was found); and the narrowing helper `export function isError<K extends keyof ErrorMap>(error: unknown, type:
     K): error is { type: K; data: ErrorMap[K] }`.
   - `conduit.ts`'s `ConduitError` carries `status: number` (the HTTP-status category; 0 from a server that
-    predates it), `type?: string` (a declared refusal's full type name), and `data?: unknown`.
+    predates it), `type?: string` (a declared refusal's full type name), `data?: unknown`, and `reference?: string` (an unexpected failure's support reference; optional, absent on refusals
+    and from older servers).
   - **camelCase parity with the wire**: the emitted interface keys use `TypeScriptEmitter.ToCamelCase`; the
     wire (`ConduitException.GetClientData`) keys with `JsonNamingPolicy.CamelCase.ConvertName`. These are two
     separate implementations, so they could in principle disagree — checked exhaustively (every combination of

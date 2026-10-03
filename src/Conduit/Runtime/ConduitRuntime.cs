@@ -155,15 +155,16 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// Checks a reply <see cref="DispatchResult{T}"/> for errors and returns the data.
-    /// Throws <see cref="InvalidOperationException"/> if the result contains an error.
+    /// Throws <see cref="RemoteDispatchException"/> (an <see cref="InvalidOperationException"/>, carrying the reference) if the result contains an error.
     /// Used by all transports after receiving a reply from a remote endpoint.
     /// </summary>
     public static object? UnwrapReply(DispatchResult<JsonElement?>? result)
     {
         if (result?.Error is not null)
         {
-            throw new InvalidOperationException(
-                $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}");
+            var reference = result.Error.Reference is null ? string.Empty : $" (reference {result.Error.Reference})";
+            throw new RemoteDispatchException(
+                $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}{reference}", result.Error.Reference);
         }
 
         return result?.Data;
@@ -380,7 +381,8 @@ public static partial class ConduitRuntime
                 ? conversationId
                 : Guid.NewGuid().ToString("N");
             LogDispatchError(logger, messageType, reference, ex);
-            return DispatchResult<object>.Fail("InternalError", $"An unexpected error occurred (reference {reference}).");
+            var failed = DispatchResult<object>.Fail("InternalError", "An unexpected error occurred.");
+            return failed with { Error = failed.Error! with { Reference = reference } };
         }
         finally
         {

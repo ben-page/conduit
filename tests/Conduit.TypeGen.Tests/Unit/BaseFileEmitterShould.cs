@@ -43,6 +43,7 @@ public class BaseFileEmitterShould
         conduitError.Should().Contain("  status: number;");
         conduitError.Should().Contain("  type?: string;");
         conduitError.Should().Contain("  data?: unknown;");
+        conduitError.Should().Contain("  reference?: string;");
     }
 
     [TestMethod]

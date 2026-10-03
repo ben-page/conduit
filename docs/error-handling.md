@@ -177,7 +177,11 @@ caveat for them.
 
 ### Unhandled exceptions
 
-Non-`ConduitException` errors are caught, logged at Error level, and returned as `DispatchResult.Fail("InternalError", "An unexpected error occurred")`. The original message is never leaked to the caller.
+Non-`ConduitException` errors are caught, logged at Error level, and returned as `InternalError` (status 500) with the fixed message `"An unexpected error occurred."`. The original message is never leaked to the caller.
+
+The support reference is a structured field, `DispatchError.Reference` (`reference?: string` in the generated `ConduitError`), never message text. It is the dispatch's `ConversationId` when that is log-safe (`^[A-Za-z0-9-]{1,64}$`; the id is caller-supplied, so anything else could forge log lines), otherwise a minted 32-hex id, and the Error log line (EventId 1) carries the same value so support can grep for what the user quotes. Refusals carry none. An older server sends none, so a client treats the field as optional and the message still reads as a sentence on its own.
+
+`ConduitException.Reference` (init-only, never part of the client data) lets code that wraps a failed inner dispatch (a batch item) keep the inner reference: `DispatchResult.Fail(ConduitException)` copies it onto the error. `ConduitRuntime.UnwrapReply` throws `RemoteDispatchException` (an `InvalidOperationException`) whose `Reference` is the remote error's.
 
 ### Wire events
 
