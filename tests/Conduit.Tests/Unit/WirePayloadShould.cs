@@ -20,6 +20,36 @@ public sealed class WirePayloadShould
     public sealed record Probe(Color Color, Color? Maybe);
 
     public sealed record Contract(int Id, string Title, string? Notes, DateOnly? Due, int Take = 50);
+
+    public sealed record Column(string Name, int? WipLimit, [property: System.Text.Json.Serialization.JsonPropertyName("done")] bool IsDone);
+
+    public sealed record Board(string Title, Column Lead, IReadOnlyList<Column> Columns);
+
+    public sealed record Settable
+    {
+        public string Name { get; init; } = "";
+        public int? WipLimit { get; init; }
+    }
+
+    public sealed record Wrapper(Settable Inner, IReadOnlyList<Contract> Contracts);
+
+    public sealed record Throwing(string Name)
+    {
+        public string Name { get; } = Name ?? throw new ArgumentNullException(nameof(Name));
+    }
+
+    public sealed class Hidden
+    {
+#pragma warning disable IDE0051 // bound by System.Text.Json through [JsonConstructor]
+        [System.Text.Json.Serialization.JsonConstructor]
+        private Hidden(int secret) => this.Secret = secret;
+#pragma warning restore IDE0051
+
+        public Hidden(string other) => this.Other = other;
+
+        public int Secret { get; }
+        public string? Other { get; }
+    }
 #pragma warning restore CA1034
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
@@ -176,5 +206,69 @@ public sealed class WirePayloadShould
         result.Error!.Code.Should().Be("ContractMismatch");
         result.Error.Status.Should().Be(400);
         result.Error.Details!.Select(d => d.Field).Should().Equal("notes");
+    }
+
+    [TestMethod]
+    public void NameAMissingMemberOfANestedPositionalModelByItsPath()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Board>(Json(
+            """{"title":"b","lead":{"name":"l","done":false},"columns":[{"name":"a","wipLimit":1,"done":true},{"name":"b"}]}"""));
+
+        var thrown = act.Should().Throw<ContractMismatchException>().Which;
+        thrown.Details!.Select(d => d.Field).Should().Equal("lead.wipLimit", "columns[1].wipLimit", "columns[1].done");
+        thrown.Code.Value.Should().Be("ContractMismatch");
+    }
+
+    [TestMethod]
+    public void NameATopLevelAndANestedMissingMemberTogether()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Board>(Json(
+            """{"lead":{"name":"l","wipLimit":null,"done":false},"columns":[]}"""));
+
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("title");
+    }
+
+    [TestMethod]
+    public void AcceptACompleteNestedPayload() =>
+        ConduitRuntime.DeserializeWire<Board>(Json(
+                """{"title":"b","lead":{"name":"l","wipLimit":null,"done":false},"columns":[{"name":"a","wipLimit":2,"done":true}]}"""))
+            .Columns.Should().ContainSingle().Which.WipLimit.Should().Be(2);
+
+    [TestMethod]
+    public void LeaveASettablePropertyOfANonPositionalNestedModelUnchecked()
+    {
+        // The documented bound: only constructor parameters are checked. A positional model inside a list beneath it is.
+        ConduitRuntime.DeserializeWire<Wrapper>(Json("""{"inner":{"name":"n"},"contracts":[]}"""))
+            .Inner.WipLimit.Should().BeNull();
+
+        var act = () => ConduitRuntime.DeserializeWire<Wrapper>(Json(
+            """{"inner":{},"contracts":[{"id":1,"title":"t","due":null}]}"""));
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("contracts[0].notes");
+    }
+
+    [TestMethod]
+    public void KeepAWrongTypedNestedFieldABadRequest()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Board>(Json(
+            """{"title":"b","lead":{"name":"l","wipLimit":"x"},"columns":[]}"""));
+
+        act.Should().Throw<BadRequestException>().Which.Should().NotBeOfType<ContractMismatchException>();
+    }
+
+    [TestMethod]
+    public void AnswerBadRequestWhenTheLenientReadThrowsSomethingElse()
+    {
+        // The defaulted (null) Name makes the constructor throw ArgumentNullException: not a 500, a plain 400.
+        var act = () => ConduitRuntime.DeserializeWire<Throwing>(Json("{}"));
+
+        act.Should().Throw<BadRequestException>().Which.Should().NotBeOfType<ContractMismatchException>();
+    }
+
+    [TestMethod]
+    public void NameTheMembersOfANonPublicJsonConstructor()
+    {
+        var act = () => ConduitRuntime.DeserializeWire<Hidden>(Json("""{"other":"o"}"""));
+
+        act.Should().Throw<ContractMismatchException>().Which.Details!.Select(d => d.Field).Should().Equal("secret");
     }
 }

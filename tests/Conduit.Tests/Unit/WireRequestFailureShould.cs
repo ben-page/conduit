@@ -148,7 +148,7 @@ public sealed partial class WireRequestFailureShould
     public async Task MintAReferenceWhenTheConversationIdIsNotLogSafe()
     {
         // The hub accepts a caller-supplied context, so the ConversationId is attacker-controlled: CR/LF would forge log
-        // lines and spaces/parentheses would break the client's reference parse. Anything but [A-Za-z0-9-]{1,64} is replaced.
+        // lines. Anything but [A-Za-z0-9-]{1,64} is replaced.
         const string injected = "abc\r\n2026-01-01 FAKE (reference x)";
         MessageContext.StartDispatchFromTransport("m-1", null, injected);
         try

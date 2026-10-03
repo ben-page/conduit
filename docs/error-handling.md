@@ -68,17 +68,28 @@ out-of-date browser tab -- and would otherwise silently default (clear) a field 
 always on; there is no opt-in flag.
 
 - `Message`: `"This page is out of date: the request is missing {names}. Reload to continue."` (names joined `, `).
-- `Details`: one `DispatchErrorDetail(Field: <wire name>, Message: "missing")` per missing member, in constructor order.
-  The names come from the type's constructor and the naming policy, not from System.Text.Json's exception text.
+- `Details`: one `DispatchErrorDetail(Field: <wire path>, Message: "missing")` per missing member: an object's own missing
+  members in constructor order, then those of its nested models in payload order. A top-level member is named by its wire name (`eTag`); a member of a nested
+  positional model is named by its path (`lead.wipLimit`, `columns[1].wipLimit`). The paths come from the type's
+  constructors, its properties' types (a collection's element type, a dictionary's value type) and the naming policy,
+  walked against the payload -- never from System.Text.Json's exception text.
 - **Explicit `null` is accepted** for a nullable member; only an *absent* key is refused.
 - **A parameter with a C# default may be omitted.** That is the declared opt-out: a default is how a member becomes
   optional on the wire.
-- **The bound.** The check covers the request type's primary-constructor parameters. A settable property on a
-  non-positional (parameterless-constructor) nested model is NOT checked, and a missing member inside a nested
-  positional model is refused as a plain `BadRequest` naming the JSON path, not as `ContractMismatch`.
-- **Only the wire request read is strict** (`ConduitRuntime.DeserializeWire`). The shared `ConduitRuntime.JsonOptions` stays
-  lenient because it also reads stored `Conduit.Jobs` payloads, remote replies and events: a job stored before a
-  member was added must keep running.
+- **The bound.** The check covers constructor parameters at any depth: the request type's own, and those of every
+  positional model nested in a property or inside a list or dictionary. It does NOT cover a settable or `init`
+  property of a non-positional (parameterless-constructor) model, at any depth: an absent one silently keeps its
+  default, as before. Nor does it name members beneath a polymorphic, abstract, interface, `object` or `JsonElement`
+  member (its declared type does not say which constructor binds); a fault there is a plain `BadRequest` naming the
+  JSON path. A consumer that needs a nested model protected makes it positional.
+- **Which reads are strict.** Only `ConduitRuntime.DeserializeWire`, which every generated wire dispatch uses: the
+  envelope endpoint, the SignalR hub, batch items, and broker-delivered commands, including a dead letter replayed
+  from the DLQ. A command queued on a broker (or dead-lettered) before a deploy added a member is therefore refused
+  after it, so **a broker-routed command's new member needs a C# default**. The RESTful endpoints
+  (`ConduitRestHandlers`' `ReadFromJsonAsync`) and the multipart binder read with ASP.NET's options and stay lenient:
+  a REST request missing a member still defaults it. The shared `ConduitRuntime.JsonOptions` stays lenient because it
+  also reads stored `Conduit.Jobs` payloads, remote replies and events: a job stored before a member was added must
+  keep running.
 - A request with any other fault (wrong-typed field, integer enum ordinal) stays a `BadRequest`, even if a member is also missing.
 
 ## Custom error codes
