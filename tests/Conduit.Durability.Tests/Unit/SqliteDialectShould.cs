@@ -117,6 +117,7 @@ public class SqliteDialectShould
                 SELECT Id FROM conduit_outbox
                 WHERE MessageId IN ({0})
                   AND (Status = @PendingStatus OR (Status = @ClaimingStatus AND ClaimedAt <= @ClaimCutoff))
+                  AND RetryCount = 0
                 ORDER BY Id
             )
             """);

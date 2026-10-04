@@ -35,4 +35,7 @@ public sealed class OutboxTableSchema : IClaimableTableSchema
 
     /// <inheritdoc/>
     public string ClaimTokenColumn => "ClaimToken";
+
+    /// <inheritdoc/>
+    public string AttemptCountColumn => "RetryCount";
 }

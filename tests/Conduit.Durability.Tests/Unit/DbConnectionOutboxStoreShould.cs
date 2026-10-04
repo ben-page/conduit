@@ -310,6 +310,46 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task NotClaimByMessageIdAnEntryTheRelayHasAlreadyAttempted()
+    {
+        // Arrange — a post-commit flush that runs later than the grace period finds the relay already
+        // tried the entry, failed, and released it back to Pending. The relay owns its retries from here:
+        // a flush attempt on top would be one attempt beyond MaxRetries that no RetryCount check sees.
+        var factory = new StubConnectionFactory();
+        await using var _ = factory;
+        var store = new DbConnectionOutboxStore(factory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        await factory.BeginTransactionAsync();
+        var transaction = factory.GetCurrentTransaction()!;
+        await store.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = "msg-1",
+                    ConversationId = "conv-1",
+                    Type = "TestEvent",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            transaction,
+            CancellationToken.None);
+        await factory.CommitAsync();
+
+        var relayed = await store.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
+        await store.IncrementRetryAsync(relayed[0].Id, CancellationToken.None);
+
+        // Act
+        var claimed = await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);
+
+        // Assert
+        claimed.Should().BeEmpty();
+        var reclaimed = await store.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
+        reclaimed.Should().ContainSingle().Which.RetryCount.Should().Be(1, "the relay still retries it");
+    }
+
+    [TestMethod]
     public async Task DeleteCompletedEntriesOlderThanRetentionPeriod()
     {
         // Arrange — save an entry, mark it sent

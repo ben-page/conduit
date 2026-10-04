@@ -37,4 +37,10 @@ public interface IClaimableTableSchema
 
     /// <summary>The claim-token column identifying the worker holding the claim.</summary>
     public string ClaimTokenColumn { get; }
+
+    /// <summary>
+    /// The count of failed attempts already made on the row. <see cref="ISqlDialect.BuildClaimByIdsSql"/>
+    /// claims only rows where it is zero: a by-id claim is a first attempt, never a retry.
+    /// </summary>
+    public string AttemptCountColumn { get; }
 }

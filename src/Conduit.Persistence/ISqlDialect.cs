@@ -124,7 +124,9 @@ public interface ISqlDialect
     /// Builds the complete atomic "claim by message ids" SQL: transition rows matching a MessageId
     /// list from the pending status (<c>@PendingStatus</c>) — or stale claiming rows
     /// (<c>@ClaimingStatus</c>) whose claimed-at is at or before <c>@ClaimCutoff</c> — to the claiming
-    /// status (<c>@ClaimingStatus</c>), stamping <c>@ClaimedAt</c> and <c>@ClaimToken</c>. The result
+    /// status (<c>@ClaimingStatus</c>), stamping <c>@ClaimedAt</c> and <c>@ClaimToken</c>. Only rows whose
+    /// <see cref="IClaimableTableSchema.AttemptCountColumn"/> is zero are eligible: a by-id claim is a first
+    /// attempt, and a row already attempted belongs to the claim-pending path's retries. The result
     /// contains a <c>{0}</c> placeholder where the caller substitutes the comma-separated
     /// <c>@p0, @p1, ...</c> parameter list. The status values are bound parameters. Parameters:
     /// <c>@ClaimToken</c>, <c>@ClaimedAt</c>, <c>@ClaimCutoff</c>, <c>@PendingStatus</c>,

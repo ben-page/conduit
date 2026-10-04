@@ -136,6 +136,7 @@ public sealed class SqlServerDialect : ISqlDialect
                 SELECT {1} FROM {0} WITH (ROWLOCK, UPDLOCK, READPAST)
                 WHERE {2} IN ({{0}})
                   AND ({3} = @PendingStatus OR ({3} = @ClaimingStatus AND {5} <= @ClaimCutoff))
+                  AND {7} = 0
             )
             """,
             schema.TableName,
@@ -144,6 +145,7 @@ public sealed class SqlServerDialect : ISqlDialect
             schema.StatusColumn,
             schema.CreatedAtColumn,
             schema.ClaimedAtColumn,
-            schema.ClaimTokenColumn);
+            schema.ClaimTokenColumn,
+            schema.AttemptCountColumn);
     }
 }

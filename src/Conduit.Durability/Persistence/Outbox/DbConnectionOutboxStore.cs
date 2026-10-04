@@ -210,7 +210,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
         // Atomically claim the matching rows under our token, then read back what we claimed.
         // The UPDATE guarantees a row is claimed by exactly one worker, so the relay and an
-        // immediate-send flush can never both dispatch the same entry.
+        // immediate-send flush can never both dispatch the same entry. Only a never-attempted row is
+        // eligible: a flush that runs later than the grace period, after the relay has already tried and
+        // released the row, leaves it to the relay, whose retries are the ones MaxRetries bounds.
         await this.ExecuteNonQueryAsync(
             claimSql,
             command =>

@@ -106,6 +106,7 @@ public class SqlServerDialectShould
                 SELECT Id FROM conduit_outbox WITH (ROWLOCK, UPDLOCK, READPAST)
                 WHERE MessageId IN ({0})
                   AND (Status = @PendingStatus OR (Status = @ClaimingStatus AND ClaimedAt <= @ClaimCutoff))
+                  AND RetryCount = 0
             )
             """);
     }

@@ -37,4 +37,7 @@ public sealed class JobRunsTableSchema : IClaimableTableSchema
 
     /// <inheritdoc/>
     public string ClaimTokenColumn => "ClaimToken";
+
+    /// <inheritdoc/>
+    public string AttemptCountColumn => "AttemptCount";
 }
