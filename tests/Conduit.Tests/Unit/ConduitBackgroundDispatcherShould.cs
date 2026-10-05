@@ -100,8 +100,62 @@ public sealed class ConduitBackgroundDispatcherShould
 
         // Assert
         secondRan.Should().BeFalse();
-        logger.Entries.Should().Contain(entry => entry.EventId.Id == 303 && entry.Level == LogLevel.Warning && entry.Message.Contains('1'),
+        logger.Entries.Should().Contain(entry => entry.EventId.Id == 303 && entry.Level == LogLevel.Warning && entry.Message.Contains("with 1 fire-and-forget"),
             "the loss is no longer silent: one queued item was abandoned, and the log says how many");
+    }
+
+    [TestMethod]
+    public async Task ReturnAtTheHostsDeadlineEvenWhenAnItemIgnoresItsToken()
+    {
+        // Arrange -- item one ignores its token entirely; the host's deadline must still bound StopAsync.
+        var logger = new RecordingLogger<ConduitBackgroundDispatcher>();
+        var dispatcher = new ConduitBackgroundDispatcher(logger);
+        await dispatcher.StartAsync(CancellationToken.None);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        dispatcher.Enqueue(async _ =>
+        {
+            firstStarted.SetResult();
+            await releaseFirst.Task;
+        });
+        dispatcher.Enqueue(_ => Task.CompletedTask);
+        await firstStarted.Task.WaitAsync(Generous);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        // Act
+        var stopping = dispatcher.StopAsync(deadline.Token);
+        var returnedInTime = await Task.WhenAny(stopping, Task.Delay(Generous)) == stopping;
+        releaseFirst.SetResult();
+
+        // Assert
+        returnedInTime.Should().BeTrue("a wedged item must not hold the host's shutdown past its deadline");
+        logger.Entries.Should().Contain(entry => entry.EventId.Id == 303 && entry.Message.Contains("with 1 fire-and-forget"),
+            "the item still queued behind the wedged one is reported abandoned");
+    }
+
+    [TestMethod]
+    public async Task StopAfterDispose_PastTheDeadline_WithoutThrowing()
+    {
+        // Arrange -- disposed, then stopped, while the reader is held by an item that ignores its token.
+        var dispatcher = new ConduitBackgroundDispatcher(NullLogger<ConduitBackgroundDispatcher>.Instance);
+        await dispatcher.StartAsync(CancellationToken.None);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        dispatcher.Enqueue(async _ =>
+        {
+            firstStarted.SetResult();
+            await releaseFirst.Task;
+        });
+        await firstStarted.Task.WaitAsync(Generous);
+        dispatcher.Dispose();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        // Act
+        var act = async () => await dispatcher.StopAsync(deadline.Token).WaitAsync(Generous);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+        releaseFirst.SetResult();
     }
 
     [TestMethod]

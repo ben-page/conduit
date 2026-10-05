@@ -8,7 +8,8 @@ namespace Conduit.Runtime;
 /// Hosted service that executes fire-and-forget command handlers and event listeners
 /// in the background. Work items are enqueued by the generated mediator and processed
 /// sequentially. On shutdown every item already queued runs, with a live token, until the host's
-/// shutdown deadline; whatever is left then is logged (<c>ShutdownAbandoned</c>).
+/// shutdown deadline. At the deadline the running item's token is cancelled, <see cref="StopAsync"/> returns
+/// even if that item ignores it, and the items still queued are logged (<c>ShutdownAbandoned</c>), not run.
 /// </summary>
 public sealed class ConduitBackgroundDispatcher : BackgroundService
 {
@@ -23,6 +24,10 @@ public sealed class ConduitBackgroundDispatcher : BackgroundService
     // abandon every queued item (deferred:needs-graceful-drain).
     private readonly CancellationTokenSource drainAbort = new();
 
+    // Items written but not yet taken by the reader. StopAsync reports it at the deadline instead of draining the
+    // channel to count: the reader may still be inside a wedged item then, and this is a SingleReader channel.
+    private int pending;
+
     /// <summary>
     /// Creates a new background dispatcher.
     /// </summary>
@@ -33,14 +38,17 @@ public sealed class ConduitBackgroundDispatcher : BackgroundService
 
     /// <summary>
     /// Enqueues a work item for background execution. Returns immediately.
-    /// The work item receives the shutdown cancellation token.
+    /// The work item receives a token that stays live while shutdown drains the queue, and is cancelled only when
+    /// the host's shutdown deadline passes.
     /// </summary>
     public void Enqueue(Func<CancellationToken, Task> workItem)
     {
         ArgumentNullException.ThrowIfNull(workItem);
 
+        Interlocked.Increment(ref this.pending);
         if (!this.workChannel.Writer.TryWrite(workItem))
         {
+            Interlocked.Decrement(ref this.pending);
             LogEnqueueFailed(this.logger, null);
         }
     }
@@ -61,6 +69,7 @@ public sealed class ConduitBackgroundDispatcher : BackgroundService
             {
                 while (!token.IsCancellationRequested && reader.TryRead(out var workItem))
                 {
+                    Interlocked.Decrement(ref this.pending);
                     try
                     {
                         await workItem(token);
@@ -91,28 +100,39 @@ public sealed class ConduitBackgroundDispatcher : BackgroundService
         // StopAsync may be called more than once (e.g. test host teardown).
         this.workChannel.Writer.TryComplete();
 
-        // Drain: let the reader run every item already queued, with a LIVE token, until the host's deadline.
+        // Drain: let the reader run every item already queued, with a LIVE token, until the host's deadline. The wait
+        // itself is bounded by the deadline too, so an item that ignores its token cannot hold shutdown past it.
         if (this.ExecuteTask is { IsCompleted: false } executeTask)
         {
-            using var registration = cancellationToken.Register(
-                static state => ((CancellationTokenSource)state!).Cancel(), this.drainAbort);
-            await executeTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await executeTask.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (!executeTask.IsCompleted)
+            {
+                // Deadline passed: stop the reader taking another item, so what is left stays queued and counted.
+                // Cancelled here rather than from a registration on the host's token -- WaitAsync's own registration
+                // runs first and resumes this method inline, which disposed ours before it ever fired.
+                this.CancelDrain();
+            }
         }
 
-        // Count what is left by draining it: a SingleReader unbounded channel cannot Count (CanCount is false). Safe
-        // here -- the reader above has finished, or never started.
-        var abandoned = 0;
-        while (this.workChannel.Reader.TryRead(out _))
-        {
-            abandoned++;
-        }
-
+        var abandoned = Volatile.Read(ref this.pending);
         if (abandoned > 0)
         {
             LogShutdownAbandoned(this.logger, abandoned, null);
         }
 
         await base.StopAsync(cancellationToken);
+    }
+
+    private void CancelDrain()
+    {
+        try
+        {
+            this.drainAbort.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposed before StopAsync -- the base already cancelled the reader's stopping token.
+        }
     }
 
     /// <inheritdoc />
