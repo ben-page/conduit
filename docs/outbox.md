@@ -134,6 +134,10 @@ The `AddOutbox()` call registers:
 - `OutboxRelay` as a background service
 - `DbConnectionOutboxStore` with the chosen dialect
 
+### Capture-only
+
+Set `options.CaptureOnly = true` for a process that shares its outbox table with another process whose relay owns delivery. A second relay could claim a row whose listener lives only in the other process and mark it sent with nobody having handled it. A capture-only outbox registers `OutboxCapture` (as `IOutboundInterceptor`) and `OutboxBehavior<,>`, so rows are still written on the caller's transaction, but it registers **no** `OutboxRelay` and its `IOutboxFlusher` is the no-op `CaptureOnlyOutboxFlusher`: nothing is delivered, flushed, or cleaned up by this process. Messages published with no ambient transaction are not captured and still deliver locally, exactly as without an outbox.
+
 ## Providing a transaction
 
 A transaction-aware connection factory is **mandatory** for the outbox. The outbox behavior writes entries using the transaction returned by `IConduitConnectionFactory.GetCurrentTransaction()` so that the business data and the outbox entry commit atomically.

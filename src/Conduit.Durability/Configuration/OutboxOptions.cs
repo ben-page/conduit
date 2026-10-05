@@ -28,4 +28,14 @@ public sealed class OutboxOptions
 
     /// <summary>How often the relay runs retention cleanup. Default: 1 hour.</summary>
     public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Capture outbound messages into the outbox on the caller's transaction, but never deliver them: no
+    /// <see cref="Runtime.Outbox.OutboxRelay"/> is registered and <see cref="Runtime.Outbox.IOutboxFlusher"/>
+    /// is a no-op. For a process that shares its outbox table with another process whose relay owns
+    /// delivery — a second relay could claim a row whose listener lives only in the other process and mark
+    /// it sent with nobody having handled it. Messages published with no ambient transaction are not
+    /// captured and still deliver locally, exactly as without an outbox. Default: <see langword="false"/>.
+    /// </summary>
+    public bool CaptureOnly { get; set; }
 }

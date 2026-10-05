@@ -38,12 +38,19 @@ public sealed class DurabilityBuilder
         this.Services.AddScoped<OutboxCapture>();
         this.Services.AddScoped<IOutboundInterceptor>(
             serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
-        this.Services.AddScoped<IOutboxFlusher>(
-            serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
+        if (options.CaptureOnly)
+        {
+            // Another process's relay owns delivery (OutboxOptions.CaptureOnly's remarks).
+            this.Services.AddSingleton<IOutboxFlusher, CaptureOnlyOutboxFlusher>();
+        }
+        else
+        {
+            this.Services.AddScoped<IOutboxFlusher>(
+                serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
+            this.Services.AddHostedService<OutboxRelay>();
+        }
 
         this.Services.TryAddTransient(typeof(OutboxBehavior<,>));
-
-        this.Services.AddHostedService<OutboxRelay>();
 
         this.Services.AddSingleton(Options.Create(options));
         return this;
