@@ -523,23 +523,20 @@ public static partial class ConduitRuntime
         Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
-        => HandleWireRequest(messageType, interceptors, createEnvelope, dispatch, logger, cancellationToken, translators: null);
+        => HandleWireRequest(messageType, interceptors, createEnvelope, dispatch, logger, translators: null, cancellationToken);
 
     /// <summary>
     /// As the overload without translators, but an exception no <see cref="ConduitException"/> arm claims is offered to
     /// each <see cref="IWireExceptionTranslator"/> before it becomes <c>InternalError</c>.
     /// </summary>
-    // CA1068: the token stays before the translators so the forwarding overload above is the same call plus one trailing argument.
-#pragma warning disable CA1068
     public static async Task<DispatchResult<object>> HandleWireRequest(
         string messageType,
         IEnumerable<IInboundInterceptor> interceptors,
         Func<DispatchEnvelope> createEnvelope,
         Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
         ILogger logger,
-        CancellationToken cancellationToken,
-        IEnumerable<IWireExceptionTranslator>? translators)
-#pragma warning restore CA1068
+        IEnumerable<IWireExceptionTranslator>? translators,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(messageType);
         ArgumentNullException.ThrowIfNull(interceptors);

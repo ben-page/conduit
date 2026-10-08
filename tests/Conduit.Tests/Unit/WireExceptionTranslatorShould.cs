@@ -24,8 +24,8 @@ public sealed class WireExceptionTranslatorShould
             () => new DispatchEnvelope("Test.Stale", JsonSerializer.SerializeToElement(new { })),
             (_, _, _) => throw toThrow,
             NullLogger.Instance,
-            CancellationToken.None,
-            translators);
+            translators,
+            CancellationToken.None);
 
     [TestMethod]
     public async Task AnswerTheTranslatedRefusal()
