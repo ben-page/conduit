@@ -79,7 +79,18 @@ Handlers never reference a transport. See [Transports](transports/index.md).
 An **observation** (`MessageObservation`) is a record emitted during dispatch via
 `MessageContext.Observe(...)`. An **observer** (`IConduitObserver`) receives observations plus the
 current `MessageContext`. The audit subsystem registers an observer to build the audit trail; types
-marked `[DoNotAudit]` suppress payload capture. See [Audit](audit.md).
+marked `[DoNotAudit]` suppress payload capture, and a property or positional-record parameter marked
+`[DoNotAudit]` is dropped from the captured body (`ConduitRuntime.AuditJsonOptions`; wire
+serialization is unaffected). See [Audit](audit.md).
+
+### IWireExceptionTranslator
+
+A `Conduit.Runtime` extension point, `ConduitException? Translate(Exception)`, that lets a host map an
+exception thrown by a handler to a refusal. `HandleWireRequest` consults every registered translator
+in its catch-all before answering `InternalError`; a claimed exception becomes that refusal, with no
+support reference. A translator that throws is logged and skipped. Typical use: mapping a data
+layer's concurrency exception to `PreconditionFailedException` (412). See
+[Error handling](error-handling.md).
 
 ### ConduitBackgroundDispatcher (fire-and-forget)
 

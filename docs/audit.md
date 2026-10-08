@@ -180,7 +180,22 @@ conduit.AddAudit(audit => audit.Suppress<HealthCheck>());
 conduit.AddAudit(audit => audit.SuppressPayload<UserLogin>());
 ```
 
-`[DoNotAudit]` suppresses payload capture only — the dispatch is still observed and recorded, just without the message body. `Suppress<T>()` drops the type from the audit trail entirely; `SuppressPayload<T>()` keeps the record but omits the body.
+`[DoNotAudit]` is also valid on a property, or on a positional-record parameter, to drop that one member and keep the rest of the body:
+
+```csharp
+// On a positional record, mark the parameter (it also drops the bound property).
+public sealed record UserLogin(string Username, [DoNotAudit] string Password) : ICommand;
+
+public sealed class Profile
+{
+    public string Name { get; init; } = "";
+    [DoNotAudit] public string Ssn { get; init; } = "";
+}
+```
+
+Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops marked properties and the properties bound to marked constructor parameters. Names match case-insensitively, and base types are walked. Wire serialization keeps `JsonOptions`, so the member still travels on the wire.
+
+`[DoNotAudit]` on a type suppresses payload capture only — the dispatch is still observed and recorded, just without the message body. `Suppress<T>()` drops the type from the audit trail entirely; `SuppressPayload<T>()` keeps the record but omits the body.
 
 ## What gets captured
 
