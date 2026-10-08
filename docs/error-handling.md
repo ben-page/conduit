@@ -9,6 +9,7 @@
   - [RESTful endpoints](#restful-endpoints)
   - [Envelope endpoint (wire dispatch)](#envelope-endpoint-wire-dispatch)
   - [Unhandled exceptions](#unhandled-exceptions)
+  - [Translating an unexpected exception](#translating-an-unexpected-exception)
   - [Wire events](#wire-events)
 - [ErrorCode equality](#errorcode-equality)
 
@@ -196,11 +197,30 @@ caveat for them.
 
 ### Unhandled exceptions
 
-Non-`ConduitException` errors are caught, logged at Error level, and returned as `InternalError` (status 500) with the fixed message `"An unexpected error occurred."`. The original message is never leaked to the caller.
+On the envelope endpoint, a non-`ConduitException` error is first offered to the host's translators (next section). One that no translator claims is logged at Error level and returned as `InternalError` (status 500) with the fixed message `"An unexpected error occurred."`. The original message is never leaked to the caller.
 
 The support reference is a structured field, `DispatchError.Reference` (`reference?: string` in the generated `ConduitError`), never message text. It is the dispatch's `ConversationId` when that is log-safe (`^[A-Za-z0-9-]{1,64}$`; the id is caller-supplied, so anything else could forge log lines), otherwise a minted 32-hex id, and the Error log line (EventId 1) carries the same value so support can grep for what the user quotes. Refusals carry none. An older server sends none, so a client treats the field as optional and the message still reads as a sentence on its own.
 
 `ConduitException.Reference` (init-only, never part of the client data) lets code that wraps a failed inner dispatch (a batch item) keep the inner reference: `DispatchResult.Fail(ConduitException)` copies it onto the error. `ConduitRuntime.UnwrapReply` throws `RemoteDispatchException` (an `InvalidOperationException`) whose `Reference` is the remote error's.
+
+### Translating an unexpected exception
+
+`IWireExceptionTranslator` (`Conduit.Runtime`) lets a host map an exception it knows to a refusal:
+`ConduitException? Translate(Exception)`. In its catch-all, before it answers `InternalError`,
+`HandleWireRequest` offers the exception to every registered translator in registration order. The generated
+mediator passes `serviceProvider.GetServices<IWireExceptionTranslator>()`.
+
+- The first translator that returns a `ConduitException` wins. Its refusal goes back like any other refusal
+  (status, details, client type and data), with no support reference. The use is logged at Information level
+  (EventId 6, `WireExceptionTranslated`) with the original exception, because a translated exception escaped the
+  pipeline and someone may want to know where.
+- A translator that returns `null` passes. When every translator passes, the error becomes `InternalError` as above.
+- A translator that throws is logged at Error level (EventId 5, `WireExceptionTranslatorFailed`) and skipped. The
+  logged exception is an `AggregateException` holding the translator's failure, then the original. The next
+  translator still gets its turn.
+
+Typical use: a data layer's concurrency exception that escaped the pipeline becomes `PreconditionFailedException`
+(412). Only the envelope endpoint consults translators. A RESTful endpoint does not (see above).
 
 ### Wire events
 

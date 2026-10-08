@@ -90,7 +90,7 @@ exception thrown by a handler to a refusal. `HandleWireRequest` consults every r
 in its catch-all before answering `InternalError`; a claimed exception becomes that refusal, with no
 support reference. A translator that throws is logged and skipped. Typical use: mapping a data
 layer's concurrency exception to `PreconditionFailedException` (412). See
-[Error handling](error-handling.md).
+[Error handling → Translating an unexpected exception](error-handling.md#translating-an-unexpected-exception).
 
 ### ConduitBackgroundDispatcher (fire-and-forget)
 

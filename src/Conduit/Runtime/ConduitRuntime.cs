@@ -387,9 +387,9 @@ public static partial class ConduitRuntime
     }
 
     // Error-level logs
-    private static readonly Action<ILogger, string, string, string, Exception?> LogTranslatorFailed =
-        LoggerMessage.Define<string, string, string>(LogLevel.Error, new EventId(2, "WireExceptionTranslatorFailed"),
-            "Wire exception translator '{Translator}' threw ({TranslatorError}) while translating a failure dispatching '{Type}'; falling back to InternalError");
+    private static readonly Action<ILogger, string, string, Exception?> LogTranslatorFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(5, "WireExceptionTranslatorFailed"),
+            "Wire exception translator '{Translator}' threw while translating a failure dispatching '{Type}'; skipping it (the exception holds the translator's failure, then the original)");
 
     private static readonly Action<ILogger, string, string, Exception?> LogDispatchError =
         LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(1, "DispatchError"),
@@ -402,6 +402,11 @@ public static partial class ConduitRuntime
     private static readonly Action<ILogger, string, Exception?> LogListenerFailed =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(4, "ListenerFailed"),
             "Event listener '{Listener}' threw an exception");
+
+    // Information-level logs
+    private static readonly Action<ILogger, string, string, string, Exception?> LogWireExceptionTranslated =
+        LoggerMessage.Define<string, string, string>(LogLevel.Information, new EventId(6, "WireExceptionTranslated"),
+            "Wire exception translator '{Translator}' answered '{Code}' for an unexpected exception dispatching '{Type}'");
 
     // Debug-level logs
     private static readonly Action<ILogger, string, Exception?> LogDispatchingLocally =
@@ -615,11 +620,13 @@ public static partial class ConduitRuntime
 #pragma warning restore CA1031
                 {
                     // A faulty translator must not replace the real failure: log it beside the original and fall through.
-                    LogTranslatorFailed(logger, translator.GetType().Name, translatorFailure.Message, messageType, ex);
+                    LogTranslatorFailed(logger, translator.GetType().Name, messageType, new AggregateException(translatorFailure, ex));
                 }
 
                 if (refusal is not null)
                 {
+                    // A translator is a backstop (an exception that escaped the pipeline), so its use is logged, not silent.
+                    LogWireExceptionTranslated(logger, translator.GetType().Name, refusal.Code.Value, messageType, ex);
                     activity?.SetStatus(ActivityStatusCode.Error, refusal.Message);
                     return DispatchResult<object>.Fail(refusal);
                 }
