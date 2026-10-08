@@ -17,6 +17,11 @@ public sealed class WireExceptionTranslatorShould
             exception is StaleWrite ? new PreconditionFailedException("Someone else changed this. Refresh and try again.") : null;
     }
 
+    private sealed class ThrowingTranslator : IWireExceptionTranslator
+    {
+        public ConduitException? Translate(Exception exception) => throw new InvalidOperationException("translator bug");
+    }
+
     private static Task<DispatchResult<object>> DispatchThrowing(Exception toThrow, params IWireExceptionTranslator[] translators) =>
         ConduitRuntime.HandleWireRequest(
             "Test.Stale",
@@ -43,5 +48,18 @@ public sealed class WireExceptionTranslatorShould
 
         result.Error!.Code.Should().Be("InternalError");
         result.Error.Reference.Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public async Task FallThroughToInternalErrorWhenATranslatorThrows()
+    {
+        var result = await DispatchThrowing(new StaleWrite(), new ThrowingTranslator(), new StaleWriteTranslator());
+
+        // The faulty translator is skipped and the next one still gets its turn.
+        result.Error!.Code.Should().Be("PreconditionFailed");
+
+        var onlyFaulty = await DispatchThrowing(new InvalidOperationException("boom"), new ThrowingTranslator());
+        onlyFaulty.Error!.Code.Should().Be("InternalError");
+        onlyFaulty.Error.Reference.Should().NotBeNull();
     }
 }

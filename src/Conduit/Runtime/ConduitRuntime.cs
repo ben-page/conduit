@@ -50,11 +50,22 @@ public static partial class ConduitRuntime
             return;
         }
 
-        var markedParameters = typeInfo.Type.GetConstructors()
-            .SelectMany(c => c.GetParameters())
-            .Where(p => p.Name is not null && p.IsDefined(typeof(DoNotAuditAttribute), inherit: false))
-            .Select(p => p.Name!)
-            .ToHashSet(StringComparer.Ordinal);
+        // System.Text.Json binds constructor parameters to properties case-insensitively, and a derived record's base
+        // positional parameters bind through the base constructor, so collect from every type up the chain.
+        var markedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var type = typeInfo.Type; type is not null && type != typeof(object); type = type.BaseType)
+        {
+            foreach (var constructor in type.GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+            {
+                foreach (var parameter in constructor.GetParameters())
+                {
+                    if (parameter.Name is not null && parameter.IsDefined(typeof(DoNotAuditAttribute), inherit: false))
+                    {
+                        markedParameters.Add(parameter.Name);
+                    }
+                }
+            }
+        }
 
         for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
         {
@@ -374,6 +385,10 @@ public static partial class ConduitRuntime
     }
 
     // Error-level logs
+    private static readonly Action<ILogger, string, string, string, Exception?> LogTranslatorFailed =
+        LoggerMessage.Define<string, string, string>(LogLevel.Error, new EventId(2, "WireExceptionTranslatorFailed"),
+            "Wire exception translator '{Translator}' threw ({TranslatorError}) while translating a failure dispatching '{Type}'; falling back to InternalError");
+
     private static readonly Action<ILogger, string, string, Exception?> LogDispatchError =
         LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(1, "DispatchError"),
             "Unhandled exception dispatching '{Type}' (reference {Reference})");
@@ -588,7 +603,20 @@ public static partial class ConduitRuntime
         {
             foreach (var translator in translators ?? [])
             {
-                if (translator.Translate(ex) is { } refusal)
+                ConduitException? refusal = null;
+#pragma warning disable CA1031
+                try
+                {
+                    refusal = translator.Translate(ex);
+                }
+                catch (Exception translatorFailure)
+#pragma warning restore CA1031
+                {
+                    // A faulty translator must not replace the real failure: log it beside the original and fall through.
+                    LogTranslatorFailed(logger, translator.GetType().Name, translatorFailure.Message, messageType, ex);
+                }
+
+                if (refusal is not null)
                 {
                     activity?.SetStatus(ActivityStatusCode.Error, refusal.Message);
                     return DispatchResult<object>.Fail(refusal);
