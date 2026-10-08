@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Conduit.Attributes;
 using Conduit.Configuration;
 using Conduit.Exceptions;
 using Conduit.Messages;
@@ -30,6 +32,39 @@ public static partial class ConduitRuntime
         PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
     };
+
+    /// <summary>
+    /// <see cref="JsonOptions"/> for the audit payload only: a member marked <see cref="DoNotAuditAttribute"/> (on the
+    /// property, or on the positional record parameter that binds it) is left out. The generated mediator serializes the
+    /// captured request with these; wire serialization keeps <see cref="JsonOptions"/>.
+    /// </summary>
+    public static JsonSerializerOptions AuditJsonOptions { get; } = new(JsonOptions)
+    {
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { DropDoNotAuditMembers } },
+    };
+
+    private static void DropDoNotAuditMembers(JsonTypeInfo typeInfo)
+    {
+        if (typeInfo.Kind != JsonTypeInfoKind.Object)
+        {
+            return;
+        }
+
+        var markedParameters = typeInfo.Type.GetConstructors()
+            .SelectMany(c => c.GetParameters())
+            .Where(p => p.Name is not null && p.IsDefined(typeof(DoNotAuditAttribute), inherit: false))
+            .Select(p => p.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
+        {
+            if (typeInfo.Properties[i].AttributeProvider is System.Reflection.MemberInfo member
+                && (member.IsDefined(typeof(DoNotAuditAttribute), inherit: true) || markedParameters.Contains(member.Name)))
+            {
+                typeInfo.Properties.RemoveAt(i);
+            }
+        }
+    }
 
     /// <summary>
     /// Reads a wire payload into its message type. A payload the contract cannot read -- an integer enum ordinal,
@@ -481,13 +516,30 @@ public static partial class ConduitRuntime
     /// Runs inbound interceptor gates, then deserializes and dispatches a wire request.
     /// Returns DispatchResult with Ok/Fail wrapping.
     /// </summary>
-    public static async Task<DispatchResult<object>> HandleWireRequest(
+    public static Task<DispatchResult<object>> HandleWireRequest(
         string messageType,
         IEnumerable<IInboundInterceptor> interceptors,
         Func<DispatchEnvelope> createEnvelope,
         Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
         ILogger logger,
         CancellationToken cancellationToken)
+        => HandleWireRequest(messageType, interceptors, createEnvelope, dispatch, logger, cancellationToken, translators: null);
+
+    /// <summary>
+    /// As the overload without translators, but an exception no <see cref="ConduitException"/> arm claims is offered to
+    /// each <see cref="IWireExceptionTranslator"/> before it becomes <c>InternalError</c>.
+    /// </summary>
+    // CA1068: the token stays before the translators so the forwarding overload above is the same call plus one trailing argument.
+#pragma warning disable CA1068
+    public static async Task<DispatchResult<object>> HandleWireRequest(
+        string messageType,
+        IEnumerable<IInboundInterceptor> interceptors,
+        Func<DispatchEnvelope> createEnvelope,
+        Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
+        ILogger logger,
+        CancellationToken cancellationToken,
+        IEnumerable<IWireExceptionTranslator>? translators)
+#pragma warning restore CA1068
     {
         ArgumentNullException.ThrowIfNull(messageType);
         ArgumentNullException.ThrowIfNull(interceptors);
@@ -537,6 +589,15 @@ public static partial class ConduitRuntime
         catch (Exception ex)
 #pragma warning restore CA1031
         {
+            foreach (var translator in translators ?? [])
+            {
+                if (translator.Translate(ex) is { } refusal)
+                {
+                    activity?.SetStatus(ActivityStatusCode.Error, refusal.Message);
+                    return DispatchResult<object>.Fail(refusal);
+                }
+            }
+
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             // A reference the user can quote and support can grep: the dispatch's ConversationId. ConduitHub mints a
             // fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line,

@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Conduit.Tests.Unit;
 
 /// <summary>
-/// Pins the exception-to-wire translation in <see cref="ConduitRuntime.HandleWireRequest"/>: a
+/// Pins the exception-to-wire translation in <c>ConduitRuntime.HandleWireRequest</c>: a
 /// <see cref="ConduitException"/>'s operands must reach <c>DispatchResult.Error.Details</c>, because
 /// that is the only path a SPA client can read them from.
 /// </summary>

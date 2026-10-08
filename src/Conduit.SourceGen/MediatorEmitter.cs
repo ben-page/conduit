@@ -278,7 +278,7 @@ public static class MediatorEmitter
         sb.AppendLine("    public Task<DispatchResult<object>> HandleWireRequestAsync(");
         sb.AppendLine("        DispatchEnvelope envelope,");
         sb.AppendLine("        CancellationToken cancellationToken)");
-        sb.AppendLine("        => ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, cancellationToken);");
+        sb.AppendLine("        => ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, cancellationToken, serviceProvider.GetServices<Conduit.Runtime.IWireExceptionTranslator>());");
         sb.AppendLine();
 
         // HandleWireEventAsync -- delegates to ConduitRuntime
@@ -809,12 +809,12 @@ public static class MediatorEmitter
             if (requestTypeName != null)
             {
                 // Strongly typed: use typeof(T) for efficient serialization
-                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, typeof({requestTypeName}), ConduitRuntime.JsonOptions));");
+                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, typeof({requestTypeName}), ConduitRuntime.AuditJsonOptions));");
             }
             else
             {
                 // Dynamic type (events via PublishAsync): use @event.GetType()
-                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {requestVarName}.GetType(), ConduitRuntime.JsonOptions));");
+                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {requestVarName}.GetType(), ConduitRuntime.AuditJsonOptions));");
             }
         }
 
