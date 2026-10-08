@@ -66,6 +66,29 @@ public sealed class AuditPayloadRedactionShould
         json.GetProperty("note").GetString().Should().Be("n");
     }
 
+    private class VirtualBaseRequest
+    {
+        public int Id { get; init; }
+
+        [DoNotAudit]
+        public virtual string? Secret { get; init; }
+    }
+
+    private sealed class OverridingRequest : VirtualBaseRequest
+    {
+        public override string? Secret { get; init; }
+    }
+
+    [TestMethod]
+    public void DropAnOverrideOfAPropertyMarkedOnItsBaseDeclaration()
+    {
+        // MemberInfo.IsDefined ignores `inherit` for a property, so the override alone would carry no mark.
+        var json = JsonSerializer.SerializeToElement(new OverridingRequest { Id = 4, Secret = "s" }, ConduitRuntime.AuditJsonOptions);
+
+        json.TryGetProperty("secret", out _).Should().BeFalse();
+        json.GetProperty("id").GetInt32().Should().Be(4);
+    }
+
     [TestMethod]
     public void LeaveTheWireOptionsUntouched() =>
         JsonSerializer.SerializeToElement(new PositionalRequest(7, 21.50m, "rate"), ConduitRuntime.JsonOptions)

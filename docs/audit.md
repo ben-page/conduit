@@ -193,7 +193,7 @@ public sealed class Profile
 }
 ```
 
-Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops marked properties and the properties bound to marked constructor parameters. Names match case-insensitively, and base types are walked. Wire serialization keeps `JsonOptions`, so the member still travels on the wire.
+Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops marked properties and the properties bound to marked constructor parameters. Names match case-insensitively, and base types are walked: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. Wire serialization keeps `JsonOptions`, so the member still travels on the wire.
 
 `[DoNotAudit]` on a type suppresses payload capture only — the dispatch is still observed and recorded, just without the message body. `Suppress<T>()` drops the type from the audit trail entirely; `SuppressPayload<T>()` keeps the record but omits the body.
 

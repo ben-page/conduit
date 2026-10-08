@@ -69,8 +69,10 @@ public static partial class ConduitRuntime
 
         for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
         {
+            // Attribute.IsDefined walks an overridden property's base declarations; MemberInfo.IsDefined ignores
+            // `inherit` for properties, so a mark on a base virtual property would be lost on its override.
             if (typeInfo.Properties[i].AttributeProvider is System.Reflection.MemberInfo member
-                && (member.IsDefined(typeof(DoNotAuditAttribute), inherit: true) || markedParameters.Contains(member.Name)))
+                && (Attribute.IsDefined(member, typeof(DoNotAuditAttribute), inherit: true) || markedParameters.Contains(member.Name)))
             {
                 typeInfo.Properties.RemoveAt(i);
             }
