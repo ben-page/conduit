@@ -254,7 +254,9 @@ effect that never ran. Cleanup resolves the store from its own fresh DI scope, s
 When an entry exhausts `MaxRetries` the relay marks it Failed, logs at Error with
 `EventId` **320** (`OutboxRetriesExhausted`; type, message id and entry id are structured fields),
 and increments the `conduit.outbox.retries_exhausted` counter on the `Conduit` meter (tag
-`conduit.message.type`). Both are stable: alert on either.
+`conduit.message.type`). Both are stable: alert on either. The relay records an untagged zero on the counter
+when it starts, so the series exists from its first export rather than from the first failure (an
+OpenTelemetry counter exports nothing until it is recorded); a real exhaustion is a separate, tagged series.
 
 ## What gets captured
 

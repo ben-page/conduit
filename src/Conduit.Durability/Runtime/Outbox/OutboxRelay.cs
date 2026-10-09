@@ -34,6 +34,9 @@ public sealed partial class OutboxRelay(
         // which honors OutboxOptions.AutoCreateTable.
         var lastCleanup = DateTime.UtcNow;
 
+        // The exhaustion counter's series exists from the relay's first export, not from the first failure.
+        ConduitTelemetry.InitializeOutboxRetriesExhausted();
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try

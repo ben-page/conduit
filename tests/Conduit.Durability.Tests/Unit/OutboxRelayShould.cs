@@ -56,6 +56,44 @@ public class OutboxRelayShould
     }
 
     [TestMethod]
+    public async Task RecordAZeroExhaustion_WhenItStarts_SoTheSeriesExistsBeforeAnyFailure()
+    {
+        // Arrange -- an OpenTelemetry counter exports nothing until it is first recorded; an alert needs the series.
+        var relay = BuildRelay(new StubOutboxStore(), CreateDispatcher());
+        var zeros = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (i, l) =>
+        {
+            if (i.Meter.Name == "Conduit" && i.Name == "conduit.outbox.retries_exhausted")
+            {
+                l.EnableMeasurementEvents(i);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            if (value == 0 && tags.Length == 0)
+            {
+                Interlocked.Increment(ref zeros);
+            }
+        });
+        listener.Start();
+
+        // Act -- since .NET 10 BackgroundService runs ExecuteAsync on the thread pool, so wait for the zero
+        // rather than stop at once (which can cancel the relay before it starts).
+        await relay.StartAsync(CancellationToken.None);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Volatile.Read(ref zeros) == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        await relay.StopAsync(CancellationToken.None);
+
+        // Assert
+        Volatile.Read(ref zeros).Should().BeGreaterThan(0, "the relay records the untagged zero on start");
+    }
+
+    [TestMethod]
     public async Task LogExhaustionAtAStableEventId_AndCountIt()
     {
         // Arrange -- the alert keys on EventId 320 or the counter; neither may drift.

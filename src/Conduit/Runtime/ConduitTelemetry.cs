@@ -224,6 +224,17 @@ public static class ConduitTelemetry
     }
 
     /// <summary>
+    /// Records a zero on the outbox-exhaustion counter, so its series exists before the first exhaustion. An
+    /// OpenTelemetry counter exports nothing until it is first recorded, so without this an alert on
+    /// <c>conduit.outbox.retries_exhausted</c> watches a series that does not exist, and the only proof the export
+    /// works would be a real failure. The zero carries no <c>conduit.message.type</c>: no type has failed.
+    /// </summary>
+    public static void InitializeOutboxRetriesExhausted()
+    {
+        OutboxRetriesExhaustedCount.Add(0);
+    }
+
+    /// <summary>
     /// Records an outbox entry marked Failed after exhausting its retries.
     /// </summary>
     public static void RecordOutboxRetriesExhausted(string messageType)
