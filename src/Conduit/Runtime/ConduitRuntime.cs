@@ -24,13 +24,19 @@ public static partial class ConduitRuntime
     /// Shared JSON serializer options used by the generated mediator for wire serialization.
     /// Uses camelCase naming and string enum conversion to match TypeGen output. Enums are read by NAME only:
     /// an integer ordinal is refused, in range or not, because TypeGen emits enums as string unions and an
-    /// ordinal is how an out-of-range value used to reach a foreign-key column as a 500.
+    /// ordinal is how an out-of-range value used to reach a foreign-key column as a 500. A closed set
+    /// (<see cref="Conduit.Messages.IClosedSet{TSelf}"/>) is read and written as its bare value
+    /// (<see cref="ClosedSetJsonConverterFactory"/>), which TypeGen emits as a union of those values.
     /// </summary>
     public static JsonSerializerOptions JsonOptions { get; } = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
+        Converters =
+        {
+            new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false),
+            new ClosedSetJsonConverterFactory(),
+        },
     };
 
     /// <summary>
