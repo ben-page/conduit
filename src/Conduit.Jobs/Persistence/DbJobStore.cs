@@ -167,10 +167,11 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 "A run materialized without overlap must name its schedule; the schedule's row is the lock.",
                 nameof(run));
 
-        // A second pass happens only when the schedule's row did not exist on the first, so the lock
-        // took nothing. Every declared schedule's row is reconciled at startup, so that means the row
-        // was never reconciled (a schedule declared only on a host that has not started) or something
-        // outside Conduit deleted it.
+        // A second pass happens only when the first found no schedule row, so it locked nothing and
+        // decided nothing (LockScheduleRowAsync tells "no row" from "locked" on every engine). Every
+        // declared schedule's row is reconciled at startup, so that means the row was never reconciled
+        // (a schedule declared only on a host that has not started) or something outside Conduit
+        // deleted it.
         for (var pass = 0; pass < 2; pass++)
         {
             if (await this.TryMaterializeUnderScheduleLockAsync(run, scheduleName, cancellationToken)
@@ -808,10 +809,20 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     /// schedule row, so it cannot close a cycle.
     /// </para>
     /// <para>
+    /// <b>A missing row</b> is the one case where the <c>UPDATE</c> locks nothing; see
+    /// <see cref="LockScheduleRowAsync"/>, which re-takes the lock once the row exists rather than
+    /// trusting a probe that found it.
+    /// </para>
+    /// <para>
     /// <b>Residual windows.</b> A run of the schedule written without this method — a host still on a
     /// version before it, or a declaration that says <c>AllowOverlap()</c> on one host and not on
     /// another — takes no lock and is outside the guarantee. Declarations must agree across hosts,
-    /// as they already must for occurrences to.
+    /// as they already must for occurrences to. During a rolling upgrade on SQL Server at locking READ
+    /// COMMITTED there is a second effect: an older host's <c>CompleteAsync</c> still advances the cursor
+    /// last, so it can deadlock with this method. If the completion is the victim, its claim goes stale
+    /// and the run executes again after <c>ClaimTimeout</c>; if this method is, the occurrence is logged
+    /// and skipped. Transient, and confined to the rollout. A schedule row deleted and re-created by
+    /// something outside Conduit mid-call is the last window (see <see cref="LockScheduleRowAsync"/>).
     /// </para>
     /// </remarks>
     private async Task<MaterializeOutcome?> TryMaterializeUnderScheduleLockAsync(
@@ -820,22 +831,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        await ExecuteNonQueryOnAsync(
-            connection,
-            LockScheduleSql,
-            command => DbParameterHelper.Add(command, "@Name", scheduleName),
-            cancellationToken,
-            transaction);
-
-        // The affected count cannot answer this: MySQL reports a no-op UPDATE as zero rows changed when
-        // the connection is configured for affected rather than found rows.
-        var exists = await ExecuteScalarOnAsync(
-            connection,
-            this.scheduleExistsSql,
-            command => DbParameterHelper.Add(command, "@Name", scheduleName),
-            cancellationToken,
-            transaction);
-        if (exists is null or DBNull)
+        if (!await this.LockScheduleRowAsync(connection, transaction, scheduleName, cancellationToken))
         {
             await transaction.RollbackAsync(cancellationToken);
             return null;
@@ -889,6 +885,70 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 cancellationToken,
                 transaction)
             : Task.CompletedTask;
+
+    /// <summary>
+    /// Takes the schedule row's write lock for the rest of the transaction. <see langword="false"/> means
+    /// there is no row, so nothing is locked and nothing may be decided.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A positive count proves the lock on every engine: the <c>UPDATE</c> matched the row. Zero is
+    /// ambiguous. Either there was no row, so nothing was locked, or the row was locked and MySQL counted
+    /// changed rather than matched rows (<c>UseAffectedRows=true</c>); SQL Server under
+    /// <c>SET NOCOUNT ON</c> reports -1 the same way. So zero is followed by a probe.
+    /// </para>
+    /// <para>
+    /// A probe that finds the row does <b>not</b> prove the lock. On PostgreSQL and SQL Server at READ
+    /// COMMITTED, an <c>UPDATE</c> that matches nothing locks nothing, and the next statement sees a row
+    /// committed after it: another caller ensuring the row in between leaves this one holding nothing
+    /// while that caller locks, checks and inserts. So the lock is taken again; now that the row exists
+    /// it matches and waits for any holder. Where the first <c>UPDATE</c> already held it (MySQL counting
+    /// changed rows), the second is a no-op re-lock. MySQL at REPEATABLE READ cannot see the row appear
+    /// after its first <c>UPDATE</c> anyway: that <c>UPDATE</c>'s gap lock blocks the insert (at READ
+    /// COMMITTED it takes none, behaves like PostgreSQL, and the re-lock covers it). On SQLite
+    /// <c>BEGIN IMMEDIATE</c> already excludes every other writer.
+    /// </para>
+    /// <para>
+    /// A second zero, with the row gone again, is a row deleted between two statements of this call.
+    /// Conduit never deletes a schedule row, so only something outside it can do that; the call then
+    /// reports the row missing rather than proceed. Only a delete <i>and</i> re-insert, both from outside
+    /// Conduit, between the re-lock and its probe could still leave a call unlocked.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> LockScheduleRowAsync(
+        DbConnection connection, DbTransaction transaction, string scheduleName, CancellationToken cancellationToken)
+    {
+        if (await ExecuteLockAsync(connection, transaction, scheduleName, cancellationToken) > 0)
+        {
+            return true;
+        }
+
+        if (!await this.ScheduleRowExistsAsync(connection, transaction, scheduleName, cancellationToken))
+        {
+            return false;
+        }
+
+        return await ExecuteLockAsync(connection, transaction, scheduleName, cancellationToken) > 0
+            || await this.ScheduleRowExistsAsync(connection, transaction, scheduleName, cancellationToken);
+    }
+
+    private static Task<int> ExecuteLockAsync(
+        DbConnection connection, DbTransaction transaction, string scheduleName, CancellationToken cancellationToken)
+        => ExecuteNonQueryOnAsync(
+            connection,
+            LockScheduleSql,
+            command => DbParameterHelper.Add(command, "@Name", scheduleName),
+            cancellationToken,
+            transaction);
+
+    private async Task<bool> ScheduleRowExistsAsync(
+        DbConnection connection, DbTransaction transaction, string scheduleName, CancellationToken cancellationToken)
+        => await ExecuteScalarOnAsync(
+            connection,
+            this.scheduleExistsSql,
+            command => DbParameterHelper.Add(command, "@Name", scheduleName),
+            cancellationToken,
+            transaction) is not (null or DBNull);
 
     private Task<int> EnsureScheduleRowAsync(string scheduleName, CancellationToken cancellationToken)
         => this.ExecuteNonQueryAsync(

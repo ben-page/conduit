@@ -105,9 +105,9 @@ this work is empty by design.
 A schedule without `AllowOverlap()` has at most one run outstanding (Pending or Claiming), whoever
 writes it: the scheduler materializing an occurrence on any host, or `IJobs.TriggerNowAsync` on any
 host. Both write through `IJobStore.TryMaterializeWithoutOverlapAsync`, which is one transaction:
-`UPDATE conduit_job_schedules SET IsPaused = IsPaused WHERE Name = @Name` (the schedule's row lock),
-an existence probe, `COUNT(*)` of the schedule's other outstanding runs, then the usual
-insert-or-ignore. Every no-overlap write for one schedule therefore runs one at a time, and each
+`UPDATE conduit_job_schedules SET IsPaused = IsPaused WHERE Name = @Name` (the schedule's row lock;
+see "a row count of zero" below for proving it was taken), `COUNT(*)` of the schedule's other
+outstanding runs, then the usual insert-or-ignore. Every no-overlap write for one schedule therefore runs one at a time, and each
 check reads every earlier insert's commit; a run only *becomes* outstanding by insertion, so "at most
 one" holds by induction. **No per-engine SQL** — the no-op `UPDATE` is the portable row lock. The
 per-engine visibility argument is in the remarks on `DbJobStore.TryMaterializeUnderScheduleLockAsync`;
@@ -117,14 +117,24 @@ keep the two in step.
   count excludes it; a replica gets `AlreadyMaterialized` and goes on to claim, exactly as before.
   For trigger-now, an identical key means a second trigger in the same tick (a frozen test clock):
   the run is queued, so it returns.
-- **The schedule row is ensured outside the transaction.** If the probe finds it missing, the
-  transaction rolls back, an autocommit insert-or-ignore creates it, and the transaction starts
-  over (twice at most, then `InvalidOperationException`). Inside, MySQL would bite twice: `INSERT
+- **A row count of zero proves nothing, and neither does a probe that then finds the row.** A
+  positive count from the lock `UPDATE` proves the lock on every engine. Zero means no row (nothing
+  locked) or a lock the count does not show (MySQL with `UseAffectedRows=true`; SQL Server under
+  `SET NOCOUNT ON` reports -1), so a probe follows. If the probe finds the row, the lock is taken
+  **again**: on PostgreSQL and SQL Server at READ COMMITTED an `UPDATE` matching nothing locks nothing,
+  and the probe sees a row another caller committed after it — that caller can then lock, check and
+  insert while this one, trusting the probe, does the same. The persistence matrix's
+  `WaitForTheLockWhenTheScheduleRowAppearsAfterTheFirstLockAttempt` reproduces exactly that, and fails
+  on PostgreSQL and SQL Server without the re-lock. MySQL at REPEATABLE READ cannot get there (the
+  `UPDATE`'s gap lock blocks the insert; the same test asserts it), and SQLite's `BEGIN IMMEDIATE`
+  excludes every other writer. Only a delete *and* re-insert of the row by something outside Conduit,
+  between the re-lock and its probe, could still leave a call unlocked; Conduit never deletes one.
+- **The schedule row is ensured outside the transaction.** If it is missing, the transaction rolls
+  back, an autocommit insert-or-ignore creates it, and the transaction starts over (twice at most,
+  then `InvalidOperationException`). Inside, MySQL would bite twice: `INSERT
   IGNORE` on an existing row takes a *shared* lock, so two replicas would deadlock upgrading it on
   the `UPDATE` — on every occurrence, since every replica materializes at once; and under
   REPEATABLE READ the probe would fix the read view before the lock was held.
-- **Existence is a `SELECT`, not the `UPDATE`'s count.** MySQL reports a no-op `UPDATE` as zero rows
-  changed when the connection asks for affected rather than found rows.
 - **Lock order: the schedule's row, then run rows.** `CompleteAsync` and `MarkTerminalAsync` advance
   the cursor *first* for this. On SQL Server's locking READ COMMITTED the overlap count waits on a
   run row a completing transaction has deleted; if that transaction then wanted the schedule's row
@@ -138,7 +148,11 @@ keep the two in step.
   what happens next and needs no atomicity. Trigger-now still ignores pause.
 - **Outside the guarantee:** a run written by `TryMaterializeAsync` for a no-overlap schedule (a host
   on an older version during a rolling upgrade), or hosts whose declarations disagree on
-  `AllowOverlap()`.
+  `AllowOverlap()`. A rolling upgrade on SQL Server at locking READ COMMITTED has a second, transient
+  effect: an older host's `CompleteAsync` still advances the cursor last and can deadlock with a newer
+  host's locked materialization. If the completion is the victim, its claim goes stale and the run
+  executes again after `ClaimTimeout`; if the materialization is, that occurrence is logged and
+  skipped. It lasts only as long as the rollout.
 - **The in-memory engine** enforces the rule per host: `InMemoryJobState.TryTrack` is a
   `ConcurrentDictionary.TryAdd`, shared by the scheduler loop and `InMemoryJobs.TriggerNowAsync`
   (which runs inline). There is nothing shared to coordinate through — every host fires every

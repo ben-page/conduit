@@ -21,6 +21,8 @@ public sealed class MySqlEngineShould : PersistenceEngineTestBase
 
     protected override ISqlDialect Dialect { get; } = new MySqlDialect();
 
+    protected override bool MissingRowUpdateLocksTheGap => true;
+
     public static async Task InitializeContainer()
     {
         try

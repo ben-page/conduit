@@ -52,6 +52,13 @@ public abstract class PersistenceEngineTestBase
     protected abstract ISqlDialect Dialect { get; }
 
     /// <summary>
+    /// Whether an <c>UPDATE</c> that matches no row still locks the gap where that row would go, so
+    /// the row cannot be inserted behind it (InnoDB at REPEATABLE READ). PostgreSQL and SQL Server at
+    /// READ COMMITTED lock nothing.
+    /// </summary>
+    protected virtual bool MissingRowUpdateLocksTheGap => false;
+
+    /// <summary>
     /// Creates a connection factory bound to a FRESH, isolated schema/database for the calling test,
     /// so tables created by one test never collide with another. The returned factory opens real
     /// connections to the engine container.
@@ -743,6 +750,62 @@ public abstract class PersistenceEngineTestBase
 
             running = (await store.ClaimDueAsync($"worker-{round}", claimNow, 10, CancellationToken.None)).Single();
         }
+    }
+
+    [TestMethod]
+    public async Task WaitForTheLockWhenTheScheduleRowAppearsAfterTheFirstLockAttempt()
+    {
+        // Arrange — no schedule row yet, so caller A's lock UPDATE matches nothing and locks nothing.
+        // A is held right after it while another host's reconcile creates the row, then again right
+        // after its probe has seen that row
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var plain = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await plain.EnsureTablesExistAsync(CancellationToken.None);
+        var gateA = new GatedConnectionFactory(
+            factory, "UPDATE conduit_job_schedules", "SELECT 1 FROM conduit_job_schedules");
+        var gateB = new GatedConnectionFactory(factory, "SELECT COUNT(*) FROM conduit_job_runs");
+        var storeA = new DbJobStore(gateA, this.Dialect, JobsOptionsForTest);
+        var storeB = new DbJobStore(gateB, this.Dialect, JobsOptionsForTest);
+        var now = DateTimeOffset.UtcNow;
+
+        var callerA = Task.Run(() => storeA.TryMaterializeWithoutOverlapAsync(
+            NewManualJobRun(now.AddSeconds(1)), CancellationToken.None));
+        await gateA.PausedAt(0).WaitAsync(TimeSpan.FromSeconds(30));
+        var reconcile = Task.Run(() => plain.ReconcileSchedulesAsync(["nightly"], CancellationToken.None));
+
+        if (this.MissingRowUpdateLocksTheGap)
+        {
+            // Assert — the row cannot appear behind A's UPDATE at all, so the interleaving below
+            // cannot happen on this engine
+            (await Task.WhenAny(reconcile, Task.Delay(TimeSpan.FromSeconds(2)))).Should().NotBeSameAs(reconcile);
+            gateA.Release(0);
+            gateA.Release(1);
+            await reconcile.WaitAsync(TimeSpan.FromSeconds(30));
+            (await callerA).Should().Be(MaterializeOutcome.Materialized);
+            (await CountOutstandingAsync(factory)).Should().Be(1);
+            return;
+        }
+
+        await reconcile.WaitAsync(TimeSpan.FromSeconds(30));
+        gateA.Release(0);
+        await gateA.PausedAt(1).WaitAsync(TimeSpan.FromSeconds(30));
+
+        // B locks the now-existing row, finds nothing outstanding, and is held before its insert
+        var callerB = Task.Run(() => storeB.TryMaterializeWithoutOverlapAsync(
+            NewManualJobRun(now.AddSeconds(2)), CancellationToken.None));
+        await gateB.PausedAt(0).WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Act — A, which has seen the row but never locked it, carries on while B holds the lock
+        // between its check and its insert
+        gateA.Release(1);
+        var aDecidedWhileBHeldTheLock = await Task.WhenAny(callerA, Task.Delay(TimeSpan.FromSeconds(2))) == callerA;
+        gateB.Release(0);
+        var outcomes = await Task.WhenAll(callerA, callerB);
+
+        // Assert — seeing the row is not holding its lock: A must take it, and so wait for B
+        aDecidedWhileBHeldTheLock.Should().BeFalse();
+        outcomes.Should().Equal(MaterializeOutcome.Overlapping, MaterializeOutcome.Materialized);
+        (await CountOutstandingAsync(factory)).Should().Be(1);
     }
 
     // Helpers -----------------------------------------------------------------------------------
