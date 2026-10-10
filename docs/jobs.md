@@ -281,8 +281,11 @@ has run and looks like it has not. The check happens at materialization, not onl
 a replica whose timer fires late — clock skew, a long GC pause — after another has already run the
 occurrence to the end finds no row to collide with, only the cursor. It reads the cursor under the
 schedule's row lock, which completion also takes before it deletes the row, so the two cannot
-interleave. An `AllowOverlap()` schedule reads it without the lock, just before its insert, so a
-replica late by less than that instant can still run the occurrence again.
+interleave. An `AllowOverlap()` schedule reads it without the lock, with the schedule row it reads
+before its insert. A late replica then runs the occurrence again only if another replica's completion
+of it commits between those two statements — any earlier and the insert collapses into the row, any
+later and the read sees the cursor. The cursor only ever moves forward, so overlapping runs that
+finish out of order cannot move it back behind an occurrence that has already run.
 
 An event trigger has no cursor to fall back on, so a non-coalescing trigger run is the one success
 that is **not** deleted. Its row is kept with status `Completed` for `CompletedRetention` (default

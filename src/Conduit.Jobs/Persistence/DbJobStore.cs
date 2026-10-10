@@ -320,6 +320,9 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         // while its overlap check reads the runs table, which on SQL Server's locking READ COMMITTED
         // waits on that same deleted row. Not hypothetical: with the cursor last, the persistence
         // matrix's NeitherDeadlockNorOverlapWhenMaterializationsRaceACompletion deadlocks on SQL Server.
+        // The advance is forward-only; when the cursor is already past this occurrence it may lock
+        // nothing, and then this transaction never waits on the schedule's row at all, so it still
+        // cannot close a cycle — and a late materializer of this occurrence reads a cursor past it.
         await AdvanceCursorOnAsync(connection, transaction, scheduleName, occurrence, cancellationToken);
 
         await WriteHistoryAsync(
@@ -992,8 +995,14 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     private static string MarkTerminalSql =>
         $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
 
+    // Forward only. Runs of an AllowOverlap() schedule can finish out of order, and an unconditional SET
+    // let the earlier one move the cursor back behind the later — after which a replica late for the
+    // later occurrence would find neither its row nor a cursor past it, and run it again. The text
+    // comparison is chronological: every value is the same fixed-width round-trip ISO 8601 UTC form,
+    // the same property the claim's RunAt cutoff already relies on.
     private static string AdvanceCursorSql =>
-        $"UPDATE {JobTableSchema.SchedulesTable} SET LastCompletedOccurrence = @LastCompletedOccurrence WHERE Name = @Name";
+        $"UPDATE {JobTableSchema.SchedulesTable} SET LastCompletedOccurrence = @LastCompletedOccurrence " +
+        "WHERE Name = @Name AND (LastCompletedOccurrence IS NULL OR LastCompletedOccurrence < @LastCompletedOccurrence)";
 
     private static string InsertHistorySql =>
         $"""

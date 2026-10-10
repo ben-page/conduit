@@ -199,8 +199,11 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             // host that runs it.
             if (schedule.AllowsOverlap)
             {
-                // No lock to read the cursor under, so it is read just before the insert: a replica late
-                // by more than that instant skips; one late by less can still re-run the occurrence.
+                // No lock to read the cursor under, so it comes from the schedule row read above. A late
+                // replica re-runs the occurrence only if another replica's completion of it commits
+                // between that read and the insert below: earlier, the insert collapses into the row;
+                // later, the read sees the cursor. The cursor only moves forward, so runs finishing out
+                // of order cannot reopen that gap.
                 if (row?.LastCompletedOccurrence is { } cursor && occurrence <= cursor)
                 {
                     LogAlreadyCompleted(this.logger, schedule.Name, occurrence);

@@ -871,6 +871,37 @@ public abstract class PersistenceEngineTestBase
         }
     }
 
+    [TestMethod]
+    public async Task OnlyEverMoveTheCursorForward()
+    {
+        // Arrange — two overlapping runs, the later occurrence finishing first; the instants straddle a
+        // rollover of every field, so this engine's text order has to be chronological order
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var earlier = new DateTimeOffset(2025, 12, 31, 23, 59, 59, TimeSpan.Zero).AddTicks(9_999_999);
+        var later = earlier.AddTicks(1);
+        await store.TryMaterializeAsync(NewJobRun("nightly@earlier", earlier), CancellationToken.None);
+        await store.TryMaterializeAsync(NewJobRun("nightly@later", later), CancellationToken.None);
+        var claimed = await store.ClaimDueAsync("worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
+
+        // Act — later completes, then earlier goes terminal, then a misfire skip names a past occurrence
+        await store.CompleteAsync(
+            claimed.Single(run => run.JobKey == "nightly@later"), "nightly", later, retainRunKey: false,
+            DateTimeOffset.UtcNow, CancellationToken.None);
+        await store.MarkTerminalAsync(
+            claimed.Single(run => run.JobKey == "nightly@earlier"), JobRunStatus.Failed, "late", "nightly",
+            earlier, DateTimeOffset.UtcNow, CancellationToken.None);
+        await store.AdvanceCursorAsync("nightly", earlier, CancellationToken.None);
+
+        // Assert
+        (await store.GetScheduleAsync("nightly", CancellationToken.None))!
+            .LastCompletedOccurrence.Should().Be(later);
+        (await store.TryMaterializeWithoutOverlapAsync(NewJobRun("nightly@later", later), CancellationToken.None))
+            .Should().Be(MaterializeOutcome.AlreadyCompleted);
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static OutboxEntry NewEntry(string messageId, DateTime createdAt) => new()

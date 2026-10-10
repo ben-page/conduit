@@ -708,6 +708,37 @@ public class JobStoreShould
         remaining.Entries.Should().ContainSingle().Which.JobKey.Should().Be("nightly@new");
     }
 
+    [TestMethod]
+    public async Task OnlyEverMoveTheCursorForward()
+    {
+        // Arrange — two overlapping runs, the later occurrence finishing first; the instants straddle a
+        // rollover of every field, so text order has to be chronological order
+        await using var fixture = await SqliteJobStoreFixture.CreateAsync();
+        var store = fixture.Store;
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var earlier = new DateTimeOffset(2026, 12, 31, 23, 59, 59, TimeSpan.Zero).AddTicks(9_999_999);
+        var later = earlier.AddTicks(1);
+        await store.TryMaterializeAsync(NewRun("nightly@earlier", earlier), CancellationToken.None);
+        await store.TryMaterializeAsync(NewRun("nightly@later", later), CancellationToken.None);
+        var claimed = await store.ClaimDueAsync("worker", later, 10, CancellationToken.None);
+
+        // Act — later completes, then earlier completes, a misfire skip names a past occurrence
+        await store.CompleteAsync(
+            claimed.Single(run => run.JobKey == "nightly@later"), "nightly", later, retainRunKey: false, later,
+            CancellationToken.None);
+        await store.MarkTerminalAsync(
+            claimed.Single(run => run.JobKey == "nightly@earlier"), JobRunStatus.Failed, "late", "nightly",
+            earlier, later, CancellationToken.None);
+        await store.AdvanceCursorAsync("nightly", earlier, CancellationToken.None);
+
+        // Assert — moved back, a replica late for the later occurrence would find neither its row nor
+        // a cursor past it, and run it again
+        (await store.GetScheduleAsync("nightly", CancellationToken.None))!
+            .LastCompletedOccurrence.Should().Be(later);
+        (await store.TryMaterializeWithoutOverlapAsync(NewRun("nightly@later", later), CancellationToken.None))
+            .Should().Be(MaterializeOutcome.AlreadyCompleted);
+    }
+
     private static JobRun NewRun(string jobKey, DateTimeOffset runAt) => new()
     {
         JobKey = jobKey,

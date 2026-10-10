@@ -157,7 +157,17 @@ keep the two in step.
   `MarkTerminalAsync` advance the cursor first, under this lock, in the transaction that deletes the
   row, so a late materialization sees either the row (and collapses into it) or the cursor. An
   `AllowOverlap()` schedule takes no lock, so the scheduler checks the cursor from the row it already
-  reads for pause, just before its insert: a replica late by less than that instant still re-runs.
+  reads for pause. A late replica re-runs the occurrence only if another replica's completion of it
+  commits between that read and its insert (earlier, the insert collapses into the row; later, the read
+  sees the cursor).
+- **The cursor only moves forward.** `AdvanceCursorSql` is guarded `LastCompletedOccurrence IS NULL OR
+  LastCompletedOccurrence < @new`, for completion, terminal marking and misfire alike. Overlapping runs
+  can finish out of order; an unconditional `SET` let the earlier one move the cursor back behind the
+  later, after which a replica late for the later occurrence found neither its row nor a cursor past it.
+  The text comparison is chronological because every value is the same fixed-width round-trip UTC
+  form, which the claim's `RunAt` cutoff already relies on. When the guard fails the `UPDATE` may lock
+  nothing; that transaction then never waits on the schedule's row, so the lock order still holds.
+  `OnlyEverMoveTheCursorForward` (SQLite, and every server engine in the matrix) pins it.
   `OverlapLockShould`, `DurableSchedulerShould.NotReRunAnOccurrenceAnotherReplicaCompletedWhileThisOneWasLate`
   and persistence matrix section 9 pin it.
 - **Pause is still checked outside the lock**, as before: a pause racing a materialization is about

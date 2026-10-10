@@ -171,7 +171,12 @@ public interface IJobStore
         DateTimeOffset now,
         CancellationToken cancellationToken);
 
-    /// <summary>Advances a schedule's cursor past an occurrence that will not be run again.</summary>
+    /// <summary>
+    /// Advances a schedule's cursor past an occurrence that will not be run again. Forward only, here and
+    /// in <see cref="CompleteAsync"/> and <see cref="MarkTerminalAsync"/>: a cursor already at or past
+    /// <paramref name="occurrence"/> is left where it is, so runs finishing out of order cannot move it
+    /// backwards.
+    /// </summary>
     /// <param name="scheduleName">The schedule to advance.</param>
     /// <param name="occurrence">The occurrence to advance to.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
