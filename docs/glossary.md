@@ -105,6 +105,13 @@ A `ConduitOptions` flag making a broker transport host **publish-only**: it skip
 (subscriptions, bindings) and consumers, but still creates reply queues for request/response. Use
 for API hosts that route commands to workers, or test sender hosts.
 
+### Closed set
+
+A class with a private constructor whose instances are a fixed list (`IClosedSet<TSelf>`, `Conduit.Messages`), each
+spelled on the wire as its `Value` (`ConduitRuntime.JsonOptions`). `[ClosedSet(...)]` (`Conduit.Attributes`) states the
+values again for TypeGen, which emits a string-literal union of them. See
+[TypeScript client](transports/typescript-client.md#closed-sets).
+
 ### Wire format / type discriminator (`FullTypeName`)
 
 The wire body is the **plain serialized message** (camelCase JSON). The message type is carried as a

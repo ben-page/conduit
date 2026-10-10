@@ -3,8 +3,18 @@
 - MSBuild task using `Microsoft.Build.Utilities.Task` + `System.Reflection.MetadataLoadContext`
 - Uses `MetadataLoadContext` (not `Assembly.LoadFrom`) to scan assemblies — supports apps referencing ASP.NET shared framework types without needing them in the output directory. Resolves assemblies from: app output dir, .NET runtime dir, ASP.NET Core shared framework dir.
 - `ReflectionScanner.ScanClientVisible()` filters to `[ClientVisible]` types — includes both dispatchable types (commands/queries/events) and non-dispatchable types (DTOs/models) with `DispatchableKind.Model`. Uses `GetCustomAttributesData()` (not `GetCustomAttributes()`) for MetadataLoadContext compatibility.
-- `TypeCollector` — BFS walker that recursively discovers all complex types referenced by `[ClientVisible]` type properties AND query/command result types. Unwraps collections, nullable, and arrays to find the inner element type. Skips primitives, enums, and framework types. This means Domain-layer DTOs referenced by Application-layer commands/queries are automatically included in the generated TypeScript — no `[ClientVisible]` attribute needed on Domain types.
-- `TypeMapper` — Maps .NET types to TypeScript equivalents using string-based name comparisons (not `typeof()`) for MetadataLoadContext compatibility. Handles: primitives, Nullable, arrays, List/IList/IEnumerable/IReadOnlyList, Dictionary/IDictionary/IReadOnlyDictionary, enums (→ string literal unions via `GetFields()`), complex types (→ type name).
+- `TypeCollector` — BFS walker that recursively discovers all complex types referenced by `[ClientVisible]` type properties AND query/command result types. Unwraps collections, nullable, and arrays to find the inner element type. Skips primitives, enums, closed sets, and framework types. This means Domain-layer DTOs referenced by Application-layer commands/queries are automatically included in the generated TypeScript — no `[ClientVisible]` attribute needed on Domain types.
+- **Closed sets** (`ClosedSetReader`): a type carrying `[ClosedSet("a", …)]` (`Conduit.Attributes`) and implementing
+  `IClosedSet<itself>` (`Conduit.Messages`) maps to `'a' | …` — its declared wire VALUES, single-quoted and escaped
+  (`ToTsStringLiteral`), never its member names — and gets no interface. Both are matched by full NAME
+  (MetadataLoadContext). The values come from the attribute because a MetadataLoadContext cannot run the static
+  initializers that create the members (`FieldInfo.GetValue` throws there — measured on DMS's `PermissionScope`,
+  2026-10-09). The attribute on a type that does not implement the interface, or with no values, is a hard generation
+  error (`InvalidOperationException`). The reverse — the interface without the attribute — and an attribute list that
+  differs from `All` are caught at RUNTIME, by `ClosedSetJsonConverterFactory` on the type's first serialization:
+  TypeGen cannot see `All`. A closed set is reached like any property type and needs no `[ClientVisible]`. Enum output
+  is untouched by it.
+- `TypeMapper` — Maps .NET types to TypeScript equivalents using string-based name comparisons (not `typeof()`) for MetadataLoadContext compatibility. Handles: primitives, Nullable, arrays, List/IList/IEnumerable/IReadOnlyList, Dictionary/IDictionary/IReadOnlyDictionary, enums (→ string literal unions of member names via `GetFields()`), closed sets (→ string literal unions of their `[ClosedSet]` values, `ClosedSetReader`), complex types (→ type name).
 - Emits two files: `conduit.ts` (stable runtime) and `conduit.generated.ts` (per-project types + client)
 - `conduit.ts` contains: `DispatchResult<T>`, `ConduitError`, `ConduitTransport` interface, `HttpTransport`, conditionally `SignalRTransport`
 - `conduit.generated.ts` contains: type interfaces (root `[ClientVisible]` types + transitively-discovered types), `CommandMap`/`QueryMap`/`EventMap` (keys are `FullTypeName`), `ConduitClient` class, re-exports

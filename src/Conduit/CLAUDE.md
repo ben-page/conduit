@@ -6,6 +6,12 @@ and `Microsoft.Extensions.Configuration.Binder`.
 ## Runtime types
 
 - `ConduitRuntime` — static class centralizing route resolution, transport resolution (keyed DI), inbound gate chain, pipeline chaining, error handling. `HandleWireRequest`/`HandleWireEvent` run `IInboundInterceptor` gates before deserialization, then dispatch. Called primarily by source-generated mediator code.
+- `ConduitRuntime.JsonOptions` — camelCase, case-insensitive names; `JsonStringEnumConverter` (names only, no ordinals)
+  and `ClosedSetJsonConverterFactory` (`Conduit.Runtime`, public): a closed set (`IClosedSet<TSelf>`) as its bare
+  `Value`, read back by Ordinal match to the very member, any other token a `JsonException` (so a JSON-pathed 400 from
+  `DeserializeWire`); the converter checks `[ClosedSet]` against `All` once per type and throws on a difference. Both
+  SignalR transports copy these converters into their payload options, and `AuditJsonOptions` is built from
+  `JsonOptions`. A REST endpoint reads with the host's ASP.NET options, which carry neither unless the host adds them.
 - `TransportDispatcher` — singleton service encapsulating route resolution + transport dispatch. `SendAsync(envelope, ct)` resolves routes via `ConduitRuntime.ResolveRoute`, then sends via the endpoint's keyed transport (`SendRequestAsync`) or broadcasts to all transports (`SendEventAsync`). Registered by `AddConduitCore`. Used by `OutboxRelay` and `OutboxCapture.ClaimAndDeliverAsync` (the routine `OutboxCapture.FlushAsync` schedules on `ConduitBackgroundDispatcher`) instead of duplicating transport resolution logic.
 - `TypeFilterInterceptor` (in `Conduit.Middleware`) — `IInboundInterceptor` gate that throws `ForbiddenException` (403, not `UnauthorizedException`/401 — the caller is authenticated, the type just isn't client-dispatchable) for types not in `TypeFilterOptions.AllowedTypes`. Configured via `conduit.AddTypeFilter()`.
 - `TopologyNaming` — generates shared resource names (`CreateSharedResourceName`) and app-scoped resource names (`CreateAppResourceName`) with consistent prefix/truncation/hashing across all transports.

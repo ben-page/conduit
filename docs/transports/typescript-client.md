@@ -278,6 +278,36 @@ C# service-to-service transports (HTTP, SignalR, brokers) propagate `MessageCont
 | `Dictionary<string, T>` | `Record<string, T>` |
 | `T?` (nullable) | `T \| null` |
 | `enum` | string literal union (e.g. `'Active' \| 'Inactive'`) |
+| a closed set (`IClosedSet<TSelf>` + `[ClosedSet("a", "b")]`) | string literal union of its values (`'a' \| 'b'`) |
+
+### Closed sets
+
+A closed set is a class whose constructor is private, so every instance is one of a fixed list — a string-valued enum
+whose spellings need not be C# identifiers. Declare it as `IClosedSet<TSelf>` and state its values again in
+`[ClosedSet]`, in `All`'s order (TypeGen reads metadata and cannot run the initializers that create the members):
+
+```csharp
+[ClosedSet("self", "reports", "any")]
+public sealed record Reach : IClosedSet<Reach>
+{
+    public static readonly Reach Self = new("self");
+    public static readonly Reach Reports = new("reports");
+    public static readonly Reach Any = new("any");
+
+    private Reach(string value) => this.Value = value;
+
+    public static IReadOnlyList<Reach> All { get; } = [Self, Reports, Any];
+
+    public string Value { get; }
+}
+```
+
+A `Reach` property emits as `'self' | 'reports' | 'any'`. On the wire a member is its bare `Value`; any other string, a
+number or an object is refused at the wire read as a `BadRequest` naming its JSON path, and a JSON `null` binds as
+`null` — refuse it in `Validate()` where the member is required. Conduit throws the first time it serializes the type if
+`[ClosedSet]` and `All` differ, so a test that round-trips each member pins the generated client to the wire. A REST
+endpoint (`MapConduitGet`/`MapConduitPost`) reads with the host's ASP.NET JSON options: add
+`ClosedSetJsonConverterFactory` there, as you would `JsonStringEnumConverter`.
 
 ---
 
