@@ -66,7 +66,9 @@ internal sealed class ClosedSetJsonConverter<TSelf> : JsonConverter<TSelf>
         writer.WritePropertyName(value.Value);
     }
 
-    // The message never echoes the client's text; DeserializeWire answers with the JSON path only.
+    // The exception MESSAGE never echoes the client's text. DeserializeWire answers with the JSON path only: for a value
+    // the path names just the member, but for a dictionary key it includes the key the client sent, as System.Text.Json
+    // does for every dictionary.
     private TSelf Find(string? value) =>
         value is not null && this.members.TryGetValue(value, out var member)
             ? member
