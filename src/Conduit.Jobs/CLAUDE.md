@@ -41,16 +41,38 @@ are all constructed before any of them starts, so this is stable even when start
 
 `AddJobs` always registers `ScheduleRegistry`, `IOptions<JobsOptions>`, `TimeProvider` (TryAdd),
 `JobSchedulerReadiness`, and `JobTableInitializer` **first** (hosted services start in registration
-order and both schedulers read the tables on their first pass). Then, depending on the engine:
+order and both schedulers read the tables on their first pass). Then, depending on the engine and
+on `ManageOnly` (default off):
 
-| Durable | Non-durable |
-|---|---|
-| `IJobStore` → `DbJobStore` (scoped) | — |
-| `IJobs` → `DurableJobs` (scoped) | `IJobs` → `InMemoryJobs` (singleton) |
-| `ScopeCoalescer` (scoped) | — |
-| `JobRunner`, `ClaimedJobExecutor` (singletons) | `InMemoryJobState` (singleton) |
-| `DurableJobScheduler`, `JobCleanup` (hosted) | `InMemoryJobScheduler` (hosted) |
-| One closed `EventTriggerListener<T>` per declared trigger's event type | — |
+| Durable | Durable + `ManageOnly` | Non-durable | Non-durable + `ManageOnly` |
+|---|---|---|---|
+| `IJobStore` → `DbJobStore` (scoped) | same | — | — |
+| `IJobs` → `DurableJobs` (scoped) | same | `IJobs` → `InMemoryJobs` (singleton) | same |
+| `ScopeCoalescer` (scoped) | — | — | — |
+| `JobRunner`, `ClaimedJobExecutor` (singletons) | — | `InMemoryJobState` (singleton) | `InMemoryJobState` (singleton) |
+| `DurableJobScheduler`, `JobCleanup` (hosted) | — | `InMemoryJobScheduler` (hosted) | — |
+| One closed `EventTriggerListener<T>` per declared trigger's event type | — (a trigger is rejected) | — | — (a trigger is rejected) |
+
+**`ManageOnly` is "the runner off", not "jobs off".** It exists for a host that must resolve `IJobs`
+but shares the tables with a host that owns execution — registering the durable runner there would
+have its sweep (`ClaimDueAsync`) claim *any* due row, including one whose handler lives only in the
+other process. `DurableJobs` needs only `IJobStore`, `ScheduleRegistry` and `TimeProvider`, so the
+cut is clean. What stays, and why:
+
+- `JobTableInitializer` — reading needs the tables, and `PauseAsync` is an `UPDATE` of the
+  schedule's row, which the initializer's reconcile creates. It runs its usual validation too.
+- `JobSchedulerReadiness` — registered **already complete** (`Expect(0)`): no loop will ever report
+  armed, and anything awaiting `Ready` (`JobsTestHost`, a health check) must not hang on loops that do
+  not exist.
+- Declarations — schedules are allowed with an engine (list and trigger another host's schedules;
+  they must match that host's declaration, since trigger-now reads the command and `AllowOverlap`
+  from the local one). `AddJobs` throws for an event trigger (it fires only through the listener this
+  mode omits; no `IJobs` call needs it declared) and, without an engine, for any declaration at all
+  (nobody would ever run it). Off + no engine + nothing declared is an `IJobs` that lists nothing.
+
+The name follows the two existing "keep this half" flags — `ConduitOptions.ProducerOnly` (publish,
+never consume) and `OutboxOptions.CaptureOnly` (capture, never relay): positive, default `false`,
+named for what the host still does. It is deliberately not coupled to `ProducerOnly`.
 
 ## Claim reuse
 

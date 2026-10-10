@@ -26,6 +26,10 @@ public static class ConduitBuilderExtensions
     /// decided here, from what is already in the service collection, so
     /// <c>conduit.UseSqlite(...)</c> after <c>AddJobs(...)</c> would silently leave the schedules
     /// non-durable. That ordering mistake is caught at startup rather than at runtime.
+    /// <para>
+    /// <see cref="JobsBuilder.ManageOnly"/> registers <see cref="IJobs"/> without the runner, for a
+    /// host that shares the jobs tables but must never execute a job.
+    /// </para>
     /// </remarks>
     /// <param name="builder">The Conduit builder to configure.</param>
     /// <param name="configure">Callback declaring schedules, triggers, and tuning.</param>
@@ -89,6 +93,12 @@ public static class ConduitBuilderExtensions
                 "schedule's and suppress its next occurrence. Rename one of them.");
         }
 
+        var durable = HasPersistenceEngine(builder.Services);
+        if (options.ManageOnly)
+        {
+            RejectWhatAManageOnlyHostCannotRun(jobsBuilder, durable);
+        }
+
         builder.Services.AddSingleton(new ScheduleRegistry(jobsBuilder.Schedules, jobsBuilder.Triggers));
         // The builder's own instance, registered whole rather than copied property by property: a
         // knob added to JobsOptions and surfaced on JobsBuilder would otherwise have to be added to
@@ -99,17 +109,40 @@ public static class ConduitBuilderExtensions
         // Never the ambient clock: every scheduling decision reads this, so occurrence computation,
         // misfire detection, backoff and MaxRuntime stay deterministically testable.
         builder.Services.TryAddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton<JobSchedulerReadiness>();
+        if (options.ManageOnly)
+        {
+            // No loop will ever arm, so there is nothing to wait for: readiness is complete from the
+            // start, and anything awaiting it does not hang on loops that do not exist.
+            builder.Services.AddSingleton(_ =>
+            {
+                var readiness = new JobSchedulerReadiness();
+                readiness.Expect(0);
+                return readiness;
+            });
+        }
+        else
+        {
+            builder.Services.AddSingleton<JobSchedulerReadiness>();
+        }
 
         // Registered first, because hosted services start in registration order and both schedulers
         // read the tables on their very first pass. It also validates, so a misconfiguration fails
-        // before any loop has begun.
+        // before any loop has begun. A manage-only host keeps it: reading needs the tables, and
+        // pausing a declared schedule needs its row.
         builder.Services.AddHostedService<JobTableInitializer>();
 
-        if (HasPersistenceEngine(builder.Services))
+        if (durable)
         {
             builder.Services.AddScoped<IJobStore, DbJobStore>();
             builder.Services.AddScoped<IJobs, DurableJobs>();
+            if (options.ManageOnly)
+            {
+                // IJobs reads and writes the ledger through IJobStore alone. Everything below is the
+                // runner, and a runner here would claim any due run in the shared table — including
+                // one whose handler is registered only in the process that owns execution.
+                return builder;
+            }
+
             builder.Services.AddScoped<ScopeCoalescer>();
             builder.Services.AddSingleton<JobRunner>();
             builder.Services.AddSingleton<ClaimedJobExecutor>();
@@ -131,10 +164,42 @@ public static class ConduitBuilderExtensions
         {
             builder.Services.AddSingleton<InMemoryJobState>();
             builder.Services.AddSingleton<IJobs, InMemoryJobs>();
-            builder.Services.AddHostedService<InMemoryJobScheduler>();
+            if (!options.ManageOnly)
+            {
+                builder.Services.AddHostedService<InMemoryJobScheduler>();
+            }
         }
 
         return builder;
+    }
+
+    /// <summary>
+    /// A manage-only host registers no runner, so a declaration that only the runner could act on
+    /// would be silently inert here. Both cases are rejected now rather than discovered later from
+    /// work that never happened.
+    /// </summary>
+    private static void RejectWhatAManageOnlyHostCannotRun(JobsBuilder jobsBuilder, bool durable)
+    {
+        var trigger = jobsBuilder.Triggers.FirstOrDefault();
+        if (trigger is not null)
+        {
+            throw new InvalidOperationException(
+                $"Event trigger '{trigger.Name}' is declared on a host with ManageOnly set. A trigger fires " +
+                "only through the event listener the runner registers, and a manage-only host registers no " +
+                "runner, so it would never fire here. No IJobs operation needs it declared: declare it on the " +
+                "host that runs jobs and remove it from this one.");
+        }
+
+        var schedule = jobsBuilder.Schedules.FirstOrDefault();
+        if (!durable && schedule is not null)
+        {
+            throw new InvalidOperationException(
+                $"Job schedule '{schedule.Name}' is declared on a host with ManageOnly set and no persistence " +
+                "engine. Without an engine there is no shared ledger for another host to run it from, and this " +
+                "host runs nothing, so it would never run. To list and trigger another host's schedules, " +
+                "register the engine before AddJobs (conduit.UseSqlite(connectionString) or another); " +
+                "otherwise remove ManageOnly.");
+        }
     }
 
     private static bool HasPersistenceEngine(IServiceCollection services)

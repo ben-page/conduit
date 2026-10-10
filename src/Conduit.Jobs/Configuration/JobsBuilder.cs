@@ -71,6 +71,13 @@ public sealed class JobsBuilder
         set => this.Options.HistoryRetention = value;
     }
 
+    /// <inheritdoc cref="JobsOptions.ManageOnly"/>
+    public bool ManageOnly
+    {
+        get => this.Options.ManageOnly;
+        set => this.Options.ManageOnly = value;
+    }
+
     /// <summary>Begins declaring a recurring schedule.</summary>
     /// <param name="name">The schedule's unique name. Used as its database key.</param>
     /// <returns>A builder for the schedule.</returns>

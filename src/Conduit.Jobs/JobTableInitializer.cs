@@ -12,7 +12,8 @@ namespace Conduit.Jobs;
 /// and reconciles a cursor row per declared schedule. Fails fast on the two configurations that would
 /// otherwise appear to work: an event trigger without an engine (triggers are always durable, so
 /// there would be nowhere to write the run) and a misfire policy without an engine (an in-memory
-/// timer has no record of what it missed).
+/// timer has no record of what it missed). Registered on a <see cref="JobsOptions.ManageOnly"/> host
+/// too, which reads the tables and pauses through the schedule rows even though it runs nothing.
 /// </summary>
 internal sealed class JobTableInitializer : TableInitializerBase
 {

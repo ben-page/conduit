@@ -20,6 +20,7 @@
 - [Operating jobs with IJobs](#operating-jobs-with-ijobs)
 - [Run history](#run-history)
 - [Without a database](#without-a-database)
+- [A host that runs no jobs](#a-host-that-runs-no-jobs)
 - [Tables](#tables)
 - [Configuration reference](#configuration-reference)
 - [Limitations](#limitations)
@@ -540,6 +541,43 @@ No engine means no tables. Each host runs one timer loop per schedule, waiting o
 This is the usual precedent: Quartz's `RAMJobStore` is explicitly single-node and clustering needs
 the ADO.NET store; Hangfire likewise requires a storage backend.
 
+## A host that runs no jobs
+
+Some processes need `IJobs` without being a place jobs run — a second host that shares the
+application's database and composes handlers that take `IJobs`, say, or an admin tool. `AddJobs`
+with an engine registered would make that host a full runner, and its claim sweep takes **any** due
+run in the shared `conduit_job_runs`, including one whose handler is registered only in the process
+that owns execution. `ManageOnly` turns the runner off and keeps `IJobs`:
+
+```csharp
+conduit.UseSqlServer(connectionString);       // the shared database, registered first as always
+conduit.AddJobs(jobs => jobs.ManageOnly = true);
+```
+
+| | `ManageOnly` with an engine | `ManageOnly` without an engine |
+|---|---|---|
+| `IJobs` | Durable — reads and writes the shared ledger | In-memory, and lists nothing |
+| Scheduler, claim sweep, cleanup, trigger listeners | None | None |
+| Tables | Created at startup (unless `AutoCreateTable` is off); declared schedules reconciled | None |
+| Schedules | May be declared, to list, pause and trigger them | Rejected at `AddJobs` |
+| Event triggers | Rejected at `AddJobs` | Rejected at `AddJobs` |
+
+- **Declare a schedule here only to operate it, and declare it exactly as the runner does.**
+  Trigger-now builds the command, and applies the [overlap](#overlap) rule, from the declaration on
+  the host it is called on.
+- **An event trigger is rejected** rather than ignored: it fires only through the listener the
+  runner registers, and no `IJobs` call needs it declared — `GetPendingAsync`,
+  `GetPendingScopesAsync` and `CancelAsync` all take a trigger's name or a run's key as plain text.
+- **Without an engine, any declaration is rejected**: there is no shared ledger for another host to
+  run it from, and this host runs nothing. A host with nothing declared gets an `IJobs` that answers
+  with empty lists.
+- The tables are still created, because reading needs them; set `AutoCreateTable = false` when the
+  runner (or your migrations) owns the schema and this host's login has no DDL rights.
+
+It sits beside `ConduitOptions.ProducerOnly` (publish, never consume) and the outbox's `CaptureOnly`
+(capture, never relay), and is independent of the former: a producer-only transport host may still
+run jobs.
+
 ## Tables
 
 All four are created at startup if absent, unless `AutoCreateTable` is `false`.
@@ -634,6 +672,7 @@ never reaches it.
 | `CompletedRetention` | 1 day | How long a completed event-trigger run is kept, so a late redelivery of its event collapses |
 | `AutoCreateTable` | `true` | Whether to create the jobs tables (including run history) on startup |
 | `HistoryRetention` | 30 days | How long run history is kept |
+| `ManageOnly` | `false` | Register `IJobs` without the runner — see [A host that runs no jobs](#a-host-that-runs-no-jobs) |
 
 ```csharp
 conduit.AddJobs(jobs =>
@@ -652,9 +691,9 @@ conduit.AddJobs(jobs =>
 
 `ClaimTimeout` must be more than twice `HeartbeatInterval`, or startup fails.
 
-Every knob here describes the durable path. [Without a database](#without-a-database) none of them
-apply — there are no tables to create, no claim to renew or time out, no ledger rows to retain, and
-no history to purge.
+Every knob here but `ManageOnly` describes the durable path.
+[Without a database](#without-a-database) none of them apply — there are no tables to create, no
+claim to renew or time out, no ledger rows to retain, and no history to purge.
 
 ## Limitations
 

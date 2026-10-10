@@ -5,6 +5,7 @@ using Conduit.Jobs;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
+using Conduit.Persistence.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -202,6 +203,7 @@ public class JobsConfigurationShould
             jobs.CompletedRetention = TimeSpan.FromHours(6);
             jobs.AutoCreateTable = false;
             jobs.HistoryRetention = TimeSpan.FromDays(90);
+            jobs.ManageOnly = true;
         });
 
         // Assert
@@ -215,11 +217,99 @@ public class JobsConfigurationShould
         options.CompletedRetention.Should().Be(TimeSpan.FromHours(6));
         options.AutoCreateTable.Should().BeFalse();
         options.HistoryRetention.Should().Be(TimeSpan.FromDays(90));
+        options.ManageOnly.Should().BeTrue();
     }
 
-    private static void AddJobsForTest(Action<JobsBuilder> configure)
+    [TestMethod]
+    public void RejectAnEventTriggerOnAManageOnlyHost()
+    {
+        // Arrange — a trigger fires only through the listener the runner registers, so on a host
+        // that registers no runner the declaration would silently never fire
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.ManageOnly = true;
+            jobs.On<ThingHappened>("notify").Run(thing => new RecordedJob(thing.Label));
+        }
+
+        // Act
+        var act = () => AddJobsForTest(Configure, withEngine: true);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*'notify'*ManageOnly*never fire*");
+    }
+
+    [TestMethod]
+    public void RejectAnEventTriggerOnAManageOnlyHostWithoutAnEngine()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.ManageOnly = true;
+            jobs.On<ThingHappened>("notify").Run(thing => new RecordedJob(thing.Label));
+        }
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*'notify'*ManageOnly*");
+    }
+
+    [TestMethod]
+    public void RejectAScheduleOnAManageOnlyHostWithoutAnEngine()
+    {
+        // Arrange — no shared ledger for another host to run it from, and this host runs nothing
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.ManageOnly = true;
+            jobs.Schedule("rollup").Every(TimeSpan.FromMinutes(1)).Run(() => new NoopJob());
+        }
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*'rollup'*no persistence engine*never run*");
+    }
+
+    [TestMethod]
+    public void AcceptAScheduleOnAManageOnlyHostWithAnEngine()
+    {
+        // Arrange — the host lists and triggers another host's schedule, the ProducerOnly use case
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.ManageOnly = true;
+            jobs.Schedule("rollup").Every(TimeSpan.FromMinutes(1)).Run(() => new NoopJob());
+        }
+
+        // Act
+        var act = () => AddJobsForTest(Configure, withEngine: true);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    [TestMethod]
+    public void AcceptAManageOnlyHostWithoutAnEngineThatDeclaresNothing()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs) => jobs.ManageOnly = true;
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    private static void AddJobsForTest(Action<JobsBuilder> configure, bool withEngine = false)
     {
         var builder = new ConduitBuilder(new ServiceCollection());
+        if (withEngine)
+        {
+            builder.UseSqlite("Data Source=:memory:");
+        }
+
         builder.AddJobs(configure);
     }
 }

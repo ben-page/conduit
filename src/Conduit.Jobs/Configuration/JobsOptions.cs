@@ -35,4 +35,26 @@ public sealed class JobsOptions
 
     /// <summary>How long run history is retained. Default 30 days.</summary>
     public TimeSpan HistoryRetention { get; set; } = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// Run no jobs on this host: <see cref="IJobs"/> still resolves, to list, pause, resume, trigger
+    /// and cancel over the shared ledger, but none of the runner is registered — no scheduler, no
+    /// claim sweep, no retention cleanup, no event-trigger listener. For a process that shares the
+    /// jobs tables with another process whose runner owns execution: with an engine registered, a
+    /// second runner would claim any due run in <c>conduit_job_runs</c>, including one whose handler
+    /// lives only in the other process. The sibling of <c>OutboxOptions.CaptureOnly</c> and
+    /// <see cref="Conduit.Configuration.ConduitOptions.ProducerOnly"/>, and independent of the
+    /// latter: a producer-only transport host may still run jobs. Default: <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// With an engine, schedules may still be declared, so this host can list and trigger them; they
+    /// must match the runner's declarations (name, command, <c>AllowOverlap</c>), because
+    /// trigger-now builds its command and applies the overlap rule from the declaration on the host
+    /// it is called on. Without an engine there is no shared ledger for another host to run from, so
+    /// any declaration is rejected at <c>AddJobs</c>. Event triggers are rejected either way: they
+    /// fire only through the listener this mode does not register. The tables are still created
+    /// (unless <see cref="AutoCreateTable"/> is off) and declared schedules still reconciled, since
+    /// reading needs the tables and pause needs the schedule's row.
+    /// </remarks>
+    public bool ManageOnly { get; set; }
 }
