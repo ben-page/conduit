@@ -138,6 +138,13 @@ public static class TypeMapper
             return "unknown";
         }
 
+        // A closed set (Conduit.Messages.IClosedSet<TSelf> + [ClosedSet]) → string literal union of its wire VALUES.
+        // Unlike an enum, the wire carries a member as its value (ConduitRuntime.JsonOptions), not its C# name.
+        if (ClosedSetReader.ValuesOf(type) is { } closedSetValues)
+        {
+            return string.Join(" | ", closedSetValues.Select(ClosedSetReader.ToTsStringLiteral));
+        }
+
         // Complex types - use the type name
         return type.Name;
     }

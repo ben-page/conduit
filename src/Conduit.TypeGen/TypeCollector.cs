@@ -12,7 +12,7 @@ public sealed record CollectedType(Type Type, string? BaseTypeName);
 /// <summary>
 /// Recursively walks the property type graph of a set of root types,
 /// collecting all complex types that need TypeScript interface generation.
-/// Skips primitives, collections, dictionaries, enums, and framework types.
+/// Skips primitives, collections, dictionaries, enums, closed sets, and framework types.
 /// </summary>
 public static class TypeCollector
 {
@@ -235,6 +235,12 @@ public static class TypeCollector
             {
                 return false;
             }
+        }
+
+        // A closed set is mapped to a string literal union of its values, not an interface
+        if (ClosedSetReader.ValuesOf(type) is not null)
+        {
+            return false;
         }
 
         return true;
