@@ -199,18 +199,41 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             // host that runs it.
             if (schedule.AllowsOverlap)
             {
+                // No lock to read the cursor under, so it is read just before the insert: a replica late
+                // by more than that instant skips; one late by less can still re-run the occurrence.
+                if (row?.LastCompletedOccurrence is { } cursor && occurrence <= cursor)
+                {
+                    LogAlreadyCompleted(this.logger, schedule.Name, occurrence);
+                    return;
+                }
+
                 await store.TryMaterializeAsync(BuildRun(schedule, occurrence), stoppingToken);
             }
-            else if (await store.TryMaterializeWithoutOverlapAsync(BuildRun(schedule, occurrence), stoppingToken)
-                == MaterializeOutcome.Overlapping)
+            else
             {
-                // Running, or awaiting a retry — a previous occurrence or a manual run: either way
-                // starting a second is the overlap the policy exists to prevent. The check and the
-                // insert are one locked step shared with trigger-now, so neither path can slip a run
-                // in between the other's check and its insert. Bounded, because attempts are finite —
-                // a run that keeps failing becomes terminal and stops holding the schedule up.
-                LogOverlapSkipped(this.logger, schedule.Name, occurrence);
-                return;
+                switch (await store.TryMaterializeWithoutOverlapAsync(BuildRun(schedule, occurrence), stoppingToken))
+                {
+                    case MaterializeOutcome.AlreadyCompleted:
+                        // This host's timer fired after another replica had already run the occurrence
+                        // to the end: the row is gone, and only the cursor, read under the lock, says so.
+                        LogAlreadyCompleted(this.logger, schedule.Name, occurrence);
+                        return;
+
+                    case MaterializeOutcome.Overlapping:
+                        // Running, or awaiting a retry — a previous occurrence or a manual run: either
+                        // way starting a second is the overlap the policy exists to prevent. The check
+                        // and the insert are one locked step shared with trigger-now, so neither path
+                        // can slip a run in between the other's check and its insert. Bounded, because
+                        // attempts are finite — a run that keeps failing becomes terminal and stops
+                        // holding the schedule up.
+                        LogOverlapSkipped(this.logger, schedule.Name, occurrence);
+                        return;
+
+                    case MaterializeOutcome.Materialized:
+                    case MaterializeOutcome.AlreadyMaterialized:
+                    default:
+                        break;
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -492,6 +515,12 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         Level = LogLevel.Information,
         Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because another run of it is still outstanding")]
     private static partial void LogOverlapSkipped(
+        ILogger logger, string scheduleName, DateTimeOffset occurrence);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because another host has already completed it")]
+    private static partial void LogAlreadyCompleted(
         ILogger logger, string scheduleName, DateTimeOffset occurrence);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job schedule '{ScheduleName}' database access failed")]

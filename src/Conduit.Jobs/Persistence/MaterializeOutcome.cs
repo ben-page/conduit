@@ -17,4 +17,11 @@ public enum MaterializeOutcome
     /// this one would start the overlap the schedule forbids. Nothing was written.
     /// </summary>
     Overlapping,
+
+    /// <summary>
+    /// The run is for an occurrence at or before the schedule's cursor: some host has already taken it
+    /// to a terminal outcome and deleted its row, so writing it again would run it twice. Nothing was
+    /// written. The usual cause is a replica whose timer fired late.
+    /// </summary>
+    AlreadyCompleted,
 }

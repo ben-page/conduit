@@ -837,6 +837,23 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             return null;
         }
 
+        // An occurrence's row is deleted on success, so once it has completed only the cursor says so.
+        // Read under the lock, and CompleteAsync and MarkTerminalAsync advance the cursor under the same
+        // lock (first, in the transaction that deletes the row), so a replica whose timer fired after
+        // another finished the occurrence sees the cursor rather than re-inserting the row.
+        if (run.Occurrence is { } occurrence
+            && await ExecuteScalarOnAsync(
+                connection,
+                ReadCursorSql,
+                command => DbParameterHelper.Add(command, "@Name", scheduleName),
+                cancellationToken,
+                transaction) is string cursor
+            && ParseTimestamp(cursor) >= occurrence)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return MaterializeOutcome.AlreadyCompleted;
+        }
+
         var overlapping = await ExecuteScalarOnAsync(
             connection,
             CountOverlappingSql,
@@ -964,6 +981,9 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     // takes that row's write lock and holds it until the transaction ends.
     private static string LockScheduleSql =>
         $"UPDATE {JobTableSchema.SchedulesTable} SET IsPaused = IsPaused WHERE Name = @Name";
+
+    private static string ReadCursorSql =>
+        $"SELECT LastCompletedOccurrence FROM {JobTableSchema.SchedulesTable} WHERE Name = @Name";
 
     private static string CountOverlappingSql =>
         $"SELECT COUNT(*) FROM {JobTableSchema.RunsTable} " +

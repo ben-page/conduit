@@ -237,10 +237,12 @@ per-host job.
 With an engine configured, one occurrence of one schedule goes like this:
 
 1. Every host computes the schedule's next occurrence in memory and sleeps until it.
-2. At occurrence time, each host reads the schedule's cursor and skips if the occurrence is not
-   strictly after it, or if the schedule is paused.
-3. Unless the schedule allows [overlap](#overlap), each host takes the schedule's row lock and skips
-   if another run of it is outstanding; this check and step 4's insert are one transaction.
+2. At occurrence time, each host skips if the schedule is paused.
+3. Each host takes the schedule's row lock and, under it, skips if the occurrence is not strictly
+   after the schedule's cursor (another replica has already run it) or — unless the schedule allows
+   [overlap](#overlap) — if another run of it is outstanding. These checks and step 4's insert are one
+   transaction. An `AllowOverlap()` schedule takes no lock and checks only the cursor, just before the
+   insert.
 4. Each host does an insert-or-ignore of a run row keyed `{schedule}@{occurrenceUtcIso}`. N replicas
    race; one row results.
 5. Each host attempts an atomic claim. Exactly one wins.
@@ -275,7 +277,12 @@ run 02:00 today?", and insert-or-ignore on the run key only prevents duplicates 
 exists. The **cursor** in `conduit_job_schedules` closes the gap: an occurrence is materialized only
 if it is strictly after `LastCompletedOccurrence`. That is why completion deletes the row and
 advances the cursor in a single transaction — a crash between the two would leave an occurrence that
-has run and looks like it has not.
+has run and looks like it has not. The check happens at materialization, not only when a host starts:
+a replica whose timer fires late — clock skew, a long GC pause — after another has already run the
+occurrence to the end finds no row to collide with, only the cursor. It reads the cursor under the
+schedule's row lock, which completion also takes before it deletes the row, so the two cannot
+interleave. An `AllowOverlap()` schedule reads it without the lock, just before its insert, so a
+replica late by less than that instant can still run the occurrence again.
 
 An event trigger has no cursor to fall back on, so a non-coalescing trigger run is the one success
 that is **not** deleted. Its row is kept with status `Completed` for `CompletedRetention` (default

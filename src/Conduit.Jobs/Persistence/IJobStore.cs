@@ -44,7 +44,9 @@ public interface IJobStore
     /// runs — the scheduler materializing an occurrence and a manual trigger — go through here, so no
     /// interleaving of them leaves two runs outstanding. A row with the run's own key does not count as
     /// overlap: that is the same run, which every replica materializes, and it collapses as in
-    /// <see cref="TryMaterializeAsync"/>.
+    /// <see cref="TryMaterializeAsync"/>. A run with an <see cref="JobRun.Occurrence"/> is also checked
+    /// against the schedule's cursor under the same lock, so an occurrence another host has already
+    /// completed — its row deleted, the cursor advanced — is never written again.
     /// </summary>
     /// <remarks>
     /// The protocol is one transaction that first takes the schedule's <c>conduit_job_schedules</c> row

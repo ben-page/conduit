@@ -150,6 +150,16 @@ keep the two in step.
 - **No isolation level is pinned** (as `CompleteAsync`). Pinning READ COMMITTED would fail on MySQL
   with statement-based binary logging; a stricter default turns the waiter's stale read into a
   serialization error — a failed call, never a second run.
+- **The cursor is checked under the same lock.** A run with an `Occurrence` at or before
+  `LastCompletedOccurrence` is `AlreadyCompleted`, and nothing is written. Before this the cursor was
+  read only when a schedule's loop started, so a running replica whose timer fired late re-inserted —
+  and re-ran — an occurrence another replica had completed and deleted. `CompleteAsync` and
+  `MarkTerminalAsync` advance the cursor first, under this lock, in the transaction that deletes the
+  row, so a late materialization sees either the row (and collapses into it) or the cursor. An
+  `AllowOverlap()` schedule takes no lock, so the scheduler checks the cursor from the row it already
+  reads for pause, just before its insert: a replica late by less than that instant still re-runs.
+  `OverlapLockShould`, `DurableSchedulerShould.NotReRunAnOccurrenceAnotherReplicaCompletedWhileThisOneWasLate`
+  and persistence matrix section 9 pin it.
 - **Pause is still checked outside the lock**, as before: a pause racing a materialization is about
   what happens next and needs no atomicity. Trigger-now still ignores pause.
 - **Outside the guarantee:** a run written by `TryMaterializeAsync` for a no-overlap schedule (a host

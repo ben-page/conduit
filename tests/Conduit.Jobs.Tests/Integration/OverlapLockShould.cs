@@ -161,6 +161,64 @@ public class OverlapLockShould
         }
     }
 
+    [TestMethod]
+    public async Task RefuseToRematerializeAnOccurrenceTheCursorHasPassed()
+    {
+        // Arrange — one replica ran 02:00 to the end: its row is deleted and the cursor records it
+        await using var database = await LockDatabase.CreateAsync();
+        var store = database.Store;
+        await store.TryMaterializeWithoutOverlapAsync(OccurrenceRun(Now), CancellationToken.None);
+        var claimed = await store.ClaimDueAsync("worker", Now, 10, CancellationToken.None);
+        await store.CompleteAsync(
+            claimed[0], "nightly", claimed[0].Occurrence, retainRunKey: false, Now, CancellationToken.None);
+
+        // Act — replicas whose timers fired late, for that occurrence and an earlier one; then the next
+        var late = await store.TryMaterializeWithoutOverlapAsync(OccurrenceRun(Now), CancellationToken.None);
+        var earlier = await store.TryMaterializeWithoutOverlapAsync(
+            OccurrenceRun(Now.AddMinutes(-1)), CancellationToken.None);
+        var next = await store.TryMaterializeWithoutOverlapAsync(
+            OccurrenceRun(Now.AddMinutes(1)), CancellationToken.None);
+
+        // Assert — the insert-or-ignore alone would have re-created 02:00, since its row is gone
+        late.Should().Be(MaterializeOutcome.AlreadyCompleted);
+        earlier.Should().Be(MaterializeOutcome.AlreadyCompleted);
+        next.Should().Be(MaterializeOutcome.Materialized);
+        (await store.GetRunAsync(OccurrenceRun(Now).JobKey, CancellationToken.None)).Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task NeverRematerializeAnOccurrenceWhileItsCompletionRacesLateReplicas()
+    {
+        // Arrange
+        await using var database = await LockDatabase.CreateAsync();
+        var store = database.Store;
+
+        for (var round = 0; round < 5; round++)
+        {
+            var occurrence = Now.AddMinutes(round);
+            await store.TryMaterializeWithoutOverlapAsync(OccurrenceRun(occurrence), CancellationToken.None);
+            var claimed = (await store.ClaimDueAsync($"worker-{round}", occurrence, 10, CancellationToken.None)).Single();
+
+            // Act — the occurrence completes while three late replicas materialize it, each on a thread
+            // of its own (Microsoft.Data.Sqlite's async methods run synchronously)
+            var completion = Task.Run(() => store.CompleteAsync(
+                claimed, "nightly", claimed.Occurrence, retainRunKey: false, occurrence, CancellationToken.None));
+            var late = Enumerable.Range(0, 3)
+                .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+                    OccurrenceRun(occurrence), CancellationToken.None)))
+                .ToList();
+            await completion;
+            var outcomes = await Task.WhenAll(late);
+
+            // Assert — each late replica either collapsed into the row before it was deleted or saw the
+            // cursor after; none wrote the completed occurrence back
+            outcomes.Should().AllSatisfy(outcome => outcome.Should().BeOneOf(
+                MaterializeOutcome.AlreadyMaterialized, MaterializeOutcome.AlreadyCompleted));
+            (await store.GetRunAsync(OccurrenceRun(occurrence).JobKey, CancellationToken.None))
+                .Should().BeNull($"round {round} must not re-create a completed occurrence");
+        }
+    }
+
     /// <summary>
     /// Claims and completes the runs a previous round left outstanding. The claim is cut off at each
     /// run's own due time, which is before anything the current round writes, so it never takes one.

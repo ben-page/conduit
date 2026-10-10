@@ -75,6 +75,44 @@ public class DurableSchedulerShould
         spy.Count.Should().Be(1);
     }
 
+    [TestMethod]
+    [DataRow(false, DisplayName = "No overlap: the cursor is read under the schedule's lock")]
+    [DataRow(true, DisplayName = "AllowOverlap: the cursor is read just before the insert")]
+    public async Task NotReRunAnOccurrenceAnotherReplicaCompletedWhileThisOneWasLate(bool allowOverlap)
+    {
+        // Arrange — this host is running and waiting for the occurrence
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs =>
+            {
+                var schedule = jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5));
+                if (allowOverlap)
+                {
+                    schedule = schedule.AllowOverlap();
+                }
+
+                schedule.Run(() => new RecordedJob("warm"));
+            },
+            spy,
+            timeProvider,
+            database.ConnectionString);
+
+        // ...when another replica, whose timer fired first, runs it to the end: its row is deleted and
+        // the cursor advanced, in one transaction
+        await JobsDatabaseProbe.StoreFor(database).AdvanceCursorAsync("warm", Occurrence, CancellationToken.None);
+
+        // Act — this host's timer fires late
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await Task.Delay(300);
+
+        // Assert — the loop read the cursor only at startup; the check at materialization is what stops it
+        spy.StartedCount.Should().Be(0);
+        (await JobsDatabaseProbe.StoreFor(database).GetRunAsync(
+            DurableJobScheduler.BuildJobKey("warm", Occurrence), CancellationToken.None)).Should().BeNull();
+    }
+
     private static Task<TestHost> StartHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, JobSpy spy)
         => JobsTestHost.StartAsync(

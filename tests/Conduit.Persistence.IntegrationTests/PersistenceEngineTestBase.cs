@@ -808,6 +808,69 @@ public abstract class PersistenceEngineTestBase
         (await CountOutstandingAsync(factory)).Should().Be(1);
     }
 
+    [TestMethod]
+    public async Task RefuseToRematerializeAnOccurrenceTheCursorHasPassed()
+    {
+        // Arrange — one replica ran the occurrence to the end: its row is deleted, the cursor records it
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var occurrence = DateTimeOffset.UtcNow.AddMinutes(-1).AddTicks(1234567);
+        await store.TryMaterializeWithoutOverlapAsync(NewJobRun("nightly@done", occurrence), CancellationToken.None);
+        var claimed = await store.ClaimDueAsync("worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
+        await store.CompleteAsync(
+            claimed[0], "nightly", claimed[0].Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+            CancellationToken.None);
+
+        // Act — a late replica for the same occurrence (the cursor's own sub-millisecond value, read back
+        // from this engine's text column), and the next occurrence
+        var late = await store.TryMaterializeWithoutOverlapAsync(NewJobRun("nightly@done", occurrence), CancellationToken.None);
+        var next = await store.TryMaterializeWithoutOverlapAsync(
+            NewJobRun("nightly@next", occurrence.AddMinutes(1)), CancellationToken.None);
+
+        // Assert
+        late.Should().Be(MaterializeOutcome.AlreadyCompleted);
+        next.Should().Be(MaterializeOutcome.Materialized);
+        (await store.GetRunAsync("nightly@done", CancellationToken.None)).Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task NeverRematerializeAnOccurrenceWhileItsCompletionRacesLateReplicas()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var start = DateTimeOffset.UtcNow.AddHours(-1);
+
+        for (var round = 0; round < 8; round++)
+        {
+            var occurrence = start.AddMinutes(round);
+            var key = $"nightly@late-{round}";
+            await store.TryMaterializeWithoutOverlapAsync(NewJobRun(key, occurrence), CancellationToken.None);
+            var claimed = (await store.ClaimDueAsync($"worker-{round}", occurrence, 10, CancellationToken.None)).Single();
+
+            // Act — the occurrence completes while four late replicas materialize it
+            var completion = Task.Run(() => store.CompleteAsync(
+                claimed, "nightly", claimed.Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+                CancellationToken.None));
+            var late = Enumerable.Range(0, 4)
+                .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+                    NewJobRun(key, occurrence), CancellationToken.None)))
+                .ToList();
+            await completion;
+            var outcomes = await Task.WhenAll(late);
+
+            // Assert — each collapsed into the row before its delete or saw the cursor after it
+            outcomes.Should().AllSatisfy(outcome => outcome.Should().BeOneOf(
+                MaterializeOutcome.AlreadyMaterialized, MaterializeOutcome.AlreadyCompleted));
+            (await store.GetRunAsync(key, CancellationToken.None))
+                .Should().BeNull($"round {round} must not re-create a completed occurrence");
+        }
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static OutboxEntry NewEntry(string messageId, DateTime createdAt) => new()
