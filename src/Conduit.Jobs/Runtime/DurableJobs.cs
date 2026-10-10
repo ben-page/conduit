@@ -21,6 +21,13 @@ internal sealed class DurableJobs : IJobs
     /// <inheritdoc/>
     public async Task<IReadOnlyList<JobScheduleInfo>> GetSchedulesAsync(CancellationToken cancellationToken)
     {
+        // The list is the registry's, so with nothing declared there is nothing to read the table for —
+        // and a manage-only host may run before anything has created the table.
+        if (this.registry.Schedules.Count == 0)
+        {
+            return [];
+        }
+
         var rows = await this.store.GetSchedulesAsync(cancellationToken);
         var byName = rows.ToDictionary(row => row.Name, StringComparer.Ordinal);
         var now = this.timeProvider.GetUtcNow();

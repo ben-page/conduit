@@ -46,6 +46,11 @@ internal sealed class InMemoryJobState
         => this.running.TryRemove(KeyValuePair.Create(scheduleName, cancellation));
 
     /// <summary>Cancels a running job's token. Returns false when nothing by that name is running.</summary>
+    /// <remarks>
+    /// The source can be disposed between the lookup and the cancel: the run finished, forgot itself and
+    /// disposed it. That is the same answer as not finding it — the job is no longer running — rather
+    /// than an <see cref="ObjectDisposedException"/> escaping <c>IJobs.CancelAsync</c>.
+    /// </remarks>
     public bool TryCancel(string scheduleName)
     {
         if (!this.running.TryGetValue(scheduleName, out var cancellation))
@@ -53,7 +58,14 @@ internal sealed class InMemoryJobState
             return false;
         }
 
-        cancellation.Cancel();
-        return true;
+        try
+        {
+            cancellation.Cancel();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 }

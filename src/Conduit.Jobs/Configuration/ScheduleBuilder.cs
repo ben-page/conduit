@@ -57,7 +57,11 @@ public sealed class ScheduleBuilder
         return this;
     }
 
-    /// <summary>Allows a new occurrence to start while a previous one is still outstanding.</summary>
+    /// <summary>
+    /// Allows a new run — an occurrence, or a manual <see cref="IJobs.TriggerNowAsync"/> — to start
+    /// while another run of the schedule is still outstanding. Without it the occurrence is skipped and
+    /// the manual run refused with <see cref="JobOverlapException"/>.
+    /// </summary>
     /// <returns>This builder for chaining.</returns>
     public ScheduleBuilder AllowOverlap()
     {

@@ -69,6 +69,12 @@ cut is clean. What stays, and why:
   from the local one). `AddJobs` throws for an event trigger (it fires only through the listener this
   mode omits; no `IJobs` call needs it declared) and, without an engine, for any declaration at all
   (nobody would ever run it). Off + no engine + nothing declared is an `IJobs` that lists nothing.
+- **No SQL at startup when there is nothing to do.** With `AutoCreateTable = false` and nothing
+  declared, a manage-only host issues no statement while starting (the initializer reconciles an empty
+  list, and `DbJobStore`'s constructor touches no database), and `GetSchedulesAsync` returns `[]`
+  without reading. A host whose login cannot reach the jobs tables relies on that;
+  `ManageOnlyHostShould.StartWithoutTouchingTheDatabaseWhenItDeclaresNothingAndCreatesNoTables` pins it
+  against a database that cannot even be opened.
 
 The name follows the two existing "keep this half" flags — `ConduitOptions.ProducerOnly` (publish,
 never consume) and `OutboxOptions.CaptureOnly` (capture, never relay): positive, default `false`,

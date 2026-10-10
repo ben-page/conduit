@@ -85,7 +85,11 @@ public interface IJobs
     /// <c>AllowOverlap()</c>, the call is refused while the schedule has a run outstanding — pending,
     /// awaiting a retry, or running, whether an occurrence or an earlier manual run — and the check
     /// and the insert are one atomic step against the scheduler on every host, so the two can never
-    /// leave two runs outstanding between them. With <c>AllowOverlap()</c> it always queues. While a
+    /// leave two runs outstanding between them. That holds while every host sharing the tables runs a
+    /// Conduit version with this check, and every host declares the schedule's <c>AllowOverlap()</c>
+    /// the same way: a host on an older version, or one that declares the schedule as allowing
+    /// overlap, writes its runs without taking the lock. With <c>AllowOverlap()</c> it always
+    /// queues. While a
     /// manual run is outstanding the scheduler skips the schedule's occurrences, exactly as it skips
     /// one behind an earlier occurrence. Without a persistence engine the run executes inline on this
     /// host, and "outstanding" means in progress on this host.

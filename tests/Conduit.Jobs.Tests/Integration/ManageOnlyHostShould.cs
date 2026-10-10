@@ -123,6 +123,30 @@ public class ManageOnlyHostShould
             .Should().NotContain(typeof(InMemoryJobScheduler));
     }
 
+    [TestMethod]
+    public async Task StartWithoutTouchingTheDatabaseWhenItDeclaresNothingAndCreatesNoTables()
+    {
+        // Arrange — an engine whose database cannot even be opened, as for a host whose login has no
+        // rights on the jobs tables: a host that only needs IJobs to resolve must still start
+        var unopenable = $"Data Source={Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing", "jobs.db")};Mode=ReadOnly";
+
+        // Act
+        await using var host = await JobsTestHost.StartAsync(
+            jobs =>
+            {
+                jobs.ManageOnly = true;
+                jobs.AutoCreateTable = false;
+            },
+            connectionString: unopenable);
+        var jobs = host.GetRequiredService<IJobs>();
+
+        // Assert — nothing declared, so listing needs no table; the control proves the engine is real
+        // and unreachable, so the start above did not merely get lucky
+        (await jobs.GetSchedulesAsync(CancellationToken.None)).Should().BeEmpty();
+        var touchTheDatabase = () => jobs.GetPendingAsync(JobFilter.All, CancellationToken.None);
+        await touchTheDatabase.Should().ThrowAsync<Microsoft.Data.Sqlite.SqliteException>();
+    }
+
     private static void ManageOnlyWarm(JobsBuilder jobs)
     {
         jobs.ManageOnly = true;

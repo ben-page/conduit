@@ -95,7 +95,7 @@ builder.Services.AddConduit(conduit =>
 | `Every(TimeSpan)` | A fixed interval. Interval schedules have no misfire policy. |
 | `InTimeZone(id)` | Evaluate the cron expression in this timezone. |
 | `OnMisfire(policy)` | What to do about occurrences missed while the application was down. |
-| `AllowOverlap()` | Permit a new occurrence to start while a previous one is still outstanding. |
+| `AllowOverlap()` | Permit a new run (an occurrence or a trigger-now) to start while another is still outstanding. |
 | `MaxRuntime(TimeSpan)` | Cancel a run that exceeds this duration. |
 | `Run(() => command)` | The command to dispatch. Completes the declaration. |
 
@@ -585,12 +585,14 @@ conduit.AddJobs(jobs => jobs.ManageOnly = true);
 | `IJobs` | Durable — reads and writes the shared ledger | In-memory, and lists nothing |
 | Scheduler, claim sweep, cleanup, trigger listeners | None | None |
 | Tables | Created at startup (unless `AutoCreateTable` is off); declared schedules reconciled | None |
-| Schedules | May be declared, to list, pause and trigger them | Rejected at `AddJobs` |
+| Schedules | May be declared; `GetSchedulesAsync` lists and `TriggerNowAsync` triggers only declared ones | Rejected at `AddJobs` |
 | Event triggers | Rejected at `AddJobs` | Rejected at `AddJobs` |
 
-- **Declare a schedule here only to operate it, and declare it exactly as the runner does.**
-  Trigger-now builds the command, and applies the [overlap](#overlap) rule, from the declaration on
-  the host it is called on.
+- **Declare a schedule here only to list or trigger it, and declare it exactly as the runner does.**
+  `GetSchedulesAsync` lists the local declarations, and trigger-now builds the command, and applies
+  the [overlap](#overlap) rule, from the declaration on the host it is called on. Pause, resume and
+  cancel, and the run, scope and history queries, need no declaration: they work by schedule name or
+  run key against the shared tables.
 - **An event trigger is rejected** rather than ignored: it fires only through the listener the
   runner registers, and no `IJobs` call needs it declared — `GetPendingAsync`,
   `GetPendingScopesAsync` and `CancelAsync` all take a trigger's name or a run's key as plain text.
