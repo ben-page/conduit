@@ -391,6 +391,14 @@ A schedule that has missed more than 100,000 occurrences (a one-minute job down 
 has no meaningful catch-up left. Its cursor is moved to now with a warning rather than stalling
 startup walking every one of them.
 
+A host that starts while the application is running — a rolling deploy, a new replica — counts an
+occurrence as missed as soon as it is due. Under `Skip` it then moves the cursor to that occurrence,
+and a running host whose timer for the same occurrence fires a moment later finds the cursor already
+there and skips it too ("…its cursor is already at or past it" in the log). The window is that host's
+timer latency plus a database round trip, or the clock skew between the two hosts if that is larger;
+the cost is **one skipped occurrence** of that schedule. The move-to-now above behaves the same way.
+This is accepted rather than covered by a grace period.
+
 `OnMisfire` requires a persistence engine and is rejected at startup without one, rather than
 silently ignored: an in-memory timer has no record of what it missed.
 
@@ -411,7 +419,10 @@ outstanding the schedule's occurrences are skipped. The check and the insert are
 the scheduler and for trigger-now alike, on every host: each holds the schedule's
 `conduit_job_schedules` row lock (a no-op `UPDATE`) from its check until its insert commits, so no
 interleaving of the two — on one host or several — leaves two runs outstanding. That needs every host
-on a version with the lock, and every host declaring the schedule the same way.
+on a version with the lock, and every host declaring the schedule the same way. While a rolling upgrade
+mixes versions on SQL Server at locking READ COMMITTED, an older host's completion can also deadlock
+with a newer host's materialization: either a finished run executes once more after `ClaimTimeout`,
+or one occurrence is skipped. It lasts only as long as the rollout.
 
 `AllowOverlap()` opts out, for occurrences and manual runs both.
 

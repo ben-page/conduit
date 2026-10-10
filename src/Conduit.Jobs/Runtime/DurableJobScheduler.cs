@@ -206,7 +206,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
                 // of order cannot reopen that gap.
                 if (row?.LastCompletedOccurrence is { } cursor && occurrence <= cursor)
                 {
-                    LogAlreadyCompleted(this.logger, schedule.Name, occurrence);
+                    LogCursorPassed(this.logger, schedule.Name, occurrence);
                     return;
                 }
 
@@ -217,9 +217,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
                 switch (await store.TryMaterializeWithoutOverlapAsync(BuildRun(schedule, occurrence), stoppingToken))
                 {
                     case MaterializeOutcome.AlreadyCompleted:
-                        // This host's timer fired after another replica had already run the occurrence
-                        // to the end: the row is gone, and only the cursor, read under the lock, says so.
-                        LogAlreadyCompleted(this.logger, schedule.Name, occurrence);
+                        // The cursor, read under the lock, is already at or past this occurrence: another
+                        // replica took it to a terminal outcome before this host's timer fired, or a host
+                        // starting up counted it as missed and skipped past it (MisfirePolicy.Skip).
+                        LogCursorPassed(this.logger, schedule.Name, occurrence);
                         return;
 
                     case MaterializeOutcome.Overlapping:
@@ -522,8 +523,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because another host has already completed it")]
-    private static partial void LogAlreadyCompleted(
+        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because its cursor is already at or past it: another host has taken it to a terminal outcome, or a host starting up skipped past it as missed")]
+    private static partial void LogCursorPassed(
         ILogger logger, string scheduleName, DateTimeOffset occurrence);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job schedule '{ScheduleName}' database access failed")]

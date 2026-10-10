@@ -89,9 +89,8 @@ public interface IJobs
     /// Conduit version with this check, and every host declares the schedule's <c>AllowOverlap()</c>
     /// the same way: a host on an older version, or one that declares the schedule as allowing
     /// overlap, writes its runs without taking the lock. With <c>AllowOverlap()</c> it always
-    /// queues. While a
-    /// manual run is outstanding the scheduler skips the schedule's occurrences, exactly as it skips
-    /// one behind an earlier occurrence. Without a persistence engine the run executes inline on this
+    /// queues. While a manual run is outstanding the scheduler skips the schedule's occurrences,
+    /// exactly as it skips one behind an earlier occurrence. Without a persistence engine the run executes inline on this
     /// host, and "outstanding" means in progress on this host.
     /// </remarks>
     /// <param name="scheduleName">The schedule to run.</param>

@@ -825,7 +825,14 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     /// last, so it can deadlock with this method. If the completion is the victim, its claim goes stale
     /// and the run executes again after <c>ClaimTimeout</c>; if this method is, the occurrence is logged
     /// and skipped. Transient, and confined to the rollout. A schedule row deleted and re-created by
-    /// something outside Conduit mid-call is the last window (see <see cref="LockScheduleRowAsync"/>).
+    /// something outside Conduit mid-call is another window (see <see cref="LockScheduleRowAsync"/>).
+    /// The cursor check has one window of its own: a host starting up counts an occurrence as missed
+    /// once it is due, and under <c>MisfirePolicy.Skip</c> (the default, and every interval schedule's)
+    /// advances the cursor to it — so a running host whose timer for that same occurrence fires a
+    /// moment later finds the cursor already there, and nobody runs it. The window is the running
+    /// host's timer latency plus a round trip, or the clock skew between the hosts if larger; the cost
+    /// is one skipped occurrence of that schedule. Moving the cursor to now after an outage of more than
+    /// <c>MaxMisfireWalk</c> occurrences behaves the same way. Accepted, with no grace period.
     /// </para>
     /// </remarks>
     private async Task<MaterializeOutcome?> TryMaterializeUnderScheduleLockAsync(
@@ -841,9 +848,10 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         }
 
         // An occurrence's row is deleted on success, so once it has completed only the cursor says so.
-        // Read under the lock, and CompleteAsync and MarkTerminalAsync advance the cursor under the same
-        // lock (first, in the transaction that deletes the row), so a replica whose timer fired after
-        // another finished the occurrence sees the cursor rather than re-inserting the row.
+        // Read under the lock: CompleteAsync and MarkTerminalAsync advance the cursor under the same
+        // lock, first in the transaction that deletes or terminally marks the row, so a replica whose
+        // timer fired after another finished the occurrence sees the cursor rather than re-inserting it.
+        // A starting host's misfire skip also moves the cursor, so "at or past" is all this can say.
         if (run.Occurrence is { } occurrence
             && await ExecuteScalarOnAsync(
                 connection,

@@ -19,9 +19,10 @@ public enum MaterializeOutcome
     Overlapping,
 
     /// <summary>
-    /// The run is for an occurrence at or before the schedule's cursor: some host has already taken it
-    /// to a terminal outcome and deleted its row, so writing it again would run it twice. Nothing was
-    /// written. The usual cause is a replica whose timer fired late.
+    /// The run is for an occurrence at or before the schedule's cursor, so writing it would run it
+    /// again: some host has taken it to a terminal outcome (on success its row is deleted; a failed or
+    /// cancelled row is kept, but the cursor moved past it), or a host starting up skipped past it as a
+    /// misfire. Nothing was written. The usual cause is a replica whose timer fired late.
     /// </summary>
     AlreadyCompleted,
 }

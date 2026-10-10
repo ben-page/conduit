@@ -112,8 +112,10 @@ A schedule without `AllowOverlap()` has at most one run outstanding (Pending or 
 writes it: the scheduler materializing an occurrence on any host, or `IJobs.TriggerNowAsync` on any
 host. Both write through `IJobStore.TryMaterializeWithoutOverlapAsync`, which is one transaction:
 `UPDATE conduit_job_schedules SET IsPaused = IsPaused WHERE Name = @Name` (the schedule's row lock;
-see "a row count of zero" below for proving it was taken), `COUNT(*)` of the schedule's other
-outstanding runs, then the usual insert-or-ignore. Every no-overlap write for one schedule therefore runs one at a time, and each
+see "a row count of zero" below for proving it was taken), for an occurrence a read of
+`LastCompletedOccurrence` (`AlreadyCompleted` if it is at or past the occurrence; see "the cursor is
+checked under the same lock"), `COUNT(*)` of the schedule's other outstanding runs, then the usual
+insert-or-ignore. Every no-overlap write for one schedule therefore runs one at a time, and each
 check reads every earlier insert's commit; a run only *becomes* outstanding by insertion, so "at most
 one" holds by induction. **No per-engine SQL** — the no-op `UPDATE` is the portable row lock. The
 per-engine visibility argument is in the remarks on `DbJobStore.TryMaterializeUnderScheduleLockAsync`;
@@ -155,7 +157,8 @@ keep the two in step.
   read only when a schedule's loop started, so a running replica whose timer fired late re-inserted —
   and re-ran — an occurrence another replica had completed and deleted. `CompleteAsync` and
   `MarkTerminalAsync` advance the cursor first, under this lock, in the transaction that deletes the
-  row, so a late materialization sees either the row (and collapses into it) or the cursor. An
+  row (on success) or marks it `Failed`/`Cancelled` and keeps it, so a late materialization sees either
+  the outstanding row (and collapses into it) or the cursor. An
   `AllowOverlap()` schedule takes no lock, so the scheduler checks the cursor from the row it already
   reads for pause. A late replica re-runs the occurrence only if another replica's completion of it
   commits between that read and its insert (earlier, the insert collapses into the row; later, the read
@@ -168,8 +171,15 @@ keep the two in step.
   form, which the claim's `RunAt` cutoff already relies on. When the guard fails the `UPDATE` may lock
   nothing; that transaction then never waits on the schedule's row, so the lock order still holds.
   `OnlyEverMoveTheCursorForward` (SQLite, and every server engine in the matrix) pins it.
-  `OverlapLockShould`, `DurableSchedulerShould.NotReRunAnOccurrenceAnotherReplicaCompletedWhileThisOneWasLate`
-  and persistence matrix section 9 pin it.
+  `OverlapLockShould`,
+  `DurableSchedulerShould.NotReRunAnOccurrenceAnotherReplicaCompletedWhileThisOneWasLate` and
+  persistence matrix section 9 pin it. **Accepted window (owner's ruling, no grace period):** a host
+  starting up counts an occurrence as missed once it is due and, under `MisfirePolicy.Skip` (every
+  interval schedule's), advances the cursor to it; a running host whose timer for that occurrence fires
+  a moment later then skips it as well. Timer latency plus a round trip, or the clock skew if larger;
+  the cost is one skipped occurrence. The move-to-now past `MaxMisfireWalk` is the same class. The log
+  line says "its cursor is already at or past it" for exactly this reason — it is not always another
+  host's completion.
 - **Pause is still checked outside the lock**, as before: a pause racing a materialization is about
   what happens next and needs no atomicity. Trigger-now still ignores pause.
 - **Outside the guarantee:** a run written by `TryMaterializeAsync` for a no-overlap schedule (a host

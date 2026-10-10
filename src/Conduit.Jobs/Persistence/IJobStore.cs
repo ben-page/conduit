@@ -45,18 +45,26 @@ public interface IJobStore
     /// interleaving of them leaves two runs outstanding. A row with the run's own key does not count as
     /// overlap: that is the same run, which every replica materializes, and it collapses as in
     /// <see cref="TryMaterializeAsync"/>. A run with an <see cref="JobRun.Occurrence"/> is also checked
-    /// against the schedule's cursor under the same lock, so an occurrence another host has already
-    /// completed — its row deleted, the cursor advanced — is never written again.
+    /// against the schedule's cursor under the same lock, so an occurrence the cursor has already
+    /// reached — taken to a terminal outcome by another host, or skipped as a misfire — is never written
+    /// again.
     /// </summary>
     /// <remarks>
-    /// The protocol is one transaction that first takes the schedule's <c>conduit_job_schedules</c> row
-    /// lock with a no-op <c>UPDATE</c>, then counts outstanding runs and inserts. A run of the schedule
+    /// The protocol is one transaction: take the schedule's <c>conduit_job_schedules</c> row lock with a
+    /// no-op <c>UPDATE</c> (re-taken if a zero count leaves it unproven); for a run with an occurrence,
+    /// read <c>LastCompletedOccurrence</c> and stop if it is at or past the occurrence; count the
+    /// schedule's other outstanding runs and stop if there are any; insert. A run of the schedule
     /// written any other way (by <see cref="TryMaterializeAsync"/>, or by a host that predates this
     /// method) does not take the lock, and is outside the guarantee.
     /// </remarks>
     /// <param name="run">The run to materialize; its <see cref="JobRun.ScheduleName"/> names the schedule.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>Whether the run was written, already existed, or was refused as overlapping.</returns>
+    /// <returns>
+    /// Whether the run was written (<see cref="MaterializeOutcome.Materialized"/>), already existed
+    /// (<see cref="MaterializeOutcome.AlreadyMaterialized"/>), was refused as overlapping
+    /// (<see cref="MaterializeOutcome.Overlapping"/>), or was refused because the cursor is already at or
+    /// past its occurrence (<see cref="MaterializeOutcome.AlreadyCompleted"/>).
+    /// </returns>
     public Task<MaterializeOutcome> TryMaterializeWithoutOverlapAsync(JobRun run, CancellationToken cancellationToken);
 
     /// <summary>
