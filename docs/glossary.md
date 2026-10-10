@@ -189,8 +189,9 @@ runs exactly one catch-up. Neither backfills.
 
 ### Overlap
 
-Whether a new occurrence may start while a previous one is still outstanding — running, or awaiting
-a retry. Skipped by default; `AllowOverlap()` opts in.
+Whether a new run of a schedule may start while another is still outstanding — running, or awaiting
+a retry. By default an occurrence is skipped and a manual `TriggerNowAsync` is refused
+(`JobOverlapException`); `AllowOverlap()` opts in.
 
 ---
 

@@ -634,6 +634,117 @@ public abstract class PersistenceEngineTestBase
         remaining.Entries.Select(entry => entry.JobKey).Should().NotContain("nightly@old");
     }
 
+    // 9) Jobs overlap lock ------------------------------------------------------------------------
+    //
+    // A no-overlap schedule's runs are written under its conduit_job_schedules row lock, taken with a
+    // no-op UPDATE. That this serializes the scheduler and trigger-now rests on each engine's row
+    // locking and read visibility (and its deadlock-freedom on the lock order CompleteAsync keeps),
+    // none of which SQLite — one writer at a time — exercises.
+
+    [TestMethod]
+    public async Task HoldTheScheduleLockAgainstAnOverlapCheckUntilTheHolderCommits()
+    {
+        // Arrange — another writer holds the schedule's lock and is about to insert a run
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+
+        await using var holder = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var transaction = await holder.BeginTransactionAsync(CancellationToken.None);
+        await ExecuteAsync(
+            holder,
+            transaction,
+            "UPDATE conduit_job_schedules SET IsPaused = IsPaused WHERE Name = @Name",
+            command => DbParameterHelper.Add(command, "@Name", "nightly"));
+
+        // Act
+        var contender = Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+            NewManualJobRun(now.AddSeconds(1)), CancellationToken.None));
+        await Task.Delay(500);
+        var waitedForTheLock = !contender.IsCompleted;
+
+        await ExecuteAsync(holder, transaction, InsertRunSql, command => BindRun(command, NewJobRun("nightly@held", now)));
+        await transaction.CommitAsync(CancellationToken.None);
+
+        // Assert — the no-op UPDATE takes the row's write lock on this engine, and what runs after it
+        // reads past nothing the holder committed
+        waitedForTheLock.Should().BeTrue();
+        (await contender).Should().Be(MaterializeOutcome.Overlapping);
+    }
+
+    [TestMethod]
+    public async Task MaterializeAtMostOneRunOfANoOverlapScheduleUnderConcurrency()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+
+        // Act — ten replicas materializing one occurrence and ten manual triggers, all at once
+        var outcomes = await Task.WhenAll(
+            Enumerable.Range(0, 10)
+                .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+                    NewJobRun("nightly@race", now), CancellationToken.None)))
+                .Concat(Enumerable.Range(0, 10).Select(trigger => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+                    NewManualJobRun(now.AddSeconds(trigger + 1)), CancellationToken.None)))));
+
+        // Assert
+        outcomes.Count(outcome => outcome == MaterializeOutcome.Materialized).Should().Be(1);
+        (await CountOutstandingAsync(factory)).Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task NeitherDeadlockNorOverlapWhenMaterializationsRaceACompletion()
+    {
+        // Arrange — a claimed run, as a host leaves it while the job executes
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbJobStore(factory, this.Dialect, JobsOptionsForTest);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.ReconcileSchedulesAsync(["nightly"], CancellationToken.None);
+        var start = DateTimeOffset.UtcNow.AddHours(-1);
+        var claimNow = DateTimeOffset.UtcNow.AddHours(1);
+
+        await store.TryMaterializeAsync(NewJobRun("nightly@0", start), CancellationToken.None);
+        var running = (await store.ClaimDueAsync("worker-0", claimNow, 10, CancellationToken.None)).Single();
+
+        for (var round = 1; round <= 8; round++)
+        {
+            var occurrence = start.AddMinutes(round);
+
+            // Act — the running run completes (cursor, history, delete) while the next occurrence
+            // and manual triggers materialize; a deadlock victim on either side fails the round
+            var completion = Task.Run(() => store.CompleteAsync(
+                running, "nightly", running.Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+                CancellationToken.None));
+            var materializations = Enumerable.Range(0, 4)
+                .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+                    NewJobRun($"nightly@{round}", occurrence), CancellationToken.None)))
+                .Concat(Enumerable.Range(0, 4).Select(trigger => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
+                    NewManualJobRun(occurrence.AddSeconds(trigger + 1)), CancellationToken.None))))
+                .ToList();
+
+            await completion;
+            await Task.WhenAll(materializations);
+
+            // Assert
+            var outstanding = await CountOutstandingAsync(factory);
+            outstanding.Should().BeLessThanOrEqualTo(1, $"round {round} must not leave two runs outstanding");
+
+            // The next round's running run: whichever won, or a fresh one when every writer saw the
+            // completing run still outstanding and stood down
+            if (outstanding == 0)
+            {
+                await store.TryMaterializeAsync(NewJobRun($"nightly@{round}-fresh", occurrence), CancellationToken.None);
+            }
+
+            running = (await store.ClaimDueAsync($"worker-{round}", claimNow, 10, CancellationToken.None)).Single();
+        }
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static OutboxEntry NewEntry(string messageId, DateTime createdAt) => new()
@@ -655,6 +766,59 @@ public abstract class PersistenceEngineTestBase
         RunAt = runAt,
         Status = JobRunStatus.Pending,
     };
+
+    private static JobRun NewManualJobRun(DateTimeOffset at) => new()
+    {
+        JobKey = string.Create(CultureInfo.InvariantCulture, $"nightly@manual-{at.UtcDateTime:O}"),
+        ScheduleName = "nightly",
+        Occurrence = null,
+        MessageType = "Tests.NoopJob",
+        Payload = "{}",
+        RunAt = at,
+        Status = JobRunStatus.Pending,
+    };
+
+    private const string InsertRunSql =
+        "INSERT INTO conduit_job_runs (JobKey, ScheduleName, Occurrence, MessageType, Payload, RunAt, Status) " +
+        "VALUES (@JobKey, @ScheduleName, @Occurrence, @MessageType, @Payload, @RunAt, @Status)";
+
+    private static void BindRun(System.Data.Common.DbCommand command, JobRun run)
+    {
+        DbParameterHelper.Add(command, "@JobKey", run.JobKey);
+        DbParameterHelper.Add(command, "@ScheduleName", run.ScheduleName!);
+        DbParameterHelper.Add(command, "@Occurrence", run.Occurrence!.Value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+        DbParameterHelper.Add(command, "@MessageType", run.MessageType);
+        DbParameterHelper.Add(command, "@Payload", run.Payload);
+        DbParameterHelper.Add(command, "@RunAt", run.RunAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+        DbParameterHelper.Add(command, "@Status", (int)run.Status);
+    }
+
+    private static async Task ExecuteAsync(
+        System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        string sql,
+        Action<System.Data.Common.DbCommand> bind)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+#pragma warning disable CA2100 // Test-owned SQL with bound parameters.
+        command.CommandText = sql;
+#pragma warning restore CA2100
+        bind(command);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static async Task<int> CountOutstandingAsync(IConduitConnectionFactory factory)
+    {
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COUNT(*) FROM conduit_job_runs WHERE ScheduleName = @ScheduleName AND Status IN (@Pending, @Claiming)";
+        DbParameterHelper.Add(command, "@ScheduleName", "nightly");
+        DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending);
+        DbParameterHelper.Add(command, "@Claiming", (int)JobRunStatus.Claiming);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None), CultureInfo.InvariantCulture);
+    }
 
     private static JobScope NewScope(string scopeKey, string scopeId, DateTimeOffset dueAt) => new()
     {

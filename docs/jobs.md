@@ -239,7 +239,8 @@ With an engine configured, one occurrence of one schedule goes like this:
 1. Every host computes the schedule's next occurrence in memory and sleeps until it.
 2. At occurrence time, each host reads the schedule's cursor and skips if the occurrence is not
    strictly after it, or if the schedule is paused.
-3. Each host checks for overlap, unless the schedule allows it.
+3. Unless the schedule allows [overlap](#overlap), each host takes the schedule's row lock and skips
+   if another run of it is outstanding; this check and step 4's insert are one transaction.
 4. Each host does an insert-or-ignore of a run row keyed `{schedule}@{occurrenceUtcIso}`. N replicas
    race; one row results.
 5. Each host attempts an atomic claim. Exactly one wins.
@@ -394,7 +395,15 @@ This means a permanently failing occurrence stalls its schedule — but only unt
 exhausted, at which point it becomes terminal and stops holding things up. Bounded, and visible
 through `IJobs.GetFailedAsync`.
 
-`AllowOverlap()` opts out.
+The rule covers a [manual run](#operating-jobs-with-ijobs) too, in both directions: `TriggerNowAsync`
+is refused with a `JobOverlapException` while a run is outstanding, and while a manual run is
+outstanding the schedule's occurrences are skipped. The check and the insert are one atomic step for
+the scheduler and for trigger-now alike, on every host: each holds the schedule's
+`conduit_job_schedules` row lock (a no-op `UPDATE`) from its check until its insert commits, so no
+interleaving of the two — on one host or several — leaves two runs outstanding. That needs every host
+on a version with the lock, and every host declaring the schedule the same way.
+
+`AllowOverlap()` opts out, for occurrences and manual runs both.
 
 ## Cancellation
 
@@ -480,7 +489,22 @@ the host that received the call would be useless. It deliberately leaves the cur
 resuming picks up from the next occurrence.
 
 **Trigger-now** queues an extra run immediately, with no occurrence attached, so running a job by
-hand cannot swallow the occurrence the schedule was already waiting for.
+hand cannot swallow the occurrence the schedule was already waiting for. It honours the schedule's
+[overlap](#overlap) rule: without `AllowOverlap()` it throws `JobOverlapException` (naming the
+schedule in `ScheduleName`) while a run is outstanding, and queues nothing. The exception is
+deliberately not a `ConflictException` — that is a wire refusal, and whether an overlap is a client's
+business is the caller's call:
+
+```csharp
+try
+{
+    await jobs.TriggerNowAsync(name, cancellationToken);
+}
+catch (JobOverlapException overlap)
+{
+    throw new ConflictException($"'{overlap.ScheduleName}' is already running or queued.");
+}
+```
 
 `GetHistoryAsync(filter)` is different in kind from the queries above it: it does not read the
 ledger at all. See [Run history](#run-history).
@@ -533,7 +557,9 @@ No engine means no tables. Each host runs one timer loop per schedule, waiting o
   deployment's logs rather than discovered from duplicated work.
 - `IJobs` degrades honestly: queries answer from the in-memory registry, the run lists are empty
   because there is no ledger, and pause, trigger-now and cancel affect only the host they were
-  called on.
+  called on. Trigger-now runs the command inline; the overlap rule then means "not while a run of
+  the schedule is in progress on this host", and a manual run skips an occurrence that comes due
+  while it is still going.
 - `OnMisfire` and event triggers are **rejected at startup**, not silently ignored.
 - Cancellation still works in-process, and `MaxRuntime` works normally — it needs nothing more than
   a start time and a token.

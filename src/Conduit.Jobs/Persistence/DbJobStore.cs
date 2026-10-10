@@ -51,6 +51,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     private readonly string materializeSql;
     private readonly string insertClaimedSql;
     private readonly string reconcileScheduleSql;
+    private readonly string scheduleExistsSql;
     private readonly string createScopesTableSql;
     private readonly string insertScopeSql;
     private readonly string dueScopesSql;
@@ -81,6 +82,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             JobTableSchema.RunsTable, InsertClaimedColumns, "JobKey");
         this.reconcileScheduleSql = dialect.BuildInsertOrIgnoreSql(
             JobTableSchema.SchedulesTable, ReconcileScheduleColumns, "Name");
+        this.scheduleExistsSql = dialect.BuildExistsSql(JobTableSchema.SchedulesTable, "Name");
         this.createScopesTableSql = BuildCreateScopesTableSql(dialect);
         this.insertScopeSql = dialect.BuildInsertOrIgnoreSql(
             JobTableSchema.ScopesTable, InsertScopeColumns, "ScopeKey");
@@ -118,14 +120,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
 
         foreach (var name in scheduleNames)
         {
-            await this.ExecuteNonQueryAsync(
-                this.reconcileScheduleSql,
-                command =>
-                {
-                    DbParameterHelper.Add(command, "@Name", name);
-                    DbParameterHelper.Add(command, "@IsPaused", 0);
-                },
-                cancellationToken);
+            await this.EnsureScheduleRowAsync(name, cancellationToken);
         }
     }
 
@@ -160,6 +155,43 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             cancellationToken);
 
         return inserted > 0;
+    }
+
+    /// <inheritdoc/>
+    public async Task<MaterializeOutcome> TryMaterializeWithoutOverlapAsync(
+        JobRun run, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        var scheduleName = run.ScheduleName
+            ?? throw new ArgumentException(
+                "A run materialized without overlap must name its schedule; the schedule's row is the lock.",
+                nameof(run));
+
+        // A second pass happens only when the schedule's row did not exist on the first, so the lock
+        // took nothing. Every declared schedule's row is reconciled at startup, so that means the row
+        // was never reconciled (a schedule declared only on a host that has not started) or something
+        // outside Conduit deleted it.
+        for (var pass = 0; pass < 2; pass++)
+        {
+            if (await this.TryMaterializeUnderScheduleLockAsync(run, scheduleName, cancellationToken)
+                is { } outcome)
+            {
+                return outcome;
+            }
+
+            // Created outside any transaction, then the transaction starts over. Inserting it inside
+            // would be wrong twice over on MySQL: INSERT IGNORE on a row another host has just
+            // inserted takes a shared lock on it, and two transactions each holding one deadlock on
+            // the exclusive lock that follows; and under REPEATABLE READ the transaction's existence
+            // check would already have fixed its read view before it held the lock, so the overlap
+            // count could miss a run committed in between.
+            await this.EnsureScheduleRowAsync(scheduleName, cancellationToken);
+        }
+
+        throw new InvalidOperationException(
+            $"Job schedule '{scheduleName}' has no row in {JobTableSchema.SchedulesTable} to lock, even " +
+            "straight after inserting one, so something is deleting it. A run cannot be materialized " +
+            "without overlap unless the schedule's row exists.");
     }
 
     /// <inheritdoc/>
@@ -281,6 +313,14 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
+        // The cursor first: lock order is the schedule's row before any run row (see
+        // TryMaterializeUnderScheduleLockAsync). Deleting the run first would hold its row while
+        // waiting for the schedule's — the reverse of a materialization holding the schedule's row
+        // while its overlap check reads the runs table, which on SQL Server's locking READ COMMITTED
+        // waits on that same deleted row. Not hypothetical: with the cursor last, the persistence
+        // matrix's NeitherDeadlockNorOverlapWhenMaterializationsRaceACompletion deadlocks on SQL Server.
+        await AdvanceCursorOnAsync(connection, transaction, scheduleName, occurrence, cancellationToken);
+
         await WriteHistoryAsync(
             connection, transaction, run, JobRunOutcome.Completed, error: null, now, cancellationToken);
 
@@ -301,20 +341,6 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             },
             cancellationToken,
             transaction);
-
-        if (scheduleName is not null && occurrence is { } completed)
-        {
-            await ExecuteNonQueryOnAsync(
-                connection,
-                AdvanceCursorSql,
-                command =>
-                {
-                    DbParameterHelper.Add(command, "@LastCompletedOccurrence", FormatTimestamp(completed));
-                    DbParameterHelper.Add(command, "@Name", scheduleName);
-                },
-                cancellationToken,
-                transaction);
-        }
 
         await transaction.CommitAsync(cancellationToken);
     }
@@ -378,6 +404,9 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
+        // The cursor first, for the lock order CompleteAsync explains.
+        await AdvanceCursorOnAsync(connection, transaction, scheduleName, occurrence, cancellationToken);
+
         await WriteHistoryAsync(
             connection, transaction, run, ToOutcome(status), error, now, cancellationToken);
 
@@ -392,20 +421,6 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             },
             cancellationToken,
             transaction);
-
-        if (scheduleName is not null && occurrence is { } reached)
-        {
-            await ExecuteNonQueryOnAsync(
-                connection,
-                AdvanceCursorSql,
-                command =>
-                {
-                    DbParameterHelper.Add(command, "@LastCompletedOccurrence", FormatTimestamp(reached));
-                    DbParameterHelper.Add(command, "@Name", scheduleName);
-                },
-                cancellationToken,
-                transaction);
-        }
 
         await transaction.CommitAsync(cancellationToken);
     }
@@ -752,6 +767,148 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             command => DbParameterHelper.Add(command, "@Cutoff", FormatTimestamp(olderThan)),
             cancellationToken);
 
+    /// <summary>
+    /// One attempt at the overlap protocol: lock the schedule's row, check, insert, in one transaction.
+    /// </summary>
+    /// <returns>
+    /// The outcome, or <see langword="null"/> when the schedule's row does not exist — the lock then
+    /// locked nothing, so nothing was decided and nothing was written.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is race-free.</b> Every write of a no-overlap schedule's run goes through here, and
+    /// each one holds the schedule's row lock from before its overlap check until its insert commits.
+    /// So the checks and inserts for one schedule run one at a time, and each check reads the committed
+    /// result of every insert before it. "At most one run outstanding" then holds by induction: a run
+    /// only <i>becomes</i> outstanding by being inserted (release and retry keep it outstanding; nothing
+    /// turns a terminal row live again), and an insert happens only after observing none outstanding
+    /// under a different key. The no-op <c>UPDATE</c> is the lock because it is the one portable
+    /// statement that takes a row's write lock on every engine; no per-engine SQL is involved.
+    /// </para>
+    /// <para>
+    /// Per engine, at the default isolation level (none is pinned, matching
+    /// <see cref="CompleteAsync"/>):
+    /// SQLite — <c>BeginTransaction</c> is <c>BEGIN IMMEDIATE</c>, the database's single write lock,
+    /// held to commit; everything after it reads the latest commit.
+    /// SQL Server (READ COMMITTED, locking or snapshot) — the <c>UPDATE</c> holds the row's exclusive
+    /// lock to commit; each later statement sees everything committed before it began, which includes
+    /// the previous holder's insert.
+    /// PostgreSQL (READ COMMITTED) — the <c>UPDATE</c> row lock blocks the next holder until commit;
+    /// every statement takes a fresh snapshot after it is acquired.
+    /// MySQL/InnoDB (REPEATABLE READ) — the <c>UPDATE</c> takes the row's exclusive record lock (a
+    /// locking read, so it creates no read view); the read view is fixed by the first plain
+    /// <c>SELECT</c>, which runs only once the lock is held.
+    /// Under a stricter default (SERIALIZABLE or snapshot transactions) the waiter gets a
+    /// serialization error instead of a stale read: a failed call, never a second run.
+    /// </para>
+    /// <para>
+    /// <b>Deadlock freedom</b> rests on lock order: the schedule's row before any run row.
+    /// <see cref="CompleteAsync"/> and <see cref="MarkTerminalAsync"/> advance the cursor first for
+    /// that reason. Every other write to the runs table is one statement that never waits on a
+    /// schedule row, so it cannot close a cycle.
+    /// </para>
+    /// <para>
+    /// <b>Residual windows.</b> A run of the schedule written without this method — a host still on a
+    /// version before it, or a declaration that says <c>AllowOverlap()</c> on one host and not on
+    /// another — takes no lock and is outside the guarantee. Declarations must agree across hosts,
+    /// as they already must for occurrences to.
+    /// </para>
+    /// </remarks>
+    private async Task<MaterializeOutcome?> TryMaterializeUnderScheduleLockAsync(
+        JobRun run, string scheduleName, CancellationToken cancellationToken)
+    {
+        await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await ExecuteNonQueryOnAsync(
+            connection,
+            LockScheduleSql,
+            command => DbParameterHelper.Add(command, "@Name", scheduleName),
+            cancellationToken,
+            transaction);
+
+        // The affected count cannot answer this: MySQL reports a no-op UPDATE as zero rows changed when
+        // the connection is configured for affected rather than found rows.
+        var exists = await ExecuteScalarOnAsync(
+            connection,
+            this.scheduleExistsSql,
+            command => DbParameterHelper.Add(command, "@Name", scheduleName),
+            cancellationToken,
+            transaction);
+        if (exists is null or DBNull)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        var overlapping = await ExecuteScalarOnAsync(
+            connection,
+            CountOverlappingSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@ScheduleName", scheduleName);
+                DbParameterHelper.Add(command, "@JobKey", run.JobKey);
+                DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending);
+                DbParameterHelper.Add(command, "@Claiming", (int)JobRunStatus.Claiming);
+            },
+            cancellationToken,
+            transaction);
+        if (Convert.ToInt64(overlapping, CultureInfo.InvariantCulture) > 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return MaterializeOutcome.Overlapping;
+        }
+
+        var inserted = await ExecuteNonQueryOnAsync(
+            connection,
+            this.materializeSql,
+            command => BindMaterializeParameters(command, run),
+            cancellationToken,
+            transaction);
+
+        await transaction.CommitAsync(cancellationToken);
+        return inserted > 0 ? MaterializeOutcome.Materialized : MaterializeOutcome.AlreadyMaterialized;
+    }
+
+    /// <summary>Advances a schedule run's cursor inside the caller's transaction; a no-op otherwise.</summary>
+    private static Task AdvanceCursorOnAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string? scheduleName,
+        DateTimeOffset? occurrence,
+        CancellationToken cancellationToken)
+        => scheduleName is not null && occurrence is { } reached
+            ? ExecuteNonQueryOnAsync(
+                connection,
+                AdvanceCursorSql,
+                command =>
+                {
+                    DbParameterHelper.Add(command, "@LastCompletedOccurrence", FormatTimestamp(reached));
+                    DbParameterHelper.Add(command, "@Name", scheduleName);
+                },
+                cancellationToken,
+                transaction)
+            : Task.CompletedTask;
+
+    private Task<int> EnsureScheduleRowAsync(string scheduleName, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            this.reconcileScheduleSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Name", scheduleName);
+                DbParameterHelper.Add(command, "@IsPaused", 0);
+            },
+            cancellationToken);
+
+    // Sets a column to itself: it changes nothing, but on every engine an UPDATE that matches a row
+    // takes that row's write lock and holds it until the transaction ends.
+    private static string LockScheduleSql =>
+        $"UPDATE {JobTableSchema.SchedulesTable} SET IsPaused = IsPaused WHERE Name = @Name";
+
+    private static string CountOverlappingSql =>
+        $"SELECT COUNT(*) FROM {JobTableSchema.RunsTable} " +
+        "WHERE ScheduleName = @ScheduleName AND Status IN (@Pending, @Claiming) AND JobKey <> @JobKey";
+
     private static string MarkTerminalSql =>
         $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
 
@@ -932,12 +1089,14 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         DbConnection connection,
         string commandText,
         Action<DbCommand>? configureParameters,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DbTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
 #pragma warning disable CA2100 // SQL comes from the dialect and module-owned identifiers, never user input.
         command.CommandText = commandText;
 #pragma warning restore CA2100
+        command.Transaction = transaction;
         configureParameters?.Invoke(command);
         return await command.ExecuteScalarAsync(cancellationToken);
     }

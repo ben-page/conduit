@@ -38,6 +38,26 @@ public interface IJobStore
     public Task<bool> TryMaterializeAsync(JobRun run, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Inserts a run of a schedule that does not allow overlap, unless the schedule already has an
+    /// outstanding run under a different key — the check and the insert atomic with respect to every
+    /// other call of this method for the same schedule, on any host. Both writers of such a schedule's
+    /// runs — the scheduler materializing an occurrence and a manual trigger — go through here, so no
+    /// interleaving of them leaves two runs outstanding. A row with the run's own key does not count as
+    /// overlap: that is the same run, which every replica materializes, and it collapses as in
+    /// <see cref="TryMaterializeAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// The protocol is one transaction that first takes the schedule's <c>conduit_job_schedules</c> row
+    /// lock with a no-op <c>UPDATE</c>, then counts outstanding runs and inserts. A run of the schedule
+    /// written any other way (by <see cref="TryMaterializeAsync"/>, or by a host that predates this
+    /// method) does not take the lock, and is outside the guarantee.
+    /// </remarks>
+    /// <param name="run">The run to materialize; its <see cref="JobRun.ScheduleName"/> names the schedule.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>Whether the run was written, already existed, or was refused as overlapping.</returns>
+    public Task<MaterializeOutcome> TryMaterializeWithoutOverlapAsync(JobRun run, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Atomically claims due runs for this worker and reads back exactly what it claimed. A run is
     /// due when its <c>RunAt</c> has arrived and it is either pending or holds a claim that has gone
     /// stale — the latter being how a crashed host's work is recovered.

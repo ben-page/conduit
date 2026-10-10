@@ -90,12 +90,13 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
                 armed = ReportArmedOnce(this.readiness, armed);
             }
 
-            await this.DispatchAsync(schedule, stoppingToken);
+            await this.DispatchAsync(schedule, occurrence, stoppingToken);
             next = schedule.NextOccurrenceAfter(occurrence);
         }
     }
 
-    private async Task DispatchAsync(JobSchedule schedule, CancellationToken stoppingToken)
+    private async Task DispatchAsync(
+        JobSchedule schedule, DateTimeOffset occurrence, CancellationToken stoppingToken)
     {
         if (this.state.IsPaused(schedule.Name))
         {
@@ -117,7 +118,15 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
             ? CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)
             : CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, runtimeLimit.Token);
 
-        this.state.Track(schedule.Name, jobCancellation);
+        // This loop awaits each run before the next occurrence, so it never overlaps itself; what it
+        // can overlap is a manual run, which registers in the same place.
+        var tracked = this.state.TryTrack(schedule.Name, jobCancellation);
+        if (!tracked && !schedule.AllowsOverlap)
+        {
+            LogOverlapSkipped(this.logger, schedule.Name, occurrence);
+            return;
+        }
+
         try
         {
             await mediator.ExecuteAsync(schedule.CreateCommand(), jobCancellation.Token);
@@ -135,7 +144,10 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         }
         finally
         {
-            this.state.Forget(schedule.Name);
+            if (tracked)
+            {
+                this.state.Forget(schedule.Name, jobCancellation);
+            }
         }
     }
 
@@ -158,4 +170,10 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job schedule '{ScheduleName}' failed")]
     private static partial void LogJobFailed(ILogger logger, string scheduleName, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because a run of it is still in progress on this host")]
+    private static partial void LogOverlapSkipped(
+        ILogger logger, string scheduleName, DateTimeOffset occurrence);
 }

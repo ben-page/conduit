@@ -80,9 +80,25 @@ public interface IJobs
     /// Queues an extra run of a schedule now, without disturbing its cursor — the occurrence it was
     /// already waiting for still happens.
     /// </summary>
+    /// <remarks>
+    /// The schedule's overlap rule applies to a manual run as it does to an occurrence. Without
+    /// <c>AllowOverlap()</c>, the call is refused while the schedule has a run outstanding — pending,
+    /// awaiting a retry, or running, whether an occurrence or an earlier manual run — and the check
+    /// and the insert are one atomic step against the scheduler on every host, so the two can never
+    /// leave two runs outstanding between them. With <c>AllowOverlap()</c> it always queues. While a
+    /// manual run is outstanding the scheduler skips the schedule's occurrences, exactly as it skips
+    /// one behind an earlier occurrence. Without a persistence engine the run executes inline on this
+    /// host, and "outstanding" means in progress on this host.
+    /// </remarks>
     /// <param name="scheduleName">The schedule to run.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">No schedule of that name is declared on this host.</exception>
+    /// <exception cref="JobOverlapException">
+    /// The schedule does not allow overlap and already has a run outstanding; nothing was queued.
+    /// Server-side by design — catch it and answer your own refusal (an HTTP 409, say) if a client
+    /// asked for the run.
+    /// </exception>
     public Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken);
 
     /// <summary>

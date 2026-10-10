@@ -53,6 +53,11 @@ public sealed class ContendedJobStore : IJobStore
         => this.inner.TryMaterializeAsync(run, cancellationToken);
 
     /// <inheritdoc/>
+    public Task<MaterializeOutcome> TryMaterializeWithoutOverlapAsync(
+        JobRun run, CancellationToken cancellationToken)
+        => this.inner.TryMaterializeWithoutOverlapAsync(run, cancellationToken);
+
+    /// <inheritdoc/>
     public Task<IReadOnlyList<JobRun>> ClaimDueAsync(
         string claimToken, DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
         => this.inner.ClaimDueAsync(claimToken, now, batchSize, cancellationToken);

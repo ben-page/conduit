@@ -42,6 +42,14 @@ public sealed class PostgresEngineShould : PersistenceEngineTestBase
         }
     }
 
+    /// <summary>
+    /// Closes the idle connections the test left pooled. Every test has a database of its own, so its
+    /// pool is never reused, and the overlap-lock tests open twenty connections at once: left to idle
+    /// out, a run's pools exhaust the server's connection limit partway through.
+    /// </summary>
+    [TestCleanup]
+    public void ReleasePooledConnections() => NpgsqlConnection.ClearAllPools();
+
     public static async Task CleanupContainer()
     {
         if (container is not null)

@@ -22,8 +22,8 @@ but `IJobStore` is not, naming the fix.
 
 - `Configuration/` — `JobsBuilder`, `JobsOptions`, `ScheduleBuilder`, `EventTriggerBuilder<TEvent>`, `CoalescingTriggerBuilder<TEvent>` and `CoalescingTriggerBuilder<TEvent, TCommand>`, `MisfirePolicy`
 - `Runtime/` — `JobSchedule`, `JobTrigger`, `ScheduleRegistry`, `DurableJobScheduler`, `InMemoryJobScheduler`, `ClaimedJobExecutor`, `JobRunner`, `ClaimHeartbeat`, `EventTriggerListener<TEvent>`, `ScopeCoalescer`, `JobCleanup`, `DurableJobs`, `InMemoryJobs`, `InMemoryJobState`, `JobSchedulerReadiness`, `JobOutcome`, `JobAttempt`
-- `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema` (`conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`, `conduit_job_run_history`), `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobRunOutcome`, `JobScheduleRow`, `JobScope`, `HeartbeatResult`
-- root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobRunHistoryInfo`, `JobScopeInfo`, `JobFilter`, `JobHistoryFilter`, `JobHistoryPage`, `CancellationOutcome`
+- `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema` (`conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`, `conduit_job_run_history`), `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobRunOutcome`, `JobScheduleRow`, `JobScope`, `HeartbeatResult`, `MaterializeOutcome`
+- root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobRunHistoryInfo`, `JobScopeInfo`, `JobFilter`, `JobHistoryFilter`, `JobHistoryPage`, `CancellationOutcome`, `JobOverlapException`
 
 ## Time
 
@@ -100,9 +100,67 @@ the existing `ClaimDueAsync` elects the runner. The scopes table itself is compo
 `ISqlDialect` type vocabulary as the other two, and `git diff main -- src/Conduit.Persistence*` over
 this work is empty by design.
 
+## The overlap lock
+
+A schedule without `AllowOverlap()` has at most one run outstanding (Pending or Claiming), whoever
+writes it: the scheduler materializing an occurrence on any host, or `IJobs.TriggerNowAsync` on any
+host. Both write through `IJobStore.TryMaterializeWithoutOverlapAsync`, which is one transaction:
+`UPDATE conduit_job_schedules SET IsPaused = IsPaused WHERE Name = @Name` (the schedule's row lock),
+an existence probe, `COUNT(*)` of the schedule's other outstanding runs, then the usual
+insert-or-ignore. Every no-overlap write for one schedule therefore runs one at a time, and each
+check reads every earlier insert's commit; a run only *becomes* outstanding by insertion, so "at most
+one" holds by induction. **No per-engine SQL** — the no-op `UPDATE` is the portable row lock. The
+per-engine visibility argument is in the remarks on `DbJobStore.TryMaterializeUnderScheduleLockAsync`;
+keep the two in step.
+
+- **The run's own key is not overlap.** Every replica materializes the same occurrence key, so the
+  count excludes it; a replica gets `AlreadyMaterialized` and goes on to claim, exactly as before.
+  For trigger-now, an identical key means a second trigger in the same tick (a frozen test clock):
+  the run is queued, so it returns.
+- **The schedule row is ensured outside the transaction.** If the probe finds it missing, the
+  transaction rolls back, an autocommit insert-or-ignore creates it, and the transaction starts
+  over (twice at most, then `InvalidOperationException`). Inside, MySQL would bite twice: `INSERT
+  IGNORE` on an existing row takes a *shared* lock, so two replicas would deadlock upgrading it on
+  the `UPDATE` — on every occurrence, since every replica materializes at once; and under
+  REPEATABLE READ the probe would fix the read view before the lock was held.
+- **Existence is a `SELECT`, not the `UPDATE`'s count.** MySQL reports a no-op `UPDATE` as zero rows
+  changed when the connection asks for affected rather than found rows.
+- **Lock order: the schedule's row, then run rows.** `CompleteAsync` and `MarkTerminalAsync` advance
+  the cursor *first* for this. On SQL Server's locking READ COMMITTED the overlap count waits on a
+  run row a completing transaction has deleted; if that transaction then wanted the schedule's row
+  (as it did when the cursor came last), the two deadlocked — reproducibly, in the persistence
+  matrix's `NeitherDeadlockNorOverlapWhenMaterializationsRaceACompletion` on SQL Server. Every other
+  runs-table write is a single statement that never waits on a schedule row.
+- **No isolation level is pinned** (as `CompleteAsync`). Pinning READ COMMITTED would fail on MySQL
+  with statement-based binary logging; a stricter default turns the waiter's stale read into a
+  serialization error — a failed call, never a second run.
+- **Pause is still checked outside the lock**, as before: a pause racing a materialization is about
+  what happens next and needs no atomicity. Trigger-now still ignores pause.
+- **Outside the guarantee:** a run written by `TryMaterializeAsync` for a no-overlap schedule (a host
+  on an older version during a rolling upgrade), or hosts whose declarations disagree on
+  `AllowOverlap()`.
+- **The in-memory engine** enforces the rule per host: `InMemoryJobState.TryTrack` is a
+  `ConcurrentDictionary.TryAdd`, shared by the scheduler loop and `InMemoryJobs.TriggerNowAsync`
+  (which runs inline). There is nothing shared to coordinate through — every host fires every
+  schedule anyway. A manual in-memory run is now cancellable through `CancelAsync` like a scheduled
+  one.
+- **`JobOverlapException` is not `ConflictException`.** `ConflictException` is a wire refusal: any
+  handler letting it escape would answer its client 409 with this message. An `IJobs` caller decides
+  whether an overlap is its client's business; an uncaught one is an unexpected failure (500, logged).
+  It derives from `InvalidOperationException` — the schedule's state refuses a valid request — as
+  `RemoteDispatchException` does.
+
 ## Rejected alternatives
 
 Recorded because each is appealing enough to be proposed again.
+
+**Ensuring the schedule row inside the overlap transaction** (insert-or-ignore, then the no-op
+`UPDATE`, then check and insert). It reads naturally and is fine on SQLite, Postgres and SQL Server,
+but on MySQL `INSERT IGNORE` of an existing row takes a shared lock: two replicas materializing one
+occurrence — every occurrence, on every multi-replica cluster — each hold one and deadlock upgrading
+to the `UPDATE`'s exclusive lock. **`SELECT ... FOR UPDATE`** for the lock is per-engine syntax (SQL
+Server has none). **A partial unique index on "one outstanding run per schedule"** cannot be expressed
+on MySQL or through `ISqlDialect`.
 
 **Inbox dedup instead of row claiming.** `IInboundInterceptor` gates run only on the wire-inbound
 path, so a locally-dispatched scheduled command never passes one — the common case would get no
@@ -304,6 +362,14 @@ database, as replicas of one application), `JobsDatabaseProbe` (ledger assertion
 while a burst accumulates behind it) and `FakeClock.AdvanceUntilAsync` (loops re-arm
 asynchronously, so one large jump is not enough).
 
+**SQLite concurrency needs `Task.Run`.** Microsoft.Data.Sqlite's async methods run synchronously,
+busy retry included (up to the 30-second command timeout), so `Task.WhenAll` over store calls on one
+thread takes turns rather than racing — and a call that waits on a lock the test itself holds blocks
+the test's thread until the timeout. The overlap tests (`OverlapLockShould`, `TriggerNowShould`) start
+each contender with `Task.Run`.
+
 The claim protocol itself is covered against real Postgres, SQL Server and MySQL in
 `tests/Conduit.Persistence.IntegrationTests/PersistenceEngineTestBase.cs` — SQLite exercises none of
-the row-locking each server engine uses.
+the row-locking each server engine uses. So is the overlap lock (section 9): that the no-op `UPDATE`
+blocks a second writer and the read after it sees the holder's commit, at-most-one-outstanding under
+twenty concurrent writers, and deadlock-freedom against a completing run.

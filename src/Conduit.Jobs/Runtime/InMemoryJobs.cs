@@ -89,6 +89,14 @@ internal sealed class InMemoryJobs : IJobs
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Runs the command inline and returns when it finishes. The overlap rule is enforced against
+    /// this host only — the scheduled run or another manual one in progress here — because without a
+    /// database every host fires every schedule anyway; there is nothing shared to coordinate through.
+    /// While it runs, <see cref="CancelAsync"/> with the schedule's name reaches it, as it does a
+    /// scheduled run. A run of an <c>AllowOverlap()</c> schedule that starts beside another is not
+    /// registered, so only the first of the two is reachable that way.
+    /// </remarks>
     public async Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
     {
         var schedule = this.registry.Schedules
@@ -96,9 +104,26 @@ internal sealed class InMemoryJobs : IJobs
             ?? throw new ArgumentException(
                 $"No job schedule named '{scheduleName}' is declared.", nameof(scheduleName));
 
-        await using var scope = this.scopeFactory.CreateAsyncScope();
-        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
-        await mediator.ExecuteAsync(schedule.CreateCommand(), cancellationToken);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var tracked = this.state.TryTrack(schedule.Name, cancellation);
+        if (!tracked && !schedule.AllowsOverlap)
+        {
+            throw new JobOverlapException(schedule.Name);
+        }
+
+        try
+        {
+            await using var scope = this.scopeFactory.CreateAsyncScope();
+            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+            await mediator.ExecuteAsync(schedule.CreateCommand(), cancellation.Token);
+        }
+        finally
+        {
+            if (tracked)
+            {
+                this.state.Forget(schedule.Name, cancellation);
+            }
+        }
     }
 
     /// <inheritdoc/>

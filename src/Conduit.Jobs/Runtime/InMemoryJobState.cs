@@ -29,12 +29,21 @@ internal sealed class InMemoryJobState
         }
     }
 
-    /// <summary>Registers a running job so a cancellation request can reach it.</summary>
-    public void Track(string scheduleName, CancellationTokenSource cancellation)
-        => this.running[scheduleName] = cancellation;
+    /// <summary>
+    /// Registers a running job so a cancellation request can reach it, unless a run of the schedule is
+    /// already registered. Atomic, so it is also this host's overlap check: of a scheduled run and a
+    /// manual one starting together, exactly one registers.
+    /// </summary>
+    /// <returns><see langword="false"/> when a run of the schedule is already registered.</returns>
+    public bool TryTrack(string scheduleName, CancellationTokenSource cancellation)
+        => this.running.TryAdd(scheduleName, cancellation);
 
-    /// <summary>Forgets a job that has finished.</summary>
-    public void Forget(string scheduleName) => this.running.TryRemove(scheduleName, out _);
+    /// <summary>
+    /// Forgets a job that has finished — only the registration it made, so a run that never
+    /// registered (it overlapped one that did) cannot remove the other's.
+    /// </summary>
+    public void Forget(string scheduleName, CancellationTokenSource cancellation)
+        => this.running.TryRemove(KeyValuePair.Create(scheduleName, cancellation));
 
     /// <summary>Cancels a running job's token. Returns false when nothing by that name is running.</summary>
     public bool TryCancel(string scheduleName)

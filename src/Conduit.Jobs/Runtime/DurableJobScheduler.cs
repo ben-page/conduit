@@ -195,20 +195,23 @@ internal sealed partial class DurableJobScheduler : BackgroundService
                 return;
             }
 
-            if (!schedule.AllowsOverlap
-                && await store.HasOutstandingAsync(schedule.Name, stoppingToken))
+            // N replicas race here and one row results. The claim that follows then elects the single
+            // host that runs it.
+            if (schedule.AllowsOverlap)
             {
-                // Running, or awaiting a retry: either way the previous occurrence has not succeeded,
-                // and starting a second is the overlap the policy exists to prevent. Bounded, because
-                // attempts are finite — an occurrence that keeps failing becomes terminal and stops
-                // holding the schedule up.
+                await store.TryMaterializeAsync(BuildRun(schedule, occurrence), stoppingToken);
+            }
+            else if (await store.TryMaterializeWithoutOverlapAsync(BuildRun(schedule, occurrence), stoppingToken)
+                == MaterializeOutcome.Overlapping)
+            {
+                // Running, or awaiting a retry — a previous occurrence or a manual run: either way
+                // starting a second is the overlap the policy exists to prevent. The check and the
+                // insert are one locked step shared with trigger-now, so neither path can slip a run
+                // in between the other's check and its insert. Bounded, because attempts are finite —
+                // a run that keeps failing becomes terminal and stops holding the schedule up.
                 LogOverlapSkipped(this.logger, schedule.Name, occurrence);
                 return;
             }
-
-            // N replicas race here and one row results. The claim that follows then elects the single
-            // host that runs it.
-            await store.TryMaterializeAsync(BuildRun(schedule, occurrence), stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -487,7 +490,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because a previous one is still outstanding")]
+        Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because another run of it is still outstanding")]
     private static partial void LogOverlapSkipped(
         ILogger logger, string scheduleName, DateTimeOffset occurrence);
 

@@ -115,18 +115,32 @@ internal sealed class DurableJobs : IJobs
 
         // Occurrence is deliberately null: a manual run must not move the cursor, or triggering a
         // job by hand would swallow the occurrence the schedule was already waiting for.
-        await this.store.TryMaterializeAsync(
-            new JobRun
-            {
-                JobKey = $"{schedule.Name}@manual-{now.UtcDateTime:O}",
-                ScheduleName = schedule.Name,
-                Occurrence = null,
-                MessageType = command.GetType().FullName!,
-                Payload = JsonSerializer.Serialize(command, command.GetType(), ConduitRuntime.JsonOptions),
-                RunAt = now,
-                Status = JobRunStatus.Pending,
-            },
-            cancellationToken);
+        var run = new JobRun
+        {
+            JobKey = $"{schedule.Name}@manual-{now.UtcDateTime:O}",
+            ScheduleName = schedule.Name,
+            Occurrence = null,
+            MessageType = command.GetType().FullName!,
+            Payload = JsonSerializer.Serialize(command, command.GetType(), ConduitRuntime.JsonOptions),
+            RunAt = now,
+            Status = JobRunStatus.Pending,
+        };
+
+        if (schedule.AllowsOverlap)
+        {
+            await this.store.TryMaterializeAsync(run, cancellationToken);
+            return;
+        }
+
+        // The same locked check-and-insert the scheduler materializes this schedule's occurrences
+        // through, so a manual run and an occurrence can never both end up outstanding, whichever
+        // host each comes from. AlreadyMaterialized is a second trigger in the same instant: the key
+        // is the run's identity, and that run is queued.
+        if (await this.store.TryMaterializeWithoutOverlapAsync(run, cancellationToken)
+            == MaterializeOutcome.Overlapping)
+        {
+            throw new JobOverlapException(schedule.Name);
+        }
     }
 
     /// <inheritdoc/>
