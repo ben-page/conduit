@@ -163,4 +163,44 @@ public class MinimalApiDispatchContextShould
             }
         }
     }
+
+    [TestMethod]
+    public async Task RunTheHandler_WhenTheResponseIsAlready400_OnAnOptedInRoute()
+    {
+        // The OpenIddict error-passthrough shape: a middleware pre-sets 400 and relies on the handler to override it.
+        // A route handler wrapped by an endpoint filter is skipped in that state; a wrapped request delegate is not.
+        var (app, client, captured) = CreateTestHost(
+            optIn: false,
+            mapMore: a =>
+            {
+                a.Use(async (context, next) =>
+                {
+                    if (context.Request.Path == "/callback")
+                    {
+                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    }
+
+                    await next(context);
+                });
+                a.MapPost("/callback", async (IMediator mediator) =>
+                {
+                    await mediator.ExecuteAsync(new CapturePropertiesCommand());
+                    return Results.Redirect("/next");
+                }).WithConduitDispatchContext();
+            });
+        await using (app)
+        using (client)
+        {
+            using var noRedirect = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CheckCertificateRevocationList = true })
+            {
+                BaseAddress = client.BaseAddress,
+            };
+
+            var response = await noRedirect.PostAsync("/callback", null);
+
+            response.StatusCode.Should().Be(HttpStatusCode.Found);
+            captured.Properties.Should().NotBeNull();
+            captured.Properties!["UserId"].Should().Be("emp-42");
+        }
+    }
 }

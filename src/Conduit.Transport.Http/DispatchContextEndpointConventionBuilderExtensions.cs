@@ -1,6 +1,5 @@
 using Conduit.Runtime;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.Http;
@@ -12,10 +11,15 @@ namespace Conduit.Transport.Http;
 /// command.</summary>
 public static class DispatchContextEndpointConventionBuilderExtensions
 {
-    /// <summary>Adds the endpoint filter that starts the inbound dispatch context before the route runs, and tags the
-    /// endpoint with <see cref="ConduitDispatchContextMetadata"/> so a host can verify the opt-in. Applied to a route
-    /// group (<c>app.MapGroup("").WithConduitDispatchContext()</c>) it opts every route in the group, nested groups
+    /// <summary>Wraps the endpoint's request delegate so the inbound dispatch context starts before the route runs
+    /// (so it applies to every endpoint kind, and runs before parameter binding), and tags the endpoint with
+    /// <see cref="ConduitDispatchContextMetadata"/> so a host can verify the opt-in. Applied to a route group
+    /// (<c>app.MapGroup("").WithConduitDispatchContext()</c>) it opts every route in the group, nested groups
     /// included, in.</summary>
+    /// <remarks>This deliberately is not an endpoint filter: ASP.NET Core's filtered invocation skips the route
+    /// handler when the response status is already 400 as the endpoint runs. An OpenIddict client with
+    /// <c>EnableErrorPassthrough()</c> pre-sets 400 on its callback and sign-out routes and relies on the handler
+    /// running to override it, so a filter would answer 400 where the handler answers 302.</remarks>
     /// <param name="builder">The route or route group to opt in.</param>
     /// <typeparam name="TBuilder">The convention builder type, returned for chaining.</typeparam>
     /// <returns>The same builder.</returns>
@@ -24,12 +28,20 @@ public static class DispatchContextEndpointConventionBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.WithMetadata(ConduitDispatchContextMetadata.Instance);
-        return builder.AddEndpointFilter(static async (context, next) =>
+        builder.Finally(static endpointBuilder =>
         {
-            HttpDispatchContext.Start(
-                context.HttpContext,
-                context.HttpContext.RequestServices.GetServices<IDispatchContextEnricher>());
-            return await next(context);
+            if (endpointBuilder.RequestDelegate is not { } inner)
+            {
+                return;
+            }
+
+            // async on purpose: the AsyncLocal context set inside must not flow back out to the middleware after the endpoint.
+            endpointBuilder.RequestDelegate = async context =>
+            {
+                HttpDispatchContext.Start(context, context.RequestServices.GetServices<IDispatchContextEnricher>());
+                await inner(context);
+            };
         });
+        return builder;
     }
 }
