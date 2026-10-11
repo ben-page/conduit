@@ -12,14 +12,18 @@ namespace Conduit.Transport.Http;
 /// command.</summary>
 public static class DispatchContextEndpointConventionBuilderExtensions
 {
-    /// <summary>Adds the endpoint filter that starts the inbound dispatch context before the route runs.</summary>
-    /// <param name="builder">The route to opt in.</param>
+    /// <summary>Adds the endpoint filter that starts the inbound dispatch context before the route runs, and tags the
+    /// endpoint with <see cref="ConduitDispatchContextMetadata"/> so a host can verify the opt-in. Applied to a route
+    /// group (<c>app.MapGroup("").WithConduitDispatchContext()</c>) it opts every route in the group, nested groups
+    /// included, in.</summary>
+    /// <param name="builder">The route or route group to opt in.</param>
     /// <typeparam name="TBuilder">The convention builder type, returned for chaining.</typeparam>
     /// <returns>The same builder.</returns>
     public static TBuilder WithConduitDispatchContext<TBuilder>(this TBuilder builder)
         where TBuilder : IEndpointConventionBuilder
     {
         ArgumentNullException.ThrowIfNull(builder);
+        builder.WithMetadata(ConduitDispatchContextMetadata.Instance);
         return builder.AddEndpointFilter(static async (context, next) =>
         {
             HttpDispatchContext.Start(

@@ -6,6 +6,7 @@ using Conduit.Transport.Http.Tests.Support;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -19,7 +20,7 @@ namespace Conduit.Transport.Http.Tests.Integration;
 [TestClass]
 public class MinimalApiDispatchContextShould
 {
-    private static (WebApplication App, HttpClient Client, CapturedProperties Captured) CreateTestHost(bool optIn)
+    private static (WebApplication App, HttpClient Client, CapturedProperties Captured) CreateTestHost(bool optIn, Action<WebApplication>? mapMore = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton<CapturedProperties>();
@@ -44,6 +45,8 @@ public class MinimalApiDispatchContextShould
         {
             route.WithConduitDispatchContext();
         }
+
+        mapMore?.Invoke(app);
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -99,6 +102,65 @@ public class MinimalApiDispatchContextShould
             response.StatusCode.Should().Be(HttpStatusCode.OK);
             captured.Properties.Should().NotBeNull();
             captured.Properties!["UserId"].Should().Be("emp-42");
+        }
+    }
+
+    private static bool IsTagged(WebApplication app, string pattern) =>
+        ((IEndpointRouteBuilder)app).DataSources
+            .SelectMany(d => d.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Single(e => e.RoutePattern.RawText == pattern)
+            .Metadata.GetMetadata<ConduitDispatchContextMetadata>() is not null;
+
+    [TestMethod]
+    public async Task TagTheEndpoint_OnAnOptedInRoute()
+    {
+        var (app, client, _) = CreateTestHost(
+            optIn: true,
+            mapMore: a => a.MapPost("/api/plain", () => Results.Ok()));
+        await using (app)
+        using (client)
+        {
+            IsTagged(app, "/api/minimal").Should().BeTrue();
+            IsTagged(app, "/api/plain").Should().BeFalse();
+        }
+    }
+
+    [TestMethod]
+    public async Task OptEveryRouteIn_WhenAppliedToARouteGroup()
+    {
+        var (app, client, captured) = CreateTestHost(
+            optIn: false,
+            mapMore: a =>
+            {
+                var g = a.MapGroup("").WithConduitDispatchContext();
+                g.MapPost("/api/grouped", async (IMediator mediator) =>
+                {
+                    await mediator.ExecuteAsync(new CapturePropertiesCommand());
+                    return Results.Ok();
+                });
+                g.MapGroup("/inner").MapPost("/nested", async (IMediator mediator) =>
+                {
+                    await mediator.ExecuteAsync(new CapturePropertiesCommand());
+                    return Results.Ok();
+                });
+            });
+        await using (app)
+        using (client)
+        {
+            IsTagged(app, "/api/grouped").Should().BeTrue();
+            IsTagged(app, "/inner/nested").Should().BeTrue();
+            IsTagged(app, "/api/minimal").Should().BeFalse();
+
+            foreach (var path in new[] { "/api/grouped", "/inner/nested" })
+            {
+                captured.Properties = null;
+                var response = await client.PostAsync(path, null);
+
+                response.StatusCode.Should().Be(HttpStatusCode.OK);
+                captured.Properties.Should().NotBeNull();
+                captured.Properties!["UserId"].Should().Be("emp-42");
+            }
         }
     }
 }
