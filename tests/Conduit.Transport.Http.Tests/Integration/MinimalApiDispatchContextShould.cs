@@ -203,4 +203,44 @@ public class MinimalApiDispatchContextShould
             captured.Properties!["UserId"].Should().Be("emp-42");
         }
     }
+
+    [TestMethod]
+    public async Task NotLeakTheStartedContextToMiddlewareAfterTheEndpoint_OnAnOptedInRoute()
+    {
+        MessageContext? before = null;
+        MessageContext? after = null;
+        var (app, client, captured) = CreateTestHost(
+            optIn: false,
+            mapMore: a =>
+            {
+                a.Use(async (context, next) =>
+                {
+                    if (context.Request.Path == "/leak")
+                    {
+                        before = MessageContext.Current;
+                        await next(context);
+                        after = MessageContext.Current;
+                        return;
+                    }
+
+                    await next(context);
+                });
+                a.MapPost("/leak", async (IMediator mediator) =>
+                {
+                    await mediator.ExecuteAsync(new CapturePropertiesCommand());
+                    return Results.Ok();
+                }).WithConduitDispatchContext();
+            });
+        await using (app)
+        using (client)
+        {
+            var response = await client.PostAsync("/leak", null);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            captured.Properties.Should().NotBeNull();
+            captured.Properties!["UserId"].Should().Be("emp-42");
+            before.Should().BeNull();
+            after.Should().BeNull("the started context must not flow out of the wrapped request delegate");
+        }
+    }
 }

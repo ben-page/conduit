@@ -27,13 +27,15 @@ public static class DispatchContextEndpointConventionBuilderExtensions
         where TBuilder : IEndpointConventionBuilder
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.WithMetadata(ConduitDispatchContextMetadata.Instance);
         builder.Finally(static endpointBuilder =>
         {
             if (endpointBuilder.RequestDelegate is not { } inner)
             {
                 return;
             }
+
+            // Tagged only where the wrap happens, so the metadata never claims an opt-in that did not take effect.
+            endpointBuilder.Metadata.Add(ConduitDispatchContextMetadata.Instance);
 
             // async on purpose: the AsyncLocal context set inside must not flow back out to the middleware after the endpoint.
             endpointBuilder.RequestDelegate = async context =>
