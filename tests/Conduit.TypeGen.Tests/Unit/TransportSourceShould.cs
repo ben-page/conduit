@@ -20,6 +20,20 @@ public class TransportSourceShould
     }
 
     [TestMethod]
+    public void AcceptBlankLinesBetweenImports()
+    {
+        // Arrange
+        const string text = "import A from 'pkg';\n\nimport type { B } from './base';\n\nexport const a = 1;\n";
+
+        // Act
+        var source = TransportSource.Parse("x.ts", text);
+
+        // Assert
+        source.PackageImports.Should().Equal("import A from 'pkg';");
+        source.Body.Should().Equal("export const a = 1;");
+    }
+
+    [TestMethod]
     public void DropAParentRelativeAndADoubleQuotedRelativeImport()
     {
         // Arrange

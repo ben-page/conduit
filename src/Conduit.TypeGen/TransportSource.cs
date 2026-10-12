@@ -7,7 +7,7 @@ namespace Conduit.TypeGen;
 /// <c>Conduit.TypeGen.Transport.&lt;file&gt;</c>), split into what <c>conduit.ts</c> takes from it.
 /// </summary>
 /// <remarks>
-/// A transport file is single-line imports at the top, then its body. <c>conduit.ts</c> is ONE module, so an import of
+/// A transport file is single-line imports at the top (blank lines between them are fine), then its body. <c>conduit.ts</c> is ONE module, so an import of
 /// another transport file (a relative specifier) is dropped, and an import from a package is hoisted to the top of
 /// <c>conduit.ts</c>. The body is emitted verbatim. The relative imports exist so each file type-checks on its own
 /// (tests/transport-ts).
@@ -50,9 +50,16 @@ internal sealed class TransportSource
         var packageImports = new List<string>();
         var index = 0;
 
-        while (index < lines.Length && IsImport(lines[index]))
+        // Blank lines between imports are never emitted, so the scan crosses them; a comment or code line ends the block.
+        while (index < lines.Length && (lines[index].Length == 0 || IsImport(lines[index])))
         {
             var line = lines[index];
+            if (line.Length == 0)
+            {
+                index++;
+                continue;
+            }
+
             if (!line.EndsWith(';'))
             {
                 throw Refuse(fileName, index, "an import must be one line ending in ';' -- TypeGen hoists or drops whole lines");
@@ -96,7 +103,7 @@ internal sealed class TransportSource
         {
             if (IsImport(body[bodyIndex]))
             {
-                throw Refuse(fileName, index + bodyIndex, "imports go at the top of a transport file, above its body");
+                throw Refuse(fileName, index + bodyIndex, "imports go at the top of a transport file, above its body -- a comment or code line above an import ends the import block");
             }
         }
 
