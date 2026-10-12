@@ -134,7 +134,9 @@ keep the two in step.
   is outstanding — trigger-now's guarantee, no more, because `retainRunKey` is for message-keyed
   triggers only and a completed schedule run's row is deleted. Unlike trigger-now it honours pause
   (nobody asked for it). `Overlapping` means an outstanding run is that start's work: logged, nothing
-  written.
+  written. A store error on the claim after the write (a deadlock victim: a host's `RunAtStart()`
+  schedules all claim at once at its start) is logged and the run left queued for the sweep —
+  `ClaimQueuedRunAsync`, shared with an occurrence's claim; escaping, it ended that schedule's loop.
 - **A row count of zero proves nothing, and neither does a probe that then finds the row.** A
   positive count from the lock `UPDATE` proves the lock on every engine. Zero means no row (nothing
   locked) or a lock the count does not show (MySQL with `UseAffectedRows=true`; SQL Server under
@@ -323,6 +325,10 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   discontinuous clock it means advancing past an occurrence nothing was waiting for.
 - **The misfire walk is capped** at 100,000 occurrences; beyond that the cursor moves to now with a
   warning rather than stalling startup.
+- **A cursor that cannot be read at start is read as no cursor** (logged): the timetable anchors to the
+  host's start and this start's misfire policy is skipped, rather than the loop ending. A completed
+  occurrence still cannot re-run: every occurrence's write checks the real cursor (under the overlap
+  lock, or from the schedule row for `AllowOverlap()`).
 - **Purge covers `Cancelled` as well as `Failed`.** Both are terminal history kept only for an
   operator to look at, and neither is ever retried, so leaving cancelled rows grows the ledger
   without bound.

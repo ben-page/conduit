@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Persistence;
 
@@ -7,9 +9,18 @@ namespace Conduit.Persistence;
 /// Base background service that runs a cleanup operation on a fixed interval. Each tick runs inside a
 /// fresh DI scope (via <see cref="IServiceScopeFactory"/>) so a scoped store can be resolved safely.
 /// </summary>
-public abstract class PeriodicCleanupServiceBase : BackgroundService
+/// <remarks>
+/// A tick that throws — a purge chosen as a deadlock victim, a dropped connection — is logged, and the
+/// next tick comes round after <see cref="Interval"/> as usual. Escaping, it would end the service, and
+/// a host whose <c>BackgroundServiceExceptionBehavior</c> is <c>StopHost</c> (the default) would stop
+/// with it. The failure is logged under the derived type's category through the host's
+/// <see cref="ILoggerFactory"/>, resolved from the first tick's scope, so a derived class's
+/// constructor needs no logger.
+/// </remarks>
+public abstract partial class PeriodicCleanupServiceBase : BackgroundService
 {
     private readonly IServiceScopeFactory scopeFactory;
+    private ILogger? logger;
 
     /// <summary>Initializes a new instance of <see cref="PeriodicCleanupServiceBase"/>.</summary>
     /// <param name="scopeFactory">Factory used to scope each cleanup tick.</param>
@@ -31,12 +42,32 @@ public abstract class PeriodicCleanupServiceBase : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await using (var scope = this.scopeFactory.CreateAsyncScope())
+            try
             {
+                await using var scope = this.scopeFactory.CreateAsyncScope();
+
+                // A singleton, so holding it past this scope is safe.
+                this.logger ??= scope.ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger(this.GetType());
                 await this.CleanupAsync(scope.ServiceProvider, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+#pragma warning disable CA1031 // One failed tick must not stop the host; the next tick tries again.
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                LogCleanupFailed(this.logger ?? NullLogger.Instance, this.GetType().Name, this.Interval, exception);
             }
 
             await Task.Delay(this.Interval, stoppingToken);
         }
     }
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "{CleanupService} cleanup pass failed; the next pass runs in {Interval}")]
+    private static partial void LogCleanupFailed(
+        ILogger logger, string cleanupService, TimeSpan interval, Exception exception);
 }

@@ -1,8 +1,10 @@
 using AwesomeAssertions;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
+using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Jobs.Tests.Integration;
@@ -197,6 +199,41 @@ public class RunAtStartShould
 
         timeProvider.Advance(TimeSpan.FromMinutes(5));
         await spy.WaitForCountAsync(1);
+    }
+
+    [TestMethod]
+    public async Task LeaveTheStartUpRunToTheSweep_WhenItsClaimFails()
+    {
+        // Arrange — the claim straight after the start-up write throws, as a deadlock victim's does
+        // when several RunAtStart() schedules claim at once at a host's start
+        await using var database = SharedSqliteDatabase.Create();
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        var logs = new CapturingLoggerProvider();
+        var fault = new JobStoreFault(nameof(IJobStore.ClaimDueAsync));
+        fault.Arm();
+
+        // Act
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("warm").Every(TimeSpan.FromHours(1)).RunAtStart().Run(() => new RecordedJob("warm")),
+            spy,
+            timeProvider,
+            database.ConnectionString,
+            logs,
+            configureServices: services => FaultingJobStore.Install(services, fault));
+
+        // Assert — logged, the host is still up, the queued start-up run is claimed by the sweep, and
+        // the schedule's timetable carries on
+        await logs.WaitForWarningAsync(message => message.Contains("could not claim its queued run", StringComparison.Ordinal));
+        await FakeClock.AdvanceUntilAsync(timeProvider, TimeSpan.FromSeconds(30), () => Task.FromResult(spy.Count >= 1));
+        await Task.Delay(300);
+        spy.Count.Should().Be(1, "the start-up run ran once, from the sweep's claim");
+        host.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested
+            .Should().BeFalse("a store error while claiming is logged, not left to stop the host");
+
+        await JobsDatabaseProbe.WaitForDeletionAsync(database, DurableJobScheduler.BuildStartUpJobKey("warm", Start));
+        timeProvider.Advance(Start.AddHours(1) - timeProvider.GetUtcNow());
+        await spy.WaitForCountAsync(2);
     }
 
     private static void FaultStartUpWrites(IServiceCollection services)

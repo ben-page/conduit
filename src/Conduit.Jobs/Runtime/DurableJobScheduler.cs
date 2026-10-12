@@ -260,7 +260,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             return;
         }
 
-        await this.ClaimAndRunDueAsync(stoppingToken);
+        await this.ClaimQueuedRunAsync(schedule.Name, stoppingToken);
     }
 
     /// <summary>
@@ -319,7 +319,33 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             return;
         }
 
-        await this.ClaimAndRunDueAsync(stoppingToken);
+        await this.ClaimQueuedRunAsync(schedule.Name, stoppingToken);
+    }
+
+    /// <summary>
+    /// Claims what is due straight after a schedule's loop has queued a run, so the run starts without
+    /// waiting for the sweep. A store error here (a deadlock victim among replicas claiming at once,
+    /// say) is logged rather than let escape: escaping, it would end this schedule's loop for good. The
+    /// run stays queued and the sweep claims it — on its next pass when nothing was claimed, or once
+    /// the claim goes stale after <c>ClaimTimeout</c> when the claim committed and only reading it
+    /// back failed.
+    /// </summary>
+    private async Task ClaimQueuedRunAsync(string scheduleName, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await this.ClaimAndRunDueAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Draining.
+        }
+#pragma warning disable CA1031 // A claim-time database error must not end the schedule's loop; the sweep claims the run.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            LogQueuedRunClaimFailed(this.logger, scheduleName, exception);
+        }
     }
 
     private async Task SweepAsync(CancellationToken stoppingToken)
@@ -528,6 +554,18 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         {
             return null;
         }
+#pragma warning disable CA1031 // A database error at start must not end the schedule's loop before it has begun.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            // Read as a schedule with no cursor yet: anchored to this host's start, with nothing
+            // missed. That loses this start's misfire handling (a RunImmediately catch-up, a Skip's
+            // cursor move) and restarts an interval schedule's phase, but never re-runs a completed
+            // occurrence: every occurrence's write still checks the real cursor (under the overlap
+            // lock, or from the schedule row for AllowOverlap()).
+            LogCursorReadFailed(this.logger, scheduleName, exception);
+            return null;
+        }
     }
 
     private static JobRun BuildRun(JobSchedule schedule, DateTimeOffset occurrence)
@@ -643,6 +681,16 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         Level = LogLevel.Error,
         Message = "Job schedule '{ScheduleName}' could not write its start-up run")]
     private static partial void LogStartUpRunFailed(ILogger logger, string scheduleName, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Job schedule '{ScheduleName}' could not claim its queued run; the sweep will pick it up")]
+    private static partial void LogQueuedRunClaimFailed(ILogger logger, string scheduleName, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Job schedule '{ScheduleName}' could not read its cursor, so its timetable starts from this host's start and its misfire policy is not applied")]
+    private static partial void LogCursorReadFailed(ILogger logger, string scheduleName, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job schedule '{ScheduleName}' database access failed")]
     private static partial void LogScheduleStoreFailed(

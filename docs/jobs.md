@@ -433,7 +433,8 @@ jobs.Schedule("sweep").Every(TimeSpan.FromMinutes(5)).RunAtStart().Run(() => new
   host starts — a retry left from before the restart, a manual run, another replica's start-up run —
   no start-up run is written, and the log says so. A **paused** schedule gets none either (also
   logged): unlike trigger-now, nobody asked for this run, and it is not deferred to the resume. A
-  database error writing it is logged, and the schedule carries on to its timetable.
+  database error writing it is logged, and the schedule carries on to its timetable. So is one
+  claiming it: the run stays queued, and a later sweep claims it.
 - **The timetable is untouched.** After the start-up run the loop waits for the next occurrence after
   the cursor, exactly as without `RunAtStart()`. The phase stays the cursor's, shared by every replica,
   so the next occurrence may follow the start-up run by less than an interval — and is skipped by the
