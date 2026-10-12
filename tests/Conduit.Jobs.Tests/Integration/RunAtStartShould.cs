@@ -211,6 +211,10 @@ public class RunAtStartShould
         var spy = new JobSpy();
         var logs = new CapturingLoggerProvider();
         var fault = new JobStoreFault(nameof(IJobStore.ClaimDueAsync));
+
+        // Armed before the start, and the sweep claims too: this relies on SQLite completing
+        // synchronously, so the schedule's loop (started before the sweep) reaches its claim first. Were
+        // the sweep to take the fault instead, the log assertion below would fail, not pass falsely.
         fault.Arm();
 
         // Act

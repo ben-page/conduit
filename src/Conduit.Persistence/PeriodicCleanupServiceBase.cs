@@ -16,7 +16,9 @@ namespace Conduit.Persistence;
 /// with it. A tick that throws while the host is stopping ends the service quietly, whatever the
 /// exception: that is the stop's cancellation. A failure is logged under the derived type's category
 /// through the host's <see cref="ILoggerFactory"/>, resolved from the first tick's scope, so a derived
-/// class's constructor needs no logger.
+/// class's constructor needs no logger. With no <see cref="ILoggerFactory"/> registered (a bare service
+/// collection rather than a host) it goes to <see cref="NullLogger"/>: the failure is swallowed and the
+/// next tick still runs.
 /// </remarks>
 public abstract partial class PeriodicCleanupServiceBase : BackgroundService
 {

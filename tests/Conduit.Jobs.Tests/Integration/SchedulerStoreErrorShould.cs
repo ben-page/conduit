@@ -98,6 +98,9 @@ public class SchedulerStoreErrorShould
         var spy = new JobSpy();
         var logs = new CapturingLoggerProvider();
         var fault = new JobStoreFault(nameof(IJobStore.GetScheduleAsync));
+
+        // Armed before the start without an ordering assumption: only a schedule's loop calls
+        // GetScheduleAsync (the sweep never does), and the cursor read is that loop's first call.
         fault.Arm();
 
         // Act

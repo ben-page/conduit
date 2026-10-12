@@ -560,6 +560,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         catch (Exception) when (stoppingToken.IsCancellationRequested)
 #pragma warning restore CA1031
         {
+            // Untested: this read comes before the loop reports armed, so a fault held open until the
+            // stop would hold the host's readiness too.
             return null;
         }
 #pragma warning disable CA1031 // A database error at start must not end the schedule's loop before it has begun.
