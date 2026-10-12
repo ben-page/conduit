@@ -137,6 +137,8 @@ keep the two in step.
   written. A store error on the claim after the write (a deadlock victim: a host's `RunAtStart()`
   schedules all claim at once at its start) is logged and the run left queued for the sweep —
   `ClaimQueuedRunAsync`, shared with an occurrence's claim; escaping, it ended that schedule's loop.
+  While the host is stopping, any exception there is the stop's cancellation (SqlClient reports one as
+  a `SqlException`) and logs nothing — likewise in the cursor read.
 - **A row count of zero proves nothing, and neither does a probe that then finds the row.** A
   positive count from the lock `UPDATE` proves the lock on every engine. Zero means no row (nothing
   locked) or a lock the count does not show (MySQL with `UseAffectedRows=true`; SQL Server under

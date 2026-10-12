@@ -49,6 +49,15 @@ public class FaultingJobStore : DispatchProxy
 
         if (this.fault.TryTake(targetMethod.Name))
         {
+            if (this.fault.ThrowsOnceCancelled)
+            {
+                var cancellationToken = args!.OfType<CancellationToken>().Last();
+                return typeof(FaultingJobStore)
+                    .GetMethod(nameof(ThrowOnceCancelledAsync), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(targetMethod.ReturnType.GetGenericArguments()[0])
+                    .Invoke(null, [cancellationToken]);
+            }
+
             throw new InvalidOperationException("the database chose this call as a deadlock victim, on purpose");
         }
 
@@ -60,5 +69,19 @@ public class FaultingJobStore : DispatchProxy
         {
             throw exception.InnerException;
         }
+    }
+
+    private static async Task<TResult> ThrowOnceCancelledAsync<TResult>(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled: now fail as SqlClient does, with something that is not cancellation.
+        }
+
+        throw new InvalidOperationException("Operation cancelled by user, as SqlClient reports it, on purpose");
     }
 }

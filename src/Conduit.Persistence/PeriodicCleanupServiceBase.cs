@@ -13,9 +13,10 @@ namespace Conduit.Persistence;
 /// A tick that throws — a purge chosen as a deadlock victim, a dropped connection — is logged, and the
 /// next tick comes round after <see cref="Interval"/> as usual. Escaping, it would end the service, and
 /// a host whose <c>BackgroundServiceExceptionBehavior</c> is <c>StopHost</c> (the default) would stop
-/// with it. The failure is logged under the derived type's category through the host's
-/// <see cref="ILoggerFactory"/>, resolved from the first tick's scope, so a derived class's
-/// constructor needs no logger.
+/// with it. A tick that throws while the host is stopping ends the service quietly, whatever the
+/// exception: that is the stop's cancellation. A failure is logged under the derived type's category
+/// through the host's <see cref="ILoggerFactory"/>, resolved from the first tick's scope, so a derived
+/// class's constructor needs no logger.
 /// </remarks>
 public abstract partial class PeriodicCleanupServiceBase : BackgroundService
 {
@@ -50,7 +51,9 @@ public abstract partial class PeriodicCleanupServiceBase : BackgroundService
                 this.logger ??= scope.ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger(this.GetType());
                 await this.CleanupAsync(scope.ServiceProvider, stoppingToken);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+#pragma warning disable CA1031 // While stopping, any exception is the stop's cancellation: SqlClient reports it as a SqlException.
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
+#pragma warning restore CA1031
             {
                 return;
             }

@@ -59,6 +59,37 @@ public class SchedulerStoreErrorShould
     }
 
     [TestMethod]
+    public async Task LogNothing_WhenAnOccurrencesClaimFailsBecauseTheHostIsStopping()
+    {
+        // Arrange — the occurrence's claim is still running when the host stops, and fails the way
+        // SqlClient reports the stop: as an error, not as cancellation
+        await using var database = SharedSqliteDatabase.Create();
+        var timeProvider = new FakeTimeProvider(Start);
+        var logs = new CapturingLoggerProvider();
+        var fault = new JobStoreFault(nameof(IJobStore.ClaimDueAsync)) { ThrowsOnceCancelled = true };
+        await using var host = await JobsTestHost.StartAsync(
+            jobs =>
+            {
+                jobs.ClaimTimeout = TimeSpan.FromMinutes(90);
+                jobs.Schedule("warm").Every(TimeSpan.FromHours(1)).Run(() => new RecordedJob("warm"));
+            },
+            new JobSpy(),
+            timeProvider,
+            database.ConnectionString,
+            logs,
+            configureServices: services => FaultingJobStore.Install(services, fault));
+        fault.Arm();
+        timeProvider.Advance(TimeSpan.FromHours(1));
+        await fault.Taken.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Act
+        await host.DisposeAsync();
+
+        // Assert
+        logs.Warnings.Should().BeEmpty("a store error while stopping is the stop's cancellation, not a failure");
+    }
+
+    [TestMethod]
     public async Task KeepItsTimetable_WhenItsCursorCannotBeRead()
     {
         // Arrange — the schedule's first store call, the cursor read its loop starts with, throws

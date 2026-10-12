@@ -336,7 +336,9 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         {
             await this.ClaimAndRunDueAsync(stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+#pragma warning disable CA1031 // While stopping, any exception is the stop's cancellation: SqlClient reports it as a SqlException.
+        catch (Exception) when (stoppingToken.IsCancellationRequested)
+#pragma warning restore CA1031
         {
             // Draining.
         }
@@ -554,15 +556,21 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         {
             return null;
         }
+#pragma warning disable CA1031 // While stopping, any exception is the stop's cancellation: SqlClient reports it as a SqlException.
+        catch (Exception) when (stoppingToken.IsCancellationRequested)
+#pragma warning restore CA1031
+        {
+            return null;
+        }
 #pragma warning disable CA1031 // A database error at start must not end the schedule's loop before it has begun.
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            // Read as a schedule with no cursor yet: anchored to this host's start, with nothing
-            // missed. That loses this start's misfire handling (a RunImmediately catch-up, a Skip's
-            // cursor move) and restarts an interval schedule's phase, but never re-runs a completed
-            // occurrence: every occurrence's write still checks the real cursor (under the overlap
-            // lock, or from the schedule row for AllowOverlap()).
+            // Read as a schedule with no cursor yet, anchored to this host's start, rather than end the
+            // loop. The cost: that start skips its misfire policy (no RunImmediately catch-up, no Skip
+            // cursor move), and an interval schedule's phase restarts from the host start. A completed
+            // run still cannot re-run: every occurrence's write checks the real cursor (under the
+            // overlap lock, or from the schedule row for AllowOverlap()).
             LogCursorReadFailed(this.logger, scheduleName, exception);
             return null;
         }

@@ -38,4 +38,25 @@ public class PeriodicCleanupServiceBaseShould
         host.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested
             .Should().BeFalse("one failed pass is not the host's to stop for");
     }
+
+    [TestMethod]
+    public async Task LogNothing_WhenAPassFailsBecauseTheHostIsStopping()
+    {
+        // Arrange — a pass under way when the host stops, failing the way SqlClient reports the stop
+        var logs = new CapturingLoggerProvider();
+        await using var host = await TestHost.StartAsync(builder =>
+        {
+            builder.Logging.ClearProviders();
+            builder.Logging.AddProvider(logs);
+            builder.Services.AddSingleton<StopCancelledCleanup>();
+            builder.Services.AddHostedService(provider => provider.GetRequiredService<StopCancelledCleanup>());
+        });
+        await host.GetRequiredService<StopCancelledCleanup>().PassStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Act
+        await host.DisposeAsync();
+
+        // Assert
+        logs.Warnings.Should().BeEmpty("a store error while stopping is the stop's cancellation, not a failure");
+    }
 }
