@@ -261,9 +261,8 @@ public class BaseFileEmitterShould
         result.Should().NotContain("builder.withAutomaticReconnect();");
     }
 
-    // B1: connect() trusted a resolved start forever, so a connection that closed for good wedged every
-    // later dispatch. The behavior is pinned in
-    // tests/transport-ts (signalr-transport.spec.ts).
+    // B1: connect() trusted a resolved start forever, so a connection that closed for good wedged every later
+    // dispatch. The behavior is pinned in tests/transport-ts (signalr-transport.spec.ts).
     [TestMethod]
     public void EmitSignalRTransportRestartingADisconnectedConnection()
     {
@@ -483,5 +482,45 @@ public class BaseFileEmitterShould
         result.Split("from '@microsoft/signalr';").Length.Should().Be(3);
         result.IndexOf("import type { IRetryPolicy, RetryContext } from '@microsoft/signalr';", StringComparison.Ordinal)
             .Should().BeLessThan(result.IndexOf("export interface DispatchResult<T> {", StringComparison.Ordinal));
+    }
+
+    // conduit.ts is the transport files assembled; tests/transport-ts/emitted holds both shapes it takes (default and
+    // HTTP-only) and type-checks them. A transport edit therefore fails here until the goldens are regenerated.
+    [TestMethod]
+    public void EmitTheDefaultConduitTsPinnedInItsGoldenFile()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        AssertMatchesGolden("conduit.default.ts", result);
+    }
+
+    [TestMethod]
+    public void EmitTheHttpOnlyConduitTsPinnedInItsGoldenFile()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Http" }, "/api/conduit", "/conduit");
+
+        // Assert
+        AssertMatchesGolden("conduit.http-only.ts", result);
+    }
+
+    private static void AssertMatchesGolden(string fileName, string actual)
+    {
+        var goldenPath = Path.Combine(AppContext.BaseDirectory, "emitted", fileName);
+        var golden = File.ReadAllText(goldenPath);
+        if (actual.ReplaceLineEndings("\n") == golden.ReplaceLineEndings("\n"))
+        {
+            return;
+        }
+
+        var actualPath = Path.Combine(AppContext.BaseDirectory, "emitted", Path.GetFileNameWithoutExtension(fileName) + ".actual.ts");
+        File.WriteAllText(actualPath, actual.ReplaceLineEndings("\n"));
+        Assert.Fail(
+            $"The assembled {fileName} no longer matches its golden file tests/transport-ts/emitted/{fileName}. "
+            + "The difference is what every consumer's committed conduit.ts will show. If the transport edit is intended, "
+            + $"regenerate the golden (cp \"{actualPath}\" tests/transport-ts/emitted/{fileName}), run `npm test` in tests/transport-ts "
+            + "to type-check it, and commit both.");
     }
 }

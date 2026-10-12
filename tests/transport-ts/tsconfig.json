@@ -14,5 +14,5 @@
     "types": [],
     "paths": { "@microsoft/signalr": ["./node_modules/@microsoft/signalr"] }
   },
-  "include": ["*.spec.ts", "../../src/Conduit.TypeGen/Transport/*.ts"]
+  "include": ["*.spec.ts", "emitted/*.ts", "../../src/Conduit.TypeGen/Transport/*.ts"]
 }

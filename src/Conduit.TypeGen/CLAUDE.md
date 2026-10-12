@@ -27,9 +27,12 @@
   body, so a transport file has none. **Path anchors:** `http.ts`'s `'/api/conduit'` and `signalr.ts`'s `'/conduit'`
   each appear exactly once; TypeGen swaps in `BasePath`/`HubPath` file by file (raw, unescaped). CRLF and a BOM in a
   resource never reach the output. **Tests:** behavior in `tests/transport-ts` (strict `tsc` + vitest; CI job
-  `transport-ts`), assembly in `TransportSourceShould`/`BaseFileEmitterShould`. **An edit to these files changes
-  every consumer's committed `conduit.ts` on its next build** (ManagementSystem and ELoc load this DLL by path) —
-  land it as an emitter change.
+  `transport-ts`), assembly in `TransportSourceShould`/`BaseFileEmitterShould`. The assembled output (default and
+  HTTP-only) is pinned by the goldens in `tests/transport-ts/emitted/` and type-checked there, so **a transport edit
+  fails that test until the goldens are regenerated — the golden diff is what every consumer's `conduit.ts` will
+  show.** **An edit to these files changes every consumer's committed `conduit.ts` on its next build** (ManagementSystem
+  and ELoc load this DLL by path) — land it as an emitter change. `Transport/tsconfig.json` only points an editor at
+  `tests/transport-ts`'s config; never `npm i` under `src/`.
 - `conduit.generated.ts` contains: type interfaces (root `[ClientVisible]` types + transitively-discovered types), `CommandMap`/`QueryMap`/`EventMap` (keys are `FullTypeName`), `ConduitClient` class, re-exports
 - `ConduitClient` — typed browser client with `execute` (commands), `fetch` (queries), `publish` (client→server events), `on` (event subscriptions returning `Subscription`)
 - `ConduitClient` returns `DispatchResult<T>` (does not throw) — consumers decide error handling strategy

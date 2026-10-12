@@ -218,9 +218,12 @@ or `disconnected` — an app can tell a logout from an outage. `onStateChange` i
 type-checks it (strict `tsc`) and runs it under vitest, locally (`npm test`) and in CI (the `transport-ts` job): a fake
 `HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional stop
 and a failed start, the retry policy the restart loop is built with, and `HttpTransport`'s requests, refusals and
-failures. ManagementSystem keeps its own copy of the
-SignalR suite, run against its committed `conduit.ts`. These tests protect a consumer only for a `Conduit.TypeGen` built
-from this source: GtlHmi pins 1.0.1 (next paragraph).
+failures. Strict `tsc` checks each transport file, and also the two assembled outputs checked in under
+`tests/transport-ts/emitted/` — the default `conduit.ts` and the HTTP-only one, the only two shapes it takes (the
+configured paths change only literals). A `BaseFileEmitterShould` test pins both to the emitter, so a transport edit fails
+until the goldens are regenerated, and the golden diff is what every consumer's `conduit.ts` will show.
+ManagementSystem keeps its own copy of the SignalR suite, run against its committed `conduit.ts`. These tests protect a
+consumer only for a `Conduit.TypeGen` built from this source: GtlHmi pins 1.0.1 (next paragraph).
 
 **Who has this fix.** ManagementSystem regenerated `conduit.ts` against it and observed a kiosk recover from two
 five-minute outages unattended. **GtlHmi does not have it yet.** It pins `Conduit.TypeGen` 1.0.1 from NuGet, so it
