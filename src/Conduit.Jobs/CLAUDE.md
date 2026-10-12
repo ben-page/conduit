@@ -126,7 +126,7 @@ keep the two in step.
   For trigger-now, an identical key means a second trigger in the same tick (a frozen test clock):
   the run is queued, so it returns.
 - **A `RunAtStart()` start-up run is written like a manual run** — `Occurrence = null`, through this
-  lock (`TryMaterializeAsync` under `AllowOverlap()`), keyed `{schedule}@start-{startedAt}` by the
+  lock unless the schedule declares `AllowOverlap()` (then `TryMaterializeAsync`, through its start-instant key alone; otherwise `TryMaterializeWithoutOverlapAsync`), keyed `{schedule}@start-{startedAt}` by the
   scheduler's construction instant (`DurableJobScheduler.MaterializeStartUpRunAndClaimAsync`, after
   the misfire walk). That is why it neither moves nor is refused by the cursor: `AdvanceCursorOnAsync`
   needs an occurrence, and so does the `AlreadyCompleted` check. Each host's start writes its own

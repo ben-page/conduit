@@ -86,7 +86,8 @@ public sealed class ScheduleBuilder
     /// </summary>
     /// <remarks>
     /// The start-up run is not an occurrence. It is written the way <see cref="IJobs.TriggerNowAsync"/>
-    /// writes a manual run — no occurrence, through the same overlap lock, keyed by the start instant —
+    /// writes a manual run — no occurrence, through the same overlap lock unless <see cref="AllowOverlap"/>
+    /// is declared (then through its start-instant key alone), keyed by the start instant —
     /// so it never moves the schedule's cursor and the timetable's phase is unchanged: the next
     /// occurrence may follow it by less than an interval. Each host's start writes its own start-up
     /// run; without <see cref="AllowOverlap"/> the overlap lock keeps at most one run outstanding across
