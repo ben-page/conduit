@@ -43,6 +43,12 @@
     <InternalsVisibleTo Include="Conduit.TypeGen.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The TS transport's source: real TypeScript, run by tests/transport-ts, assembled into conduit.ts by
+         BaseFileEmitter through TransportSource. Inside the task DLL, so the NuGet layout is unchanged. -->
+    <EmbeddedResource Include="Transport\*.ts" LogicalName="Conduit.TypeGen.Transport.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- Bundle everything the task needs at runtime into tasks/net10.0/. -->
   <ItemGroup>
     <None Include="$(OutputPath)\Conduit.TypeGen.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />

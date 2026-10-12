@@ -262,7 +262,8 @@ public class BaseFileEmitterShould
     }
 
     // B1: connect() trusted a resolved start forever, so a connection that closed for good wedged every
-    // later dispatch. Text only -- ManagementSystem's signalr-transport.spec.ts pins the behavior.
+    // later dispatch. The behavior is pinned in
+    // tests/transport-ts (signalr-transport.spec.ts).
     [TestMethod]
     public void EmitSignalRTransportRestartingADisconnectedConnection()
     {
@@ -451,5 +452,36 @@ public class BaseFileEmitterShould
         var start = result.IndexOf("export interface ConduitTransport {", StringComparison.Ordinal);
         var transportInterface = result[start..result.IndexOf('}', start)];
         transportInterface.Should().NotContain("onServerInfo");
+    }
+
+    // Each configured path goes into its own transport. Swapped, a whole-text replace would put both in one place.
+    [TestMethod]
+    public void SubstituteEachConfiguredPathIntoItsOwnTransportOnly()
+    {
+        // Arrange
+        var transports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Http", "SignalR" };
+
+        // Act
+        var result = BaseFileEmitter.Emit(transports, "/conduit", "/api/conduit");
+
+        // Assert
+        result.Should().Contain("constructor(private baseUrl: string, private basePath: string = '/conduit') {}");
+        result.Should().Contain(
+            "constructor(pathOrConnection: string | HubConnection = '/api/conduit', options?: SignalRTransportOptions) {");
+    }
+
+    // conduit.ts is one module: an import of another transport file must never reach it, and the package imports
+    // come first, once each.
+    [TestMethod]
+    public void EmitThePackageImportsOnceAtTheTopAndNoRelativeImport()
+    {
+        // Act
+        var result = BaseFileEmitter.Emit();
+
+        // Assert
+        result.Should().NotContain("from './");
+        result.Split("from '@microsoft/signalr';").Length.Should().Be(3);
+        result.IndexOf("import type { IRetryPolicy, RetryContext } from '@microsoft/signalr';", StringComparison.Ordinal)
+            .Should().BeLessThan(result.IndexOf("export interface DispatchResult<T> {", StringComparison.Ordinal));
     }
 }

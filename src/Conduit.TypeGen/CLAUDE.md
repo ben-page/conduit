@@ -17,6 +17,19 @@
 - `TypeMapper` — Maps .NET types to TypeScript equivalents using string-based name comparisons (not `typeof()`) for MetadataLoadContext compatibility. Handles: primitives, Nullable, arrays, List/IList/IEnumerable/IReadOnlyList, Dictionary/IDictionary/IReadOnlyDictionary, enums (→ string literal unions of member names via `GetFields()`), closed sets (→ string literal unions of their `[ClosedSet]` values, `ClosedSetReader`), complex types (→ type name).
 - Emits two files: `conduit.ts` (stable runtime) and `conduit.generated.ts` (per-project types + client)
 - `conduit.ts` contains: `DispatchResult<T>`, `ConduitError`, `ConduitTransport` interface, `HttpTransport`, conditionally `SignalRTransport`
+- **The transport is real TypeScript** — `Transport/base.ts`, `http.ts`, `signalr.ts`, embedded in this DLL as
+  `Conduit.TypeGen.Transport.<file>` (one `EmbeddedResource` glob). `BaseFileEmitter` assembles `conduit.ts` from
+  them through `TransportSource`: the header line; every package import, hoisted, in file order (SignalR's two only
+  when `Transports` includes SignalR); then each file's body verbatim plus one blank line — `base.ts`, `http.ts`,
+  `signalr.ts`. An import of another transport file (`./base`) is dropped: `conduit.ts` is one module, and those
+  imports exist so each file type-checks alone. **The file shape is enforced** (`TransportSource.Parse`, a generation
+  error): single-line imports at the top, then the body, no import below it. A header comment would be emitted as
+  body, so a transport file has none. **Path anchors:** `http.ts`'s `'/api/conduit'` and `signalr.ts`'s `'/conduit'`
+  each appear exactly once; TypeGen swaps in `BasePath`/`HubPath` file by file (raw, unescaped). CRLF and a BOM in a
+  resource never reach the output. **Tests:** behavior in `tests/transport-ts` (strict `tsc` + vitest; CI job
+  `transport-ts`), assembly in `TransportSourceShould`/`BaseFileEmitterShould`. **An edit to these files changes
+  every consumer's committed `conduit.ts` on its next build** (ManagementSystem and ELoc load this DLL by path) —
+  land it as an emitter change.
 - `conduit.generated.ts` contains: type interfaces (root `[ClientVisible]` types + transitively-discovered types), `CommandMap`/`QueryMap`/`EventMap` (keys are `FullTypeName`), `ConduitClient` class, re-exports
 - `ConduitClient` — typed browser client with `execute` (commands), `fetch` (queries), `publish` (client→server events), `on` (event subscriptions returning `Subscription`)
 - `ConduitClient` returns `DispatchResult<T>` (does not throw) — consumers decide error handling strategy
