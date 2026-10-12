@@ -102,7 +102,7 @@ TypeGen runs as a post-build MSBuild task. It scans the compiled assembly for `[
 
 TypeGen emits two files.
 
-**`conduit.ts`** is the stable runtime. It contains `DispatchResult<T>`, `ConduitError`, the `ConduitTransport` interface, `HttpTransport`, and `SignalRTransport`. This file does not change between builds unless you change `ConduitTransports`.
+**`conduit.ts`** is the stable runtime. It contains `DispatchResult<T>`, `ConduitError`, the `ConduitTransport` interface, `HttpTransport`, and `SignalRTransport`. This file does not change between builds unless you change `ConduitTransports`. Its source is real TypeScript — `src/Conduit.TypeGen/Transport/` — embedded in `Conduit.TypeGen`.
 
 **`conduit.generated.ts`** is regenerated on every build. It contains TypeScript interfaces for every `[ClientVisible]` type, the type maps, and the `ConduitClient` class.
 
@@ -213,11 +213,13 @@ once with the current state:
 or `disconnected` — an app can tell a logout from an outage. `onStateChange` is deliberately not on
 `ConduitTransport`: `HttpTransport` has no connection to report on.
 
-**Where the behavior is tested.** The transport is emitted as C# string literals and this repository has no
-TypeScript test project, so `Conduit.TypeGen.Tests` pins only the emitted text. The behavioral tests — a fake
-`HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional
-stop and a failed start, and the retry policy the restart loop is built with — live in ManagementSystem's
-`src/ManagementSystem.Web/Client/src/app/core/conduit/signalr-transport.spec.ts`, and protect that consumer only.
+**Where the behavior is tested.** The transport is real TypeScript — `src/Conduit.TypeGen/Transport/base.ts`,
+`http.ts` and `signalr.ts`, embedded in `Conduit.TypeGen` and assembled into `conduit.ts` — and `tests/transport-ts`
+type-checks it (strict `tsc`) and runs it under vitest, locally (`npm test`) and in CI (the `transport-ts` job): a fake
+`HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional stop
+and a failed start, and the retry policy the restart loop is built with. ManagementSystem keeps its own copy of the
+SignalR suite, run against its committed `conduit.ts`. These tests protect a consumer only for a `Conduit.TypeGen` built
+from this source: GtlHmi pins 1.0.1 (next paragraph).
 
 **Who has this fix.** ManagementSystem regenerated `conduit.ts` against it and observed a kiosk recover from two
 five-minute outages unattended. **GtlHmi does not have it yet.** It pins `Conduit.TypeGen` 1.0.1 from NuGet, so it

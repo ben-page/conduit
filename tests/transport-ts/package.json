@@ -1,0 +1,14 @@
+{
+  "name": "conduit-transport-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "npm run typecheck && vitest run"
+  },
+  "devDependencies": {
+    "@microsoft/signalr": "^10.0.0",
+    "typescript": "~6.0.0",
+    "vitest": "^4.0.8"
+  }
+}

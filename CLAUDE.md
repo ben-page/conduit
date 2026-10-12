@@ -4,14 +4,14 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Twenty-one source projects, fifteen test projects, one shared test utility, four sample apps:
+Twenty-one source projects, fifteen test projects, one shared test utility, one TypeScript test project (`tests/transport-ts`), four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
 src/Conduit.Contracts/              Dependency-free contract types: Conduit.Exceptions, Conduit.Messages (minus ConduitFile), Conduit.Attributes — net10.0, zero package references, referenced by Conduit
 src/Conduit.Analysis/               Shared type model (DispatchableTypeInfo, etc.) — netstandard2.0 (PolySharp)
 src/Conduit.SourceGen/              Roslyn incremental source generator + RoslynScanner — netstandard2.0 (PolySharp)
-src/Conduit.TypeGen/                MSBuild task for TypeScript emission + ReflectionScanner — net10.0
+src/Conduit.TypeGen/                MSBuild task for TypeScript emission + ReflectionScanner — net10.0; the TS transport's source in `Transport/*.ts` (embedded)
 
 src/Conduit.Transport.Http/              HTTP transport (outbound HttpTransport + inbound MapConduitEndpoint) — net10.0
 src/Conduit.Transport.SignalR/           SignalR transport (outbound SignalRTransport + inbound ConduitHub) — net10.0
@@ -95,7 +95,7 @@ keep their original `Conduit.*` names):
 - **Browser MessageContext**: Browser clients (TypeScript) are always conversation origins. They do not send `MessageContext` — the server mints a fresh context on receipt. C# service-to-service transports propagate `MessageContext` automatically via transport-native properties/headers.
 - **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `ErrorCode.ToHttpStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization. An unexpected failure answers `InternalError` with the fixed message `"An unexpected error occurred."` and its support reference in `DispatchError.Reference` (never in the message); `ConduitException.Reference` forwards through `Fail(ConduitException)`.
-- **TypeScript generation**: Types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This includes both dispatchable types and non-dispatchable DTOs/models. TypeGen emits a self-contained runtime (`conduit.ts`) with transports and a per-project file (`conduit.generated.ts`) with `ConduitClient` — no npm package needed. `ConduitClient` is a thin dispatch client (not a mediator) with `execute`/`fetch`/`publish`/`on` methods. Enums emit as unions of their member names; a closed set (`IClosedSet<TSelf>` + `[ClosedSet]`) as a union of its values — the wire carries each in that spelling (`ConduitRuntime.JsonOptions`).
+- **TypeScript generation**: Types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This includes both dispatchable types and non-dispatchable DTOs/models. TypeGen emits a self-contained runtime (`conduit.ts`, assembled from the real TypeScript in `src/Conduit.TypeGen/Transport/` — see that project's CLAUDE.md) with transports and a per-project file (`conduit.generated.ts`) with `ConduitClient` — no npm package needed. `ConduitClient` is a thin dispatch client (not a mediator) with `execute`/`fetch`/`publish`/`on` methods. Enums emit as unions of their member names; a closed set (`IClosedSet<TSelf>` + `[ClosedSet]`) as a union of its values — the wire carries each in that spelling (`ConduitRuntime.JsonOptions`).
 - **MessageContext**: AsyncLocal-backed context tracking `MessageId`, `CausationId`, `ConversationId` through dispatch chains. Set automatically by the generated mediator. A head/origin dispatch self-causates: `CausationId == MessageId == ConversationId`. `CausationId` is a non-nullable `string` and is never null. Nested dispatches inherit `ConversationId` and set `CausationId` to the parent's `MessageId`. Access via `MessageContext.Current`. `StartDispatch()` for local dispatch, `StartDispatchFromTransport(messageId, causationId, conversationId)` for inbound wire messages — a wire message that omits `causationId` defaults it to `messageId` (self-causation).
 - **BrokerTransportBase<TMessage>**: Template method base class for all 5 broker transports. Owns `IHostedService` lifecycle, inbound dispatch orchestration (`ProcessInboundMessageAsync`), outbound serialization. Transports implement ~15 abstract members for broker-specific primitives.
 - **Unified broker options** (`Conduit.Runtime`): all 5 broker options classes inherit `BrokerTransportOptions`, which owns the default concurrency knob (`DefaultConcurrency`), the `Pools` collection, and `AddPool(...)`. Named pools use a single shared `ReceiverPoolOptions` (`Name`, `Concurrency`, `MessageTypes` via `Handle(fullTypeName)`). `Concurrency` is one `int` interpreted per broker: prefetch count for RabbitMQ/ActiveMQ (cast to `ushort` for RabbitMQ at the consumption site), max-concurrent-calls for Azure Service Bus, polling parallelism for Amazon SQS, consume parallelism for Kafka. Each transport's options class adds only broker-specific extras (connection settings, region/credentials, `ProducerConfig`/`ConsumerConfig`, `AdminConnectionString`, `ResponseTimeout`, `EndpointName`, etc.).
@@ -122,6 +122,7 @@ keep their original `Conduit.*` names):
 ```bash
 dotnet build          # builds everything including sample apps
 dotnet test           # runs all tests across 14 test projects
+(cd tests/transport-ts && npm ci && npm test)   # the TS transport: strict tsc + vitest (CI job transport-ts)
 ```
 
 Solution file is `Conduit.slnx` (.NET 10 format).

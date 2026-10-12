@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [],
+    "paths": { "@microsoft/signalr": ["./node_modules/@microsoft/signalr"] }
+  },
+  "include": ["*.spec.ts", "../../src/Conduit.TypeGen/Transport/*.ts"]
+}
