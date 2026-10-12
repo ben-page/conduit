@@ -72,13 +72,40 @@ test:
       - tests/**/TestResults/
     expire_in: 1 week
 
+transport-ts:
+  stage: test
+  # The TypeScript transport TypeGen embeds into every consumer's conduit.ts
+  # (src/Conduit.TypeGen/Transport/*.ts): strict tsc, then vitest. Needs no
+  # .NET and no build artifacts, so it starts at once. node:22 is the line
+  # ManagementSystem's web-frontend job tests on.
+  image: node:22
+  needs: []
+  cache:
+    key:
+      files:
+        - tests/transport-ts/package-lock.json
+    paths:
+      - .npm/
+  script:
+    - cd tests/transport-ts
+    - npm ci --cache "$CI_PROJECT_DIR/.npm" --prefer-offline --no-audit --no-fund
+    - npm run typecheck
+    - npx vitest run --reporter=default --reporter=junit --outputFile.junit=TestResults/TestResults.xml
+  artifacts:
+    when: always
+    reports:
+      junit: tests/transport-ts/TestResults/TestResults.xml
+    expire_in: 1 week
+
 pack:
   stage: package
   needs:
-    # Both: test gates release (don't publish red), build supplies bin/obj
-    # needed by `--no-build`. `needs` doesn't transitively inherit artifacts.
+    # test and transport-ts gate release (don't publish red); build supplies
+    # bin/obj needed by `--no-build`. `needs` doesn't transitively inherit
+    # artifacts.
     - build
     - test
+    - transport-ts
   rules:
     # Only pack on `vMAJOR.MINOR.PATCH` tags; pre-release suffixes (`-rc1`,
     # `-alpha.2`) are accepted on the tail end so v1.0.0-rc1 also packs.
