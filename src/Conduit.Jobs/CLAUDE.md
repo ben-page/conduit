@@ -125,6 +125,16 @@ keep the two in step.
   count excludes it; a replica gets `AlreadyMaterialized` and goes on to claim, exactly as before.
   For trigger-now, an identical key means a second trigger in the same tick (a frozen test clock):
   the run is queued, so it returns.
+- **A `RunAtStart()` start-up run is written like a manual run** — `Occurrence = null`, through this
+  lock (`TryMaterializeAsync` under `AllowOverlap()`), keyed `{schedule}@start-{startedAt}` by the
+  scheduler's construction instant (`DurableJobScheduler.MaterializeStartUpRunAndClaimAsync`, after
+  the misfire walk). That is why it neither moves nor is refused by the cursor: `AdvanceCursorOnAsync`
+  needs an occurrence, and so does the `AlreadyCompleted` check. Each host's start writes its own
+  (different keys); a second write for the same start collapses into the first only while that run
+  is outstanding — trigger-now's guarantee, no more, because `retainRunKey` is for message-keyed
+  triggers only and a completed schedule run's row is deleted. Unlike trigger-now it honours pause
+  (nobody asked for it). `Overlapping` means an outstanding run is that start's work: logged, nothing
+  written.
 - **A row count of zero proves nothing, and neither does a probe that then finds the row.** A
   positive count from the lock `UPDATE` proves the lock on every engine. Zero means no row (nothing
   locked) or a lock the count does not show (MySQL with `UseAffectedRows=true`; SQL Server under

@@ -92,6 +92,14 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         var cursor = await this.ReadCursorAsync(schedule.Name, stoppingToken) ?? this.startedAt;
         cursor = await this.ApplyMisfireAsync(schedule, cursor, stoppingToken) ?? cursor;
 
+        // After the misfire walk, so the cursor is settled exactly as it would be without this, and
+        // before the first wait, as an occurrence already due is. The timetable below still follows
+        // the cursor: the start-up run is not an occurrence and does not shift the phase.
+        if (schedule.RunsAtStart)
+        {
+            await this.MaterializeStartUpRunAndClaimAsync(schedule, stoppingToken);
+        }
+
         var next = schedule.NextOccurrenceAfter(cursor);
         var armed = false;
 
@@ -249,6 +257,65 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 #pragma warning restore CA1031
         {
             LogOccurrenceFailed(this.logger, schedule.Name, occurrence, exception);
+            return;
+        }
+
+        await this.ClaimAndRunDueAsync(stoppingToken);
+    }
+
+    /// <summary>
+    /// Writes a <see cref="JobSchedule.RunsAtStart"/> schedule's one start-up run and claims it. The
+    /// run is written the way <see cref="IJobs.TriggerNowAsync"/> writes a manual run: no occurrence,
+    /// so it never moves the cursor and the cursor never refuses it, and through the same overlap
+    /// lock. Its key is the start instant, so a second write for the same start collapses into the
+    /// first while that run is outstanding — the guarantee trigger-now's key gives, no more: a
+    /// completed schedule run's key is not retained.
+    /// </summary>
+    private async Task MaterializeStartUpRunAndClaimAsync(JobSchedule schedule, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await using var scope = this.scopeFactory.CreateAsyncScope();
+            var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
+
+            var row = await store.GetScheduleAsync(schedule.Name, stoppingToken);
+            if (row is { IsPaused: true })
+            {
+                // Unlike trigger-now, nobody asked for this run, so a pause holds it back like an
+                // occurrence. It is not deferred to the resume: the next start writes its own.
+                LogStartUpRunPaused(this.logger, schedule.Name);
+                return;
+            }
+
+            var run = this.BuildStartUpRun(schedule);
+            if (schedule.AllowsOverlap)
+            {
+                await store.TryMaterializeAsync(run, stoppingToken);
+            }
+            else if (await store.TryMaterializeWithoutOverlapAsync(run, stoppingToken)
+                     == MaterializeOutcome.Overlapping)
+            {
+                // A run already outstanding — a retry left from before the restart, a manual run, a
+                // replica's start-up run — is this start's work; a second would be the overlap the
+                // policy exists to prevent.
+                LogStartUpRunOverlapSkipped(this.logger, schedule.Name);
+                return;
+            }
+
+            // Materialized, or AlreadyMaterialized by a start at the same instant whose run is still
+            // outstanding: either way the run with this key is queued. A null occurrence is never
+            // AlreadyCompleted.
+            LogStartUpRunQueued(this.logger, schedule.Name, run.JobKey);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+#pragma warning disable CA1031 // A database error at start must not stop the schedule's timetable.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            LogStartUpRunFailed(this.logger, schedule.Name, exception);
             return;
         }
 
@@ -487,6 +554,36 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             CultureInfo.InvariantCulture,
             $"{scheduleName}@{occurrence.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)}");
 
+    /// <summary>
+    /// A start-up run: a manual run's shape (no occurrence, due now) under a key derived from the
+    /// scheduler's construction instant rather than from the clock at the write.
+    /// </summary>
+    private JobRun BuildStartUpRun(JobSchedule schedule)
+    {
+        var command = schedule.CreateCommand();
+        return new JobRun
+        {
+            JobKey = BuildStartUpJobKey(schedule.Name, this.startedAt),
+            ScheduleName = schedule.Name,
+            Occurrence = null,
+            MessageType = command.GetType().FullName!,
+            Payload = JsonSerializer.Serialize(command, command.GetType(), ConduitRuntime.JsonOptions),
+            RunAt = this.timeProvider.GetUtcNow(),
+            Status = JobRunStatus.Pending,
+        };
+    }
+
+    /// <summary>
+    /// The start-up run's key, <c>{schedule}@start-{startedAt}</c>. One start computes one key, so a
+    /// second write for the same start collapses into the first while that run is outstanding (a
+    /// completed schedule run's key is not retained). Hosts started at different instants write
+    /// different keys; for a no-overlap schedule the overlap lock keeps at most one outstanding.
+    /// </summary>
+    internal static string BuildStartUpJobKey(string scheduleName, DateTimeOffset startedAt)
+        => string.Create(
+            CultureInfo.InvariantCulture,
+            $"{scheduleName}@start-{startedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)}");
+
     [LoggerMessage(
         Level = LogLevel.Error,
         Message = "Job schedule '{ScheduleName}' could not materialize occurrence {Occurrence}")]
@@ -526,6 +623,26 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because its cursor is already at or past it: another host has taken it to a terminal outcome, or a host starting up skipped past it as missed")]
     private static partial void LogCursorPassed(
         ILogger logger, string scheduleName, DateTimeOffset occurrence);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' runs at start: run '{JobKey}' is queued")]
+    private static partial void LogStartUpRunQueued(ILogger logger, string scheduleName, string jobKey);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' wrote no start-up run because another run of it is still outstanding")]
+    private static partial void LogStartUpRunOverlapSkipped(ILogger logger, string scheduleName);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' is paused, so its start-up run was skipped")]
+    private static partial void LogStartUpRunPaused(ILogger logger, string scheduleName);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Job schedule '{ScheduleName}' could not write its start-up run")]
+    private static partial void LogStartUpRunFailed(ILogger logger, string scheduleName, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Job schedule '{ScheduleName}' database access failed")]
     private static partial void LogScheduleStoreFailed(

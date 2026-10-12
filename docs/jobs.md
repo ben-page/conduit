@@ -95,6 +95,7 @@ builder.Services.AddConduit(conduit =>
 | `Every(TimeSpan)` | A fixed interval. Interval schedules have no misfire policy. |
 | `InTimeZone(id)` | Evaluate the cron expression in this timezone. |
 | `OnMisfire(policy)` | What to do about occurrences missed while the application was down. |
+| `RunAtStart()` | One run when the host starts — interval schedules only; not an occurrence. See [Run at start](#run-at-start). |
 | `AllowOverlap()` | Permit a new run (an occurrence or a trigger-now) to start while another is still outstanding. |
 | `MaxRuntime(TimeSpan)` | Cancel a run that exceeds this duration. |
 | `Run(() => command)` | The command to dispatch. Completes the declaration. |
@@ -226,6 +227,7 @@ outbox, inbox, dead-letter queue and audit trail use, and configured the same wa
 | Scheduled jobs | Fire **exactly once across the cluster** | Fire **on every host** |
 | Event triggers | Available | Rejected at startup |
 | Misfire policy | Honoured | Rejected at startup |
+| `RunAtStart()` | One run per host start, through the overlap lock; the cursor is untouched | One run per host start, on that host |
 | Pause, trigger-now, cancel | Cluster-wide, survive a restart | This host only, lost on restart |
 | Run history | Every outcome, in `conduit_job_run_history` | Not recorded |
 
@@ -401,6 +403,49 @@ This is accepted rather than covered by a grace period.
 
 `OnMisfire` requires a persistence engine and is rejected at startup without one, rather than
 silently ignored: an in-memory timer has no record of what it missed.
+
+## Run at start
+
+`RunAtStart()` gives an interval schedule one run when its host's scheduler starts, besides its
+timetable — for work that should not wait a whole interval after a deploy or a restart.
+
+```csharp
+jobs.Schedule("sweep").Every(TimeSpan.FromMinutes(5)).RunAtStart().Run(() => new RunSweep());
+```
+
+- **Interval schedules only.** `RunAtStart()` on a `Cron(...)` schedule is rejected at startup,
+  naming the schedule. A cron schedule's start-up catch-up is `OnMisfire(MisfirePolicy.RunImmediately)`,
+  and the two can never both fire for one start. Without `RunAtStart()` nothing changes.
+- **One start-up run per host start, outside the timetable.** When the schedule's loop begins it
+  first does what it always does — reads the cursor and walks the misfire, which for an interval
+  schedule is `Skip`: the cursor moves past every missed occurrence and nothing runs. Then it writes
+  one start-up run the way [trigger-now](#operating-jobs-with-ijobs) writes a manual run: no
+  occurrence, so completing it never moves the cursor and the cursor never refuses it; due now;
+  through the same [overlap](#overlap) lock. A restart after a long outage therefore writes one run —
+  not one per missed occurrence, and not one for the misfire walk plus one for the start.
+- **Keyed by the start instant.** The run's key is `{schedule}@start-{startedAt}`, `startedAt` being
+  when the host's scheduler was constructed. Each host's start writes its own start-up run (the keys
+  differ by start instant). A second write for the **same** start collapses into the first while that
+  run is outstanding — the same guarantee trigger-now's key gives, because a completed schedule run's
+  key is not retained (only an event trigger's message-keyed run keeps its row). Without
+  `AllowOverlap()`, the overlap lock keeps at most one run outstanding across hosts.
+- **An outstanding run is that start's work.** If a run of the schedule is still outstanding when the
+  host starts — a retry left from before the restart, a manual run, another replica's start-up run —
+  no start-up run is written, and the log says so. A **paused** schedule gets none either (also
+  logged): unlike trigger-now, nobody asked for this run, and it is not deferred to the resume. A
+  database error writing it is logged, and the schedule carries on to its timetable.
+- **The timetable is untouched.** After the start-up run the loop waits for the next occurrence after
+  the cursor, exactly as without `RunAtStart()`. The phase stays the cursor's, shared by every replica,
+  so the next occurrence may follow the start-up run by less than an interval — and is skipped by the
+  overlap lock if the start-up run is still outstanding.
+- **It is not an occurrence.** `IJobs` lists a start-up run under its schedule as it lists a manual
+  run, and one whose attempts are exhausted shows in `GetFailedAsync`; `LastCompletedOccurrence`
+  never reflects it.
+- **Without a database** the loop dispatches the start-up run once at start, through the same per-host
+  overlap tracking as its occurrences, then follows its timetable from the start instant as before.
+  The host reports ready without waiting for that run: the first occurrence's timer is armed first.
+  The loop never overlaps itself, so a start-up run longer than the interval delays the first
+  occurrence, as a long occurrence delays the next.
 
 ## Overlap
 

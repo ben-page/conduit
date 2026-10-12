@@ -123,6 +123,45 @@ public class NonDurableSchedulerShould
         spy.StartedCount.Should().Be(1);
     }
 
+    [TestMethod]
+    public async Task RunOnceAtStart_WhenOptedIn()
+    {
+        // Arrange
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+
+        // Act
+        await using var host = await JobsTestHost.StartAsync(WarmEveryFiveMinutesAndAtStart, spy, timeProvider);
+
+        // Assert — one run at start, then the timetable from the start instant
+        await spy.WaitForCountAsync(1);
+        await Task.Delay(300);
+        spy.Count.Should().Be(1, "one start, one start-up run");
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await spy.WaitForCountAsync(2);
+        spy.Count.Should().Be(2);
+    }
+
+    [TestMethod]
+    public async Task BeReadyWhileTheStartUpRunIsStillRunning()
+    {
+        // Arrange — a start-up run far longer than JobsTestHost's ten-second wait for readiness
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { JobDuration = TimeSpan.FromMinutes(30) };
+
+        // Act — JobsTestHost.StartAsync returns only once the scheduler reports ready
+        await using var host = await JobsTestHost.StartAsync(WarmEveryFiveMinutesAndAtStart, spy, timeProvider);
+
+        // Assert
+        await spy.WaitForStartedAsync(1);
+        spy.StartedCount.Should().Be(1);
+        spy.Count.Should().Be(0, "the start-up run is still running");
+    }
+
     private static void WarmEveryFiveMinutes(JobsBuilder jobs)
         => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).Run(() => new RecordedJob("warm"));
+
+    private static void WarmEveryFiveMinutesAndAtStart(JobsBuilder jobs)
+        => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).RunAtStart().Run(() => new RecordedJob("warm"));
 }

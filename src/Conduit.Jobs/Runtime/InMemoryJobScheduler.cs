@@ -65,29 +65,35 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
     {
         var next = schedule.NextOccurrenceAfter(this.startedAt);
         var armed = false;
+        var startUpRunPending = schedule.RunsAtStart;
 
         while (!stoppingToken.IsCancellationRequested && next is { } occurrence)
         {
+            // The timer exists the moment Task.Delay is called, so reporting between creating it and
+            // awaiting it is the only point at which "armed" is true and not yet racy.
             var delay = occurrence - this.timeProvider.GetUtcNow();
-            if (delay > TimeSpan.Zero)
-            {
-                // The timer exists the moment Task.Delay is called, so reporting between creating it
-                // and awaiting it is the only point at which "armed" is true and not yet racy.
-                var wait = Task.Delay(delay, this.timeProvider, stoppingToken);
-                armed = ReportArmedOnce(this.readiness, armed);
+            var wait = delay > TimeSpan.Zero
+                ? Task.Delay(delay, this.timeProvider, stoppingToken)
+                : Task.CompletedTask;
+            armed = ReportArmedOnce(this.readiness, armed);
 
-                try
-                {
-                    await wait;
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-            }
-            else
+            if (startUpRunPending)
             {
-                armed = ReportArmedOnce(this.readiness, armed);
+                // Dispatched with the first occurrence's timer already armed, so readiness never waits
+                // on this run and the timetable keeps the start instant's phase. Awaited like any
+                // occurrence: this loop never overlaps itself, so a start-up run longer than the
+                // interval delays the first occurrence, as a long occurrence delays the next.
+                startUpRunPending = false;
+                await this.DispatchAsync(schedule, occurrence: null, stoppingToken);
+            }
+
+            try
+            {
+                await wait;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
             }
 
             await this.DispatchAsync(schedule, occurrence, stoppingToken);
@@ -95,8 +101,9 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         }
     }
 
+    /// <summary>Dispatches one run: an occurrence, or the start-up run when <paramref name="occurrence"/> is null.</summary>
     private async Task DispatchAsync(
-        JobSchedule schedule, DateTimeOffset occurrence, CancellationToken stoppingToken)
+        JobSchedule schedule, DateTimeOffset? occurrence, CancellationToken stoppingToken)
     {
         if (this.state.IsPaused(schedule.Name))
         {
@@ -123,7 +130,15 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         var tracked = this.state.TryTrack(schedule.Name, jobCancellation);
         if (!tracked && !schedule.AllowsOverlap)
         {
-            LogOverlapSkipped(this.logger, schedule.Name, occurrence);
+            if (occurrence is { } due)
+            {
+                LogOverlapSkipped(this.logger, schedule.Name, due);
+            }
+            else
+            {
+                LogStartUpRunOverlapSkipped(this.logger, schedule.Name);
+            }
+
             return;
         }
 
@@ -176,4 +191,9 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         Message = "Job schedule '{ScheduleName}' skipped occurrence {Occurrence} because a run of it is still in progress on this host")]
     private static partial void LogOverlapSkipped(
         ILogger logger, string scheduleName, DateTimeOffset occurrence);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Job schedule '{ScheduleName}' skipped its start-up run because a run of it is still in progress on this host")]
+    private static partial void LogStartUpRunOverlapSkipped(ILogger logger, string scheduleName);
 }

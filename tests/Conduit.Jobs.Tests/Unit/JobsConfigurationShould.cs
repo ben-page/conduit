@@ -63,6 +63,50 @@ public class JobsConfigurationShould
     }
 
     [TestMethod]
+    public void CarryRunAtStartOnAnIntervalSchedule()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).RunAtStart().Run(() => new NoopJob());
+
+        // Act
+        var registry = RegistryFor(Configure);
+
+        // Assert
+        registry.Schedules.Single().RunsAtStart.Should().BeTrue();
+    }
+
+    [TestMethod]
+    public void NotRunAtStartUnlessAsked()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).Run(() => new NoopJob());
+
+        // Act
+        var registry = RegistryFor(Configure);
+
+        // Assert
+        registry.Schedules.Single().RunsAtStart.Should().BeFalse();
+    }
+
+    [TestMethod]
+    public void RefuseRunAtStartOnACronSchedule()
+    {
+        // Arrange — a cron schedule's start-up catch-up is OnMisfire(RunImmediately); allowing both
+        // would let one start fire the job twice
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("nightly").Cron("0 2 * * *").RunAtStart().Run(() => new NoopJob());
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*'nightly'*RunAtStart()*OnMisfire(MisfirePolicy.RunImmediately)*");
+    }
+
+    [TestMethod]
     public void RejectDuplicateTriggerNames()
     {
         // Arrange — two triggers on one event type both default to the event's type name, so they
@@ -311,5 +355,16 @@ public class JobsConfigurationShould
         }
 
         builder.AddJobs(configure);
+    }
+
+    private static ScheduleRegistry RegistryFor(Action<JobsBuilder> configure)
+    {
+        var services = new ServiceCollection();
+        new ConduitBuilder(services).AddJobs(configure);
+
+        return services
+            .Single(descriptor => descriptor.ServiceType == typeof(ScheduleRegistry))
+            .ImplementationInstance
+            .Should().BeOfType<ScheduleRegistry>().Subject;
     }
 }

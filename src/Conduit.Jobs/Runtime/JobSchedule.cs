@@ -22,7 +22,8 @@ public sealed class JobSchedule
         MisfirePolicy misfire,
         bool allowsOverlap,
         TimeSpan? maxRuntime,
-        Func<ICommand> createCommand)
+        Func<ICommand> createCommand,
+        bool runsAtStart)
     {
         this.Name = name;
         this.cron = cron;
@@ -32,6 +33,7 @@ public sealed class JobSchedule
         this.AllowsOverlap = allowsOverlap;
         this.MaxRuntime = maxRuntime;
         this.CreateCommand = createCommand;
+        this.RunsAtStart = runsAtStart;
     }
 
     /// <summary>The schedule's unique name, used as its database key.</summary>
@@ -51,6 +53,13 @@ public sealed class JobSchedule
 
     /// <summary>Builds the command dispatched for one occurrence.</summary>
     public Func<ICommand> CreateCommand { get; }
+
+    /// <summary>
+    /// Whether the schedule runs once when its host's scheduler starts, besides its timetable. The run
+    /// is not an occurrence: it never moves the cursor, and the timetable's phase is unchanged. Only an
+    /// interval schedule can carry it.
+    /// </summary>
+    public bool RunsAtStart { get; }
 
     /// <summary>Creates a cron-driven schedule.</summary>
     /// <param name="name">The schedule's unique name.</param>
@@ -80,7 +89,7 @@ public sealed class JobSchedule
 
         return new JobSchedule(
             name, CronExpression.Parse(cronExpression, format), interval: null,
-            timeZone, misfire, allowsOverlap, maxRuntime, createCommand);
+            timeZone, misfire, allowsOverlap, maxRuntime, createCommand, runsAtStart: false);
     }
 
     /// <summary>Creates a fixed-interval schedule. Interval schedules have no misfire policy.</summary>
@@ -89,13 +98,15 @@ public sealed class JobSchedule
     /// <param name="allowsOverlap">Whether a new occurrence may start while a previous one is outstanding.</param>
     /// <param name="maxRuntime">Optional ceiling on a single run's duration.</param>
     /// <param name="createCommand">Builds the command dispatched for one occurrence.</param>
+    /// <param name="runsAtStart">Whether the schedule also runs once when its host's scheduler starts.</param>
     /// <returns>The declared schedule.</returns>
     public static JobSchedule FromInterval(
         string name,
         TimeSpan interval,
         bool allowsOverlap,
         TimeSpan? maxRuntime,
-        Func<ICommand> createCommand)
+        Func<ICommand> createCommand,
+        bool runsAtStart = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(createCommand);
@@ -108,7 +119,7 @@ public sealed class JobSchedule
 
         return new JobSchedule(
             name, cron: null, interval, TimeZoneInfo.Utc,
-            MisfirePolicy.Skip, allowsOverlap, maxRuntime, createCommand);
+            MisfirePolicy.Skip, allowsOverlap, maxRuntime, createCommand, runsAtStart);
     }
 
     /// <summary>
