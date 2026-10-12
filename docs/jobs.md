@@ -227,7 +227,7 @@ outbox, inbox, dead-letter queue and audit trail use, and configured the same wa
 | Scheduled jobs | Fire **exactly once across the cluster** | Fire **on every host** |
 | Event triggers | Available | Rejected at startup |
 | Misfire policy | Honoured | Rejected at startup |
-| `RunAtStart()` | One run per host start, through the overlap lock; the cursor is untouched | One run per host start, on that host |
+| `RunAtStart()` | One run per host start; the overlap lock applies unless `AllowOverlap()` is declared, when the run is written through its start-instant key alone; the cursor is untouched | One run per host start, on that host |
 | Pause, trigger-now, cancel | Cluster-wide, survive a restart | This host only, lost on restart |
 | Run history | Every outcome, in `conduit_job_run_history` | Not recorded |
 

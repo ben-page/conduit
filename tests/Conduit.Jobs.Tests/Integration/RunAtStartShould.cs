@@ -1,6 +1,8 @@
 using AwesomeAssertions;
 using Conduit.Jobs.Configuration;
+using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Tests.Support;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Jobs.Tests.Integration;
@@ -143,6 +145,86 @@ public class RunAtStartShould
 
         // Assert
         spy.Count.Should().Be(0);
+    }
+
+    [TestMethod]
+    public async Task NotRunAtStartWhileARetryIsPending()
+    {
+        // Arrange — a first host's start-up run fails and is backed off; the host then goes down
+        await using var database = SharedSqliteDatabase.Create();
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { FailuresRemaining = 1 };
+        var first = await StartAsync(database, timeProvider, spy, TimeSpan.FromHours(1));
+        await spy.WaitForStartedAsync(1);
+        var store = JobsDatabaseProbe.StoreFor(database);
+        var pending = await WaitForOnlyPendingRetryAsync(store);
+        pending.RunAt.Should().BeAfter(timeProvider.GetUtcNow(), "the retry is backed off, not due");
+        await first.DisposeAsync();
+
+        // Act — a second start while the retry is still pending
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        await using var second = await StartAsync(database, timeProvider, spy, TimeSpan.FromHours(1));
+        await Task.Delay(300);
+
+        // Assert — the retry is that start's work: no start-up run beside it
+        spy.StartedCount.Should().Be(1, "the pending retry is not due and no second start-up run ran");
+        (await JobsDatabaseProbe.CountRunsAsync(database)).Should().Be(1, "only the retry-pending row exists");
+    }
+
+    [TestMethod]
+    public async Task CarryOnToItsTimetable_WhenTheStartUpRunCannotBeWritten()
+    {
+        // Arrange — the store throws on the first start-up write, as a database error would
+        await using var database = SharedSqliteDatabase.Create();
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        var logs = new CapturingLoggerProvider();
+        StartUpWriteFaultingJobStore.ArmOneFault();
+
+        // Act
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).RunAtStart().Run(() => new RecordedJob("warm")),
+            spy,
+            timeProvider,
+            database.ConnectionString,
+            logs,
+            configureServices: FaultStartUpWrites);
+
+        // Assert — logged, nothing ran at start, and the next occurrence still runs
+        await logs.WaitForWarningAsync(message => message.Contains("could not write its start-up run", StringComparison.Ordinal));
+        await Task.Delay(300);
+        spy.Count.Should().Be(0, "the start-up run was never written");
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await spy.WaitForCountAsync(1);
+    }
+
+    private static void FaultStartUpWrites(IServiceCollection services)
+    {
+        var descriptor = services.Single(d => d.ServiceType == typeof(IJobStore));
+        services.Remove(descriptor);
+        services.AddScoped(provider => StartUpWriteFaultingJobStore.Wrap(
+            (IJobStore)ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!)));
+    }
+
+    private static async Task<JobRun> WaitForOnlyPendingRetryAsync(IJobStore store)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            var pending = await store.GetPendingAsync(null, CancellationToken.None);
+            if (pending is [{ AttemptCount: 1 } run])
+            {
+                return run;
+            }
+
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException("The failed start-up run never became a pending retry.");
+            }
+
+            await Task.Delay(10);
+        }
     }
 
     private static Task<Conduit.TestUtils.TestHost> StartAsync(

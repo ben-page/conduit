@@ -27,7 +27,8 @@ public static class JobsTestHost
         TimeProvider? timeProvider = null,
         string? connectionString = null,
         CapturingLoggerProvider? logs = null,
-        WorkstationSpy? workstationSpy = null)
+        WorkstationSpy? workstationSpy = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         ArgumentNullException.ThrowIfNull(configureJobs);
 
@@ -58,6 +59,9 @@ public static class JobsTestHost
 
                 conduit.AddJobs(configureJobs);
             });
+
+            // After AddConduit, so a test can replace what the subsystem registered.
+            configureServices?.Invoke(builder.Services);
         });
 
         // Without this the test could advance a FakeTimeProvider past an occurrence before any loop

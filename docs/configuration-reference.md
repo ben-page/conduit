@@ -365,6 +365,10 @@ the packages:
   breaking: dropping `init` removes the setter's `IsExternalInit` modreq, so an assembly compiled
   against the previous package version must be rebuilt rather than swapped in. `UseSignalR` also
   gained parameters, so it is binary breaking in the same way.
+- **`JobSchedule.FromInterval` gained a trailing optional `runsAtStart` parameter** for
+  `ScheduleBuilder.RunAtStart()`. Callers still compile unchanged, but the method's signature changed,
+  so an assembly compiled against the previous package version must be rebuilt rather than swapped in
+  (binary breaking, as above).
 - **A missing required value now throws `InvalidOperationException`.**
   Where `UseRabbitMQ(null)` or `UseSignalR(null)` used to fail immediately in a guard clause with
   an `ArgumentNullException`/`ArgumentException`, the
