@@ -217,7 +217,8 @@ or `disconnected` — an app can tell a logout from an outage. `onStateChange` i
 `http.ts` and `signalr.ts`, embedded in `Conduit.TypeGen` and assembled into `conduit.ts` — and `tests/transport-ts`
 type-checks it (strict `tsc`) and runs it under vitest, locally (`npm test`) and in CI (the `transport-ts` job): a fake
 `HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional stop
-and a failed start, and the retry policy the restart loop is built with. ManagementSystem keeps its own copy of the
+and a failed start, the retry policy the restart loop is built with, and `HttpTransport`'s requests, refusals and
+failures. ManagementSystem keeps its own copy of the
 SignalR suite, run against its committed `conduit.ts`. These tests protect a consumer only for a `Conduit.TypeGen` built
 from this source: GtlHmi pins 1.0.1 (next paragraph).
 
