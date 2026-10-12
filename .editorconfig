@@ -72,6 +72,10 @@ indent_size = 4
 insert_final_newline = true
 trim_trailing_whitespace = true
 
+# The transport files are emitted byte for byte into every consumer's conduit.ts, and are 2-space
+[{src/Conduit.TypeGen/Transport/*.ts,tests/transport-ts/*.ts,tests/transport-ts/emitted/*.ts}]
+indent_size = 2
+
 # Code files
 [*.{cs,csx,vb,vbx,razor}]
 indent_size = 4
