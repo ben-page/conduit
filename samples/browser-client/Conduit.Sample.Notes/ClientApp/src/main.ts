@@ -3,7 +3,7 @@ import { ConduitClient, SignalRTransport } from '../generated/conduit.generated'
 const transport = new SignalRTransport();
 const conduit = new ConduitClient(transport);
 
-await transport.start();
+await transport.connect();
 document.getElementById('status')!.textContent = 'Connected';
 
 async function loadNotes() {
