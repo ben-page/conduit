@@ -214,7 +214,9 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     /// <inheritdoc />
     protected override string? GetMessageType(AmazonSqsInboundMessage message)
     {
-        if (message.Message.MessageAttributes.TryGetValue("Type", out var typeAttribute))
+        // AWSSDK v4 leaves an absent collection null where v3 gave an empty one, so every read of a message's
+        // MessageAttributes, or a response's Messages, here tolerates null.
+        if (message.Message.MessageAttributes?.TryGetValue("Type", out var typeAttribute) == true)
         {
             return typeAttribute.StringValue;
         }
@@ -228,7 +230,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
     /// <inheritdoc />
     protected override bool IsRequest(AmazonSqsInboundMessage message) =>
-        message.Message.MessageAttributes.ContainsKey("ReplyQueueAddress");
+        message.Message.MessageAttributes?.ContainsKey("ReplyQueueAddress") == true;
 
     /// <inheritdoc />
     protected override (string MessageId, string? CausationId, string ConversationId) ExtractContext(
@@ -423,7 +425,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
     /// <inheritdoc />
     protected override string? ExtractMessageHeader(AmazonSqsInboundMessage message, string key) =>
-        message.Message.MessageAttributes.TryGetValue(key, out var attr)
+        message.Message.MessageAttributes?.TryGetValue(key, out var attr) == true
             ? attr.StringValue
             : null;
 
@@ -451,7 +453,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                     },
                     cancellationToken);
 
-                foreach (var sqsMessage in response.Messages)
+                foreach (var sqsMessage in response.Messages ?? [])
                 {
                     await semaphore.WaitAsync(cancellationToken);
 
@@ -508,10 +510,10 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                     },
                     cancellationToken);
 
-                foreach (var sqsMessage in response.Messages)
+                foreach (var sqsMessage in response.Messages ?? [])
                 {
-                    var correlationId = sqsMessage.MessageAttributes
-                        .TryGetValue("CorrelationId", out var attr)
+                    var correlationId = sqsMessage.MessageAttributes?
+                        .TryGetValue("CorrelationId", out var attr) == true
                             ? attr.StringValue
                             : null;
 
@@ -625,7 +627,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     private static string? GetAttributeValue(
         AmazonSqsInboundMessage message, string attributeName)
     {
-        if (message.Message.MessageAttributes.TryGetValue(attributeName, out var attribute))
+        if (message.Message.MessageAttributes?.TryGetValue(attributeName, out var attribute) == true)
         {
             return attribute.StringValue;
         }

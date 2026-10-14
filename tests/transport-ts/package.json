@@ -7,8 +7,8 @@
     "test": "npm run typecheck && vitest run"
   },
   "devDependencies": {
-    "@microsoft/signalr": "^10.0.0",
+    "@microsoft/signalr": "^10.0.11",
     "typescript": "~6.0.0",
-    "vitest": "^4.0.8"
+    "vitest": "^5.0.4"
   }
 }
