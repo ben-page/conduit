@@ -664,7 +664,7 @@ public static class MediatorEmitter
         foreach (var cmd in commands.Where(c => handledTypes.Contains(c.FullTypeName)))
         {
             sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.Execute(");
-            sb.AppendLine($"                    ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload),");
+            sb.AppendLine($"                    {WireRead(cmd)},");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -676,7 +676,7 @@ public static class MediatorEmitter
             // The background dispatcher path would execute after the DI scope is disposed.
             var method = cmd.IsFireAndForget ? "ExecuteVoidWire" : "ExecuteVoid";
             sb.AppendLine($"                \"{cmd.FullTypeName}\" => await ConduitDispatch.{method}(");
-            sb.AppendLine($"                    ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)}>(payload),");
+            sb.AppendLine($"                    {WireRead(cmd)},");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -685,7 +685,7 @@ public static class MediatorEmitter
         foreach (var query in queries.Where(q => handledTypes.Contains(q.FullTypeName)))
         {
             sb.AppendLine($"                \"{query.FullTypeName}\" => await ConduitDispatch.Fetch(");
-            sb.AppendLine($"                    ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(query.FullTypeName)}>(payload),");
+            sb.AppendLine($"                    {WireRead(query)},");
             sb.AppendLine($"                    serviceProvider,");
             sb.AppendLine($"                    conduitOptions,");
             sb.AppendLine($"                    cancellationToken),");
@@ -717,7 +717,9 @@ public static class MediatorEmitter
 
         foreach (var evt in events)
         {
-            sb.AppendLine($"                \"{evt.FullTypeName}\" => JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(evt.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!,");
+            var read = $"JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(evt.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!";
+            var arm = evt.IsDoNotAudit ? read : $"ConduitRuntime.CaptureAuditPayload({read})";
+            sb.AppendLine($"                \"{evt.FullTypeName}\" => {arm},");
         }
 
         sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
@@ -803,19 +805,17 @@ public static class MediatorEmitter
         // observation is isolated per host rather than routed through a process-global static.
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
 
-        // Payload capture for non-DoNotAudit types
+        // Payload capture for non-DoNotAudit types -- only when an observer is attached, so a host without AddAudit
+        // never serializes (MessageContext.HasObserver).
         if (emitPayloadCapture && !isDoNotAudit && requestVarName != null)
         {
-            if (requestTypeName != null)
-            {
-                // Strongly typed: use typeof(T) for efficient serialization
-                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, typeof({requestTypeName}), ConduitRuntime.AuditJsonOptions));");
-            }
-            else
-            {
-                // Dynamic type (events via PublishAsync): use @event.GetType()
-                sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {requestVarName}.GetType(), ConduitRuntime.AuditJsonOptions));");
-            }
+            var typeExpr = requestTypeName != null
+                ? $"typeof({requestTypeName})"   // Strongly typed: use typeof(T) for efficient serialization
+                : $"{requestVarName}.GetType()"; // Dynamic type (events via PublishAsync)
+            sb.AppendLine($"        if ({EmitConstants.MessageContext}.Current is {{ HasObserver: true }} __auditContext)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            __auditContext.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {typeExpr}, ConduitRuntime.AuditJsonOptions));");
+            sb.AppendLine("        }");
         }
 
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
@@ -849,6 +849,18 @@ public static class MediatorEmitter
     {
         sb.AppendLine($"{indent}{{ var __elapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
         sb.AppendLine($"{indent}{EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchCompleted}(__elapsed)); }}");
+    }
+
+    /// <summary>
+    /// The expression a wire-dispatch arm reads its message with: <c>DeserializeWire</c>, wrapped in
+    /// <c>CaptureAuditPayload</c> so the typed object becomes the dispatch's redacted audit payload -- unless the type is
+    /// <c>[DoNotAudit]</c> at type level, which captures nothing (the same compile-time decision
+    /// <see cref="EmitContextStart"/> makes for the in-process path).
+    /// </summary>
+    private static string WireRead(DispatchableTypeInfo type)
+    {
+        var read = $"ConduitRuntime.DeserializeWire<{EmitConstants.ToCSharpTypeRef(type.FullTypeName)}>(payload)";
+        return type.IsDoNotAudit ? read : $"ConduitRuntime.CaptureAuditPayload({read})";
     }
 
     /// <summary>

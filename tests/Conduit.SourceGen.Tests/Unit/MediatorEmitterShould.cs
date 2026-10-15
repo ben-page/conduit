@@ -333,4 +333,79 @@ namespace App.Events
         mediatorSource.Should().NotContain("__bypassCapture");
         mediatorSource.Should().Contain("if (outboundInterceptor != null && outboundInterceptor.Intercept(eventEnvelope))");
     }
+
+    [TestMethod]
+    public void CaptureWirePayloadsUnlessTheTypeIsDoNotAudit()
+    {
+        // Arrange
+        var source = @"
+using Conduit.Attributes;
+using Conduit.Handlers;
+using Conduit.Messages;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace App.Commands
+{
+    public record CreateOrder(string CustomerId) : ICommand<Guid>;
+
+    public class CreateOrderHandler : ICommandHandler<CreateOrder, Guid>
+    {
+        public Task<Guid> HandleAsync(CreateOrder command, CancellationToken cancellationToken)
+            => Task.FromResult(Guid.NewGuid());
+    }
+
+    [DoNotAudit]
+    public record SignIn(string Password) : ICommand;
+
+    public class SignInHandler : ICommandHandler<SignIn>
+    {
+        public Task HandleAsync(SignIn command, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+}
+
+namespace App.Queries
+{
+    public record GetOrder(Guid Id) : IQuery<string>;
+
+    public class GetOrderHandler : IQueryHandler<GetOrder, string>
+    {
+        public Task<string> HandleAsync(GetOrder query, CancellationToken cancellationToken)
+            => Task.FromResult(""order"");
+    }
+}
+
+namespace App.Events
+{
+    public record OrderCreated(Guid Id) : IEvent;
+
+    public class OrderCreatedListener : IEventListener<OrderCreated>
+    {
+        public Task HandleAsync(OrderCreated @event, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+}
+";
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert -- request and query arms capture the typed object
+        mediatorSource.Should().MatchRegex(@"ConduitRuntime\.CaptureAuditPayload\(ConduitRuntime\.DeserializeWire<(global::)?App\.Commands\.CreateOrder>\(payload\)\)");
+        mediatorSource.Should().MatchRegex(@"ConduitRuntime\.CaptureAuditPayload\(ConduitRuntime\.DeserializeWire<(global::)?App\.Queries\.GetOrder>\(payload\)\)");
+
+        // A type-level [DoNotAudit] type is read but never captured
+        mediatorSource.Should().MatchRegex(@"DeserializeWire<(global::)?App\.Commands\.SignIn>\(payload\)");
+        mediatorSource.Should().NotMatchRegex(@"CaptureAuditPayload\(ConduitRuntime\.DeserializeWire<(global::)?App\.Commands\.SignIn>");
+
+        // The wire event arm captures too (it reads with JsonSerializer, not DeserializeWire)
+        mediatorSource.Should().MatchRegex(@"ConduitRuntime\.CaptureAuditPayload\(JsonSerializer\.Deserialize<(global::)?App\.Events\.OrderCreated>\(payload, ConduitRuntime\.JsonOptions\)!\)");
+
+        // The in-process capture is guarded on an attached observer
+        mediatorSource.Should().Contain("is { HasObserver: true } __auditContext");
+        mediatorSource.Should().NotContain("MessageContext.Current?.SetPayload(");
+    }
 }
