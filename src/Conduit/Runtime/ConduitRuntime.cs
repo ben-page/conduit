@@ -175,6 +175,25 @@ public static partial class ConduitRuntime
     }
 
     /// <summary>
+    /// Records <paramref name="message"/> as the current dispatch's audit payload and returns it unchanged. The
+    /// generated wire dispatch wraps each arm's read in it, so a wire request is captured the way an in-process one is:
+    /// the TYPED object serialized with <see cref="AuditJsonOptions"/>, never the raw client JSON (which would keep
+    /// <see cref="DoNotAuditAttribute"/> members and any property the client invented). No-op without a current
+    /// context or without an attached observer. A type marked <see cref="DoNotAuditAttribute"/> at type level is never
+    /// wrapped -- the generator decides that at compile time.
+    /// </summary>
+    public static T CaptureAuditPayload<T>(T message)
+    {
+        var context = MessageContext.Current;
+        if (context is { HasObserver: true })
+        {
+            context.SetPayload(JsonSerializer.SerializeToElement<T>(message, AuditJsonOptions));
+        }
+
+        return message;
+    }
+
+    /// <summary>
     /// <see cref="JsonOptions"/> plus <c>RespectRequiredConstructorParameters</c>, used ONLY by
     /// <see cref="DeserializeWire{T}"/>. The shared <see cref="JsonOptions"/> must stay lenient: it also reads stored
     /// <c>Conduit.Jobs</c> payloads, remote replies and events, where a record written before a member was added must

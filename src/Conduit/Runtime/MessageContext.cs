@@ -171,6 +171,13 @@ public sealed class MessageContext
     }
 
     /// <summary>
+    /// Whether an observer is attached to this context. The generated mediator and
+    /// <see cref="ConduitRuntime.CaptureAuditPayload{T}"/> check it before serializing an audit payload, so a host that
+    /// never registered an observer (no <c>AddAudit</c>) pays nothing for capture.
+    /// </summary>
+    public bool HasObserver => this.observer is not null;
+
+    /// <summary>
     /// Restores the previous context after a dispatch completes.
     /// Called by the generated mediator in a finally block.
     /// </summary>
