@@ -107,6 +107,23 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     }
 
     /// <summary>
+    /// Drops the envelopes captured at or after index <paramref name="capturedCount"/> that are
+    /// still unwritten — called by <see cref="OutboxBehavior{TRequest,TResult}"/> when the pipeline
+    /// that captured them faults, so a later pipeline in the same DI scope cannot write a failed
+    /// unit of work's messages into its own transaction. Written envelopes already have a row in the
+    /// transaction (its commit or rollback decides them) and are never dropped; nor are envelopes
+    /// captured before <paramref name="capturedCount"/>, which belong to an enclosing handler.
+    /// </summary>
+    internal void DiscardUnwrittenCapturedSince(int capturedCount)
+    {
+        var start = Math.Max(capturedCount, this.writtenCount);
+        if (start < this.captured.Count)
+        {
+            this.captured.RemoveRange(start, this.captured.Count - start);
+        }
+    }
+
+    /// <summary>
     /// The messages added by <see cref="AddWrittenMessages"/> since the last flush. Exposed for tests that exercise
     /// <see cref="ClaimAndDeliverAsync"/> directly against the messages a real capture/behavior
     /// pipeline correlated, without going through the background dispatcher.

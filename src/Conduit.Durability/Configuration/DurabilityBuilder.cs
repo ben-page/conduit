@@ -38,6 +38,9 @@ public sealed class DurabilityBuilder
         this.Services.AddScoped<OutboxCapture>();
         this.Services.AddScoped<IOutboundInterceptor>(
             serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
+
+        // Writing (unlike delivery) happens in capture-only mode too: rows go on the caller's transaction.
+        this.Services.AddScoped<IOutboxPendingWriter, OutboxPendingWriter>();
         if (options.CaptureOnly)
         {
             // Another process's relay owns delivery (OutboxOptions.CaptureOnly's remarks).

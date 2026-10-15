@@ -261,6 +261,106 @@ public class OutboxLocalDeliveryShould
     }
 
     [TestMethod]
+    public async Task LeaveAnEventCapturedAfterThePipelineExitedUnwrittenWithoutThePendingWriter()
+    {
+        // Arrange — the control for WriteAnEventCapturedAfterThePipelineExitedThroughThePendingWriter:
+        // an outermost behavior publishes after every OutboxBehavior has exited, and does NOT call
+        // IOutboxPendingWriter — the gap the writer closes.
+        await using var connectionFactory = new StubConnectionFactory();
+        await using var host = await StartPostHandlerPublishHostAsync(connectionFactory, new SpyTransport());
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act
+        await connectionFactory.BeginTransactionAsync();
+        _ = await mediator.ExecuteAsync(new DeferredAuditCommand("unwritten", WritePending: false), CancellationToken.None);
+        await connectionFactory.CommitAsync();
+
+        // Assert — captured (so its local delivery was suppressed) but never written.
+        using var rows = connectionFactory.Connection.CreateCommand();
+        rows.CommandText = "SELECT COUNT(*) FROM conduit_outbox";
+        Convert.ToInt32(await rows.ExecuteScalarAsync(), CultureInfo.InvariantCulture).Should().Be(0);
+        host.GetRequiredService<ListenerProbe>().Count.Should().Be(0);
+    }
+
+    [TestMethod]
+    public async Task WriteAnEventCapturedAfterThePipelineExitedThroughThePendingWriter()
+    {
+        // Arrange — an outermost behavior (a host's transactional behavior dispatching domain
+        // events after next()) publishes a [FireAndForget] event after every OutboxBehavior in the
+        // scope has exited, then calls IOutboxPendingWriter.WritePendingAsync before the commit.
+        await using var connectionFactory = new StubConnectionFactory();
+        var spyTransport = new SpyTransport();
+        await using var host = await StartPostHandlerPublishHostAsync(connectionFactory, spyTransport);
+        var mediator = host.GetRequiredService<IMediator>();
+        var probe = host.GetRequiredService<ListenerProbe>();
+
+        // Act
+        await connectionFactory.BeginTransactionAsync();
+        _ = await mediator.ExecuteAsync(new DeferredAuditCommand("written", WritePending: true), CancellationToken.None);
+        await connectionFactory.CommitAsync();
+
+        // Assert — one row, in the transaction.
+        using var rows = connectionFactory.Connection.CreateCommand();
+        rows.CommandText = "SELECT COUNT(*) FROM conduit_outbox WHERE Type LIKE '%AuditTrailEvent%'";
+        Convert.ToInt32(await rows.ExecuteScalarAsync(), CultureInfo.InvariantCulture).Should().Be(1);
+
+        // The flush delivers it...
+        await host.GetRequiredService<IOutboxFlusher>().FlushAsync(CancellationToken.None);
+
+        using var unsentRows = connectionFactory.Connection.CreateCommand();
+        unsentRows.CommandText = "SELECT COUNT(*) FROM conduit_outbox WHERE Status <> @Sent";
+        unsentRows.Parameters.AddWithValue("@Sent", (int)OutboxEntryStatus.Sent);
+        var allSent = false;
+        for (var attempt = 0; attempt < 50 && !allSent; attempt++)
+        {
+            allSent = Convert.ToInt32(await unsentRows.ExecuteScalarAsync(), CultureInfo.InvariantCulture) == 0;
+            if (!allSent)
+            {
+                await Task.Delay(100);
+            }
+        }
+
+        allSent.Should().BeTrue("the pending writer adds its rows to the written-messages list the flush delivers");
+
+        // ...and the relay has nothing more to deliver.
+        var relay = new OutboxRelay(
+            host.GetRequiredService<IServiceScopeFactory>(),
+            host.GetRequiredService<TransportDispatcher>(),
+            Options.Create(new OutboxOptions { GracePeriod = TimeSpan.Zero, AutoCreateTable = false }),
+            NullLogger<OutboxRelay>.Instance);
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        probe.Count.Should().Be(1);
+        spyTransport.SentEvents.Where(e => e.Type.Contains("AuditTrailEvent", StringComparison.Ordinal)).Should().ContainSingle();
+    }
+
+    // A host whose OUTERMOST behavior is PostHandlerPublishBehavior (registered before
+    // AddDurability adds OutboxBehavior, so it wraps it). The hosted relay's grace period is pushed
+    // out of reach so only the flush can deliver until a test runs the relay by hand.
+    private static async Task<TestWebHost> StartPostHandlerPublishHostAsync(StubConnectionFactory connectionFactory, SpyTransport spyTransport)
+    {
+        var store = new DbConnectionOutboxStore(connectionFactory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        return TestWebHost.Start(builder =>
+        {
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.UseSqlite("Data Source=:memory:");
+                conduit.AddPipeline(typeof(PostHandlerPublishBehavior<,>));
+                conduit.AddDurability(durability => durability.AddOutbox(options =>
+                {
+                    options.AutoCreateTable = false;
+                    options.GracePeriod = TimeSpan.FromHours(1);
+                }));
+            });
+            builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
+            builder.Services.AddSingleton<ListenerProbe>();
+            builder.Services.AddSingleton<IConduitTransport>(spyTransport);
+        });
+    }
+
+    [TestMethod]
     public async Task BypassCaptureForImmediateEventsEvenInsideATransaction()
     {
         // Arrange — host as before (probe registered; no transport needed)

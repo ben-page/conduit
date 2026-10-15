@@ -1,5 +1,4 @@
 ﻿using Conduit.Middleware;
-using Conduit.Runtime;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
 
@@ -13,7 +12,10 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// It runs at the end of every pipeline in the dispatch scope — including the nested pipelines of
 /// events a handler publishes inline — so it writes only the envelopes that have no row yet
 /// (<see cref="OutboxCapture.Unwritten"/>): each captured envelope gets exactly one row per scope,
-/// written by the first pipeline to finish after it was captured.
+/// written by the first pipeline to finish after it was captured. An envelope captured after the
+/// last behavior in the scope has exited (a host's outermost behavior publishing after its
+/// <c>next()</c>) is written by <see cref="IOutboxPendingWriter"/>. When the pipeline faults, the
+/// unwritten envelopes it captured are dropped.
 /// </remarks>
 public sealed class OutboxBehavior<TRequest, TResult>(
     OutboxCapture capture,
@@ -28,55 +30,22 @@ public sealed class OutboxBehavior<TRequest, TResult>(
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        var result = await next();
-
-        var captured = capture.Unwritten;
-        if (captured.Count == 0)
+        // Envelopes captured from here on belong to this pipeline's unit of work. If it faults —
+        // its handler, a nested pipeline it lets the exception escape from, or its own write — those
+        // still unwritten are dropped, so a later command in the same DI scope cannot write a failed
+        // command's messages into its own transaction. Envelopes captured BEFORE this pipeline began
+        // (by an enclosing handler that may catch the exception and carry on) are kept.
+        var capturedBefore = capture.Captured.Count;
+        try
         {
+            var result = await next();
+            await OutboxPendingWriter.WriteUnwrittenAsync(capture, store, connectionFactory, cancellationToken);
             return result;
         }
-
-        var transaction = connectionFactory.GetCurrentTransaction();
-        if (transaction is null)
+        catch
         {
-            return result;
+            capture.DiscardUnwrittenCapturedSince(capturedBefore);
+            throw;
         }
-
-        var context = MessageContext.Current;
-
-        // The triggering message (the one currently being handled) becomes the CAUSE of every
-        // outbound message it emits. Each emitted message gets its OWN fresh MessageId so that a
-        // handler producing several outbound messages does not stamp them all with one shared id —
-        // which would make a downstream inbox dedup all-but-one as duplicates (silent message loss)
-        // and make ClaimByMessageIdsAsync ambiguous (multiple rows per id). ConversationId is
-        // inherited so the whole chain stays correlated.
-        var conversationId = context?.ConversationId ?? Guid.NewGuid().ToString("N");
-        var causationId = context?.MessageId;
-
-        var entries = new List<OutboxEntry>(captured.Count);
-        foreach (var envelope in captured)
-        {
-            entries.Add(new OutboxEntry
-            {
-                MessageId = Guid.NewGuid().ToString("N"),
-                ConversationId = conversationId,
-                CausationId = causationId,
-                Type = envelope.Type,
-                Payload = envelope.Payload.GetRawText(),
-                CreatedAt = DateTime.UtcNow,
-            });
-        }
-
-        await store.SaveAsync(entries, transaction, cancellationToken);
-        MessageContext.Observe(new OutboxWritten(entries.Count));
-
-        capture.AddWrittenMessages(
-            entries.Select((entry, index) => new WrittenOutboxMessage(
-                entry.MessageId,
-                entry.ConversationId,
-                entry.CausationId,
-                captured[index])).ToList());
-
-        return result;
     }
 }

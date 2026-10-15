@@ -13,6 +13,7 @@
 - [Relay configuration](#relay-configuration)
 - [What gets captured](#what-gets-captured)
 - [The Immediate escape hatch](#the-immediate-escape-hatch)
+- [Publishing after the pipeline](#publishing-after-the-pipeline)
 - [Immediate send](#immediate-send)
 - [Limitations](#limitations)
 
@@ -132,6 +133,7 @@ builder.Services.AddConduit(conduit =>
 
 The `AddOutbox()` call registers:
 - `OutboxCapture` as both `IOutboundInterceptor` and `IOutboxFlusher` (scoped)
+- `IOutboxPendingWriter` (scoped) — see [Publishing after the pipeline](#publishing-after-the-pipeline)
 - `OutboxBehavior<,>` as a pipeline behavior
 - `OutboxRelay` as a background service
 - `DbConnectionOutboxStore` with the chosen dialect
@@ -391,6 +393,47 @@ execution. Choosing `Immediate` is choosing at-most-once delivery for that messa
 exchange for guaranteed rollback-survival and zero outbox latency. Make that trade-off
 deliberately, per type — it is not a global default, and nothing gets it unless you write
 `Immediate = true` yourself.
+
+## Publishing after the pipeline
+
+`OutboxBehavior` writes captured envelopes when a pipeline ends — every pipeline, nested inline-event
+pipelines included, each envelope once. A host's own transactional behavior that publishes *after*
+its `next()` returns — for example, dispatching domain events just before the commit — publishes
+after every `OutboxBehavior` in the scope has already exited. Those publishes are captured (the
+transaction is still open), but nothing writes them. Write them yourself with `IOutboxPendingWriter`,
+after the last publish and before the commit:
+
+```csharp
+public sealed class TransactionalBehavior<TRequest, TResult>(
+    AppDbContext dbContext,
+    DomainEventDispatcher domainEvents,
+    IOutboxPendingWriter outboxWriter,
+    IOutboxFlusher flusher) : IPipelineBehavior<TRequest, TResult>
+{
+    public async Task<TResult> HandleAsync(TRequest request, Func<Task<TResult>> next, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        var result = await next();
+        await domainEvents.DispatchPendingAsync(cancellationToken);   // publishes are captured here
+        await outboxWriter.WritePendingAsync(cancellationToken);      // ...and written here
+
+        await transaction.CommitAsync(cancellationToken);
+        await flusher.FlushAsync(cancellationToken);
+        return result;
+    }
+}
+```
+
+`WritePendingAsync` writes the same entries `OutboxBehavior` would (it is the same code), adds them
+to what `FlushAsync` delivers, and is a no-op when nothing is unwritten or no transaction is active.
+It is registered in capture-only mode too — writing is not delivery.
+
+When a pipeline faults, `OutboxBehavior` drops the unwritten envelopes that pipeline captured, so a
+later command in the same DI scope cannot write a failed command's messages into its own
+transaction. Envelopes your behavior captures after `next()` are outside every pipeline: if it
+faults before `WritePendingAsync`, they stay unwritten in the scope — don't dispatch another command
+in that scope after a failure.
 
 ## Immediate send
 

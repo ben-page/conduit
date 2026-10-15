@@ -254,8 +254,9 @@ public class OutboxBehaviorShould
     [TestMethod]
     public async Task LeaveEnvelopesUnwrittenWhenTheSaveFails()
     {
-        // Arrange — the first save throws, so nothing reached the transaction; a later pipeline in
-        // the same scope must still write the envelope.
+        // Arrange — the first save throws, so nothing reached the transaction. The envelope was
+        // captured before the failing pipeline began (by an enclosing handler, not by the failed
+        // unit), so a later pipeline in the same scope must still write it.
         var capture = CreateCapture();
         var store = new FailOnceOutboxStore();
         var factory = new StubTransactionFactory(hasTransaction: true);
@@ -273,6 +274,86 @@ public class OutboxBehaviorShould
         // Assert
         store.SavedEntries.Should().ContainSingle(e => e.Type == "Test.Notice");
         capture.WrittenMessages.Should().ContainSingle();
+    }
+
+    [TestMethod]
+    public async Task DiscardEnvelopesCapturedByAFaultedPipeline()
+    {
+        // Arrange — a command captures an envelope and then throws; a later command in the same DI
+        // scope must not write the failed command's envelope into its own transaction.
+        var capture = CreateCapture();
+        var store = new StubOutboxStore();
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        var failedBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+        var laterBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Act
+        var failed = () => failedBehavior.HandleAsync(
+            "failed",
+            () =>
+            {
+                capture.Intercept(new DispatchEnvelope("Test.FromFailedCommand", JsonSerializer.SerializeToElement(new { })));
+                throw new InvalidOperationException("Simulated handler failure.");
+            },
+            CancellationToken.None);
+        await failed.Should().ThrowAsync<InvalidOperationException>();
+
+        await laterBehavior.HandleAsync(
+            "later",
+            () =>
+            {
+                capture.Intercept(new DispatchEnvelope("Test.FromLaterCommand", JsonSerializer.SerializeToElement(new { })));
+                return Task.FromResult("later");
+            },
+            CancellationToken.None);
+
+        // Assert
+        store.SavedEntries.Select(e => e.Type).Should().Equal("Test.FromLaterCommand");
+        capture.WrittenMessages.Select(m => m.Envelope.Type).Should().Equal("Test.FromLaterCommand");
+    }
+
+    [TestMethod]
+    public async Task KeepTheEnclosingHandlersEnvelopesWhenANestedPipelineFaults()
+    {
+        // Arrange — the outer handler captures an envelope, then a nested pipeline captures its own
+        // and throws; the outer handler catches and carries on. Only the nested pipeline's envelope
+        // belongs to the failed unit.
+        var capture = CreateCapture();
+        var store = new StubOutboxStore();
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        var outerBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+        var innerBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Act
+        await outerBehavior.HandleAsync(
+            "outer",
+            async () =>
+            {
+                capture.Intercept(new DispatchEnvelope("Test.FromOuter", JsonSerializer.SerializeToElement(new { })));
+                try
+                {
+                    await innerBehavior.HandleAsync(
+                        "inner",
+                        () =>
+                        {
+                            capture.Intercept(new DispatchEnvelope("Test.FromFailedInner", JsonSerializer.SerializeToElement(new { })));
+                            throw new InvalidOperationException("Simulated listener failure.");
+                        },
+                        CancellationToken.None);
+                }
+                catch (InvalidOperationException)
+                {
+                    // The outer handler tolerates the nested failure.
+                }
+
+                return "outer";
+            },
+            CancellationToken.None);
+
+        // Assert
+        store.SavedEntries.Select(e => e.Type).Should().Equal("Test.FromOuter");
     }
 }
 

@@ -1,6 +1,8 @@
 using Conduit.Attributes;
+using Conduit.Durability.Runtime.Outbox;
 using Conduit.Handlers;
 using Conduit.Messages;
+using Conduit.Middleware;
 
 namespace Conduit.Durability.Tests.Support;
 
@@ -83,5 +85,39 @@ public class RecordAuditWithStepsHandler(IMediator mediator) : ICommandHandler<R
         await mediator.PublishAsync(new AuditStepEvent(1), cancellationToken);
         await mediator.PublishAsync(new AuditStepEvent(2), cancellationToken);
         return Guid.NewGuid();
+    }
+}
+
+/// <summary>A command whose handler publishes nothing: <see cref="PostHandlerPublishBehavior{TRequest,TResult}"/>
+/// publishes its audit event after the pipeline (and so every OutboxBehavior) has exited.</summary>
+public record DeferredAuditCommand(string Detail, bool WritePending) : ICommand<Guid>;
+
+public class DeferredAuditHandler : ICommandHandler<DeferredAuditCommand, Guid>
+{
+    public Task<Guid> HandleAsync(DeferredAuditCommand command, CancellationToken cancellationToken)
+        => Task.FromResult(Guid.NewGuid());
+}
+
+/// <summary>Models a host's outermost transactional behavior that dispatches domain events after
+/// <c>next()</c> returns — outside every OutboxBehavior — and then writes what they captured.</summary>
+public sealed class PostHandlerPublishBehavior<TRequest, TResult>(IMediator mediator, IOutboxPendingWriter pendingWriter)
+    : IPipelineBehavior<TRequest, TResult>
+{
+    public async Task<TResult> HandleAsync(TRequest request, Func<Task<TResult>> next, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+
+        var result = await next();
+
+        if (request is DeferredAuditCommand command)
+        {
+            await mediator.PublishAsync(new AuditTrailEvent(command.Detail), cancellationToken);
+            if (command.WritePending)
+            {
+                await pendingWriter.WritePendingAsync(cancellationToken);
+            }
+        }
+
+        return result;
     }
 }

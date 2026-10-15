@@ -58,4 +58,18 @@ public sealed class CaptureOnlyOutboxShould
         services.Should().Contain(d =>
             d.ServiceType == typeof(IOutboxFlusher) && d.ImplementationType == typeof(CaptureOnlyOutboxFlusher));
     }
+
+    [TestMethod]
+    public void RegisterThePendingWriterInEitherMode()
+    {
+        // Writing is not delivery: a capture-only host's own transactional behavior still writes
+        // what it captured after its pipeline's last OutboxBehavior exited.
+        foreach (var captureOnly in new[] { true, false })
+        {
+            Configure(captureOnly).Should().Contain(d =>
+                d.ServiceType == typeof(IOutboxPendingWriter)
+                && d.ImplementationType == typeof(OutboxPendingWriter)
+                && d.Lifetime == ServiceLifetime.Scoped);
+        }
+    }
 }
