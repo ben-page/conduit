@@ -193,7 +193,15 @@ public sealed class Profile
 }
 ```
 
-Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops marked properties and the properties bound to marked constructor parameters. Names match case-insensitively, and base types are walked: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. Wire serialization keeps `JsonOptions`, so the member still travels on the wire.
+`[AuditRedacted]` is the middle course for a member whose *presence* matters but whose value must never be stored. On a property or a positional-record parameter, the audit payload carries the placeholder `"•••"` when the member has a value; `null` and `""` stay as themselves (so "sent" and "blanked" remain distinguishable). It works on a member of any type, and records no derived value: no hash, no length, no last four.
+
+```csharp
+public sealed record UpdateSsn(int EmployeeId, [AuditRedacted] string? SocialSecurityNumber) : ICommand;
+```
+
+`[AuditRedacted]` cannot be combined with `[DoNotAudit]` on one member (CONDUIT005; refused at serialization).
+
+Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops `[DoNotAudit]` properties (and the properties bound to marked constructor parameters) and writes `[AuditRedacted]` ones as their placeholder. Names match case-insensitively, and base types are walked: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. Wire serialization keeps `JsonOptions`, so the member still travels on the wire.
 
 `[DoNotAudit]` on a type suppresses payload capture only — the dispatch is still observed and recorded, just without the message body. `Suppress<T>()` drops the type from the audit trail entirely; `SuppressPayload<T>()` keeps the record but omits the body.
 

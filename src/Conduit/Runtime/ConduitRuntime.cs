@@ -41,15 +41,16 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// <see cref="JsonOptions"/> for the audit payload only: a member marked <see cref="DoNotAuditAttribute"/> (on the
-    /// property, or on the positional record parameter that binds it) is left out. The generated mediator serializes the
+    /// property, or on the positional record parameter that binds it) is left out, and a member marked <see cref="AuditRedactedAttribute"/> is written as its
+    /// <see cref="AuditRedactedAttribute.Placeholder"/>. The generated mediator serializes the
     /// captured request with these; wire serialization keeps <see cref="JsonOptions"/>.
     /// </summary>
     public static JsonSerializerOptions AuditJsonOptions { get; } = new(JsonOptions)
     {
-        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { DropDoNotAuditMembers } },
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ApplyAuditMemberMarks } },
     };
 
-    private static void DropDoNotAuditMembers(JsonTypeInfo typeInfo)
+    private static void ApplyAuditMemberMarks(JsonTypeInfo typeInfo)
     {
         if (typeInfo.Kind != JsonTypeInfoKind.Object)
         {
@@ -58,16 +59,27 @@ public static partial class ConduitRuntime
 
         // System.Text.Json binds constructor parameters to properties case-insensitively, and a derived record's base
         // positional parameters bind through the base constructor, so collect from every type up the chain.
-        var markedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var droppedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var redactedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var type = typeInfo.Type; type is not null && type != typeof(object); type = type.BaseType)
         {
             foreach (var constructor in type.GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
             {
                 foreach (var parameter in constructor.GetParameters())
                 {
-                    if (parameter.Name is not null && parameter.IsDefined(typeof(DoNotAuditAttribute), inherit: false))
+                    if (parameter.Name is null)
                     {
-                        markedParameters.Add(parameter.Name);
+                        continue;
+                    }
+
+                    if (parameter.IsDefined(typeof(DoNotAuditAttribute), inherit: false))
+                    {
+                        droppedParameters.Add(parameter.Name);
+                    }
+
+                    if (parameter.IsDefined(typeof(AuditRedactedAttribute), inherit: false))
+                    {
+                        redactedParameters.Add(parameter.Name);
                     }
                 }
             }
@@ -77,12 +89,45 @@ public static partial class ConduitRuntime
         {
             // Attribute.IsDefined walks an overridden property's base declarations; MemberInfo.IsDefined ignores
             // `inherit` for properties, so a mark on a base virtual property would be lost on its override.
-            if (typeInfo.Properties[i].AttributeProvider is System.Reflection.MemberInfo member
-                && (Attribute.IsDefined(member, typeof(DoNotAuditAttribute), inherit: true) || markedParameters.Contains(member.Name)))
+            if (typeInfo.Properties[i].AttributeProvider is not System.Reflection.MemberInfo member)
+            {
+                continue;
+            }
+
+            var dropped = Attribute.IsDefined(member, typeof(DoNotAuditAttribute), inherit: true) || droppedParameters.Contains(member.Name);
+            var redacted = Attribute.IsDefined(member, typeof(AuditRedactedAttribute), inherit: true) || redactedParameters.Contains(member.Name);
+            if (dropped && redacted)
+            {
+                throw new InvalidOperationException(
+                    $"{typeInfo.Type.FullName}.{member.Name} carries both [DoNotAudit] and [AuditRedacted]; an audited member takes one.");
+            }
+
+            if (dropped)
             {
                 typeInfo.Properties.RemoveAt(i);
             }
+            else if (redacted)
+            {
+                typeInfo.Properties[i] = Redacted(typeInfo, typeInfo.Properties[i]);
+            }
         }
+    }
+
+    // A string-typed stand-in under the same JSON name: the placeholder when the member holds a value, null and "" as
+    // themselves. Serialize-only -- AuditJsonOptions never reads.
+    private static JsonPropertyInfo Redacted(JsonTypeInfo typeInfo, JsonPropertyInfo original)
+    {
+        var read = original.Get;
+        var standIn = typeInfo.CreateJsonPropertyInfo(typeof(string), original.Name);
+        standIn.Get = read is null
+            ? null
+            : target => read(target) switch
+            {
+                null => null,
+                string { Length: 0 } => string.Empty,
+                _ => AuditRedactedAttribute.Placeholder,
+            };
+        return standIn;
     }
 
     /// <summary>

@@ -383,6 +383,8 @@ the packages:
 |---|---|---|
 | `[LocalOnly]` | Event types | Prevent event from broadcasting to transports |
 | `[ClientVisible]` | Any type | Include in TypeScript generation output |
+| `[DoNotAudit]` | Type, property, record parameter | Type: no payload captured. Member: left out of the captured body |
+| `[AuditRedacted]` | Property, record parameter | Audit payload holds `"•••"` for a present value (null/`""` as themselves), never the value; not combinable with `[DoNotAudit]` (CONDUIT005) |
 | `[assembly: RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace |
 
 ## MSBuild properties (TypeGen)

@@ -81,7 +81,8 @@ An **observation** (`MessageObservation`) is a record emitted during dispatch vi
 current `MessageContext`. The audit subsystem registers an observer to build the audit trail; types
 marked `[DoNotAudit]` suppress payload capture, and a property or positional-record parameter marked
 `[DoNotAudit]` is dropped from the captured body (`ConduitRuntime.AuditJsonOptions`; wire
-serialization is unaffected). See [Audit](audit.md).
+serialization is unaffected); a member marked `[AuditRedacted]` is captured as the placeholder `"•••"` when it has a
+value, never the value itself. See [Audit](audit.md).
 
 ### IWireExceptionTranslator
 

@@ -64,7 +64,7 @@ keep their original `Conduit.*` names):
 - `Conduit.Middleware` — pipeline, gate, and interceptor types: `IPipelineBehavior`, `IInboundInterceptor` (gate), `IOutboundInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — spans **two assemblies**. `ICommand`, `IQuery`, `IEvent`, `Unit`, `IClosedSet<TSelf>` live in `src/Conduit.Contracts/Messages/`. `ConduitFile` stays behind in `src/Conduit/Messages/` (core) — it holds a `BinaryData` field, which needs the `System.Memory.Data` package, and `Conduit.Contracts` must carry zero package references (a downstream domain project references it alone, precisely to avoid pulling in packages). This is deliberate, not an oversight — do not "fix" it by moving `ConduitFile` into `Conduit.Contracts`.
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
-- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute`, `ClosedSetAttribute` (`src/Conduit.Contracts/Attributes/`)
+- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute`, `ClosedSetAttribute`, `AuditRedactedAttribute` (`src/Conduit.Contracts/Attributes/`)
 - `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException` (`src/Conduit.Contracts/Exceptions/`)
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
@@ -114,6 +114,7 @@ keep their original `Conduit.*` names):
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
 | `[ClosedSet("a", …)]` | Type | State a closed set's wire values for TypeGen (the type implements `IClosedSet<TSelf>`; the list must equal `All`, checked at runtime) |
 | `[DoNotAudit]` | Type, property, record parameter | Type: suppress payload capture in audit trail (observations still emitted). Member: capture the body without that member (`ConduitRuntime.AuditJsonOptions`; wire serialization unaffected). |
+| `[AuditRedacted]` | Property, record parameter | Capture that the member has a value (`"•••"`), never the value; null/"" as themselves. Not combinable with [DoNotAudit] (CONDUIT005). |
 | `[NotAutoRegistered]` | Type | Exclude a handler/listener from source-gen auto-registration (for components wired explicitly via a feature's `Add*` extension, e.g. `LocalAuditListener` via `AddAuditListener`). The type stays dispatchable when registered manually. |
 | `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
 
