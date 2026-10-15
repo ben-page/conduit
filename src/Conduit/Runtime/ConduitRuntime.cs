@@ -119,6 +119,13 @@ public static partial class ConduitRuntime
     {
         var read = original.Get;
         var standIn = typeInfo.CreateJsonPropertyInfo(typeof(string), original.Name);
+        standIn.Order = original.Order;
+        standIn.IsRequired = original.IsRequired;
+        // The original predicate (e.g. [JsonIgnore(Condition = WhenWritingNull)]) judges the REAL value, so an absent
+        // redacted member is still omitted where the original would have been.
+        standIn.ShouldSerialize = original.ShouldSerialize is { } shouldSerialize && read is not null
+            ? (target, _) => shouldSerialize(target, read(target))
+            : null;
         standIn.Get = read is null
             ? null
             : target => read(target) switch

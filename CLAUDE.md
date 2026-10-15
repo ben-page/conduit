@@ -173,7 +173,7 @@ onboarding or answering "how does X work" questions:
 
 - [`docs/dispatch-flows.md`](docs/dispatch-flows.md) — end-to-end traces (local dispatch, event broadcast, wire-inbound) with real type/method names
 - [`docs/glossary.md`](docs/glossary.md) — domain vocabulary (endpoint, route, topology, gate, interceptor, envelope, MessageContext, reply queue, ...)
-- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT004 source-generator diagnostics and how to resolve/suppress them
+- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT005 source-generator diagnostics and how to resolve/suppress them
 - [`docs/getting-started.md`](docs/getting-started.md) — first-run walkthrough
 - [`docs/core-concepts.md`](docs/core-concepts.md) — messages, handlers, mediator, the mental model
 - [`docs/configuration-reference.md`](docs/configuration-reference.md) — `ConduitOptions` / builder reference

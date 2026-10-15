@@ -71,4 +71,48 @@ namespace App.Queries
 
         diagnostics.Should().NotContain(d => d.Id == "CONDUIT005");
     }
+
+    [TestMethod]
+    public void ReportBothMarksAcrossTheBaseChain()
+    {
+        var source = @"
+using Conduit.Attributes;
+using Conduit.Handlers;
+using Conduit.Messages;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace App.Commands
+{
+    public record BaseSsn(int Id, [DoNotAudit] string Ssn);
+
+    public record DerivedSsn(int Id, [AuditRedacted] string Ssn) : BaseSsn(Id, Ssn), ICommand;
+
+    public class DerivedSsnHandler : ICommandHandler<DerivedSsn>
+    {
+        public Task HandleAsync(DerivedSsn command, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+}
+";
+        var (_, diagnostics) = RunGenerator(source);
+
+        diagnostics.Should().Contain(d => d.Id == "CONDUIT005");
+    }
+
+    [TestMethod]
+    public void ReportBothMarksOnAnEvent()
+    {
+        var source = @"
+using Conduit.Attributes;
+using Conduit.Messages;
+
+namespace App.Events
+{
+    public record SsnChanged(int Id, [DoNotAudit][AuditRedacted] string Ssn) : IEvent;
+}
+";
+        var (_, diagnostics) = RunGenerator(source);
+
+        diagnostics.Should().Contain(d => d.Id == "CONDUIT005" && d.GetMessage(CultureInfo.InvariantCulture).Contains("Ssn"));
+    }
 }

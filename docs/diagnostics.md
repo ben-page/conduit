@@ -10,6 +10,7 @@ in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
 | `CONDUIT002` | Error | Multiple handlers found | More than one handler was found for the same command/query. Only one is allowed. |
 | `CONDUIT003` | Warning | Invalid `[FireAndForget]` usage | `[FireAndForget]` was applied to a type that cannot be fire-and-forget. |
 | `CONDUIT004` | Warning | Handler not accessible | A handler exists in a referenced assembly but is not accessible (e.g. internal) to the generating assembly. |
+| `CONDUIT005` | Error | Conflicting audit marks | A message member is marked both `[DoNotAudit]` and `[AuditRedacted]`. |
 
 ---
 
@@ -64,6 +65,22 @@ handler it can **see**. An `internal` handler in a referenced assembly is found 
 **Resolve** by making the cross-assembly handler `public` so it can be auto-registered. If the
 handler is genuinely meant to stay internal to its own assembly, register Conduit (and its
 generator) in that assembly instead, so the handler and its generated registration live together.
+
+## CONDUIT005 — Conflicting audit marks
+
+> '{type}' marks member(s) {members} both [DoNotAudit] and [AuditRedacted]; an audited member takes one
+
+`[DoNotAudit]` removes a member from the audited request payload; `[AuditRedacted]` keeps the member but
+writes the `•••` placeholder instead of its value. They contradict each other, so a member may carry only one.
+The generator reports the conflict on any command, query or event whose member carries both. The scan mirrors
+the serializer's rule: it walks the **base chain** (a mark on a base record's parameter or a virtual base
+property counts for the override) and binds a constructor parameter to a property **case-insensitively**, so
+`[DoNotAudit]` on a record parameter `Ssn` and `[AuditRedacted]` on a property `ssn` conflict.
+
+**Resolve** by keeping one: `[DoNotAudit]` when the member's presence is not worth recording, `[AuditRedacted]`
+when it is. The generator checks only the message type's own members; a **nested DTO** carrying both marks is
+not caught at build and is refused at serialization time (an `InvalidOperationException` when the payload is
+audited), so keep one there too.
 
 ---
 

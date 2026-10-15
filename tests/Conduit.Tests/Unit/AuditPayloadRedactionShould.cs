@@ -155,6 +155,60 @@ public sealed class AuditPayloadRedactionShould
         act.Should().Throw<InvalidOperationException>().WithMessage("*BothMarks.Ssn*[DoNotAudit]*[AuditRedacted]*");
     }
 
+    private sealed class IgnoreWhenNullRedacted
+    {
+        public int Id { get; init; }
+
+        [AuditRedacted]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? Ssn { get; init; }
+    }
+
+    [TestMethod]
+    public void OmitARedactedNullWhereTheOriginalIgnoresNull()
+    {
+        var absent = JsonSerializer.SerializeToElement(new IgnoreWhenNullRedacted { Id = 1 }, ConduitRuntime.AuditJsonOptions);
+        var present = JsonSerializer.SerializeToElement(new IgnoreWhenNullRedacted { Id = 1, Ssn = "123-45-6789" }, ConduitRuntime.AuditJsonOptions);
+
+        absent.TryGetProperty("ssn", out _).Should().BeFalse();
+        present.GetProperty("ssn").GetString().Should().Be(AuditRedactedAttribute.Placeholder);
+    }
+
+    private record RedactedBaseRecord(int Id, [AuditRedacted] string Ssn);
+
+    private sealed record RedactedDerivedRecord(int Id, string Ssn, string Note) : RedactedBaseRecord(Id, Ssn);
+
+    private sealed class RedactedCtorRequest([AuditRedacted] string ssn)
+    {
+        public string Ssn { get; } = ssn;
+    }
+
+    private class RedactedVirtualBase
+    {
+        [AuditRedacted]
+        public virtual string? Secret { get; init; }
+    }
+
+    private sealed class RedactedOverride : RedactedVirtualBase
+    {
+        public override string? Secret { get; init; }
+    }
+
+    [TestMethod]
+    public void RedactAMemberMarkedOnABaseRecordParameter() =>
+        JsonSerializer.SerializeToElement(new RedactedDerivedRecord(1, "123-45-6789", "n"), ConduitRuntime.AuditJsonOptions)
+            .GetProperty("ssn").GetString().Should().Be(AuditRedactedAttribute.Placeholder);
+
+    [TestMethod]
+    public void RedactAnOverrideOfAPropertyMarkedOnItsBaseDeclaration() =>
+        JsonSerializer.SerializeToElement(new RedactedOverride { Secret = "s" }, ConduitRuntime.AuditJsonOptions)
+            .GetProperty("secret").GetString().Should().Be(AuditRedactedAttribute.Placeholder);
+
+    [TestMethod]
+    public void RedactAMemberWhoseConstructorParameterDiffersOnlyInCase() =>
+        JsonSerializer.SerializeToElement(new RedactedCtorRequest("123-45-6789"), ConduitRuntime.AuditJsonOptions)
+            .GetProperty("ssn").GetString().Should().Be(AuditRedactedAttribute.Placeholder);
+
     [TestMethod]
     public void LeaveARedactedMemberUntouchedOnTheWire() =>
         JsonSerializer.SerializeToElement(new RedactedPositional(7, "123-45-6789", 21.50m), ConduitRuntime.JsonOptions)
