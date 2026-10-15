@@ -185,6 +185,82 @@ public class OutboxLocalDeliveryShould
     }
 
     [TestMethod]
+    public async Task WriteACapturedEventOnceWhenTheHandlerPublishesNestedEvents()
+    {
+        // Arrange — the command captures one [FireAndForget] event, then publishes two plain events
+        // inline; each plain event's listener pipeline runs its own OutboxBehavior in the same
+        // dispatch scope. The hosted relay's grace period is pushed out of reach so only the flush
+        // can deliver until the test runs the relay by hand.
+        await using var connectionFactory = new StubConnectionFactory();
+        var store = new DbConnectionOutboxStore(connectionFactory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        var spyTransport = new SpyTransport();
+
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.UseSqlite("Data Source=:memory:");
+                conduit.AddDurability(durability => durability.AddOutbox(options =>
+                {
+                    options.AutoCreateTable = false;
+                    options.GracePeriod = TimeSpan.FromHours(1);
+                }));
+            });
+            builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
+            builder.Services.AddSingleton<ListenerProbe>();
+            builder.Services.AddSingleton<IConduitTransport>(spyTransport);
+        });
+
+        var mediator = host.GetRequiredService<IMediator>();
+        var probe = host.GetRequiredService<ListenerProbe>();
+
+        // Act
+        await connectionFactory.BeginTransactionAsync();
+        _ = await mediator.ExecuteAsync(new RecordAuditWithStepsCommand("urgent"), CancellationToken.None);
+        await connectionFactory.CommitAsync();
+
+        // Assert — one row for the captured event, and no envelope written twice.
+        using var auditRows = connectionFactory.Connection.CreateCommand();
+        auditRows.CommandText = "SELECT COUNT(*) FROM conduit_outbox WHERE Type LIKE '%AuditTrailEvent%'";
+        Convert.ToInt32(await auditRows.ExecuteScalarAsync(), CultureInfo.InvariantCulture)
+            .Should().Be(1, "a captured envelope is written to the outbox once per scope, however many pipelines run in it");
+
+        using var duplicateRows = connectionFactory.Connection.CreateCommand();
+        duplicateRows.CommandText = "SELECT COUNT(*) FROM (SELECT Type, Payload FROM conduit_outbox GROUP BY Type, Payload HAVING COUNT(*) > 1)";
+        Convert.ToInt32(await duplicateRows.ExecuteScalarAsync(), CultureInfo.InvariantCulture).Should().Be(0);
+
+        // The flush alone delivers every written row — nothing is left for the relay.
+        await host.GetRequiredService<IOutboxFlusher>().FlushAsync(CancellationToken.None);
+
+        using var unsentRows = connectionFactory.Connection.CreateCommand();
+        unsentRows.CommandText = "SELECT COUNT(*) FROM conduit_outbox WHERE Status <> @Sent";
+        unsentRows.Parameters.AddWithValue("@Sent", (int)OutboxEntryStatus.Sent);
+        var allSent = false;
+        for (var attempt = 0; attempt < 50 && !allSent; attempt++)
+        {
+            allSent = Convert.ToInt32(await unsentRows.ExecuteScalarAsync(), CultureInfo.InvariantCulture) == 0;
+            if (!allSent)
+            {
+                await Task.Delay(100);
+            }
+        }
+
+        allSent.Should().BeTrue("every written row must be in the written-messages list the flush delivers");
+
+        var relay = new OutboxRelay(
+            host.GetRequiredService<IServiceScopeFactory>(),
+            host.GetRequiredService<TransportDispatcher>(),
+            Options.Create(new OutboxOptions { GracePeriod = TimeSpan.Zero, AutoCreateTable = false }),
+            NullLogger<OutboxRelay>.Instance);
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        probe.Count.Should().Be(1, "the captured event's listener runs once — not once per nested pipeline");
+        spyTransport.SentEvents.Where(e => e.Type.Contains("AuditTrailEvent", StringComparison.Ordinal)).Should().ContainSingle();
+    }
+
+    [TestMethod]
     public async Task BypassCaptureForImmediateEventsEvenInsideATransaction()
     {
         // Arrange — host as before (probe registered; no transport needed)

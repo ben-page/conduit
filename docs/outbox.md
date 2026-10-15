@@ -92,7 +92,9 @@ Handler executes (in managed transaction)
   │         both, post-commit
   │       - no ambient transaction → declined (false): normal path — local dispatch
   │         (events; commands go to their route) + direct transport send
-  ├── OutboxBehavior writes captured envelopes to the outbox table (same transaction)
+  ├── OutboxBehavior writes captured envelopes to the outbox table (same transaction) —
+  │     once each: it ends every pipeline in the scope, nested inline-event pipelines
+  │     included, and writes only the envelopes no earlier pipeline end has written
   └── Transaction commits (business data + outbox entries, atomic)
 
 The delivery IOutboxFlusher.FlushAsync schedules on the background dispatcher (optional —

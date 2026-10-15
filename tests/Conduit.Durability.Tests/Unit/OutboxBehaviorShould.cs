@@ -157,7 +157,7 @@ public class OutboxBehaviorShould
     }
 
     [TestMethod]
-    public async Task SetWrittenMessagesOnCaptureAfterSave()
+    public async Task AddWrittenMessagesOnCaptureAfterSave()
     {
         // Arrange
         var store = new StubOutboxStore();
@@ -176,7 +176,7 @@ public class OutboxBehaviorShould
         // Assert -- after behavior runs, capture's correlated messages should be deliverable.
         // Exercises the delivery routine directly (rather than capture.FlushAsync, which now only
         // schedules it on the background dispatcher) against the exact messages OutboxBehavior
-        // correlated via SetWrittenMessages, proving the MessageId round-trips correctly.
+        // correlated via AddWrittenMessages, proving the MessageId round-trips correctly.
         var savedMessageId = store.SavedEntries[0].MessageId;
         store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 1, MessageId = savedMessageId }];
 
@@ -186,6 +186,109 @@ public class OutboxBehaviorShould
         transport.SentEvents.Should().HaveCount(1);
         transport.SentEvents[0].Type.Should().Be("Test.OrderPlaced");
         store.MarkedSent.Should().BeEquivalentTo([1L]);
+    }
+
+    [TestMethod]
+    public async Task WriteEachCapturedEnvelopeOnceAcrossNestedPipelines()
+    {
+        // Arrange — one dispatch scope (one capture): the command handler captures one envelope,
+        // then publishes two events inline, whose listener pipelines each run their own
+        // OutboxBehavior inside the command's pipeline before the command's own behavior runs.
+        var capture = CreateCapture();
+        var store = new StubOutboxStore();
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        var commandBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+        var firstListenerBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+        var secondListenerBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Act
+        await commandBehavior.HandleAsync(
+            "command",
+            async () =>
+            {
+                capture.Intercept(new DispatchEnvelope("Test.UrgentNotice", JsonSerializer.SerializeToElement(new { Id = 1 })));
+                await firstListenerBehavior.HandleAsync("first", () => Task.FromResult("first"), CancellationToken.None);
+                await secondListenerBehavior.HandleAsync("second", () => Task.FromResult("second"), CancellationToken.None);
+                return "command";
+            },
+            CancellationToken.None);
+
+        // Assert — one row, and that row is the one the post-commit flush delivers.
+        store.SavedEntries.Should().ContainSingle();
+        capture.WrittenMessages.Should().ContainSingle();
+        capture.WrittenMessages[0].MessageId.Should().Be(store.SavedEntries[0].MessageId);
+    }
+
+    [TestMethod]
+    public async Task AccumulateWrittenMessagesAcrossPipelinesInOneScope()
+    {
+        // Arrange — the inner pipeline writes the first envelope; the outer handler then captures
+        // a second one after the inner pipeline has returned.
+        var capture = CreateCapture();
+        var store = new StubOutboxStore();
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        var outerBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+        var innerBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Act
+        await outerBehavior.HandleAsync(
+            "outer",
+            async () =>
+            {
+                capture.Intercept(new DispatchEnvelope("Test.First", JsonSerializer.SerializeToElement(new { })));
+                await innerBehavior.HandleAsync("inner", () => Task.FromResult("inner"), CancellationToken.None);
+                capture.Intercept(new DispatchEnvelope("Test.Second", JsonSerializer.SerializeToElement(new { })));
+                return "outer";
+            },
+            CancellationToken.None);
+
+        // Assert — each envelope written once, and BOTH are in the list the flush delivers (the
+        // inner pipeline's written message is not replaced by the outer one's).
+        store.SavedEntries.Select(e => e.Type).Should().Equal("Test.First", "Test.Second");
+        capture.WrittenMessages.Select(m => m.MessageId).Should().Equal(store.SavedEntries.Select(e => e.MessageId));
+        capture.WrittenMessages.Select(m => m.Envelope.Type).Should().Equal("Test.First", "Test.Second");
+    }
+
+    [TestMethod]
+    public async Task LeaveEnvelopesUnwrittenWhenTheSaveFails()
+    {
+        // Arrange — the first save throws, so nothing reached the transaction; a later pipeline in
+        // the same scope must still write the envelope.
+        var capture = CreateCapture();
+        var store = new FailOnceOutboxStore();
+        var factory = new StubTransactionFactory(hasTransaction: true);
+
+        capture.Intercept(new DispatchEnvelope("Test.Notice", JsonSerializer.SerializeToElement(new { })));
+
+        var failingBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+        var laterBehavior = new OutboxBehavior<string, string>(capture, store, factory);
+
+        // Act
+        var failing = () => failingBehavior.HandleAsync("request", () => Task.FromResult("response"), CancellationToken.None);
+        await failing.Should().ThrowAsync<InvalidOperationException>();
+        await laterBehavior.HandleAsync("request", () => Task.FromResult("response"), CancellationToken.None);
+
+        // Assert
+        store.SavedEntries.Should().ContainSingle(e => e.Type == "Test.Notice");
+        capture.WrittenMessages.Should().ContainSingle();
+    }
+}
+
+file sealed class FailOnceOutboxStore : StubOutboxStore
+{
+    private bool failed;
+
+    public override Task SaveAsync(IReadOnlyList<OutboxEntry> entries, DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        if (!this.failed)
+        {
+            this.failed = true;
+            throw new InvalidOperationException("Simulated outbox write failure.");
+        }
+
+        return base.SaveAsync(entries, transaction, cancellationToken);
     }
 }
 

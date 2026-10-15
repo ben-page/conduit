@@ -1,4 +1,5 @@
-﻿using Conduit.Middleware;
+﻿using System.Diagnostics;
+using Conduit.Middleware;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,10 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     private readonly ILogger<OutboxCapture> logger;
     private readonly List<DispatchEnvelope> captured = [];
     private List<WrittenOutboxMessage> writtenMessages = [];
+
+    // How many of `captured` (always a prefix — envelopes are written in capture order) already
+    // have an outbox row in this scope's transaction.
+    private int writtenCount;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="OutboxCapture"/> class.
@@ -74,16 +79,35 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     }
 
     /// <summary>
-    /// Called by <see cref="OutboxBehavior{TRequest,TResult}"/> after writing
-    /// entries to the store. Correlates database entries with in-memory envelopes.
+    /// The captured envelopes that have no outbox row yet, in capture order — a snapshot.
+    /// <see cref="OutboxBehavior{TRequest,TResult}"/> runs at the end of EVERY pipeline in the
+    /// scope (including the nested pipelines of events a handler publishes inline), so it writes
+    /// only these: writing all of <see cref="Captured"/> each time would give one envelope a row
+    /// per pipeline.
     /// </summary>
-    internal void SetWrittenMessages(IReadOnlyList<WrittenOutboxMessage> messages)
+    internal IReadOnlyList<DispatchEnvelope> Unwritten
+        => this.captured.GetRange(this.writtenCount, this.captured.Count - this.writtenCount);
+
+    /// <summary>
+    /// Called by <see cref="OutboxBehavior{TRequest,TResult}"/> after its write to the store
+    /// succeeded: marks the written envelopes (the leading <paramref name="messages"/>.Count of
+    /// <see cref="Unwritten"/>) as written, and APPENDS their MessageId-to-envelope correlation to
+    /// <see cref="WrittenMessages"/>, so the post-commit flush delivers every row this scope wrote
+    /// — not only the last pipeline's.
+    /// </summary>
+    internal void AddWrittenMessages(IReadOnlyList<WrittenOutboxMessage> messages)
     {
-        this.writtenMessages = [.. messages];
+        Debug.Assert(
+            this.writtenCount + messages.Count <= this.captured.Count
+            && messages.Select((message, index) => ReferenceEquals(message.Envelope, this.captured[this.writtenCount + index])).All(matches => matches),
+            "Written messages must be the leading unwritten envelopes, in capture order.");
+
+        this.writtenMessages.AddRange(messages);
+        this.writtenCount += messages.Count;
     }
 
     /// <summary>
-    /// The messages set by <see cref="SetWrittenMessages"/>. Exposed for tests that exercise
+    /// The messages added by <see cref="AddWrittenMessages"/> since the last flush. Exposed for tests that exercise
     /// <see cref="ClaimAndDeliverAsync"/> directly against the messages a real capture/behavior
     /// pipeline correlated, without going through the background dispatcher.
     /// </summary>

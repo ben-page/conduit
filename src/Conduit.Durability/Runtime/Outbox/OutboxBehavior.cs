@@ -9,6 +9,12 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// Pipeline behavior that writes captured outbound messages to the outbox table
 /// within the handler's database transaction.
 /// </summary>
+/// <remarks>
+/// It runs at the end of every pipeline in the dispatch scope — including the nested pipelines of
+/// events a handler publishes inline — so it writes only the envelopes that have no row yet
+/// (<see cref="OutboxCapture.Unwritten"/>): each captured envelope gets exactly one row per scope,
+/// written by the first pipeline to finish after it was captured.
+/// </remarks>
 public sealed class OutboxBehavior<TRequest, TResult>(
     OutboxCapture capture,
     IOutboxStore store,
@@ -24,7 +30,7 @@ public sealed class OutboxBehavior<TRequest, TResult>(
 
         var result = await next();
 
-        var captured = capture.Captured;
+        var captured = capture.Unwritten;
         if (captured.Count == 0)
         {
             return result;
@@ -64,7 +70,7 @@ public sealed class OutboxBehavior<TRequest, TResult>(
         await store.SaveAsync(entries, transaction, cancellationToken);
         MessageContext.Observe(new OutboxWritten(entries.Count));
 
-        capture.SetWrittenMessages(
+        capture.AddWrittenMessages(
             entries.Select((entry, index) => new WrittenOutboxMessage(
                 entry.MessageId,
                 entry.ConversationId,

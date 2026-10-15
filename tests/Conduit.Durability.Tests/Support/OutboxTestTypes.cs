@@ -62,3 +62,26 @@ public class RecordAuditHandler(IMediator mediator) : ICommandHandler<RecordAudi
         return Guid.NewGuid();
     }
 }
+
+/// <summary>A plain (inline) event: its listener's pipeline runs inside the publishing handler's.</summary>
+public record AuditStepEvent(int Step) : IEvent;
+
+public class AuditStepListener : IEventListener<AuditStepEvent>
+{
+    public Task HandleAsync(AuditStepEvent @event, CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
+/// <summary>Captures one fire-and-forget event, then publishes two plain events inline — each of
+/// which runs a nested pipeline (and so a nested outbox behavior) in the same dispatch scope.</summary>
+public record RecordAuditWithStepsCommand(string Detail) : ICommand<Guid>;
+
+public class RecordAuditWithStepsHandler(IMediator mediator) : ICommandHandler<RecordAuditWithStepsCommand, Guid>
+{
+    public async Task<Guid> HandleAsync(RecordAuditWithStepsCommand command, CancellationToken cancellationToken)
+    {
+        await mediator.PublishAsync(new AuditTrailEvent(command.Detail), cancellationToken);
+        await mediator.PublishAsync(new AuditStepEvent(1), cancellationToken);
+        await mediator.PublishAsync(new AuditStepEvent(2), cancellationToken);
+        return Guid.NewGuid();
+    }
+}
