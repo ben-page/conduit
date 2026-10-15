@@ -18,7 +18,7 @@
 
 The audit trail records the lifecycle of every dispatch — the message type and kind, the message/conversation/causation IDs that correlate it to other dispatches, the (optional) payload, contextual properties, a timestamp, and an ordered list of observations (`DispatchInvoked`, `HandlerStarted`, `HandlerCompleted`, `DispatchCompleted`, `DispatchFailed`, retry attempts, and so on).
 
-It is built on `MessageContext.Observe()`, a static observation hook the generated mediator and other framework components call at the moment each lifecycle event occurs. When no observer is registered the hook is a no-op, so the audit infrastructure is **zero-cost until you opt in**.
+It is built on `MessageContext.Observe()`, a static observation hook the generated mediator and other framework components call at the moment each lifecycle event occurs. When no observer is registered the hook is a no-op, so the audit infrastructure is **zero-cost until you opt in**. Payload serialization is guarded the same way: the generated mediator serializes a message for the audit payload only when an observer is attached (`MessageContext.HasObserver`).
 
 ### When to use it
 
@@ -203,6 +203,8 @@ public sealed record UpdateSsn(int EmployeeId, [AuditRedacted] string? SocialSec
 
 Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops `[DoNotAudit]` properties (and the properties bound to marked constructor parameters) and writes `[AuditRedacted]` ones as their placeholder. Names match case-insensitively, and base types are walked: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. Wire serialization keeps `JsonOptions`, so the member still travels on the wire.
 
+**Wire-inbound dispatch captures the same body.** A request or event that arrives over a transport (the generated `HandleWireRequestAsync`/`HandleWireEventAsync`) is read into its typed message, and that object is serialized with `AuditJsonOptions` (`ConduitRuntime.CaptureAuditPayload`) — never the raw inbound JSON, which would keep `[DoNotAudit]` members and any property the sender invented. A type-level `[DoNotAudit]` type captures nothing. A request this host **forwards** to another endpoint by route is never deserialized here, so its record carries no body. The receiving host records its own. A request whose JSON cannot be read still leaves a failed record, without a body.
+
 `[DoNotAudit]` on a type suppresses payload capture only — the dispatch is still observed and recorded, just without the message body. `Suppress<T>()` drops the type from the audit trail entirely; `SuppressPayload<T>()` keeps the record but omits the body.
 
 ## What gets captured
@@ -212,7 +214,7 @@ A `DispatchAuditRecord` contains:
 | Field | Description |
 |---|---|
 | `MessageId`, `ConversationId`, `CausationId` | Correlation IDs from `MessageContext`. Records across services join on `MessageId`. |
-| `MessageType`, `MessageKind` | Full type name and `command` / `query` / `event`. |
+| `MessageType`, `MessageKind` | Full type name, and the kind: `command` / `query` / `event` for an in-process dispatch; `Request` (command or query) / `Event` for a wire-inbound one. |
 | `ServiceName` | The emitting service (from `AddAudit().ServiceName`). |
 | `Payload` | The serialized message body — unless suppressed via `[DoNotAudit]` or `SuppressPayload<T>()`. |
 | `Properties` | Contextual properties carried on the `MessageContext`. |
