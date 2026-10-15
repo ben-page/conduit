@@ -16,6 +16,7 @@
 - **CONDUIT002** — *Multiple handlers found* (Error): more than one handler exists for a command/query; only one handler per command/query is allowed.
 - **CONDUIT003** — *Invalid [FireAndForget] usage* (Warning): `[FireAndForget]` is only valid on void commands (`ICommand`) and events (`IEvent`). Commands with results (`ICommand<TResult>`) and queries (`IQuery<TResult>`) require a response.
 - **CONDUIT004** — *Handler not accessible* (Warning): a handler for a type exists in a referenced assembly but is not accessible to the generating assembly. Make it `public` to be auto-registered.
+- **CONDUIT005** — *Conflicting audit marks* (Error): a message member (property or record/constructor parameter, base chain included) is marked both `[DoNotAudit]` and `[AuditRedacted]`; an audited member takes one. Mirrors the runtime refusal in `ConduitRuntime.ApplyAuditMemberMarks`.
 - Generated `AddConduit()` calls `ConduitRuntime.AddConduitCore()` and registers handlers/listeners by interface type (e.g. `ICommandHandler<T,R>`, `IEventListener<T>`) — enables test substitution
 - Generated `AddConduit()` also registers `ConduitTypeRegistry` with `typeof()` expressions for all discovered message types (`eventTypes:`, `commandTypes:`, `queryTypes:`) — compile-time verified, no runtime DI scanning needed by transports
 - Pipeline behaviors resolved via `ConduitRuntime.ResolvePipelines` (explicit ordering, not DI enumeration)

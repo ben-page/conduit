@@ -50,4 +50,8 @@ public sealed record DispatchableTypeInfo
 
     /// <summary>Whether the type has a <c>[DoNotAudit]</c> attribute.</summary>
     public bool IsDoNotAudit { get; init; }
+
+    /// <summary>Members marked both <c>[DoNotAudit]</c> and <c>[AuditRedacted]</c> (comma-joined, ordinal-sorted), or
+    /// <see langword="null"/>. A string, not an array, so the record's value equality holds (CONDUIT005).</summary>
+    public string? AuditMarkConflicts { get; init; }
 }

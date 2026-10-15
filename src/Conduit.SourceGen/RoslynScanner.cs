@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Conduit.Analysis;
 using Microsoft.CodeAnalysis;
 
@@ -18,6 +19,7 @@ public static class RoslynScanner
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
     private const string FireAndForgetAttributeName = "Conduit.Attributes.FireAndForgetAttribute";
     private const string DoNotAuditAttributeName = "Conduit.Attributes.DoNotAuditAttribute";
+    private const string AuditRedactedAttributeName = "Conduit.Attributes.AuditRedactedAttribute";
     private const string NotAutoRegisteredAttributeName = "Conduit.Attributes.NotAutoRegisteredAttribute";
 
     /// <summary>
@@ -70,6 +72,7 @@ public static class RoslynScanner
                 IsFireAndForget = fireAndForgetAttribute is not null,
                 IsFireAndForgetImmediate = GetNamedBoolArgument(fireAndForgetAttribute, "Immediate"),
                 IsDoNotAudit = HasAttribute(typeSymbol, DoNotAuditAttributeName),
+                AuditMarkConflicts = AuditMarkConflicts(typeSymbol),
             });
         }
 
@@ -312,7 +315,43 @@ public static class RoslynScanner
         return ns.ToDisplayString() + "." + nestedName;
     }
 
-    private static bool HasAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)
+    // The same rule ConduitRuntime.ApplyAuditMemberMarks enforces at runtime: walk the base chain, and bind constructor
+    // parameters to properties by name case-insensitively.
+    private static string? AuditMarkConflicts(INamedTypeSymbol typeSymbol)
+    {
+        var dropped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var redacted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var type = typeSymbol; type is not null && type.SpecialType != SpecialType.System_Object; type = type.BaseType)
+        {
+            foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
+            {
+                Collect(property, property.Name);
+            }
+
+            foreach (var parameter in type.InstanceConstructors.SelectMany(c => c.Parameters))
+            {
+                Collect(parameter, parameter.Name);
+            }
+        }
+
+        var conflicts = dropped.Where(redacted.Contains).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        return conflicts.Count == 0 ? null : string.Join(", ", conflicts);
+
+        void Collect(ISymbol symbol, string name)
+        {
+            if (HasAttribute(symbol, DoNotAuditAttributeName))
+            {
+                dropped.Add(name);
+            }
+
+            if (HasAttribute(symbol, AuditRedactedAttributeName))
+            {
+                redacted.Add(name);
+            }
+        }
+    }
+
+    private static bool HasAttribute(ISymbol typeSymbol, string attributeFullName)
     {
         foreach (var attribute in typeSymbol.GetAttributes())
         {

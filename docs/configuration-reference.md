@@ -402,6 +402,7 @@ the packages:
 | CONDUIT001 | Warning | No handler found for a command or query | Add a handler or use `[assembly: RemoteContracts("Ns")]` |
 | CONDUIT002 | Error | Multiple handlers for a command or query | Remove the duplicate handler |
 | CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
+| CONDUIT005 | Error | A message member is marked both [DoNotAudit] and [AuditRedacted] | Keep one |
 
 ---
 

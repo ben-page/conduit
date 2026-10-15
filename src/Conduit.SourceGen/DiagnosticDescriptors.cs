@@ -30,4 +30,10 @@ public static class DiagnosticDescriptors
         "CONDUIT004", "Handler not accessible",
         "Handler for {0} exists but is not accessible to the generating assembly. Make it public to be auto-registered.",
         "Conduit", DiagnosticSeverity.Warning, true);
+
+    /// <summary>CONDUIT005: A message member is marked both [DoNotAudit] and [AuditRedacted].</summary>
+    public static readonly DiagnosticDescriptor ConflictingAuditMarks = new(
+        "CONDUIT005", "Conflicting audit marks",
+        "'{0}' marks member(s) {1} both [DoNotAudit] and [AuditRedacted]; an audited member takes one",
+        "Conduit", DiagnosticSeverity.Error, true);
 }

@@ -123,6 +123,12 @@ public sealed class ConduitGenerator : IIncrementalGenerator
     {
         foreach (var type in types)
         {
+            if (type.AuditMarkConflicts is not null)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticDescriptors.ConflictingAuditMarks, Location.None, type.FullTypeName, type.AuditMarkConflicts));
+            }
+
             if (type.Kind == DispatchableKind.Event)
             {
                 continue;
