@@ -12,6 +12,7 @@ internal sealed class DispatchGroup
     private readonly IReadOnlyDictionary<string, object?>? properties;
     private readonly string serviceName;
     private JsonElement? payload;
+    private bool payloadSuppressed;
 
     internal DispatchGroup(MessageContext context, string serviceName)
     {
@@ -32,9 +33,27 @@ internal sealed class DispatchGroup
 
     /// <summary>
     /// Omits the captured payload body from the sealed record. Used for types marked via
-    /// <c>SuppressPayload&lt;T&gt;()</c> — observations are still recorded, but no body is persisted.
+    /// <c>SuppressPayload&lt;T&gt;()</c> — observations are still recorded, but no body is persisted. Sticky: a later
+    /// <see cref="RefreshPayload"/> does not restore it.
     /// </summary>
-    internal void SuppressPayload() => this.payload = null;
+    internal void SuppressPayload()
+    {
+        this.payloadSuppressed = true;
+        this.payload = null;
+    }
+
+    /// <summary>
+    /// Takes the context's payload again at seal time. The wire dispatch observes <see cref="DispatchInvoked"/> before
+    /// its switch arm deserializes and captures the message, so the constructor's copy is empty on that path; re-reading
+    /// here keeps it, while a dispatch that failed before capture (unreadable JSON) still seals -- without a body.
+    /// </summary>
+    internal void RefreshPayload(MessageContext context)
+    {
+        if (!this.payloadSuppressed && context.Payload is { } latest)
+        {
+            this.payload = latest;
+        }
+    }
 
     /// <summary>
     /// Appends a synthetic <see cref="DispatchFailed"/> observation marking this group as evicted

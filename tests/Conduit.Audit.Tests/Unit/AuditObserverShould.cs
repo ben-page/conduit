@@ -323,4 +323,60 @@ public sealed class AuditObserverShould
         channel.Reader.TryRead(out _).Should().BeFalse(
             "a group younger than StaleGroupTimeout must not be evicted");
     }
+
+    [TestMethod]
+    public void KeepAPayloadSetAfterDispatchInvoked()
+    {
+        // Arrange -- the wire path: DispatchInvoked is observed BEFORE the arm deserializes and captures
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(channel.Writer, "TestService");
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.DoThing", "Request"), context);
+
+        // Act
+        context.SetPayload(JsonSerializer.SerializeToElement(new { value = "set-after-invoked" }));
+        observer.OnObservation(new DispatchCompleted(1.0), context);
+
+        // Assert
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Payload.Should().NotBeNull("the group re-reads the context's payload when it seals");
+        record.Payload!.Value.GetRawText().Should().Contain("set-after-invoked");
+    }
+
+    [TestMethod]
+    public void KeepAPayloadSetAfterDispatchInvokedOnAFailedDispatch()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(channel.Writer, "TestService");
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.DoThing", "Request"), context);
+
+        // Act
+        context.SetPayload(JsonSerializer.SerializeToElement(new { value = "captured-then-failed" }));
+        observer.OnObservation(new DispatchFailed(1.0, "boom", "InvalidOperationException"), context);
+
+        // Assert
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Payload!.Value.GetRawText().Should().Contain("captured-then-failed");
+    }
+
+    [TestMethod]
+    public void KeepASuppressedPayloadOmittedWhenSetAfterInvoked()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(
+            channel.Writer, "TestService", new HashSet<string>(), new HashSet<string> { "Test.Commands.Sensitive" });
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.Sensitive", "Request"), context);
+
+        // Act -- the wire arm captures after DispatchInvoked; suppression must still win
+        context.SetPayload(JsonSerializer.SerializeToElement(new { ssn = "123-45-6789" }));
+        observer.OnObservation(new DispatchCompleted(1.0), context);
+
+        // Assert
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Payload.Should().BeNull("SuppressPayload<T>() must not be undone by the seal-time re-read");
+    }
 }
