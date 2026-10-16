@@ -10,7 +10,8 @@ namespace Conduit.Attributes;
 /// dispatch records no body -- marked <see cref="DoNotAuditAttribute"/> at type level, or suppressed by the host's audit
 /// registration (Conduit.Audit's <c>Suppress&lt;T&gt;()</c>/<c>SuppressPayload&lt;T&gt;()</c>) -- leaves the member out; an unknown or null name, or JSON that does
 /// not read as that type, writes <see cref="AuditRedactedAttribute.Placeholder"/>. Wire serialization is unaffected.
-/// A message member that is not <c>JsonElement</c>, or names no sibling string property, is a build error (CONDUIT006).
+/// A member that is not <c>JsonElement</c>, or names no sibling string property, is a build error (CONDUIT006) on a message
+/// and on any type a message carries that is declared in the same compilation.
 /// </summary>
 /// <param name="typeMember">The sibling string property holding the inner message's wire type name; use <c>nameof</c>.</param>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter)]

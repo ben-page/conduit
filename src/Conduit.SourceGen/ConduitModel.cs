@@ -13,6 +13,9 @@ public sealed record ConduitModel
     /// <summary>All discovered dispatchable command/query/event types.</summary>
     public required EquatableArray<DispatchableTypeInfo> DispatchableTypes { get; init; }
 
+    /// <summary>Types a message carries whose [AuditAs] is misapplied (CONDUIT006), one per type.</summary>
+    public required EquatableArray<CarriedAuditAsMisuse> CarriedAuditAsMisuses { get; init; }
+
     /// <summary>All discovered accessible command/query handlers.</summary>
     public required EquatableArray<HandlerInfo> Handlers { get; init; }
 

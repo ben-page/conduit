@@ -11,7 +11,7 @@ in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
 | `CONDUIT003` | Warning | Invalid `[FireAndForget]` usage | `[FireAndForget]` was applied to a type that cannot be fire-and-forget. |
 | `CONDUIT004` | Warning | Handler not accessible | A handler exists in a referenced assembly but is not accessible (e.g. internal) to the generating assembly. |
 | `CONDUIT005` | Error | Conflicting audit marks | A message member is marked both `[DoNotAudit]` and `[AuditRedacted]`. |
-| `CONDUIT006` | Error | Misapplied `[AuditAs]` | `[AuditAs]` is on a message member that is not `JsonElement`/`JsonElement?`, or names no sibling `string` property. |
+| `CONDUIT006` | Error | Misapplied `[AuditAs]` | `[AuditAs]` is on a member of a message, or of a type a message carries, that is not `JsonElement`/`JsonElement?`, or names no sibling `string` property. |
 
 ---
 
@@ -93,10 +93,21 @@ type name is in a sibling property, so capture can read it as that message and r
 `string` property of the type or a base. Each reason names the member and what is wrong: it is not a `JsonElement`,
 or the name is not a property of the type, or the property is not a `string`.
 
-The scan is scoped as CONDUIT005's is: the generator checks the members of every command, query and event, **base
-chain** included (property attributes and constructor-parameter attributes alike). It does not check a **nested
-type** a message carries — such as an envelope's item record. There, a misapplied `[AuditAs]` is not a build error;
-the serializer writes the member as the `•••` placeholder (never its raw JSON, and without failing the dispatch).
+The generator checks the members of every command, query and event, **base chain** included (property attributes
+and constructor-parameter attributes alike) — and of every **type a message carries** that is declared in the
+compilation being built: the types of a message's properties and of its public constructors' parameters, through
+nullables, arrays and generic type arguments (`IReadOnlyList<BatchItem>`, `BatchItem[]`, `Dictionary<string,
+List<BatchItem>>`), transitively, so an envelope's item record is checked like the envelope. Each such type is
+reported once, under its own name, however many messages reach it; a cycle (a type that carries itself, or A
+carries B carries A) is walked once. A carried type that is itself a message is reported as a message, not twice.
+Every member is walked, marked or not: a misapplied `[AuditAs]` is reported even below a `[DoNotAudit]` member.
+
+**Bounds.** A carried type declared in **another assembly** is neither walked nor checked: the check runs where the
+type is compiled, and only if that project runs the Conduit generator. When contracts live in a library the
+generator does not run on, a carried type there is unchecked. A member typed as an interface, `object` or a type
+parameter carries a runtime shape the generator cannot see, and is not walked. On an unchecked type, a misapplied
+`[AuditAs]` is not a build error; the serializer writes the member as the `•••` placeholder (never its raw JSON,
+and without failing the dispatch). CONDUIT005 keeps the message-only scope.
 
 **Resolve** by moving `[AuditAs]` to the `JsonElement` member that holds the serialized message, and pointing it at
 the `string` property holding that message's type name, with `nameof`.

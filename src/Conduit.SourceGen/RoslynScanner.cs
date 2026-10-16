@@ -31,7 +31,13 @@ public static class RoslynScanner
     /// </summary>
     /// <param name="compilation">The Roslyn compilation to scan.</param>
     /// <returns>The discovered dispatchable types.</returns>
-    public static IReadOnlyList<DispatchableTypeInfo> Scan(Compilation compilation)
+    public static IReadOnlyList<DispatchableTypeInfo> Scan(Compilation compilation) => Scan(compilation, messageSymbols: null);
+
+    /// <summary>
+    /// <see cref="Scan(Compilation)"/>, also collecting each discovered message's symbol into
+    /// <paramref name="messageSymbols"/> for <see cref="ScanCarriedAuditAsMisuses"/>.
+    /// </summary>
+    internal static IReadOnlyList<DispatchableTypeInfo> Scan(Compilation compilation, List<INamedTypeSymbol>? messageSymbols)
     {
         if (compilation is null)
         {
@@ -77,6 +83,7 @@ public static class RoslynScanner
                 AuditMarkConflicts = AuditMarkConflicts(typeSymbol),
                 AuditAsMisuses = AuditAsMisuses(typeSymbol),
             });
+            messageSymbols?.Add(typeSymbol);
         }
 
         return results.AsReadOnly();
@@ -397,6 +404,102 @@ public static class RoslynScanner
             else if (sibling.Type.SpecialType != SpecialType.System_String)
             {
                 misuses.Add($"{name} names '{typeMember}', which is not a string");
+            }
+        }
+    }
+
+    /// <summary>
+    /// CONDUIT006 beyond the message itself: every type a message declared in this compilation carries -- its members'
+    /// types (properties and constructor parameters, base chain included), through nullables, arrays and generic type
+    /// arguments, transitively -- that is declared in this compilation and is not itself a message (a message is checked
+    /// as one). Constructor parameters count for public constructors other than a record's copy constructor. A type from
+    /// another assembly is not walked or checked. Cycles are guarded, and each type is reported once however many messages
+    /// reach it. Every member is walked, marked or not: a misapplied [AuditAs] is wrong wherever it sits. A member typed
+    /// as an interface or a type parameter is not walked.
+    /// </summary>
+    internal static IReadOnlyList<CarriedAuditAsMisuse> ScanCarriedAuditAsMisuses(
+        Compilation compilation, IReadOnlyList<INamedTypeSymbol> messageSymbols)
+    {
+        var messages = new HashSet<ITypeSymbol>(messageSymbols, SymbolEqualityComparer.Default);
+        var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+        var pending = new Queue<INamedTypeSymbol>();
+        foreach (var message in messageSymbols)
+        {
+            if (IsDeclaredIn(message, compilation) && seen.Add(message))
+            {
+                pending.Enqueue(message);
+            }
+        }
+
+        var misuses = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        while (pending.Count > 0)
+        {
+            var type = pending.Dequeue();
+            if (!messages.Contains(type) && AuditAsMisuses(type) is { } misuse)
+            {
+                misuses[type.IsGenericType ? type.ToDisplayString() : GetMetadataFullName(type)] = misuse;
+            }
+
+            for (var declaring = type; declaring is not null && declaring.SpecialType != SpecialType.System_Object; declaring = declaring.BaseType)
+            {
+                var memberTypes = declaring.GetMembers().OfType<IPropertySymbol>()
+                    .Where(property => !property.IsStatic && !property.IsIndexer)
+                    .Select(property => property.Type)
+                    .Concat(declaring.InstanceConstructors.Where(IsBindingConstructor)
+                        .SelectMany(constructor => constructor.Parameters).Select(parameter => parameter.Type));
+                foreach (var carried in memberTypes.SelectMany(Constituents))
+                {
+                    if (IsDeclaredIn(carried, compilation) && seen.Add(carried))
+                    {
+                        pending.Enqueue(carried);
+                    }
+                }
+            }
+        }
+
+        return misuses.Select(entry => new CarriedAuditAsMisuse { FullTypeName = entry.Key, Misuses = entry.Value }).ToList();
+    }
+
+    // A public constructor the serializer could bind, not a record's copy constructor (its one parameter is the type
+    // itself, which would make a base record "carried" by every derived one).
+    private static bool IsBindingConstructor(IMethodSymbol constructor) =>
+        constructor.DeclaredAccessibility == Accessibility.Public
+        && !(constructor.Parameters.Length == 1
+            && SymbolEqualityComparer.Default.Equals(constructor.Parameters[0].Type, constructor.ContainingType));
+
+    private static bool IsDeclaredIn(ITypeSymbol type, Compilation compilation) =>
+        SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, compilation.Assembly);
+
+    // The class and struct types a member type is built from: itself, its element type, a nullable's underlying type,
+    // and its generic type arguments, recursively. The walk takes each one's members.
+    private static IEnumerable<INamedTypeSymbol> Constituents(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol array)
+        {
+            foreach (var element in Constituents(array.ElementType))
+            {
+                yield return element;
+            }
+
+            yield break;
+        }
+
+        if (type is not INamedTypeSymbol named)
+        {
+            yield break;
+        }
+
+        if (named.OriginalDefinition.SpecialType != SpecialType.System_Nullable_T
+            && named.TypeKind is TypeKind.Class or TypeKind.Struct)
+        {
+            yield return named;
+        }
+
+        foreach (var argument in named.TypeArguments)
+        {
+            foreach (var constituent in Constituents(argument))
+            {
+                yield return constituent;
             }
         }
     }

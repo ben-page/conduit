@@ -404,7 +404,7 @@ the packages:
 | CONDUIT002 | Error | Multiple handlers for a command or query | Remove the duplicate handler |
 | CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
 | CONDUIT005 | Error | A message member is marked both [DoNotAudit] and [AuditRedacted] | Keep one |
-| CONDUIT006 | Error | [AuditAs] on a message member that is not JsonElement, or naming no sibling string property | Put it on a `JsonElement` member and name a `string` property |
+| CONDUIT006 | Error | [AuditAs] on a member of a message, or of a type a message carries (declared in the compilation), that is not JsonElement, or naming no sibling string property | Put it on a `JsonElement` member and name a `string` property |
 
 ---
 

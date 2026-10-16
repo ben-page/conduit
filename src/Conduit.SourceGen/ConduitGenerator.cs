@@ -29,7 +29,9 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
     private static ConduitModel BuildModel(Compilation compilation, CancellationToken cancellationToken)
     {
-        var dispatchableTypes = RoslynScanner.Scan(compilation);
+        var messageSymbols = new List<INamedTypeSymbol>();
+        var dispatchableTypes = RoslynScanner.Scan(compilation, messageSymbols);
+        var carriedAuditAsMisuses = RoslynScanner.ScanCarriedAuditAsMisuses(compilation, messageSymbols);
         var scan = RoslynScanner.ScanHandlers(compilation);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -46,6 +48,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         return new ConduitModel
         {
             DispatchableTypes = dispatchableTypes.ToEquatableArray(),
+            CarriedAuditAsMisuses = carriedAuditAsMisuses.ToEquatableArray(),
             Handlers = scan.Handlers.ToEquatableArray(),
             ListenerGroups = listenerGroups,
             InaccessibleHandlerMessageTypes = scan.InaccessibleHandlerMessageTypes.ToEquatableArray(),
@@ -67,6 +70,12 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         var groups = model.ListenerGroups;
 
         EmitDiagnostics(context, dispatchableTypes, handlers, model.InaccessibleHandlerMessageTypes, model.RemoteContractPatterns);
+
+        foreach (var carried in model.CarriedAuditAsMisuses)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.MisappliedAuditAs, Location.None, carried.FullTypeName, carried.Misuses));
+        }
 
         context.AddSource("ConduitDispatch.g.cs", DispatchEmitter.Emit(dispatchableTypes, handlers));
         context.AddSource("ConduitRegistration.g.cs", RegistrationEmitter.Emit(handlers, groups, dispatchableTypes));
