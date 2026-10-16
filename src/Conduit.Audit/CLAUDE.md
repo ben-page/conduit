@@ -13,19 +13,19 @@ Audit shares the relational-persistence abstraction in **`Conduit.Persistence`**
 ## Directory layout
 
 - `Configuration/` — `AuditBuilder` (capture side), `AuditListenerBuilder` (persistence side), `AuditOptions`
-- `Runtime/` — `AuditObserver`, `DispatchGroup`, `AuditBatchPublisher`, `AuditBatch`, `DispatchAuditRecord`, `LocalAuditListener`, `AuditPurgeService`, `AuditObserverInitializer`, `AuditTableInitializer`
+- `Runtime/` — `AuditObserver`, `DispatchGroup`, `AuditBatchPublisher`, `AuditBatch`, `DispatchAuditRecord`, `LocalAuditListener`, `AuditPurgeService`, `AuditTableInitializer`
 - `Persistence/` — `IAuditStore`, `DbAuditStore`, `AuditTableSchema` (module-owned table + column identifiers)
 
 ## Key types
 
 - `AuditObserver` — `IConduitObserver` implementation. Receives `MessageObservation` callbacks from `MessageContext.Observe()`. Groups observations by `MessageId` in a `ConcurrentDictionary<string, DispatchGroup>`. Seals the group on `DispatchCompleted`/`DispatchFailed` and writes the resulting `DispatchAuditRecord` to a bounded channel. Filters out `AuditBatch` type observations to prevent infinite recursion. Also honours per-type suppression: it takes two `IReadOnlySet<string>` of full type names — **suppressed types** (no group is ever created, so nothing is recorded) and **suppressed-payload types** (group is recorded but the body is nulled out via `DispatchGroup.SuppressPayload()`). `EvictStaleGroups(now, staleTimeout)` removes groups whose `CreatedAt` is older than `staleTimeout` relative to `now`; `now` is a parameter for deterministic testing. Evicted groups are sealed as failed (a synthetic `DispatchFailed` is appended via `DispatchGroup.MarkIncomplete`) and flushed to the channel rather than dropped, preserving the partial trail.
-- `DispatchGroup` — internal type that accumulates observations for a single dispatch. Captures `MessageContext` snapshot (message ID, conversation ID, causation ID, properties, payload) at creation time. `Seal()` produces a `DispatchAuditRecord`. `SuppressPayload()` nulls the captured body (for `SuppressPayload<T>()` types). `MarkIncomplete(staleTimeout)` appends a synthetic `DispatchFailed` for stale-group eviction. `CreatedAt` is the eviction reference time.
+- `DispatchGroup` — internal type that accumulates observations for a single dispatch. Holds the dispatch's `MessageContext` (message ID, conversation ID, causation ID, properties). `Seal()` produces a `DispatchAuditRecord`, reading the context's payload at that moment -- so a payload captured after `DispatchInvoked` (the wire path) is kept, and one cleared with `MessageContext.ClearPayload()` before the dispatch closes is dropped. `SuppressPayload()` nulls the captured body (for `SuppressPayload<T>()` types). `MarkIncomplete(staleTimeout)` appends a synthetic `DispatchFailed` for stale-group eviction. `CreatedAt` is the eviction reference time.
 - `AuditBatchPublisher` — `BackgroundService` that drains `DispatchAuditRecord` instances from the channel and publishes them as `AuditBatch` events via `IMediator.PublishAsync`. Creates a new DI scope per batch for correct handler lifetime. Batch size controlled by `AuditOptions.BatchSize`. Also runs a concurrent `PeriodicTimer` sweep loop that calls `AuditObserver.EvictStaleGroups` to evict incomplete dispatch groups (sweep cadence = `min(StaleGroupTimeout, 1 minute)`). This is the single owner of stale-group eviction.
 - `AuditBatch` — `IEvent` record containing `SourceService`, `SourceHost`, `BatchTimestamp`, and `Records`. Marked `[DoNotAudit]` to prevent the audit infrastructure from auditing its own events.
 - `DispatchAuditRecord` — the consolidated audit record for a single dispatch: message context fields, type info, raw JSON payload, properties, timestamp, and the full observation list.
 - `LocalAuditListener` — `IEventListener<AuditBatch>` (transient) that persists records to `IAuditStore`. Registered by `AddAuditListener`, whether batches are published in-process or arrive over a transport. Resolved per-publish inside the dispatch scope, so it can consume the **Scoped** `IAuditStore`.
 - `AuditPurgeService` — extends `PeriodicCleanupServiceBase`. Periodically deletes expired records based on `AuditOptions.RetentionPeriod`. The base class runs each tick inside a fresh `IServiceScopeFactory` scope and the purge resolves `IAuditStore` from that scoped provider in `CleanupAsync` — it does **not** inject the store into the constructor. This avoids a captive-dependency bug: the store is now Scoped, so a singleton `BackgroundService` injecting it directly would throw "Cannot consume scoped service from singleton" at startup under `ValidateScopes`.
-- `AuditObserverInitializer` — `IHostedService` that wires `AuditObserver` to `MessageContext.Observer` at startup and clears it at shutdown.
+- Observer attachment — there is no process-global observer. `AddAudit` registers `AuditObserver` as a DI singleton exposed as `IConduitObserver`; the generated mediator resolves it from each dispatch's scope and attaches it to that dispatch's `MessageContext` (`AttachObserver`), so each host observes only its own dispatches.
 - `AuditTableInitializer` — extends `TableInitializerBase`. Creates the audit table at startup (scoped) and **fails fast** in `ValidateConfiguration` if `AddAuditListener` was called but no persistence engine (`IConduitConnectionFactory`/`ISqlDialect`) is registered, pointing at `conduit.UseSqlite(...)`.
 
 ## Configuration
@@ -62,7 +62,7 @@ Deployment roles:
 ## Observation flow
 
 1. Generated mediator calls `MessageContext.Observe(observation)` at dispatch boundaries (`DispatchInvoked`, `DispatchCompleted`, `DispatchFailed`)
-2. `MessageContext.Observer` (static, set by `AuditObserverInitializer`) forwards to `AuditObserver.OnObservation`
+2. The context's attached observer (this host's `AuditObserver`, attached per dispatch by the generated mediator) receives it in `AuditObserver.OnObservation`
 3. Observer groups observations by `MessageId` in `DispatchGroup`, seals on terminal observation
 4. Sealed `DispatchAuditRecord` written to bounded `Channel<DispatchAuditRecord>`
 5. `AuditBatchPublisher` drains channel, publishes `AuditBatch` event via mediator

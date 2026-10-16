@@ -171,6 +171,16 @@ public sealed class MessageContext
     }
 
     /// <summary>
+    /// Drops the payload captured on this context. For a host that refuses a request whose captured body must not be
+    /// kept (e.g. a filter naming a value the audit trail may not store): the dispatch's record still seals -- failed --
+    /// but without a body, because the audit group reads the payload when it seals.
+    /// </summary>
+    public void ClearPayload()
+    {
+        this.Payload = null;
+    }
+
+    /// <summary>
     /// Whether an observer is attached to this context. The generated mediator and
     /// <see cref="ConduitRuntime.CaptureAuditPayload{T}"/> check it before serializing an audit payload, so a host that
     /// never registered an observer (no <c>AddAudit</c>) pays nothing for capture.

@@ -33,3 +33,39 @@ public sealed class AuditAsPropertyItem
     [AuditAs(nameof(Kind))]
     public JsonElement? Body { get; init; }
 }
+
+// An inner contract whose constructor refuses a value: reading it at capture throws ArgumentException.
+public sealed record AuditAsThrowingInnerCommand : ICommand
+{
+    public AuditAsThrowingInnerCommand(string value)
+    {
+        if (value == "refused")
+        {
+            throw new ArgumentException("The value is refused.", nameof(value));
+        }
+
+        this.Value = value;
+    }
+
+    public string Value { get; }
+}
+
+public sealed class AuditAsThrowingInnerCommandHandler : ICommandHandler<AuditAsThrowingInnerCommand>
+{
+    public Task HandleAsync(AuditAsThrowingInnerCommand command, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+}
+
+public class AuditAsHiddenBase
+{
+    public int Type { get; init; }
+}
+
+// Hides the base's int Type with a string one: the [AuditAs] sibling is the most-derived declaration.
+public sealed class AuditAsHiddenItem : AuditAsHiddenBase
+{
+    public new string? Type { get; init; }
+
+    [AuditAs(nameof(Type))]
+    public JsonElement Payload { get; init; }
+}

@@ -19,7 +19,7 @@ namespace Conduit.Runtime;
 /// (<see cref="TryGetRegisteredMessageType"/>), which <see cref="ConduitRuntime.AuditJsonOptions"/> reads to type an
 /// <c>[AuditAs]</c> member: it is static, so it cannot resolve a registry from DI. Exclusions do not apply to it
 /// (they filter topology, not what a host can dispatch), and only a type implementing <c>ICommand</c>,
-/// <c>IQuery&lt;T&gt;</c> or <c>IEvent</c> is added.
+/// <c>IQuery&lt;T&gt;</c> or <c>IEvent</c> is added. A name two different types register resolves to nothing.
 /// </para>
 /// </remarks>
 public sealed class ConduitTypeRegistry
@@ -58,7 +58,10 @@ public sealed class ConduitTypeRegistry
         {
             if (type.FullName is { } fullName && IsMessageType(type))
             {
-                RegisteredMessageTypes.TryAdd(fullName, type);
+                // A name two different types claim (two versions of a contracts assembly, separate load contexts) is
+                // ambiguous: capture could redact by one type's marks while dispatch runs the other, so it resolves to
+                // nothing (the placeholder) rather than to either.
+                RegisteredMessageTypes.AddOrUpdate(fullName, type, (_, existing) => existing == type ? existing : typeof(AmbiguousName));
             }
         }
     }
@@ -136,8 +139,19 @@ public sealed class ConduitTypeRegistry
     /// Resolves a wire type name (<see cref="Type.FullName"/>) to a message type some registry in this process
     /// registered. Never loads a type by name: a name no registry listed resolves to nothing.
     /// </summary>
-    internal static bool TryGetRegisteredMessageType(string fullName, [NotNullWhen(true)] out Type? type) =>
-        RegisteredMessageTypes.TryGetValue(fullName, out type);
+    internal static bool TryGetRegisteredMessageType(string fullName, [NotNullWhen(true)] out Type? type)
+    {
+        if (RegisteredMessageTypes.TryGetValue(fullName, out type) && type != typeof(AmbiguousName))
+        {
+            return true;
+        }
+
+        type = null;
+        return false;
+    }
+
+    // Stands in the lookup for a name two different message types registered.
+    private sealed class AmbiguousName;
 
     private static bool IsMessageType(Type type) =>
         typeof(ICommand).IsAssignableFrom(type)

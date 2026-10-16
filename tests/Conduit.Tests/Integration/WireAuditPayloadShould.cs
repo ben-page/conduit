@@ -278,4 +278,19 @@ public sealed class WireAuditPayloadShould
         inner.TryGetProperty("pin", out _).Should().BeFalse();
         inner.GetProperty("ssn").GetString().Should().Be("\u2022\u2022\u2022");
     }
+
+    [TestMethod]
+    public async Task KeepTheDispatchWhenAnAuditAsItemsContractThrowsOnRead()
+    {
+        // Act -- the inner contract's constructor throws ArgumentException at capture
+        var result = await this.SendAsync(
+            typeof(AuditAsEnvelopeCommand).FullName!,
+            new { items = new[] { new { type = typeof(AuditAsThrowingInnerCommand).FullName, payload = new { value = "refused" } } } });
+
+        // Assert -- capture writes the placeholder; it never fails the dispatch it records
+        result.Error.Should().BeNull();
+        var payload = this.observer.ClosedOfType(typeof(AuditAsEnvelopeCommand).FullName!).PayloadJson;
+        JsonDocument.Parse(payload!).RootElement.GetProperty("items")[0].GetProperty("payload").GetString()
+            .Should().Be("\u2022\u2022\u2022");
+    }
 }

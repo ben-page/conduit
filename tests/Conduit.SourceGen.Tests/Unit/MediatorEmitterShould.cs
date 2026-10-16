@@ -406,6 +406,8 @@ namespace App.Events
 
         // The in-process capture is guarded on an attached observer
         mediatorSource.Should().Contain("is { HasObserver: true } __auditContext");
+        // ... and skipped for a type the host's audit registration suppresses, which is never serialized
+        mediatorSource.Should().Contain("ConduitRuntime.CapturesAuditPayload(");
         mediatorSource.Should().NotContain("MessageContext.Current?.SetPayload(");
     }
 }

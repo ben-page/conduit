@@ -68,6 +68,19 @@ public static partial class ConduitRuntime
     /// </summary>
     internal static void SuppressAuditPayloadOf(Type type) => AuditSuppressedPayloadTypes.TryAdd(type, 0);
 
+    /// <summary>
+    /// Whether a dispatch of <paramref name="type"/> captures an audit body: false for a type marked
+    /// <see cref="DoNotAuditAttribute"/> at type level or suppressed by the host's audit registration
+    /// (<c>Suppress&lt;T&gt;()</c>/<c>SuppressPayload&lt;T&gt;()</c>, process-wide). The generated in-process capture and
+    /// <see cref="CaptureAuditPayload{T}"/> check it before serializing, so a body that is never kept is never
+    /// serialized -- and a type whose serialization would throw cannot fail its dispatch through capture.
+    /// </summary>
+    public static bool CapturesAuditPayload(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return !CapturesNoBody(type);
+    }
+
     // Whether a dispatch of this message type records no body: a type-level [DoNotAudit] (the generator's rule) or the
     // host's audit suppression (SuppressAuditPayloadOf).
     private static bool CapturesNoBody(Type type) =>
@@ -164,11 +177,12 @@ public static partial class ConduitRuntime
     // An [AuditAs] member: a JsonElement-typed stand-in under the same JSON name holding the inner message, typed by the
     // sibling string property's wire name and serialized with AuditJsonOptions -- so its own marks apply, recursively.
     // Never the raw JSON: a misapplied mark (not a JsonElement member, no sibling string property) is redacted outright,
-    // never thrown, because a throw here would fail the dispatch being captured. Serialize-only.
+    // and an inner message that fails to read or write is the placeholder -- never thrown, because a throw here would
+    // fail the dispatch being captured. Serialize-only.
     private static JsonPropertyInfo TypedAtCapture(JsonTypeInfo typeInfo, JsonPropertyInfo original, string typeMember)
     {
         var read = original.Get;
-        var typeName = typeInfo.Type.GetProperty(typeMember, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+        var typeName = SiblingProperty(typeInfo.Type, typeMember);
         if (read is null
             || (original.PropertyType != typeof(JsonElement) && original.PropertyType != typeof(JsonElement?))
             || typeName is not { PropertyType: var namePropertyType, CanRead: true }
@@ -208,19 +222,38 @@ public static partial class ConduitRuntime
                 return null;
             }
 
-            object? message;
+            // Any failure -- unreadable JSON, a contract whose constructor or a converter throws, a conflicting mark on the
+            // inner type -- is the placeholder. Only an out-of-memory condition propagates.
             try
             {
-                message = element.Deserialize(type, JsonOptions);
+                return element.Deserialize(type, JsonOptions) is { } message
+                    ? JsonSerializer.SerializeToElement(message, type, AuditJsonOptions)
+                    : PlaceholderElement;
             }
-            catch (Exception exception) when (exception is JsonException or NotSupportedException or InvalidOperationException)
+            catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 return PlaceholderElement;
             }
-
-            return message is null ? PlaceholderElement : JsonSerializer.SerializeToElement(message, type, AuditJsonOptions);
         };
         return standIn;
+    }
+
+    // The sibling the [AuditAs] argument names: the most-derived declaration of an instance, non-indexed property, walking
+    // the base chain declaration by declaration -- so a `new`-hidden sibling resolves to the derived one instead of the
+    // AmbiguousMatchException Type.GetProperty throws (inside the type-info modifier, that would fail every capture).
+    private static System.Reflection.PropertyInfo? SiblingProperty(Type type, string name)
+    {
+        const System.Reflection.BindingFlags declared = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+        for (var current = type; current is not null && current != typeof(object); current = current.BaseType)
+        {
+            if (current.GetProperties(declared).FirstOrDefault(p => p.Name == name && p.GetIndexParameters().Length == 0) is { } property)
+            {
+                return property;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -269,13 +302,14 @@ public static partial class ConduitRuntime
     /// the raw JSON it holds -- <see cref="AuditJsonOptions"/> cannot redact inside it -- unless it is marked
     /// <see cref="AuditAsAttribute"/> (typed at capture), <see cref="DoNotAuditAttribute"/> or <see cref="AuditRedactedAttribute"/>;
     /// otherwise a message carrying one must have its payload suppressed. No-op without a current
-    /// context or without an attached observer. A type marked <see cref="DoNotAuditAttribute"/> at type level is never
-    /// wrapped -- the generator decides that at compile time.
+    /// context or without an attached observer, and for a type whose dispatch records no body
+    /// (<see cref="CapturesAuditPayload"/>: the host's audit suppression), which is therefore never serialized. A type
+    /// marked <see cref="DoNotAuditAttribute"/> at type level is never wrapped -- the generator decides that at compile time.
     /// </summary>
     public static T CaptureAuditPayload<T>(T message)
     {
         var context = MessageContext.Current;
-        if (context is { HasObserver: true })
+        if (context is { HasObserver: true } && message is not null && !CapturesNoBody(message.GetType()))
         {
             context.SetPayload(JsonSerializer.SerializeToElement<T>(message, AuditJsonOptions));
         }

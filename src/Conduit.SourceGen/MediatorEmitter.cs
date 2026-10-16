@@ -806,13 +806,14 @@ public static class MediatorEmitter
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
 
         // Payload capture for non-DoNotAudit types -- only when an observer is attached, so a host without AddAudit
-        // never serializes (MessageContext.HasObserver).
+        // never serializes (MessageContext.HasObserver), and only for a type whose body is kept (CapturesAuditPayload:
+        // not suppressed by the host's audit registration), so a suppressed type cannot fail its dispatch through capture.
         if (emitPayloadCapture && !isDoNotAudit && requestVarName != null)
         {
             var typeExpr = requestTypeName != null
                 ? $"typeof({requestTypeName})"   // Strongly typed: use typeof(T) for efficient serialization
                 : $"{requestVarName}.GetType()"; // Dynamic type (events via PublishAsync)
-            sb.AppendLine($"        if ({EmitConstants.MessageContext}.Current is {{ HasObserver: true }} __auditContext)");
+            sb.AppendLine($"        if ({EmitConstants.MessageContext}.Current is {{ HasObserver: true }} __auditContext && ConduitRuntime.CapturesAuditPayload({typeExpr}))");
             sb.AppendLine("        {");
             sb.AppendLine($"            __auditContext.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {typeExpr}, ConduitRuntime.AuditJsonOptions));");
             sb.AppendLine("        }");

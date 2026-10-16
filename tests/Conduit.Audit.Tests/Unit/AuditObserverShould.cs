@@ -418,4 +418,24 @@ public sealed class AuditObserverShould
         channel.Reader.TryRead(out var record).Should().BeTrue();
         record!.Payload.Should().BeNull();
     }
+
+    [TestMethod]
+    public void SealAFailedDispatchWithoutABodyClearedBeforeItClosed()
+    {
+        // Arrange -- a host refuses the request after capture and drops the body it must not keep
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(channel.Writer, "TestService");
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Queries.ListThings", "Request"), context);
+        context.SetPayload(JsonSerializer.SerializeToElement(new { value = "must-not-be-kept" }));
+
+        // Act
+        context.ClearPayload();
+        observer.OnObservation(new DispatchFailed(1.0, "refused", "BadRequestException"), context);
+
+        // Assert -- the record still seals, failed, without a body
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Payload.Should().BeNull();
+        record.Observations.Should().HaveCount(2);
+    }
 }

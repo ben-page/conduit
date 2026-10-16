@@ -1,6 +1,9 @@
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Attributes;
+using Conduit.Messages;
 using Conduit.Runtime;
 using Conduit.Tests.Support;
 
@@ -23,7 +26,7 @@ public sealed class AuditAsShould
         // A registry adds its message types to the process-wide lookup AuditJsonOptions resolves against
         _ = new ConduitTypeRegistry(
             eventTypes: [],
-            commandTypes: [typeof(AuditAsInnerCommand), typeof(WholeSecretCommand)],
+            commandTypes: [typeof(AuditAsInnerCommand), typeof(WholeSecretCommand), typeof(AuditAsThrowingInnerCommand)],
             queryTypes: []);
     }
 
@@ -184,5 +187,65 @@ public sealed class AuditAsShould
 
         // Assert
         json.GetProperty("payload").GetProperty("pin").GetString().Should().Be(Secret);
+    }
+
+    [TestMethod]
+    public void WriteThePlaceholderWhenTheInnerContractThrowsOnRead()
+    {
+        // Arrange -- the constructor throws ArgumentException, which no JSON-specific catch would see
+        var item = new AuditAsItem(typeof(AuditAsThrowingInnerCommand).FullName, Element(new { value = "refused" }));
+
+        // Act
+        var json = Capture(item);
+
+        // Assert
+        json.GetProperty("payload").GetString().Should().Be(AuditRedactedAttribute.Placeholder);
+    }
+
+    [TestMethod]
+    public void ResolveANewHiddenSiblingToTheDerivedDeclaration()
+    {
+        // Arrange -- Type.GetProperty would throw AmbiguousMatchException on the hidden pair
+        var item = new AuditAsHiddenItem
+        {
+            Type = typeof(AuditAsInnerCommand).FullName,
+            Payload = Element(new { name = "inner-visible", pin = Secret, ssn = Ssn }),
+        };
+
+        // Act
+        var json = JsonSerializer.SerializeToElement(item, ConduitRuntime.AuditJsonOptions);
+
+        // Assert
+        var payload = json.GetProperty("payload");
+        payload.GetProperty("name").GetString().Should().Be("inner-visible");
+        payload.TryGetProperty("pin", out _).Should().BeFalse();
+        json.GetRawText().Should().NotContain(Secret).And.NotContain(Ssn);
+    }
+
+    [TestMethod]
+    public void WriteThePlaceholderForANameTwoTypesRegistered()
+    {
+        // Arrange -- two distinct message types with one FullName, as two versions of a contracts assembly would be
+        const string sharedName = "Conduit.Tests.Dynamic.SharedNameEvent";
+        var item = new AuditAsItem(sharedName, Element(new { }));
+        _ = new ConduitTypeRegistry(eventTypes: [DynamicEvent(sharedName)], commandTypes: [], queryTypes: []);
+        var beforeTheSecond = Capture(item);
+
+        // Act
+        _ = new ConduitTypeRegistry(eventTypes: [DynamicEvent(sharedName)], commandTypes: [], queryTypes: []);
+        var json = Capture(item);
+
+        // Assert
+        beforeTheSecond.GetProperty("payload").ValueKind.Should().Be(JsonValueKind.Object, "one registered type resolves");
+        json.GetProperty("payload").GetString().Should().Be(AuditRedactedAttribute.Placeholder);
+    }
+
+    private static Type DynamicEvent(string fullName)
+    {
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName($"Dynamic{Guid.NewGuid():N}"), AssemblyBuilderAccess.Run);
+        var type = assembly.DefineDynamicModule("Main")
+            .DefineType(fullName, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class, typeof(object), [typeof(IEvent)]);
+        type.DefineDefaultConstructor(MethodAttributes.Public);
+        return type.CreateType();
     }
 }
