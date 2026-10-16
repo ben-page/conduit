@@ -19,6 +19,7 @@ public sealed class AuditObserver : IConduitObserver
     private readonly string serviceName;
     private readonly IReadOnlySet<string> suppressedTypes;
     private readonly IReadOnlySet<string> suppressedPayloadTypes;
+    private readonly int maxPayloadBytes;
 
     /// <summary>
     /// Creates a new audit observer that writes sealed records to the specified channel.
@@ -43,7 +44,30 @@ public sealed class AuditObserver : IConduitObserver
         string serviceName,
         IReadOnlySet<string> suppressedTypes,
         IReadOnlySet<string> suppressedPayloadTypes)
+        : this(channel, serviceName, suppressedTypes, suppressedPayloadTypes, Configuration.AuditOptions.DefaultMaxPayloadBytes)
     {
+    }
+
+    /// <summary>
+    /// Creates a new audit observer that writes sealed records to the specified channel, honouring per-type suppression
+    /// and capping each record's payload at <paramref name="maxPayloadBytes"/>.
+    /// </summary>
+    /// <param name="channel">The channel writer for sealed audit records.</param>
+    /// <param name="serviceName">The service name to include in audit records.</param>
+    /// <param name="suppressedTypes">Full type names for which no audit record is recorded at all.</param>
+    /// <param name="suppressedPayloadTypes">Full type names for which the payload body is omitted from the record.</param>
+    /// <param name="maxPayloadBytes">The largest body, in UTF-8 bytes, a sealed record keeps (0 or less: no cap); see
+    /// <see cref="Configuration.AuditOptions.MaxPayloadBytes"/>. The other constructors use the 64 KB default.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxPayloadBytes"/> is above 0 but below
+    /// <see cref="Configuration.AuditOptions.MinimumMaxPayloadBytes"/>.</exception>
+    public AuditObserver(
+        ChannelWriter<DispatchAuditRecord> channel,
+        string serviceName,
+        IReadOnlySet<string> suppressedTypes,
+        IReadOnlySet<string> suppressedPayloadTypes,
+        int maxPayloadBytes)
+    {
+        AuditPayloadCap.ThrowIfInvalid(maxPayloadBytes, nameof(maxPayloadBytes));
         ArgumentNullException.ThrowIfNull(suppressedTypes);
         ArgumentNullException.ThrowIfNull(suppressedPayloadTypes);
 
@@ -51,6 +75,7 @@ public sealed class AuditObserver : IConduitObserver
         this.serviceName = serviceName;
         this.suppressedTypes = suppressedTypes;
         this.suppressedPayloadTypes = suppressedPayloadTypes;
+        this.maxPayloadBytes = maxPayloadBytes;
     }
 
     /// <inheritdoc />
@@ -78,7 +103,7 @@ public sealed class AuditObserver : IConduitObserver
 
         var group = this.activeGroups.GetOrAdd(
             context.MessageId,
-            _ => new DispatchGroup(context, this.serviceName));
+            _ => new DispatchGroup(context, this.serviceName, this.maxPayloadBytes));
 
         // If this dispatch's type opts out of payload capture, drop the body now that we know
         // the type (carried by DispatchInvoked, which is always the first observation).

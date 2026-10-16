@@ -56,6 +56,17 @@ public sealed class AuditBuilder
     }
 
     /// <summary>
+    /// The largest request body, in UTF-8 bytes, a sealed record keeps. Default 64 KB; 0 or less means no cap; an enabled
+    /// cap below 1 KB is refused by <c>AddAudit</c>. A body over the cap is stored with its longest strings shortened and a
+    /// <c>$truncated</c> marker, or as the marker alone when that cannot fit (see <see cref="AuditOptions.MaxPayloadBytes"/>).
+    /// </summary>
+    public int MaxPayloadBytes
+    {
+        get => this.Options.MaxPayloadBytes;
+        set => this.Options.MaxPayloadBytes = value;
+    }
+
+    /// <summary>
     /// Suppresses all audit recording for the specified message type.
     /// No observations will be captured or published for dispatches of <typeparamref name="T"/>.
     /// </summary>

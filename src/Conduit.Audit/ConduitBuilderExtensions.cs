@@ -28,6 +28,7 @@ public static class ConduitBuilderExtensions
 
         var auditBuilder = new AuditBuilder(builder.Services);
         configure?.Invoke(auditBuilder);
+        AuditPayloadCap.ThrowIfInvalid(auditBuilder.Options.MaxPayloadBytes, nameof(AuditBuilder.MaxPayloadBytes));
 
         // Configure options via IOptions<AuditOptions>
         builder.Services.Configure<AuditOptions>(options =>
@@ -37,6 +38,7 @@ public static class ConduitBuilderExtensions
             options.StaleGroupTimeout = auditBuilder.Options.StaleGroupTimeout;
             options.ChannelCapacity = auditBuilder.Options.ChannelCapacity;
             options.BackpressureMode = auditBuilder.Options.BackpressureMode;
+            options.MaxPayloadBytes = auditBuilder.Options.MaxPayloadBytes;
         });
 
         // Channel for observation consolidation -> batch publishing
@@ -76,7 +78,8 @@ public static class ConduitBuilderExtensions
             var serviceName = auditBuilder.Options.ServiceName
                 ?? serviceProvider.GetService<IHostEnvironment>()?.ApplicationName
                 ?? "unknown";
-            return new AuditObserver(channel.Writer, serviceName, suppressedTypes, suppressedPayloadTypes);
+            return new AuditObserver(
+                channel.Writer, serviceName, suppressedTypes, suppressedPayloadTypes, auditBuilder.Options.MaxPayloadBytes);
         });
         builder.Services.AddSingleton<Conduit.Runtime.IConduitObserver>(
             serviceProvider => serviceProvider.GetRequiredService<AuditObserver>());

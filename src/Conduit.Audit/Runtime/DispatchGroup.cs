@@ -11,9 +11,10 @@ internal sealed class DispatchGroup
     private readonly IReadOnlyDictionary<string, object?>? properties;
     private readonly string serviceName;
     private readonly MessageContext context;
+    private readonly int maxPayloadBytes;
     private bool payloadSuppressed;
 
-    internal DispatchGroup(MessageContext context, string serviceName)
+    internal DispatchGroup(MessageContext context, string serviceName, int maxPayloadBytes)
     {
         this.messageId = context.MessageId;
         this.conversationId = context.ConversationId;
@@ -24,6 +25,7 @@ internal sealed class DispatchGroup
         this.context = context;
         this.CreatedAt = DateTime.UtcNow;
         this.serviceName = serviceName;
+        this.maxPayloadBytes = maxPayloadBytes;
     }
 
     internal DateTime CreatedAt { get; }
@@ -54,6 +56,8 @@ internal sealed class DispatchGroup
     /// dispatch observes <see cref="DispatchInvoked"/> before its switch arm deserializes and captures the message, so
     /// a copy taken at construction would be empty on that path. Every seal path (terminal observation and stale
     /// eviction) therefore keeps the body; a dispatch that failed before capture (unreadable JSON) seals without one.
+    /// The body read is capped here, at seal, so both paths store it within the observer's <c>MaxPayloadBytes</c>
+    /// (<see cref="AuditPayloadCap"/>).
     /// </summary>
     internal DispatchAuditRecord Seal()
     {
@@ -67,7 +71,7 @@ internal sealed class DispatchGroup
             MessageType = invoked?.MessageType ?? "",
             MessageKind = invoked?.MessageKind ?? "",
             ServiceName = this.serviceName,
-            Payload = this.payloadSuppressed ? null : this.context.Payload,
+            Payload = this.payloadSuppressed ? null : AuditPayloadCap.Apply(this.context.Payload, this.maxPayloadBytes),
             Properties = this.properties,
             Timestamp = this.CreatedAt,
             Observations = this.observations.ToList(),

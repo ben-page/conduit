@@ -146,10 +146,27 @@ conduit.AddAudit(audit =>
     audit.ChannelCapacity = 10_000;                      // buffered records before backpressure (default: 10,000)
     audit.BackpressureMode = BoundedChannelFullMode.DropOldest; // when buffer is full (default: DropOldest)
     audit.StaleGroupTimeout = TimeSpan.FromMinutes(5);   // evict incomplete dispatch groups (default: 5m)
+    audit.MaxPayloadBytes = 64 * 1024;                   // largest stored request body, UTF-8 bytes (default: 64 KB; 0 = no cap)
 });
 ```
 
 By default the buffer drops the oldest record under sustained overload, trading completeness for bounded memory — audit must never block or crash the dispatch path.
+
+### Payload size cap
+
+`MaxPayloadBytes` bounds the request body a record keeps. It is applied when the record **seals** (its terminal observation, or stale-group eviction), so it covers every capture path — in process, wire-inbound and `[AuditAs]`-typed members alike — and it measures the body's UTF-8 bytes as serialized. The body is still serialized in full before the cap applies; the cap bounds what is stored and published, not the capture cost.
+
+- A body **at or under** the cap is stored unchanged, byte for byte.
+- A body **over** the cap whose root is a JSON object is stored shortened: the longest string values anywhere in it (objects and arrays, any depth) are cut to one common length, the largest that fits, each keeping its leading characters followed by `…`; every other member is kept as it was. A redacted placeholder (`"•••"`) is never cut. A top-level member records the cut:
+
+  ```json
+  { "$truncated": { "bytes": 1048646, "cap": 65536 }, "id": 7, "description": "BEGIN-ddd…" }
+  ```
+
+  `bytes` is the original body's UTF-8 length and `cap` the cap it was cut to.
+- When the root is not an object, or cutting strings cannot bring the body under the cap (a large array of numbers, say), the stored body is the marker alone: `{ "$truncated": { "bytes": N, "cap": C } }`.
+
+The stored body is always valid JSON and never longer than the cap. A shortened body is re-written by the serializer, so its escaping can differ from the original's (it is not a byte prefix of it). `0` or less turns the cap off; an enabled cap below 1 KB (`AuditOptions.MinimumMaxPayloadBytes`) is refused when `AddAudit` runs, so the marker always fits. Bodies that should never be kept at all still belong to `SuppressPayload<T>()`, `Suppress<T>()` and `[DoNotAudit]` — the cap only bounds what remains.
 
 ## Retention
 
@@ -233,7 +250,7 @@ A `DispatchAuditRecord` contains:
 | `MessageId`, `ConversationId`, `CausationId` | Correlation IDs from `MessageContext`. Records across services join on `MessageId`. |
 | `MessageType`, `MessageKind` | Full type name, and the kind: `command` / `query` / `event` for an in-process dispatch; `Request` (command or query) / `Event` for a wire-inbound one. |
 | `ServiceName` | The emitting service (from `AddAudit().ServiceName`). |
-| `Payload` | The serialized message body — unless suppressed via `[DoNotAudit]` or `SuppressPayload<T>()`. |
+| `Payload` | The serialized message body — unless suppressed via `[DoNotAudit]` or `SuppressPayload<T>()`. A body over `MaxPayloadBytes` (64 KB by default) is stored shortened with a `$truncated` marker (see [Payload size cap](#payload-size-cap)). |
 | `Properties` | Contextual properties carried on the `MessageContext`. |
 | `Timestamp` | UTC timestamp of the dispatch. |
 | `Observations` | Ordered lifecycle observations (invoked, handler start/complete, retries, completed/failed). |
