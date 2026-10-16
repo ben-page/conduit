@@ -94,7 +94,6 @@ public sealed class AuditObserver : IConduitObserver
         {
             if (this.activeGroups.TryRemove(context.MessageId, out var completed))
             {
-                completed.RefreshPayload(context);
                 this.channel.TryWrite(completed.Seal());
             }
         }

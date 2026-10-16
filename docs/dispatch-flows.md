@@ -220,7 +220,9 @@ This is the fix that lets the wire-supplied `MessageId` / `CausationId` propagat
 instead of being re-minted (overwritten) on every inbound message.
 
 **Layer 2 — `IPipelineBehavior<TRequest, TResult>` (post-deserialization).** After
-`createEnvelope()` deserializes the payload, dispatch runs the strongly-typed pipeline chain via
+`createEnvelope()` yields the envelope, each generated switch arm deserializes the payload into the typed
+message and records it as the audit payload (`ConduitRuntime.CaptureAuditPayload`; a type-level `[DoNotAudit]`
+type and a route-forwarded request capture none). Dispatch then runs the strongly-typed pipeline chain via
 `ResolvePipelines` + `ExecuteWithBehaviors` (same mechanism as local dispatch). Resilience,
 inbox/outbox, and validation behaviors live here.
 

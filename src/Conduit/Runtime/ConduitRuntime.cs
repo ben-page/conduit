@@ -178,7 +178,10 @@ public static partial class ConduitRuntime
     /// Records <paramref name="message"/> as the current dispatch's audit payload and returns it unchanged. The
     /// generated wire dispatch wraps each arm's read in it, so a wire request is captured the way an in-process one is:
     /// the TYPED object serialized with <see cref="AuditJsonOptions"/>, never the raw client JSON (which would keep
-    /// <see cref="DoNotAuditAttribute"/> members and any property the client invented). No-op without a current
+    /// <see cref="DoNotAuditAttribute"/> members and any property the client invented). A member typed
+    /// <see cref="JsonElement"/>, <c>JsonNode</c> or <c>object</c>, or a <c>[JsonExtensionData]</c> bag, is still written as
+    /// the raw JSON it holds: <see cref="AuditJsonOptions"/> cannot redact inside it, so a message carrying one must have
+    /// its payload suppressed. No-op without a current
     /// context or without an attached observer. A type marked <see cref="DoNotAuditAttribute"/> at type level is never
     /// wrapped -- the generator decides that at compile time.
     /// </summary>

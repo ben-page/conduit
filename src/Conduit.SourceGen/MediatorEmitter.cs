@@ -864,8 +864,10 @@ public static class MediatorEmitter
     }
 
     /// <summary>
-    /// Emits the context start block for wire dispatch methods (no DispatchOptions, no payload capture).
-    /// Wire dispatch runs within the transport's context so uses simplified observation setup.
+    /// Emits the context start block for wire dispatch methods (no DispatchOptions). The payload is not captured
+    /// here: each switch arm captures its typed message (<c>WireRead</c>) after <c>DispatchInvoked</c>, and the audit
+    /// group reads it when it seals. Wire dispatch runs within the transport's context so uses simplified
+    /// observation setup.
     /// </summary>
     private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
     {

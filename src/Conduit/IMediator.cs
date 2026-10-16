@@ -105,6 +105,13 @@ public interface IWireMediator : IMediator
     /// gates before deserialization, then dispatches to the handler and wraps the result
     /// in <see cref="DispatchResult{T}"/>.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Call it from a transport, where no dispatch is running. Called from inside a running dispatch, the caller must
+    /// first start a child context (<c>MessageContext.StartDispatch()</c>): otherwise the wire dispatch runs on the
+    /// outer context, shares its MessageId and audit group, and its captured payload can replace the outer record's.
+    /// </para>
+    /// </remarks>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A dispatch result containing the handler output or error information.</returns>
@@ -117,6 +124,13 @@ public interface IWireMediator : IMediator
     /// gates before deserialization, then publishes to local listeners.
     /// Swallows exceptions (fire-and-forget).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Call it from a transport, where no dispatch is running. Called from inside a running dispatch, the caller must
+    /// first start a child context (<c>MessageContext.StartDispatch()</c>): otherwise the wire dispatch runs on the
+    /// outer context, shares its MessageId and audit group, and its captured payload can replace the outer record's.
+    /// </para>
+    /// </remarks>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>

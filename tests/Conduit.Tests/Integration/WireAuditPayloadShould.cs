@@ -44,6 +44,9 @@ public sealed class WireAuditPayloadShould
     private async Task<DispatchResult<object>> SendAsync(string type, object payload)
     {
         var wireMediator = this.serviceProvider!.GetRequiredService<IWireMediator>();
+
+        // Mirrors a transport, which supplies the wire correlation ids before calling in. HandleWireRequestAsync
+        // mints a context itself when none exists; CaptureAWireRequestsPayloadWithoutATransportContext covers that.
         MessageContext.StartDispatchFromTransport(Guid.NewGuid().ToString(), null, Guid.NewGuid().ToString());
         return await wireMediator.HandleWireRequestAsync(
             new DispatchEnvelope(type, JsonSerializer.SerializeToElement(payload)), CancellationToken.None);
@@ -200,5 +203,51 @@ public sealed class WireAuditPayloadShould
         spyTransport.SentRequests.Should().ContainSingle();
         this.observer.ClosedOfType(typeof(EchoCommand).FullName!).PayloadJson.Should().BeNull(
             "the route-forward branch never deserializes, and raw client JSON would skip redaction");
+    }
+
+    [TestMethod]
+    public async Task CaptureAWireRequestsPayloadWithoutATransportContext()
+    {
+        // Arrange -- no StartDispatchFromTransport: HandleWireRequestAsync creates the context itself
+        MessageContext.RestoreContext(null);
+        var wireMediator = this.serviceProvider!.GetRequiredService<IWireMediator>();
+
+        // Act
+        var result = await wireMediator.HandleWireRequestAsync(
+            new DispatchEnvelope(
+                typeof(EchoCommand).FullName!, JsonSerializer.SerializeToElement(new { value = "minted-context" })),
+            CancellationToken.None);
+
+        // Assert
+        result.Error.Should().BeNull();
+        this.observer.ClosedOfType(typeof(EchoCommand).FullName!).PayloadJson.Should().Contain("minted-context");
+    }
+
+    [TestMethod]
+    public async Task WriteAnAuditRedactedMemberOfAWireRequestAsItsPlaceholder()
+    {
+        // Act
+        var result = await this.SendAsync(
+            typeof(RedactedBearingCommand).FullName!, new { name = "visible", ssn = "123-45-6789" });
+
+        // Assert -- presence is recorded, the value never is
+        result.Error.Should().BeNull();
+        var payload = this.observer.ClosedOfType(typeof(RedactedBearingCommand).FullName!).PayloadJson;
+        payload.Should().Contain("visible");
+        payload.Should().NotContain("123-45-6789");
+        JsonDocument.Parse(payload!).RootElement.GetProperty("ssn").GetString().Should().Be("\u2022\u2022\u2022");
+    }
+
+    [TestMethod]
+    public async Task KeepANullAuditRedactedMemberOfAWireRequestNull()
+    {
+        // Act
+        var result = await this.SendAsync(
+            typeof(RedactedBearingCommand).FullName!, new { name = "visible", ssn = (string?)null });
+
+        // Assert -- "no value sent" stays distinguishable from "a value was sent"
+        result.Error.Should().BeNull();
+        var payload = this.observer.ClosedOfType(typeof(RedactedBearingCommand).FullName!).PayloadJson;
+        JsonDocument.Parse(payload!).RootElement.GetProperty("ssn").ValueKind.Should().Be(JsonValueKind.Null);
     }
 }

@@ -379,4 +379,43 @@ public sealed class AuditObserverShould
         channel.Reader.TryRead(out var record).Should().BeTrue();
         record!.Payload.Should().BeNull("SuppressPayload<T>() must not be undone by the seal-time re-read");
     }
+
+    [TestMethod]
+    public void KeepAPayloadSetAfterDispatchInvokedWhenTheGroupIsEvictedAsStale()
+    {
+        // Arrange -- a wire request that captured its payload, then ran past StaleGroupTimeout without finishing
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(channel.Writer, "TestService");
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.Hangs", "Request"), context);
+        context.SetPayload(JsonSerializer.SerializeToElement(new { value = "captured-then-evicted" }));
+
+        // Act
+        observer.EvictStaleGroups(DateTime.UtcNow.AddMinutes(10), TimeSpan.FromMinutes(5));
+
+        // Assert
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Observations.Should().Contain(observation => observation is DispatchFailed);
+        record.Payload.Should().NotBeNull("eviction seals through the same payload read as a terminal observation");
+        record.Payload!.Value.GetRawText().Should().Contain("captured-then-evicted");
+    }
+
+    [TestMethod]
+    public void KeepASuppressedPayloadOmittedWhenTheGroupIsEvictedAsStale()
+    {
+        // Arrange
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(
+            channel.Writer, "TestService", new HashSet<string>(), new HashSet<string> { "Test.Commands.Sensitive" });
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.Sensitive", "Request"), context);
+        context.SetPayload(JsonSerializer.SerializeToElement(new { ssn = "123-45-6789" }));
+
+        // Act
+        observer.EvictStaleGroups(DateTime.UtcNow.AddMinutes(10), TimeSpan.FromMinutes(5));
+
+        // Assert
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Payload.Should().BeNull();
+    }
 }

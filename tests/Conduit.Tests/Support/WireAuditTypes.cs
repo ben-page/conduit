@@ -32,3 +32,11 @@ public sealed class NestedSecretCommandHandler : ICommandHandler<NestedSecretCom
     public Task HandleAsync(NestedSecretCommand command, CancellationToken cancellationToken)
         => Task.CompletedTask;
 }
+
+public sealed record RedactedBearingCommand(string Name, [AuditRedacted] string? Ssn) : ICommand<string>;
+
+public sealed class RedactedBearingCommandHandler : ICommandHandler<RedactedBearingCommand, string>
+{
+    public Task<string> HandleAsync(RedactedBearingCommand command, CancellationToken cancellationToken)
+        => Task.FromResult(command.Name);
+}

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Attributes;
 using Conduit.Runtime;
@@ -11,6 +12,8 @@ namespace Conduit.Tests.Unit;
 public sealed class CaptureAuditPayloadShould
 {
     private sealed record MemberSecretRequest(string Name, [DoNotAudit] string Pin);
+
+    private sealed record RawJsonRequest(string Name, JsonElement Body);
 
     [TestCleanup]
     public void Cleanup()
@@ -63,5 +66,21 @@ public sealed class CaptureAuditPayloadShould
         raw.Should().Contain("visible-name");
         raw.Should().NotContain("4321", "a [DoNotAudit] member is dropped by AuditJsonOptions");
         raw.Should().NotContainEquivalentOf("pin");
+    }
+
+    [TestMethod]
+    public void StoreAJsonElementMemberAsTheRawJsonItHolds()
+    {
+        // Arrange -- AuditJsonOptions redacts members it can see as CLR properties; nothing under a JsonElement is one
+        var context = MessageContext.StartDispatch();
+        context.AttachObserver(new ObservationCollector());
+        var body = JsonDocument.Parse("{\"pin\":\"4321\",\"anything\":\"the client invented\"}").RootElement;
+
+        // Act
+        ConduitRuntime.CaptureAuditPayload(new RawJsonRequest("visible-name", body));
+
+        // Assert -- documented behaviour: a message carrying a raw-JSON member must be payload-suppressed
+        var raw = context.Payload!.Value.GetProperty("body").GetRawText();
+        raw.Should().Contain("4321").And.Contain("the client invented");
     }
 }
