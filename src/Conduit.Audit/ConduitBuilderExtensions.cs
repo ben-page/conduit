@@ -50,6 +50,13 @@ public static class ConduitBuilderExtensions
         builder.Services.AddSingleton(channel.Writer);
         builder.Services.AddSingleton(channel.Reader);
 
+        // A suppressed type's body must not reach the trail inside another message either: an [AuditAs] envelope member
+        // holding one is left out of AuditJsonOptions' output. That lookup is process-wide (AuditJsonOptions is static).
+        foreach (var type in auditBuilder.SuppressedTypes.Concat(auditBuilder.SuppressedPayloadTypes))
+        {
+            Conduit.Runtime.ConduitRuntime.SuppressAuditPayloadOf(type);
+        }
+
         // Suppression is keyed by Type in the builder; the observer matches on the full type name
         // carried by DispatchInvoked observations, so resolve to type-name sets up front.
         var suppressedTypes = auditBuilder.SuppressedTypes

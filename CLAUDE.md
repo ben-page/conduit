@@ -64,7 +64,7 @@ keep their original `Conduit.*` names):
 - `Conduit.Middleware` — pipeline, gate, and interceptor types: `IPipelineBehavior`, `IInboundInterceptor` (gate), `IOutboundInterceptor`, `TypeFilterInterceptor` (`src/Conduit/Middleware/`)
 - `Conduit.Messages` — spans **two assemblies**. `ICommand`, `IQuery`, `IEvent`, `Unit`, `IClosedSet<TSelf>` live in `src/Conduit.Contracts/Messages/`. `ConduitFile` stays behind in `src/Conduit/Messages/` (core) — it holds a `BinaryData` field, which needs the `System.Memory.Data` package, and `Conduit.Contracts` must carry zero package references (a downstream domain project references it alone, precisely to avoid pulling in packages). This is deliberate, not an oversight — do not "fix" it by moving `ConduitFile` into `Conduit.Contracts`.
 - `Conduit.Handlers` — `ICommandHandler`, `IQueryHandler`, `IEventListener` (`src/Conduit/Handlers/`)
-- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute`, `ClosedSetAttribute`, `AuditRedactedAttribute` (`src/Conduit.Contracts/Attributes/`)
+- `Conduit.Attributes` — `LocalOnlyAttribute`, `ClientVisibleAttribute`, `RemoteContractsAttribute`, `ClosedSetAttribute`, `AuditRedactedAttribute`, `AuditAsAttribute` (`src/Conduit.Contracts/Attributes/`)
 - `Conduit.Exceptions` — `ConduitException`, `NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException` (`src/Conduit.Contracts/Exceptions/`)
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
@@ -113,8 +113,9 @@ keep their original `Conduit.*` names):
 | `[FireAndForget]` | Type | Void commands: local handler runs in background, routed dispatch uses `SendEventAsync` (no reply). Events: local listeners run in background (transport broadcast unchanged — events are already fire-and-forget on the wire). Invalid on `ICommand<TResult>` or `IQuery<TResult>` (CONDUIT003). |
 | `[ClientVisible]` | Type | Generate TypeScript for this type |
 | `[ClosedSet("a", …)]` | Type | State a closed set's wire values for TypeGen (the type implements `IClosedSet<TSelf>`; the list must equal `All`, checked at runtime) |
-| `[DoNotAudit]` | Type, property, record parameter | Type: suppress payload capture in audit trail (observations still emitted). Member: capture the body without that member (`ConduitRuntime.AuditJsonOptions`; wire serialization unaffected). Wire-inbound dispatch captures the same redacted body (`ConduitRuntime.CaptureAuditPayload`); a route-forwarded request records none. A member typed `JsonElement`/`JsonNode`/`object` (or `[JsonExtensionData]`) is captured as the raw JSON it holds -- the marks cannot reach inside it, so suppress the type's payload. |
+| `[DoNotAudit]` | Type, property, record parameter | Type: suppress payload capture in audit trail (observations still emitted). Member: capture the body without that member (`ConduitRuntime.AuditJsonOptions`; wire serialization unaffected). Wire-inbound dispatch captures the same redacted body (`ConduitRuntime.CaptureAuditPayload`); a route-forwarded request records none. A member typed `JsonElement`/`JsonNode`/`object` (or `[JsonExtensionData]`) is captured verbatim -- the marks cannot reach inside it -- unless it is `[AuditAs]`, `[DoNotAudit]` or `[AuditRedacted]`; otherwise suppress the type's payload. |
 | `[AuditRedacted]` | Property, record parameter | Capture that the member has a value (`"•••"`), never the value; null/"" as themselves. Not combinable with [DoNotAudit] (CONDUIT005). |
+| `[AuditAs(nameof(Type))]` | Property, record parameter | On a `JsonElement`/`JsonElement?` member holding a serialized message whose wire type name is in the named sibling `string` property: capture it as that message, redacted by its own marks. Resolves only registered message types (`ConduitTypeRegistry`); inner type that records no body (type-level `[DoNotAudit]`, or the host's `Suppress<T>()`/`SuppressPayload<T>()`, process-wide) -> member left out; null -> null; unknown/null name or unreadable JSON -> `"•••"`, never the raw JSON. Misapplied on a message member: CONDUIT006. |
 | `[NotAutoRegistered]` | Type | Exclude a handler/listener from source-gen auto-registration (for components wired explicitly via a feature's `Add*` extension, e.g. `LocalAuditListener` via `AddAuditListener`). The type stays dispatchable when registered manually. |
 | `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
 
@@ -173,7 +174,7 @@ onboarding or answering "how does X work" questions:
 
 - [`docs/dispatch-flows.md`](docs/dispatch-flows.md) — end-to-end traces (local dispatch, event broadcast, wire-inbound) with real type/method names
 - [`docs/glossary.md`](docs/glossary.md) — domain vocabulary (endpoint, route, topology, gate, interceptor, envelope, MessageContext, reply queue, ...)
-- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT005 source-generator diagnostics and how to resolve/suppress them
+- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT006 source-generator diagnostics and how to resolve/suppress them
 - [`docs/getting-started.md`](docs/getting-started.md) — first-run walkthrough
 - [`docs/core-concepts.md`](docs/core-concepts.md) — messages, handlers, mediator, the mental model
 - [`docs/configuration-reference.md`](docs/configuration-reference.md) — `ConduitOptions` / builder reference

@@ -1,3 +1,7 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
+using Conduit.Messages;
+
 namespace Conduit.Runtime;
 
 /// <summary>
@@ -10,9 +14,18 @@ namespace Conduit.Runtime;
 /// <see cref="ExcludeQueryTypes"/>, and <see cref="ExcludeEventTypes"/>. Filtered
 /// properties (<see cref="ActiveCommandTypeNames"/>, etc.) reflect the exclusions.
 /// The original unfiltered properties remain available for diagnostics.
+/// <para>
+/// Every registry also adds its message types to a process-wide lookup by <see cref="Type.FullName"/>
+/// (<see cref="TryGetRegisteredMessageType"/>), which <see cref="ConduitRuntime.AuditJsonOptions"/> reads to type an
+/// <c>[AuditAs]</c> member: it is static, so it cannot resolve a registry from DI. Exclusions do not apply to it
+/// (they filter topology, not what a host can dispatch), and only a type implementing <c>ICommand</c>,
+/// <c>IQuery&lt;T&gt;</c> or <c>IEvent</c> is added.
+/// </para>
 /// </remarks>
 public sealed class ConduitTypeRegistry
 {
+    private static readonly ConcurrentDictionary<string, Type> RegisteredMessageTypes = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Initializes the registry with the source-generated message type lists.
     /// </summary>
@@ -40,6 +53,14 @@ public sealed class ConduitTypeRegistry
         this.ActiveEventTypeNames = this.EventTypeNames;
         this.ActiveCommandTypeNames = this.CommandTypeNames;
         this.ActiveQueryTypeNames = this.QueryTypeNames;
+
+        foreach (var type in eventTypes.Concat(commandTypes).Concat(queryTypes))
+        {
+            if (type.FullName is { } fullName && IsMessageType(type))
+            {
+                RegisteredMessageTypes.TryAdd(fullName, type);
+            }
+        }
     }
 
     /// <summary>All discovered event types (unfiltered).</summary>
@@ -110,6 +131,18 @@ public sealed class ConduitTypeRegistry
         this.ActiveEventTypeNames = this.EventTypeNames
             .Where(n => !excluded.Contains(n)).ToList();
     }
+
+    /// <summary>
+    /// Resolves a wire type name (<see cref="Type.FullName"/>) to a message type some registry in this process
+    /// registered. Never loads a type by name: a name no registry listed resolves to nothing.
+    /// </summary>
+    internal static bool TryGetRegisteredMessageType(string fullName, [NotNullWhen(true)] out Type? type) =>
+        RegisteredMessageTypes.TryGetValue(fullName, out type);
+
+    private static bool IsMessageType(Type type) =>
+        typeof(ICommand).IsAssignableFrom(type)
+        || typeof(IEvent).IsAssignableFrom(type)
+        || type.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQuery<>));
 
     /// <summary>Excludes all command types from topology creation.</summary>
     public void ExcludeAllCommandTypes() => this.ActiveCommandTypeNames = [];

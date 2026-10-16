@@ -79,7 +79,8 @@ public sealed class CaptureAuditPayloadShould
         // Act
         ConduitRuntime.CaptureAuditPayload(new RawJsonRequest("visible-name", body));
 
-        // Assert -- documented behaviour: a message carrying a raw-JSON member must be payload-suppressed
+        // Assert -- documented behaviour: an unmarked raw-JSON member is captured verbatim; type it with [AuditAs]
+        // (AuditAsShould), mark it, or suppress the message's payload
         var raw = context.Payload!.Value.GetProperty("body").GetRawText();
         raw.Should().Contain("4321").And.Contain("the client invented");
     }

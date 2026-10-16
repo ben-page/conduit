@@ -11,6 +11,7 @@ in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
 | `CONDUIT003` | Warning | Invalid `[FireAndForget]` usage | `[FireAndForget]` was applied to a type that cannot be fire-and-forget. |
 | `CONDUIT004` | Warning | Handler not accessible | A handler exists in a referenced assembly but is not accessible (e.g. internal) to the generating assembly. |
 | `CONDUIT005` | Error | Conflicting audit marks | A message member is marked both `[DoNotAudit]` and `[AuditRedacted]`. |
+| `CONDUIT006` | Error | Misapplied `[AuditAs]` | `[AuditAs]` is on a message member that is not `JsonElement`/`JsonElement?`, or names no sibling `string` property. |
 
 ---
 
@@ -81,6 +82,24 @@ property counts for the override) and binds a constructor parameter to a propert
 when it is. The generator checks only the message type's own members; a **nested DTO** carrying both marks is
 not caught at build and is refused at serialization time (an `InvalidOperationException` when the payload is
 audited), so keep one there too.
+
+## CONDUIT006 — Misapplied [AuditAs]
+
+> '{type}' misapplies [AuditAs]: {reasons}; [AuditAs] goes on a JsonElement or JsonElement? member and names a sibling string property holding the message type name
+
+`[AuditAs(nameof(Type))]` tells the audit serializer that a raw-JSON member holds a serialized message whose wire
+type name is in a sibling property, so capture can read it as that message and redact it by its own marks (see
+[Audit](audit.md)). That needs the member to be a `JsonElement` or `JsonElement?` and the named sibling to be a
+`string` property of the type or a base. Each reason names the member and what is wrong: it is not a `JsonElement`,
+or the name is not a property of the type, or the property is not a `string`.
+
+The scan is scoped as CONDUIT005's is: the generator checks the members of every command, query and event, **base
+chain** included (property attributes and constructor-parameter attributes alike). It does not check a **nested
+type** a message carries — such as an envelope's item record. There, a misapplied `[AuditAs]` is not a build error;
+the serializer writes the member as the `•••` placeholder (never its raw JSON, and without failing the dispatch).
+
+**Resolve** by moving `[AuditAs]` to the `JsonElement` member that holds the serialized message, and pointing it at
+the `string` property holding that message's type name, with `nameof`.
 
 ---
 

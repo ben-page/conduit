@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -41,14 +42,36 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// <see cref="JsonOptions"/> for the audit payload only: a member marked <see cref="DoNotAuditAttribute"/> (on the
-    /// property, or on the positional record parameter that binds it) is left out, and a member marked <see cref="AuditRedactedAttribute"/> is written as its
-    /// <see cref="AuditRedactedAttribute.Placeholder"/>. The generated mediator serializes the
+    /// property, or on the positional record parameter that binds it) is left out, a member marked <see cref="AuditRedactedAttribute"/> is written as its
+    /// <see cref="AuditRedactedAttribute.Placeholder"/>, and a raw-JSON member marked <see cref="AuditAsAttribute"/> is written
+    /// as the message it holds, read into its type and redacted by that type's own marks (left out when that type records
+    /// no body: type-level <see cref="DoNotAuditAttribute"/>, or suppressed by the host's audit registration). The generated mediator serializes the
     /// captured request with these; wire serialization keeps <see cref="JsonOptions"/>.
     /// </summary>
     public static JsonSerializerOptions AuditJsonOptions { get; } = new(JsonOptions)
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ApplyAuditMemberMarks } },
     };
+
+    private static readonly JsonElement PlaceholderElement = JsonSerializer.SerializeToElement(AuditRedactedAttribute.Placeholder);
+
+    // Message types whose body the host's audit registration keeps out (Conduit.Audit's Suppress<T>/SuppressPayload<T>).
+    // Process-wide, like AuditJsonOptions itself, and add-only: a type suppressed by any host in the process is never
+    // written inside an [AuditAs] member, so a second host can only redact more, never less.
+    private static readonly ConcurrentDictionary<Type, byte> AuditSuppressedPayloadTypes = new();
+
+    /// <summary>
+    /// Records that the host's audit registration keeps <paramref name="type"/>'s body out of the trail
+    /// (<c>Suppress&lt;T&gt;()</c> or <c>SuppressPayload&lt;T&gt;()</c>), so an <see cref="AuditAsAttribute"/> member holding
+    /// one is left out of <see cref="AuditJsonOptions"/>' output, as it is for a type-level <see cref="DoNotAuditAttribute"/>.
+    /// Called by Conduit.Audit's <c>AddAudit</c>. Process-wide and add-only.
+    /// </summary>
+    internal static void SuppressAuditPayloadOf(Type type) => AuditSuppressedPayloadTypes.TryAdd(type, 0);
+
+    // Whether a dispatch of this message type records no body: a type-level [DoNotAudit] (the generator's rule) or the
+    // host's audit suppression (SuppressAuditPayloadOf).
+    private static bool CapturesNoBody(Type type) =>
+        type.IsDefined(typeof(DoNotAuditAttribute), inherit: false) || AuditSuppressedPayloadTypes.ContainsKey(type);
 
     private static void ApplyAuditMemberMarks(JsonTypeInfo typeInfo)
     {
@@ -57,45 +80,16 @@ public static partial class ConduitRuntime
             return;
         }
 
-        // System.Text.Json binds constructor parameters to properties case-insensitively, and a derived record's base
-        // positional parameters bind through the base constructor, so collect from every type up the chain.
-        var droppedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var redactedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var type = typeInfo.Type; type is not null && type != typeof(object); type = type.BaseType)
-        {
-            foreach (var constructor in type.GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
-            {
-                foreach (var parameter in constructor.GetParameters())
-                {
-                    if (parameter.Name is null)
-                    {
-                        continue;
-                    }
-
-                    if (parameter.IsDefined(typeof(DoNotAuditAttribute), inherit: false))
-                    {
-                        droppedParameters.Add(parameter.Name);
-                    }
-
-                    if (parameter.IsDefined(typeof(AuditRedactedAttribute), inherit: false))
-                    {
-                        redactedParameters.Add(parameter.Name);
-                    }
-                }
-            }
-        }
-
+        var parameters = ConstructorParameters(typeInfo.Type);
         for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
         {
-            // Attribute.IsDefined walks an overridden property's base declarations; MemberInfo.IsDefined ignores
-            // `inherit` for properties, so a mark on a base virtual property would be lost on its override.
             if (typeInfo.Properties[i].AttributeProvider is not System.Reflection.MemberInfo member)
             {
                 continue;
             }
 
-            var dropped = Attribute.IsDefined(member, typeof(DoNotAuditAttribute), inherit: true) || droppedParameters.Contains(member.Name);
-            var redacted = Attribute.IsDefined(member, typeof(AuditRedactedAttribute), inherit: true) || redactedParameters.Contains(member.Name);
+            var dropped = AuditMark<DoNotAuditAttribute>(member, parameters) is not null;
+            var redacted = AuditMark<AuditRedactedAttribute>(member, parameters) is not null;
             if (dropped && redacted)
             {
                 throw new InvalidOperationException(
@@ -110,8 +104,38 @@ public static partial class ConduitRuntime
             {
                 typeInfo.Properties[i] = Redacted(typeInfo, typeInfo.Properties[i]);
             }
+            else if (AuditMark<AuditAsAttribute>(member, parameters) is { } auditAs)
+            {
+                typeInfo.Properties[i] = TypedAtCapture(typeInfo, typeInfo.Properties[i], auditAs.TypeMember);
+            }
         }
     }
+
+    // System.Text.Json binds constructor parameters to properties case-insensitively, and a derived record's base
+    // positional parameters bind through the base constructor, so collect from every type up the chain.
+    private static ILookup<string, System.Reflection.ParameterInfo> ConstructorParameters(Type type)
+    {
+        var parameters = new List<System.Reflection.ParameterInfo>();
+        for (var current = type; current is not null && current != typeof(object); current = current.BaseType)
+        {
+            foreach (var constructor in current.GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+            {
+                parameters.AddRange(constructor.GetParameters().Where(parameter => parameter.Name is not null));
+            }
+        }
+
+        return parameters.ToLookup(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // The member's mark, or the mark on a constructor parameter that binds it. Attribute.GetCustomAttribute walks an
+    // overridden property's base declarations; MemberInfo.GetCustomAttribute ignores `inherit` for properties, so a mark on
+    // a base virtual property would be lost on its override.
+    private static TMark? AuditMark<TMark>(System.Reflection.MemberInfo member, ILookup<string, System.Reflection.ParameterInfo> parameters)
+        where TMark : Attribute =>
+        Attribute.GetCustomAttribute(member, typeof(TMark), inherit: true) as TMark
+        ?? parameters[member.Name]
+            .Select(parameter => Attribute.GetCustomAttribute(parameter, typeof(TMark), inherit: false) as TMark)
+            .FirstOrDefault(mark => mark is not null);
 
     // A string-typed stand-in under the same JSON name: the placeholder when the member holds a value, null and "" as
     // themselves. Serialize-only -- AuditJsonOptions never reads.
@@ -134,6 +158,68 @@ public static partial class ConduitRuntime
                 string { Length: 0 } => string.Empty,
                 _ => AuditRedactedAttribute.Placeholder,
             };
+        return standIn;
+    }
+
+    // An [AuditAs] member: a JsonElement-typed stand-in under the same JSON name holding the inner message, typed by the
+    // sibling string property's wire name and serialized with AuditJsonOptions -- so its own marks apply, recursively.
+    // Never the raw JSON: a misapplied mark (not a JsonElement member, no sibling string property) is redacted outright,
+    // never thrown, because a throw here would fail the dispatch being captured. Serialize-only.
+    private static JsonPropertyInfo TypedAtCapture(JsonTypeInfo typeInfo, JsonPropertyInfo original, string typeMember)
+    {
+        var read = original.Get;
+        var typeName = typeInfo.Type.GetProperty(typeMember, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+        if (read is null
+            || (original.PropertyType != typeof(JsonElement) && original.PropertyType != typeof(JsonElement?))
+            || typeName is not { PropertyType: var namePropertyType, CanRead: true }
+            || namePropertyType != typeof(string))
+        {
+            return Redacted(typeInfo, original);
+        }
+
+        // The inner message type, or null when the name resolves to no registered message type.
+        Type? InnerType(object target) =>
+            typeName.GetValue(target) is string name && ConduitTypeRegistry.TryGetRegisteredMessageType(name, out var type)
+                ? type
+                : null;
+
+        var standIn = typeInfo.CreateJsonPropertyInfo(typeof(JsonElement?), original.Name);
+        standIn.Order = original.Order;
+        standIn.IsRequired = original.IsRequired;
+        // A message type whose dispatch records no body -- type-level [DoNotAudit], or suppressed by the host's audit
+        // registration -- is left out, as a [DoNotAudit] member is. The original predicate still judges the REAL value.
+        standIn.ShouldSerialize = (target, _) =>
+            !(InnerType(target) is { } type && CapturesNoBody(type))
+            && (original.ShouldSerialize is not { } shouldSerialize || shouldSerialize(target, read(target)));
+        standIn.Get = target =>
+        {
+            if (read(target) is not JsonElement element || element.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            {
+                return null;
+            }
+
+            if (InnerType(target) is not { } type)
+            {
+                return PlaceholderElement;
+            }
+
+            if (CapturesNoBody(type))
+            {
+                return null;
+            }
+
+            object? message;
+            try
+            {
+                message = element.Deserialize(type, JsonOptions);
+            }
+            catch (Exception exception) when (exception is JsonException or NotSupportedException or InvalidOperationException)
+            {
+                return PlaceholderElement;
+            }
+
+            return message is null ? PlaceholderElement : JsonSerializer.SerializeToElement(message, type, AuditJsonOptions);
+        };
         return standIn;
     }
 
@@ -179,9 +265,10 @@ public static partial class ConduitRuntime
     /// generated wire dispatch wraps each arm's read in it, so a wire request is captured the way an in-process one is:
     /// the TYPED object serialized with <see cref="AuditJsonOptions"/>, never the raw client JSON (which would keep
     /// <see cref="DoNotAuditAttribute"/> members and any property the client invented). A member typed
-    /// <see cref="JsonElement"/>, <c>JsonNode</c> or <c>object</c>, or a <c>[JsonExtensionData]</c> bag, is still written as
-    /// the raw JSON it holds: <see cref="AuditJsonOptions"/> cannot redact inside it, so a message carrying one must have
-    /// its payload suppressed. No-op without a current
+    /// <see cref="JsonElement"/>, <c>JsonNode</c> or <c>object</c>, or a <c>[JsonExtensionData]</c> bag, is written as
+    /// the raw JSON it holds -- <see cref="AuditJsonOptions"/> cannot redact inside it -- unless it is marked
+    /// <see cref="AuditAsAttribute"/> (typed at capture), <see cref="DoNotAuditAttribute"/> or <see cref="AuditRedactedAttribute"/>;
+    /// otherwise a message carrying one must have its payload suppressed. No-op without a current
     /// context or without an attached observer. A type marked <see cref="DoNotAuditAttribute"/> at type level is never
     /// wrapped -- the generator decides that at compile time.
     /// </summary>

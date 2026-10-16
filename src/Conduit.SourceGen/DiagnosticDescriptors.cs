@@ -36,4 +36,10 @@ public static class DiagnosticDescriptors
         "CONDUIT005", "Conflicting audit marks",
         "'{0}' marks member(s) {1} both [DoNotAudit] and [AuditRedacted]; an audited member takes one",
         "Conduit", DiagnosticSeverity.Error, true);
+
+    /// <summary>CONDUIT006: [AuditAs] is on a member that is not JsonElement, or names no sibling string property.</summary>
+    public static readonly DiagnosticDescriptor MisappliedAuditAs = new(
+        "CONDUIT006", "Misapplied [AuditAs]",
+        "'{0}' misapplies [AuditAs]: {1}; [AuditAs] goes on a JsonElement or JsonElement? member and names a sibling string property holding the message type name",
+        "Conduit", DiagnosticSeverity.Error, true);
 }

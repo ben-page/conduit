@@ -250,4 +250,32 @@ public sealed class WireAuditPayloadShould
         var payload = this.observer.ClosedOfType(typeof(RedactedBearingCommand).FullName!).PayloadJson;
         JsonDocument.Parse(payload!).RootElement.GetProperty("ssn").ValueKind.Should().Be(JsonValueKind.Null);
     }
+
+    [TestMethod]
+    public async Task CaptureAnEnvelopesAuditAsItemAsItsRedactedInnerMessage()
+    {
+        // Act -- the item's payload travels as raw JSON; [AuditAs] types it by the sibling name at capture
+        var result = await this.SendAsync(
+            typeof(AuditAsEnvelopeCommand).FullName!,
+            new
+            {
+                items = new[]
+                {
+                    new
+                    {
+                        type = typeof(AuditAsInnerCommand).FullName,
+                        payload = new { name = "inner-visible", pin = "4321", ssn = "123-45-6789" },
+                    },
+                },
+            });
+
+        // Assert
+        result.Error.Should().BeNull();
+        var payload = this.observer.ClosedOfType(typeof(AuditAsEnvelopeCommand).FullName!).PayloadJson;
+        payload.Should().Contain("inner-visible");
+        payload.Should().NotContain("4321").And.NotContain("123-45-6789");
+        var inner = JsonDocument.Parse(payload!).RootElement.GetProperty("items")[0].GetProperty("payload");
+        inner.TryGetProperty("pin", out _).Should().BeFalse();
+        inner.GetProperty("ssn").GetString().Should().Be("\u2022\u2022\u2022");
+    }
 }

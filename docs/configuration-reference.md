@@ -383,8 +383,9 @@ the packages:
 |---|---|---|
 | `[LocalOnly]` | Event types | Prevent event from broadcasting to transports |
 | `[ClientVisible]` | Any type | Include in TypeScript generation output |
-| `[DoNotAudit]` | Type, property, record parameter | Type: no payload captured. Member: left out of the captured body |
+| `[DoNotAudit]` | Type, property, record parameter | Type: no payload captured. Member: left out of the captured body. A raw-JSON member (`JsonElement`, `JsonNode`, `object`, extension data) is otherwise captured verbatim, so mark it, type it with `[AuditAs]`, or suppress the type's payload |
 | `[AuditRedacted]` | Property, record parameter | Audit payload holds `"•••"` for a present value (null/`""` as themselves), never the value; not combinable with `[DoNotAudit]` (CONDUIT005) |
+| `[AuditAs(nameof(Type))]` | Property, record parameter | On a `JsonElement`/`JsonElement?` member holding a serialized message named by the sibling `string` property: the audit payload holds that message redacted by its own marks; `"•••"` when the name is not a registered message type or the JSON does not read as it; left out when that type is `[DoNotAudit]` or suppressed by `AddAudit` (`Suppress<T>()`/`SuppressPayload<T>()`) (CONDUIT006 when misapplied) |
 | `[assembly: RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace |
 
 ## MSBuild properties (TypeGen)
@@ -403,6 +404,7 @@ the packages:
 | CONDUIT002 | Error | Multiple handlers for a command or query | Remove the duplicate handler |
 | CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
 | CONDUIT005 | Error | A message member is marked both [DoNotAudit] and [AuditRedacted] | Keep one |
+| CONDUIT006 | Error | [AuditAs] on a message member that is not JsonElement, or naming no sibling string property | Put it on a `JsonElement` member and name a `string` property |
 
 ---
 

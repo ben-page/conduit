@@ -129,6 +129,12 @@ public sealed class ConduitGenerator : IIncrementalGenerator
                     DiagnosticDescriptors.ConflictingAuditMarks, Location.None, type.FullTypeName, type.AuditMarkConflicts));
             }
 
+            if (type.AuditAsMisuses is not null)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticDescriptors.MisappliedAuditAs, Location.None, type.FullTypeName, type.AuditAsMisuses));
+            }
+
             if (type.Kind == DispatchableKind.Event)
             {
                 continue;

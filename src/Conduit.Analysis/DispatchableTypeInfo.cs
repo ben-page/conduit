@@ -54,4 +54,8 @@ public sealed record DispatchableTypeInfo
     /// <summary>Members marked both <c>[DoNotAudit]</c> and <c>[AuditRedacted]</c> (comma-joined, ordinal-sorted), or
     /// <see langword="null"/>. A string, not an array, so the record's value equality holds (CONDUIT005).</summary>
     public string? AuditMarkConflicts { get; init; }
+
+    /// <summary>Members whose <c>[AuditAs]</c> is misapplied, each with its reason (<c>"; "</c>-joined, ordinal-sorted), or
+    /// <see langword="null"/>. A string, not an array, so the record's value equality holds (CONDUIT006).</summary>
+    public string? AuditAsMisuses { get; init; }
 }

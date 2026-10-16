@@ -20,6 +20,8 @@ public static class RoslynScanner
     private const string FireAndForgetAttributeName = "Conduit.Attributes.FireAndForgetAttribute";
     private const string DoNotAuditAttributeName = "Conduit.Attributes.DoNotAuditAttribute";
     private const string AuditRedactedAttributeName = "Conduit.Attributes.AuditRedactedAttribute";
+    private const string AuditAsAttributeName = "Conduit.Attributes.AuditAsAttribute";
+    private const string JsonElementTypeName = "System.Text.Json.JsonElement";
     private const string NotAutoRegisteredAttributeName = "Conduit.Attributes.NotAutoRegisteredAttribute";
 
     /// <summary>
@@ -73,6 +75,7 @@ public static class RoslynScanner
                 IsFireAndForgetImmediate = GetNamedBoolArgument(fireAndForgetAttribute, "Immediate"),
                 IsDoNotAudit = HasAttribute(typeSymbol, DoNotAuditAttributeName),
                 AuditMarkConflicts = AuditMarkConflicts(typeSymbol),
+                AuditAsMisuses = AuditAsMisuses(typeSymbol),
             });
         }
 
@@ -351,6 +354,76 @@ public static class RoslynScanner
         }
     }
 
+    // The rule ConduitRuntime.ApplyAuditMemberMarks needs to type an [AuditAs] member at capture: the member is a
+    // JsonElement (or JsonElement?), and its argument names a string property of the type (base chain included). Walks
+    // the base chain as AuditMarkConflicts does; a constructor parameter is checked by its own type.
+    private static string? AuditAsMisuses(INamedTypeSymbol typeSymbol)
+    {
+        var misuses = new SortedSet<string>(StringComparer.Ordinal);
+        for (var type = typeSymbol; type is not null && type.SpecialType != SpecialType.System_Object; type = type.BaseType)
+        {
+            foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
+            {
+                Check(property, property.Name, property.Type);
+            }
+
+            foreach (var parameter in type.InstanceConstructors.SelectMany(c => c.Parameters))
+            {
+                Check(parameter, parameter.Name, parameter.Type);
+            }
+        }
+
+        return misuses.Count == 0 ? null : string.Join("; ", misuses);
+
+        void Check(ISymbol symbol, string name, ITypeSymbol memberType)
+        {
+            var auditAs = GetAttribute(symbol, AuditAsAttributeName);
+            if (auditAs is null)
+            {
+                return;
+            }
+
+            if (!IsJsonElement(memberType))
+            {
+                misuses.Add($"{name} is not a JsonElement");
+            }
+
+            var typeMember = auditAs.ConstructorArguments.Length == 1 ? auditAs.ConstructorArguments[0].Value as string : null;
+            var sibling = typeMember is null ? null : FindProperty(typeSymbol, typeMember);
+            if (sibling is null)
+            {
+                misuses.Add($"{name} names '{typeMember}', which is not a property of the type");
+            }
+            else if (sibling.Type.SpecialType != SpecialType.System_String)
+            {
+                misuses.Add($"{name} names '{typeMember}', which is not a string");
+            }
+        }
+    }
+
+    private static bool IsJsonElement(ITypeSymbol type)
+    {
+        var underlying = type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+            ? nullable.TypeArguments[0]
+            : type;
+        return underlying.ToDisplayString() == JsonElementTypeName;
+    }
+
+    // The runtime reads the sibling with Type.GetProperty: an exact-name, instance property of the type or a base.
+    private static IPropertySymbol? FindProperty(INamedTypeSymbol typeSymbol, string name)
+    {
+        for (var type = typeSymbol; type is not null; type = type.BaseType)
+        {
+            var property = type.GetMembers(name).OfType<IPropertySymbol>().FirstOrDefault(p => !p.IsStatic);
+            if (property is not null)
+            {
+                return property;
+            }
+        }
+
+        return null;
+    }
+
     private static bool HasAttribute(ISymbol typeSymbol, string attributeFullName)
     {
         foreach (var attribute in typeSymbol.GetAttributes())
@@ -364,7 +437,7 @@ public static class RoslynScanner
         return false;
     }
 
-    private static AttributeData? GetAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)
+    private static AttributeData? GetAttribute(ISymbol typeSymbol, string attributeFullName)
     {
         foreach (var attribute in typeSymbol.GetAttributes())
         {

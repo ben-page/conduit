@@ -82,7 +82,8 @@ current `MessageContext`. The audit subsystem registers an observer to build the
 marked `[DoNotAudit]` suppress payload capture, and a property or positional-record parameter marked
 `[DoNotAudit]` is dropped from the captured body (`ConduitRuntime.AuditJsonOptions`; wire
 serialization is unaffected); a member marked `[AuditRedacted]` is captured as the placeholder `"•••"` when it has a
-value, never the value itself. See [Audit](audit.md).
+value, never the value itself; a raw-JSON member marked `[AuditAs]` is captured as the message it holds, redacted
+by that message's own marks. See [Audit](audit.md).
 
 ### IWireExceptionTranslator
 
