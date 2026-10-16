@@ -9,7 +9,7 @@ public abstract class GeneratorTestBase
 {
     /// <summary>
     /// The base metadata references (object/Guid/System.Runtime/Conduit.Contracts/Conduit) shared
-    /// by the compilation under test and by <see cref="CompileReference"/>.
+    /// by the compilation under test and by <see cref="CompileReference(string, string)"/>.
     /// </summary>
     protected static readonly IReadOnlyList<MetadataReference> BaseReferences = BuildBaseReferences();
 
@@ -50,12 +50,19 @@ public abstract class GeneratorTestBase
     /// *referenced* assembly rather than the compilation under test.
     /// </summary>
     protected static MetadataReference CompileReference(string assemblyName, string source)
+        => CompileReference(assemblyName, source, BaseReferences);
+
+    /// <summary>
+    /// <see cref="CompileReference(string, string)"/> against an explicit reference set -- e.g. one without
+    /// Conduit.Contracts, or with System.Text.Json added.
+    /// </summary>
+    protected static MetadataReference CompileReference(string assemblyName, string source, IEnumerable<MetadataReference> references)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(source);
         var compilation = CSharpCompilation.Create(
             assemblyName,
             [syntaxTree],
-            BaseReferences,
+            references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
         using var ms = new MemoryStream();

@@ -224,9 +224,9 @@ namespace App.Commands
     }
 
     [TestMethod]
-    public void NotReportACarriedTypeFromAnotherAssembly()
+    public void ReportAMisappliedCarriedTypeFromAReferencedAssembly()
     {
-        // Arrange -- the item's assembly is checked when that assembly is compiled, not here
+        // Arrange -- contracts compiled in a library the generator does not run on, as a host references them
         var itemReference = CompileReference("Items", @"
 using Conduit.Attributes;
 
@@ -247,6 +247,102 @@ namespace App.Commands
 
         // Act
         var messages = AuditAsMessages(source, itemReference);
+
+        // Assert
+        messages.Should().ContainSingle()
+            .Which.Should().Contain("'Items.ForeignItem'").And.Contain("Payload is not a JsonElement");
+    }
+
+    [TestMethod]
+    public void ReportACarriedTypeOfAReferencedMessage()
+    {
+        // Arrange -- the message and its item both live in the referenced library
+        var contractsReference = CompileReference("Contracts", @"
+using System.Collections.Generic;
+using Conduit.Attributes;
+using Conduit.Messages;
+
+namespace Contracts
+{
+    public record ForeignItem(string Type, [AuditAs(nameof(Type))] string Payload);
+
+    public record ForeignBatch(IReadOnlyList<ForeignItem> Items) : ICommand;
+}
+");
+
+        // Act
+        var messages = AuditAsMessages("namespace App { public sealed class Host { } }", contractsReference);
+
+        // Assert
+        messages.Should().ContainSingle().Which.Should().Contain("'Contracts.ForeignItem'");
+    }
+
+    [TestMethod]
+    public void NotReportAWellFormedCarriedTypeFromAReferencedAssembly()
+    {
+        // Arrange
+        var itemReference = CompileReference("Items", @"
+using System.Text.Json;
+using Conduit.Attributes;
+
+namespace Items
+{
+    public record ForeignItem(string Type, [AuditAs(nameof(Type))] JsonElement Payload);
+}
+", [.. BaseReferences, JsonReference]);
+        var source = @"
+using System.Collections.Generic;
+using Conduit.Messages;
+
+namespace App.Commands
+{
+    public record BatchCommand(IReadOnlyList<Items.ForeignItem> Items) : ICommand;
+}
+";
+
+        // Act
+        var messages = AuditAsMessages(source, itemReference);
+
+        // Assert
+        messages.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public void NotWalkAnAssemblyThatDoesNotReferenceConduitContracts()
+    {
+        // Arrange -- a look-alike attribute of the same full name, in an assembly that cannot carry Conduit's [AuditAs]
+        var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var lookalikeReference = CompileReference("Lookalike", @"
+namespace Conduit.Attributes
+{
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Parameter)]
+    public sealed class AuditAsAttribute : System.Attribute
+    {
+        public AuditAsAttribute(string typeMember) { }
+    }
+}
+
+namespace Lookalike
+{
+    public record Item(string Type, [Conduit.Attributes.AuditAs(nameof(Type))] string Payload);
+
+    public record Holder(Item Inner);
+}
+", [
+            MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
+            MetadataReference.CreateFromFile(Path.Combine(runtimeDirectory, "System.Runtime.dll")),
+        ]);
+        var source = @"
+using Conduit.Messages;
+
+namespace App.Commands
+{
+    public record HoldCommand(Lookalike.Holder Holder) : ICommand;
+}
+";
+
+        // Act
+        var messages = AuditAsMessages(source, lookalikeReference);
 
         // Assert
         messages.Should().BeEmpty();

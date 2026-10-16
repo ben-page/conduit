@@ -22,6 +22,7 @@ public static class RoslynScanner
     private const string AuditRedactedAttributeName = "Conduit.Attributes.AuditRedactedAttribute";
     private const string AuditAsAttributeName = "Conduit.Attributes.AuditAsAttribute";
     private const string JsonElementTypeName = "System.Text.Json.JsonElement";
+    private const string ContractsAssemblyName = "Conduit.Contracts";
     private const string NotAutoRegisteredAttributeName = "Conduit.Attributes.NotAutoRegisteredAttribute";
 
     /// <summary>
@@ -409,12 +410,13 @@ public static class RoslynScanner
     }
 
     /// <summary>
-    /// CONDUIT006 beyond the message itself: every type a message declared in this compilation carries -- its members'
-    /// types (properties and constructor parameters, base chain included), through nullables, arrays and generic type
-    /// arguments, transitively -- that is declared in this compilation and is not itself a message (a message is checked
-    /// as one). Constructor parameters count for public constructors other than a record's copy constructor. A type from
-    /// another assembly is not walked or checked. Cycles are guarded, and each type is reported once however many messages
-    /// reach it. Every member is walked, marked or not: a misapplied [AuditAs] is wrong wherever it sits. A member typed
+    /// CONDUIT006 beyond the message itself: every type a discovered message carries -- its members' types (properties and
+    /// constructor parameters, base chain included), through nullables, arrays and generic type arguments, transitively --
+    /// that could carry Conduit's [AuditAs] (<see cref="CanCarryAuditMarks"/>) and is not itself a message (a message is
+    /// checked as one). That reaches a referenced contracts library the generator does not run on, as message discovery
+    /// does; a type in an assembly that does not reference Conduit.Contracts (the BCL, third-party packages) is not walked.
+    /// Constructor parameters count for public constructors other than a record's copy constructor. Cycles are guarded,
+    /// and each type is reported once however many messages reach it. Every member is walked, marked or not: a misapplied [AuditAs] is wrong wherever it sits. A member typed
     /// as an interface or a type parameter is not walked.
     /// </summary>
     internal static IReadOnlyList<CarriedAuditAsMisuse> ScanCarriedAuditAsMisuses(
@@ -422,10 +424,11 @@ public static class RoslynScanner
     {
         var messages = new HashSet<ITypeSymbol>(messageSymbols, SymbolEqualityComparer.Default);
         var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+        var assemblies = new Dictionary<IAssemblySymbol, bool>(SymbolEqualityComparer.Default);
         var pending = new Queue<INamedTypeSymbol>();
         foreach (var message in messageSymbols)
         {
-            if (IsDeclaredIn(message, compilation) && seen.Add(message))
+            if (CanCarryAuditMarks(message, compilation, assemblies) && seen.Add(message))
             {
                 pending.Enqueue(message);
             }
@@ -449,7 +452,7 @@ public static class RoslynScanner
                         .SelectMany(constructor => constructor.Parameters).Select(parameter => parameter.Type));
                 foreach (var carried in memberTypes.SelectMany(Constituents))
                 {
-                    if (IsDeclaredIn(carried, compilation) && seen.Add(carried))
+                    if (CanCarryAuditMarks(carried, compilation, assemblies) && seen.Add(carried))
                     {
                         pending.Enqueue(carried);
                     }
@@ -467,8 +470,27 @@ public static class RoslynScanner
         && !(constructor.Parameters.Length == 1
             && SymbolEqualityComparer.Default.Equals(constructor.Parameters[0].Type, constructor.ContainingType));
 
-    private static bool IsDeclaredIn(ITypeSymbol type, Compilation compilation) =>
-        SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, compilation.Assembly);
+    // A type the walk takes: declared in this compilation, or in a referenced assembly that is or references
+    // Conduit.Contracts (where [AuditAs] lives). Anything else cannot carry the attribute, so it is not walked. The
+    // per-assembly answer is cached for the walk.
+    private static bool CanCarryAuditMarks(ITypeSymbol type, Compilation compilation, Dictionary<IAssemblySymbol, bool> assemblies)
+    {
+        var assembly = type.ContainingAssembly;
+        if (assembly is null)
+        {
+            return false;
+        }
+
+        if (!assemblies.TryGetValue(assembly, out var canCarry))
+        {
+            canCarry = SymbolEqualityComparer.Default.Equals(assembly, compilation.Assembly)
+                || assembly.Identity.Name == ContractsAssemblyName
+                || assembly.Modules.Any(module => module.ReferencedAssemblies.Any(reference => reference.Name == ContractsAssemblyName));
+            assemblies[assembly] = canCarry;
+        }
+
+        return canCarry;
+    }
 
     // The class and struct types a member type is built from: itself, its element type, a nullable's underlying type,
     // and its generic type arguments, recursively. The walk takes each one's members.

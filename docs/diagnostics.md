@@ -95,17 +95,22 @@ or the name is not a property of the type, or the property is not a `string`.
 
 The generator checks the members of every command, query and event, **base chain** included (property attributes
 and constructor-parameter attributes alike) — and of every **type a message carries** that is declared in the
-compilation being built: the types of a message's properties and of its public constructors' parameters, through
+compilation being built **or in a referenced assembly that is or references `Conduit.Contracts`** (a contracts
+library the generator does not run on, as message discovery reaches it): the types of a message's properties and of
+its public constructors' parameters, through
 nullables, arrays and generic type arguments (`IReadOnlyList<BatchItem>`, `BatchItem[]`, `Dictionary<string,
 List<BatchItem>>`), transitively, so an envelope's item record is checked like the envelope. Each such type is
 reported once, under its own name, however many messages reach it; a cycle (a type that carries itself, or A
 carries B carries A) is walked once. A carried type that is itself a message is reported as a message, not twice.
 Every member is walked, marked or not: a misapplied `[AuditAs]` is reported even below a `[DoNotAudit]` member.
 
-**Bounds.** A carried type declared in **another assembly** is neither walked nor checked: the check runs where the
-type is compiled, and only if that project runs the Conduit generator. When contracts live in a library the
-generator does not run on, a carried type there is unchecked. A member typed as an interface, `object` or a type
-parameter carries a runtime shape the generator cannot see, and is not walked. On an unchecked type, a misapplied
+A misapplied member of a carried type from a referenced assembly is reported like one on a referenced message:
+without a source location, naming the type and member. Every project that runs the generator over that library
+reports it.
+
+**Bounds.** A type in an assembly that does not reference `Conduit.Contracts` (the BCL, third-party packages) cannot
+carry Conduit's `[AuditAs]` and is not walked. A member typed as an interface, `object` or a type parameter carries a
+runtime shape the generator cannot see, and is not walked. On an unchecked type, a misapplied
 `[AuditAs]` is not a build error; the serializer writes the member as the `•••` placeholder (never its raw JSON,
 and without failing the dispatch). CONDUIT005 keeps the message-only scope.
 
