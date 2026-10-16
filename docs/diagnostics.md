@@ -99,17 +99,24 @@ compilation being built **or in a referenced assembly that is or references `Con
 library the generator does not run on, as message discovery reaches it): the types of a message's properties and of
 its public constructors' parameters, through
 nullables, arrays and generic type arguments (`IReadOnlyList<BatchItem>`, `BatchItem[]`, `Dictionary<string,
-List<BatchItem>>`), transitively, so an envelope's item record is checked like the envelope. Each such type is
-reported once, under its own name, however many messages reach it; a cycle (a type that carries itself, or A
-carries B carries A) is walked once. A carried type that is itself a message is reported as a message, not twice.
+List<BatchItem>>`), transitively, so an envelope's item record is checked like the envelope. A generic type is
+walked and checked once, as its definition (`Wrapper<T>`, however many constructions are carried), after the type
+arguments at each use site are reached; so a recursively expanding generic (`Tree<T>` carrying `Tree<Tree<T>>`)
+terminates, and a member typed by a type parameter is checked as declared (a `T` is not a `JsonElement`). Each type
+is reported once, under its own name, however many messages reach it (two same-named types from two assemblies are
+reported separately); a cycle (a type that carries itself, or A carries B carries A) is walked once. A carried type that is itself a message is reported as a message, not twice.
 Every member is walked, marked or not: a misapplied `[AuditAs]` is reported even below a `[DoNotAudit]` member.
 
 A misapplied member of a carried type from a referenced assembly is reported like one on a referenced message:
 without a source location, naming the type and member. Every project that runs the generator over that library
 reports it.
 
-**Bounds.** A type in an assembly that does not reference `Conduit.Contracts` (the BCL, third-party packages) cannot
-carry Conduit's `[AuditAs]` and is not walked. A member typed as an interface, `object` or a type parameter carries a
+**Bounds.** An assembly that does not reference `Conduit.Contracts` (the BCL, most packages) cannot carry Conduit's
+`[AuditAs]` and is not walked. One that does **is** walked, a third-party or another team's contracts package
+included: a misapplied `[AuditAs]` on a type it declares, carried by your message, fails your build with no source
+location, and you cannot fix it there. The escape hatch is the severity override in `.editorconfig`
+(`dotnet_diagnostic.CONDUIT006.severity = warning`, or `none`); it applies to the whole diagnostic, so it also
+downgrades your own misuses until the package is fixed. A member typed as an interface, `object` or a type parameter carries a
 runtime shape the generator cannot see, and is not walked. On an unchecked type, a misapplied
 `[AuditAs]` is not a build error; the serializer writes the member as the `•••` placeholder (never its raw JSON,
 and without failing the dispatch). CONDUIT005 keeps the message-only scope.

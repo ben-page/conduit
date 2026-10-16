@@ -347,4 +347,80 @@ namespace App.Commands
         // Assert
         messages.Should().BeEmpty();
     }
+
+    [TestMethod]
+    public async Task TerminateOnARecursivelyExpandingGeneric()
+    {
+        // Arrange -- each step constructs a new type (Tree<int>, Tree<Tree<int>>, ...); the walk keys on the definition
+        var source = @"
+using System.Collections.Generic;
+using Conduit.Attributes;
+using Conduit.Messages;
+
+namespace App.Commands
+{
+    public record Tree<T>(T Value, string Name, [AuditAs(nameof(Name))] string Payload, IReadOnlyList<Tree<Tree<T>>> Kids);
+
+    public record Plant(Tree<int> Root) : ICommand;
+}
+";
+
+        // Act
+        var run = Task.Run(() => AuditAsMessages(source));
+        var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30)));
+
+        // Assert
+        finished.Should().BeSameAs(run, "the walk must terminate on an expanding generic");
+        (await run).Should().ContainSingle().Which.Should().Contain("'App.Commands.Tree<T>'");
+    }
+
+    [TestMethod]
+    public void ReportAGenericCarriedTypeOncePerDefinition()
+    {
+        // Arrange -- two constructions of one misapplied definition
+        var source = @"
+using Conduit.Attributes;
+using Conduit.Messages;
+
+namespace App.Commands
+{
+    public record Wrapper<T>(string Type, [AuditAs(nameof(Type))] string Payload, T Value);
+
+    public record Wrap(Wrapper<int> Numbers, Wrapper<string> Words) : ICommand;
+}
+";
+
+        // Act
+        var messages = AuditAsMessages(source);
+
+        // Assert
+        messages.Should().ContainSingle().Which.Should().Contain("'App.Commands.Wrapper<T>'").And.Contain("Payload is not a JsonElement");
+    }
+
+    [TestMethod]
+    public void ReportSameNamedCarriedTypesFromTwoAssembliesEach()
+    {
+        // Arrange -- two libraries each declare Shared.Item, each carried by its own message
+        static MetadataReference Library(string name) => CompileReference(name, @"
+using System.Collections.Generic;
+using Conduit.Attributes;
+using Conduit.Messages;
+
+namespace Shared
+{
+    public record Item(string Type, [AuditAs(nameof(Type))] string Payload);
+}
+
+namespace " + name + @"
+{
+    public record Batch(IReadOnlyList<Shared.Item> Items) : ICommand;
+}
+");
+
+        // Act
+        var messages = AuditAsMessages("namespace App { public sealed class Host { } }", Library("First"), Library("Second"));
+
+        // Assert
+        messages.Should().HaveCount(2).And.AllSatisfy(message => message.Should().Contain("'Shared.Item'"));
+    }
 }

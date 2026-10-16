@@ -415,8 +415,12 @@ public static class RoslynScanner
     /// that could carry Conduit's [AuditAs] (<see cref="CanCarryAuditMarks"/>) and is not itself a message (a message is
     /// checked as one). That reaches a referenced contracts library the generator does not run on, as message discovery
     /// does; a type in an assembly that does not reference Conduit.Contracts (the BCL, third-party packages) is not walked.
-    /// Constructor parameters count for public constructors other than a record's copy constructor. Cycles are guarded,
-    /// and each type is reported once however many messages reach it. Every member is walked, marked or not: a misapplied [AuditAs] is wrong wherever it sits. A member typed
+    /// Constructor parameters count for public constructors other than a record's copy constructor. The walk is keyed on
+    /// each type's generic DEFINITION (attributes are per definition): the type arguments at a use site are reached first
+    /// (<see cref="Constituents"/> recurses into them), then the definition is walked once -- so a recursively expanding
+    /// generic (<c>Tree&lt;T&gt;</c> carrying <c>Tree&lt;Tree&lt;T&gt;&gt;</c>) terminates, and cycles are guarded. Each
+    /// definition is reported once (keyed by name and assembly) however many messages or constructions reach it; a member
+    /// typed by a type parameter is checked as declared (a <c>T</c> is not a <c>JsonElement</c>). Every member is walked, marked or not: a misapplied [AuditAs] is wrong wherever it sits. A member typed
     /// as an interface or a type parameter is not walked.
     /// </summary>
     internal static IReadOnlyList<CarriedAuditAsMisuse> ScanCarriedAuditAsMisuses(
@@ -428,19 +432,23 @@ public static class RoslynScanner
         var pending = new Queue<INamedTypeSymbol>();
         foreach (var message in messageSymbols)
         {
-            if (CanCarryAuditMarks(message, compilation, assemblies) && seen.Add(message))
+            if (CanCarryAuditMarks(message, compilation, assemblies) && seen.Add(message.OriginalDefinition))
             {
-                pending.Enqueue(message);
+                pending.Enqueue(message.OriginalDefinition);
             }
         }
 
-        var misuses = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var misuses = new SortedDictionary<(string Name, string Assembly), string>(Comparer<(string Name, string Assembly)>.Create(
+            (left, right) => StringComparer.Ordinal.Compare(left.Name, right.Name) is var byName and not 0
+                ? byName
+                : StringComparer.Ordinal.Compare(left.Assembly, right.Assembly)));
         while (pending.Count > 0)
         {
             var type = pending.Dequeue();
             if (!messages.Contains(type) && AuditAsMisuses(type) is { } misuse)
             {
-                misuses[type.IsGenericType ? type.ToDisplayString() : GetMetadataFullName(type)] = misuse;
+                var name = type.IsGenericType ? type.ToDisplayString() : GetMetadataFullName(type);
+                misuses[(name, type.ContainingAssembly?.Identity.GetDisplayName() ?? "")] = misuse;
             }
 
             for (var declaring = type; declaring is not null && declaring.SpecialType != SpecialType.System_Object; declaring = declaring.BaseType)
@@ -452,15 +460,15 @@ public static class RoslynScanner
                         .SelectMany(constructor => constructor.Parameters).Select(parameter => parameter.Type));
                 foreach (var carried in memberTypes.SelectMany(Constituents))
                 {
-                    if (CanCarryAuditMarks(carried, compilation, assemblies) && seen.Add(carried))
+                    if (CanCarryAuditMarks(carried, compilation, assemblies) && seen.Add(carried.OriginalDefinition))
                     {
-                        pending.Enqueue(carried);
+                        pending.Enqueue(carried.OriginalDefinition);
                     }
                 }
             }
         }
 
-        return misuses.Select(entry => new CarriedAuditAsMisuse { FullTypeName = entry.Key, Misuses = entry.Value }).ToList();
+        return misuses.Select(entry => new CarriedAuditAsMisuse { FullTypeName = entry.Key.Name, Misuses = entry.Value }).ToList();
     }
 
     // A public constructor the serializer could bind, not a record's copy constructor (its one parameter is the type

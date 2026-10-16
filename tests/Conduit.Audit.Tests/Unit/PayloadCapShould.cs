@@ -273,4 +273,26 @@ public sealed class PayloadCapShould(TestContext testContext)
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
+
+    [TestMethod]
+    public void ReplaceABodysOwnTruncatedMemberOverTheCap()
+    {
+        // Arrange -- a message whose root really has a "$truncated" member
+        var payload = Capture(new Dictionary<string, object>
+        {
+            ["$truncated"] = "the message's own value",
+            ["description"] = new string('d', 10 * Kilobyte),
+        });
+        var originalBytes = Utf8Length(payload);
+
+        // Act
+        var record = Seal(payload, Kilobyte);
+
+        // Assert -- the cap's marker takes its place; the message's own value is not kept
+        var stored = Reparse(record);
+        stored.EnumerateObject().Count(property => property.Name == "$truncated").Should().Be(1);
+        stored.GetProperty("$truncated").GetProperty("bytes").GetInt64().Should().Be(originalBytes);
+        stored.GetRawText().Should().NotContain("the message's own value");
+        stored.GetProperty("description").GetString().Should().EndWith("…");
+    }
 }
