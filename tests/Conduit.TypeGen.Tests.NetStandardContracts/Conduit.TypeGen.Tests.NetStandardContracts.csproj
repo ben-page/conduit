@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A netstandard2.0 contracts library, as a net4x or netstandard consumer of Conduit has. netstandard2.0 has no public
+       System.Runtime.CompilerServices.NullableAttribute, so the compiler synthesizes one INTO this assembly and the
+       attribute's constructor is a MethodDefinition (a MemberReference into System.Runtime on .NET 10).
+       ResultNullabilityReaderShould pins that decode path against this assembly. It defines its own IQuery<T> rather
+       than referencing Conduit.Contracts, so nothing here can bring a framework NullableAttribute in. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsTestProject>false</IsTestProject>
+    <EnableMSTestRunner>false</EnableMSTestRunner>
+    <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1040</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="obj\**;bin\**" />
+  </ItemGroup>
+
+</Project>

@@ -23,6 +23,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
     <ProjectReference Include="..\..\src\Conduit.TypeGen\Conduit.TypeGen.csproj" />
+    <!-- Built and copied next to the tests, never referenced: it declares its own Conduit.Messages.IQuery<T>, which would
+         collide with Conduit.Contracts' at compile time. The tests load it by path into a MetadataLoadContext. -->
+    <ProjectReference Include="..\Conduit.TypeGen.Tests.NetStandardContracts\Conduit.TypeGen.Tests.NetStandardContracts.csproj"
+                      ReferenceOutputAssembly="false" OutputItemType="Content" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

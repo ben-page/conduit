@@ -82,6 +82,27 @@ public sealed class ResultNullabilityReaderShould
     public void Treats_an_oblivious_result_as_not_nullable() =>
         IsResultNullable("TestObliviousQuery", QueryInterfaceName).Should().BeFalse();
 
+    [TestMethod]
+    public void Reads_a_result_whose_nullable_attribute_is_compiled_into_a_netstandard_assembly()
+    {
+        // Arrange -- a netstandard2.0 library has no framework NullableAttribute, so the compiler synthesizes one into the
+        // assembly and its constructor is a MethodDefinition, not the MemberReference every net10.0 contract takes.
+        var netStandardAssembly = metadataContext.LoadFromAssemblyPath(
+            Path.Combine(Path.GetDirectoryName(typeof(ResultNullabilityReaderShould).Assembly.Location)!, "Conduit.TypeGen.Tests.NetStandardContracts.dll"));
+        using var reader = new ResultNullabilityReader();
+
+        // Act
+        var nullable = reader.IsResultNullable(NetStandardType(netStandardAssembly, "NetStandardFindQuery"), QueryInterfaceName);
+        var notNull = reader.IsResultNullable(NetStandardType(netStandardAssembly, "NetStandardRequireQuery"), QueryInterfaceName);
+
+        // Assert
+        nullable.Should().BeTrue();
+        notNull.Should().BeFalse();
+    }
+
+    private static Type NetStandardType(Assembly assembly, string name) =>
+        assembly.GetType($"Conduit.TypeGen.Tests.NetStandardContracts.{name}", throwOnError: true)!;
+
     private static bool IsResultNullable(string sampleName, string genericInterfaceFullName)
     {
         // Arrange

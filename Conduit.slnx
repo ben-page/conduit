@@ -56,5 +56,6 @@
     <Project Path="tests/Conduit.Transport.RabbitMQ.Tests/Conduit.Transport.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Conduit.Transport.SignalR.Tests/Conduit.Transport.SignalR.Tests.csproj" />
     <Project Path="tests/Conduit.TypeGen.Tests/Conduit.TypeGen.Tests.csproj" />
+    <Project Path="tests/Conduit.TypeGen.Tests.NetStandardContracts/Conduit.TypeGen.Tests.NetStandardContracts.csproj" />
   </Folder>
 </Solution>
