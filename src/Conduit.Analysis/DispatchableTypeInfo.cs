@@ -25,6 +25,12 @@ public sealed record DispatchableTypeInfo
     public string? ResultFullTypeName { get; init; }
 
     /// <summary>
+    /// <see langword="true"/> when a reference-type result is declared <c>T?</c>; TypeGen only, so SourceGen's scanner
+    /// leaves it <see langword="false"/>.
+    /// </summary>
+    public bool ResultIsNullable { get; init; }
+
+    /// <summary>
     /// Full type name of the TypeScript base interface this type extends, or <see langword="null"/>
     /// if the type has no inheritance relationship in the emitted output. Populated by
     /// <c>Conduit.TypeGen.ReflectionScanner</c> when discovering concrete derived types of

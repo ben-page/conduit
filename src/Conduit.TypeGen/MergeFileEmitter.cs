@@ -308,19 +308,8 @@ public static class MergeFileEmitter
             }
         }
 
-        const string contextAttr = "System.Runtime.CompilerServices.NullableContextAttribute";
-        for (var declaring = property.DeclaringType; declaring is not null; declaring = declaring.DeclaringType)
-        {
-            var ctx = declaring.GetCustomAttributesData()
-                .FirstOrDefault(a => a.AttributeType.FullName == contextAttr);
-            if (ctx is not null && ctx.ConstructorArguments.Count == 1
-                && ctx.ConstructorArguments[0].Value is byte ctxFlag)
-            {
-                return ctxFlag == 2;
-            }
-        }
-
-        return false;
+        return property.DeclaringType is { } declaringType
+            && ResultNullabilityReader.NullableContextOf(declaringType) == 2;
     }
 
     /// <summary>

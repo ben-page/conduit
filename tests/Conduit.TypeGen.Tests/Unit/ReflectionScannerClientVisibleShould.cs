@@ -28,4 +28,15 @@ public class ReflectionScannerClientVisibleShould
         var allTypeNames = types.Select(t => t.TypeName).ToList();
         allTypeNames.Should().NotContain("ReflectionScannerClientVisibleShould");
     }
+
+    [TestMethod]
+    public void ScanClientVisible_sets_ResultIsNullable()
+    {
+        // Arrange / Act
+        var types = ReflectionScanner.ScanClientVisible(typeof(ReflectionScannerClientVisibleShould).Assembly);
+
+        // Assert
+        types.Single(t => t.TypeName == "TestFindQuery").ResultIsNullable.Should().BeTrue();
+        types.Single(t => t.TypeName == "TestRequireQuery").ResultIsNullable.Should().BeFalse();
+    }
 }

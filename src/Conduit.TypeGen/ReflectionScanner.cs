@@ -28,6 +28,7 @@ public static class ReflectionScanner
         ArgumentNullException.ThrowIfNull(assembly);
 
         var results = new List<DispatchableTypeInfo>();
+        using var nullability = new ResultNullabilityReader();
 
         foreach (var type in assembly.GetExportedTypes())
         {
@@ -50,6 +51,7 @@ public static class ReflectionScanner
                 Kind = kind.Value,
                 ResultTypeName = GetResultTypeName(type, kind.Value),
                 ResultFullTypeName = GetResultFullTypeName(type, kind.Value),
+                ResultIsNullable = IsResultNullable(nullability, type, kind.Value),
             });
         }
 
@@ -234,6 +236,23 @@ public static class ReflectionScanner
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether the result is a reference type declared <c>T?</c>, which reflection cannot see (<see cref="ResultNullabilityReader"/>).
+    /// </summary>
+    private static bool IsResultNullable(ResultNullabilityReader nullability, Type type, DispatchableKind kind)
+    {
+        if (kind is DispatchableKind.VoidCommand or DispatchableKind.Event)
+        {
+            return false;
+        }
+
+        var targetGenericName = kind == DispatchableKind.Command
+            ? CommandWithResultInterfaceName
+            : QueryInterfaceName;
+
+        return nullability.IsResultNullable(type, targetGenericName);
     }
 
     private static string FormatFullTypeName(Type type)
