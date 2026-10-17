@@ -192,4 +192,52 @@ public class TypeMapEmitterShould
         result.Should().NotContain("EventMap");
         result.Should().NotContain("ItemDto");
     }
+
+    private static string EmitFor(DispatchableKind kind, string resultFull, bool nullable)
+    {
+        var types = new List<DispatchableTypeInfo>
+        {
+            new()
+            {
+                TypeName = "MyThing",
+                FullTypeName = "MyApp.MyThing",
+                Namespace = "MyApp",
+                Kind = kind,
+                ResultTypeName = resultFull.Split('.')[^1],
+                ResultFullTypeName = resultFull,
+                ResultIsNullable = nullable,
+            }
+        };
+        var sb = new StringBuilder();
+        TypeMapEmitter.EmitMaps(sb, types);
+        return sb.ToString();
+    }
+
+    [TestMethod]
+    public void Emits_null_after_a_nullable_query_result()
+    {
+        EmitFor(DispatchableKind.Query, "MyApp.Dto", true).Should().Contain("response: Dto | null }");
+    }
+
+    [TestMethod]
+    public void Emits_null_after_a_nullable_command_result()
+    {
+        EmitFor(DispatchableKind.Command, "MyApp.Dto", true).Should().Contain("response: Dto | null }");
+    }
+
+    [TestMethod]
+    public void Never_doubles_null_on_a_nullable_value_type()
+    {
+        var result = EmitFor(DispatchableKind.Query, "System.Nullable<System.Int32>", true);
+
+        result.Should().Contain("response: number | null }");
+        result.Should().NotContain("| null | null");
+    }
+
+    [TestMethod]
+    public void Emits_null_after_a_generic_result()
+    {
+        EmitFor(DispatchableKind.Query, "System.Collections.Generic.IReadOnlyList<MyApp.Dto>", true)
+            .Should().Contain("response: Dto[] | null }");
+    }
 }

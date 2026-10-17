@@ -79,4 +79,33 @@ public class TypeGenTaskShould
             }
         }
     }
+
+    [TestMethod]
+    public void Emits_a_nullable_result_from_the_compiled_assembly()
+    {
+        var outputDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var task = new TypeGenTask
+        {
+            AssemblyPath = typeof(TypeGenTaskShould).Assembly.Location,
+            OutputDirectory = outputDir,
+            Transports = "Http;SignalR",
+            BuildEngine = new FakeBuildEngine(),
+        };
+
+        try
+        {
+            task.Execute();
+
+            var lines = File.ReadAllLines(Path.Combine(outputDir, "conduit.generated.ts"));
+            lines.Single(l => l.Contains("TestFindQuery'", StringComparison.Ordinal)).TrimEnd().Should().EndWith("response: TestFound | null };");
+            lines.Single(l => l.Contains("TestRequireQuery'", StringComparison.Ordinal)).TrimEnd().Should().EndWith("response: TestFound };");
+        }
+        finally
+        {
+            if (Directory.Exists(outputDir))
+            {
+                Directory.Delete(outputDir, true);
+            }
+        }
+    }
 }

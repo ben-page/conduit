@@ -87,6 +87,18 @@ public static class TypeMapEmitter
 
     private static string ResolveResultType(DispatchableTypeInfo typeInfo, IReadOnlyList<Assembly>? assemblies)
     {
+        var mapped = MapResultType(typeInfo, assemblies);
+
+        // A reference-type result declared T? may be null. A value-type T? already maps to "X | null" through
+        // Nullable<T>, so the guard keeps it from doubling.
+        const string nullSuffix = " | null";
+        return typeInfo.ResultIsNullable && !mapped.EndsWith(nullSuffix, StringComparison.Ordinal)
+            ? mapped + nullSuffix
+            : mapped;
+    }
+
+    private static string MapResultType(DispatchableTypeInfo typeInfo, IReadOnlyList<Assembly>? assemblies)
+    {
         if (typeInfo.ResultFullTypeName is not null)
         {
             // Try resolving via assemblies (works with MetadataLoadContext)
@@ -106,10 +118,10 @@ public static class TypeMapEmitter
             }
 
             // Fall back to string-based mapping for generic types formatted in C#-style
-            var mapped = TypeMapper.MapFullTypeName(typeInfo.ResultFullTypeName, assemblies);
-            if (mapped is not null)
+            var fallback = TypeMapper.MapFullTypeName(typeInfo.ResultFullTypeName, assemblies);
+            if (fallback is not null)
             {
-                return mapped;
+                return fallback;
             }
         }
 
