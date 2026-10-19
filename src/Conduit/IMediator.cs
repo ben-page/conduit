@@ -110,6 +110,8 @@ public interface IWireMediator : IMediator
     /// Call it from a transport, where no dispatch is running. Called from inside a running dispatch, the caller must
     /// first start a child context (<c>MessageContext.StartDispatch()</c>): otherwise the wire dispatch runs on the
     /// outer context, shares its MessageId and audit group, and its captured payload can replace the outer record's.
+    /// Under a dispatch retry policy it also binds that context to the running attempt, so the outer dispatch's own
+    /// audit record can be dropped with an abandoned attempt: an in-process wire call starts its own context.
     /// </para>
     /// </remarks>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
@@ -129,6 +131,8 @@ public interface IWireMediator : IMediator
     /// Call it from a transport, where no dispatch is running. Called from inside a running dispatch, the caller must
     /// first start a child context (<c>MessageContext.StartDispatch()</c>): otherwise the wire dispatch runs on the
     /// outer context, shares its MessageId and audit group, and its captured payload can replace the outer record's.
+    /// Under a dispatch retry policy it also binds that context to the running attempt, so the outer dispatch's own
+    /// audit record can be dropped with an abandoned attempt: an in-process wire call starts its own context.
     /// </para>
     /// </remarks>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>

@@ -30,7 +30,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`AddDispatchRetry<TPolicy>(Action<DispatchRetryOptions>? configure = null)` registers `TPolicy` as a singleton `IDispatchRetryPolicy`, so it is built from the root provider and takes constructor dependencies only from singleton services. Call it once per host: a second call throws `InvalidOperationException`. The options are validated in the call, so a bad value fails at startup and registers nothing.
+`AddDispatchRetry<TPolicy>(Action<DispatchRetryOptions>? configure = null)` registers `TPolicy` as a singleton `IDispatchRetryPolicy`, so it is built from the root provider and takes constructor dependencies only from singleton services. Call it once per host: a second call throws `InvalidOperationException`. The options are validated in the call, so a bad value fails at startup and registers nothing. The attempt loop copies them when it is first resolved (at the host's first dispatch), so set them only in `configure`: a later change to the registered `DispatchRetryOptions` is not seen.
 
 ## The policy
 
@@ -48,7 +48,7 @@ public sealed record DispatchAttemptFailure(
 - **`Covers(requestType)`** says whether a top-level dispatch of that request type runs under the policy. A type it does not cover runs once on the caller's provider, as if no policy were registered.
 - **`RetryReason(failure)`** is asked after each failed attempt. A non-null string is the reason to retry (it tags the counter and the log); `null` stops and rethrows the attempt's exception. It is asked for the last attempt too: a reason there means the attempts were exhausted, and is counted as such.
 - **`AttemptServices` is the failed attempt's scope, still open.** A policy reads its own signal from it: a flag the attempt's unit of work set, say. The scope is disposed right after the question is answered.
-- An attempt cancelled by the dispatch's own token is never offered to the policy.
+- An attempt that ends in an `OperationCanceledException` while the dispatch's own token is cancelled is never offered to the policy.
 - A policy that throws is logged (Warning, EventId 19) and treated as `null`: the attempt's own exception is the one the caller sees.
 
 A host that retries deadlock victims would answer `"deadlock"` for the failures its data layer classifies that way, and `null` for everything else, including refusals such as `ConflictException`.
@@ -84,14 +84,18 @@ Every attempt of a covered top-level dispatch, **the first included**, runs in a
 
 The scope is disposed **before** the wait. A retry holds nothing of the failed attempt (a pooled connection included) while it sleeps.
 
+**A lazy result outlives its scope.** The attempt's scope is disposed before the result reaches the caller or the wire serializer. A covered dispatch that returns an `IAsyncEnumerable`, an `IQueryable` over a scoped context, or any scoped disposable hands its caller something already disposed, although the same handler works without a policy (it then runs on the caller's scope). Materialize such a result inside the handler.
+
 ## Nested and independent dispatches
 
 `DispatchAttempt.Current` is an `AsyncLocal` set for the duration of an attempt. It exposes `Number` (1-based) and `MaxAttempts`. Whether a dispatch gets attempts of its own depends on the provider it was made from:
 
-- **Nested**: the dispatching `IServiceProvider` is the current attempt's own scope (compared by reference). The dispatch runs inline on that scope, with no new scope and no retry of its own. A handler that sends a command through its injected `IMediator` is nested, and so is an event listener's dispatch from the same scope. The nested dispatch shares the attempt's transaction, and an exception from it fails the attempt that owns it.
+- **Nested**: the dispatching `IServiceProvider` is the current attempt's own scope (compared by reference). The dispatch runs inline on that scope, with no new scope and no retry of its own. A handler that sends a command through its injected `IMediator` is nested, and so is an event listener's dispatch from the same scope, and an item a batch handler sends through its injected `IWireMediator`. The nested dispatch shares the attempt's transaction, and an exception from it fails the attempt that owns it.
 - **Independent**: any other provider, even from inside an attempt. A handler that opens its own scope so that the inner command commits on its own makes an independent dispatch. It gets attempts of its own, sets `DispatchAttempt.Current` for them, and restores the outer attempt afterwards.
 
 Only the outermost dispatch retries. A nested dispatch that fails fails its owner, and the owner's attempt is the unit that reruns.
+
+**An in-process wire call starts its own context.** Code inside an attempt that hands a request to `IWireMediator.HandleWireRequestAsync` (a batch handler, say) must start a context of its own first (`MessageContext.StartDispatch()`, restored afterwards). The wire dispatch binds the current context to the running attempt; without a context of its own it binds the caller's, and the caller's own audit record can then be dropped with an abandoned attempt.
 
 ## Which dispatches are covered
 
@@ -112,7 +116,7 @@ The boundary sits in the generated `ConduitDispatch` methods that run a handler 
 
 The wait before each retry is `Task.Delay(delay, options.TimeProvider, cancellationToken)`. `DispatchRetryOptions.TimeProvider` defaults to `TimeProvider.System` and is **deliberately never** the host's DI `TimeProvider`: that is the business clock, and a test host that fakes it would never see a wait end. Only Conduit's own tests set this option.
 
-The dispatch's `CancellationToken` (a hub's `ConnectionAborted`, a request's `RequestAborted`) cancels the wait, and the `OperationCanceledException` reaches the caller. An attempt that fails with the token cancelled is kept as the answer and never offered to the policy.
+The dispatch's `CancellationToken` (a hub's `ConnectionAborted`, a request's `RequestAborted`) cancels the wait, and the `OperationCanceledException` reaches the caller. An attempt that fails with an `OperationCanceledException` while the token is cancelled is kept as the answer and never offered to the policy. Any other exception is offered as usual, even with the token cancelled.
 
 ## Observing retries
 
@@ -148,7 +152,8 @@ The retry log carries no exception: the failure it answers is the host's to log.
 
 - The retry is in-process and lasts for the duration of the dispatch. It survives nothing: for work that must outlive a restart use the ledger ([Jobs](jobs.md)) or the [outbox](outbox.md).
 - A side effect that leaves the transaction (a send, a call to another service) is repeated by every attempt that reaches it. Retried work should hold its external effects until the attempt is kept, or be idempotent.
-- Kept-attempt work registered with `DispatchAttempt.OnKept` runs on the thread that decides the attempt and should not throw: an exception from it reaches the dispatch's caller.
+- A nested dispatch whose effect leaves the attempt (a local `[FireAndForget]` command or event, an event broadcast to a transport that no outbox captures, a routed command or query) has its audit record dropped with an abandoned attempt, although its effect happened. The audit records only the kept attempt's, so it under-records these dispatches. See [Audit → Records and retried attempts](audit.md#records-and-retried-attempts).
+- Kept-attempt work registered with `DispatchAttempt.OnKept` runs on the thread that decides the attempt and should not throw. It runs after the attempt's own `try`, so it is never offered to the policy and never causes a retry. Every queued action runs even when one throws; then that exception (an `AggregateException` when several threw) reaches the dispatch's caller in place of its result, or in place of the attempt's own exception when the kept attempt failed.
 
 ---
 
