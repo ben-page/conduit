@@ -131,6 +131,7 @@ public sealed class AuditScopeValidationShould
         });
 
         builder.Services.AddSingleton<MessageIdCapture>();
+        builder.Services.AddSingleton<AuditRetryCalls>();
         builder.Services.AddConduit(conduit =>
         {
             conduit.UseSqlite(connectionString);

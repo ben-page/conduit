@@ -119,7 +119,17 @@ public sealed class AuditObserver : IConduitObserver
         {
             if (this.activeGroups.TryRemove(context.MessageId, out var completed))
             {
-                this.channel.TryWrite(completed.Seal());
+                // Seal now, while the payload is readable; only the write waits. A dispatch nested in a retrying
+                // attempt is written once that attempt is kept and dropped if it is abandoned.
+                var sealedRecord = completed.Seal();
+                if (context.Attempt is { } attempt)
+                {
+                    attempt.OnKept(() => this.channel.TryWrite(sealedRecord));
+                }
+                else
+                {
+                    this.channel.TryWrite(sealedRecord);
+                }
             }
         }
     }
