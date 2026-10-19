@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Runtime;
+using Conduit.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Tests.Unit;
@@ -85,6 +86,20 @@ public class ConduitRuntimeShould
         // Assert
         action.Should().ThrowExactly<InvalidOperationException>()
             .WithMessage("*no transport configured*");
+    }
+
+    [TestMethod]
+    public void LogPipelines_names_the_type_and_the_count_in_their_places()
+    {
+        // Arrange
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+
+        // Act
+        ConduitRuntime.LogPipelines(logger, "Orders.Commands.CreateOrder", 3);
+
+        // Assert
+        logger.Entries.Should().ContainSingle()
+            .Which.Message.Should().Be("Executing pipeline behaviors for 'Orders.Commands.CreateOrder': 3");
     }
 
     [TestMethod]

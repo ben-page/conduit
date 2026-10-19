@@ -12,7 +12,9 @@ namespace Conduit.Runtime;
 /// </summary>
 internal sealed class DispatchRetryRunner
 {
-    private readonly DispatchRetryOptions options;
+    private readonly int maxAttempts;
+    private readonly DispatchRetryDelay[] delays;
+    private readonly TimeProvider timeProvider;
     private readonly ILogger<DispatchRetryRunner> logger;
 
     public DispatchRetryRunner(
@@ -21,7 +23,11 @@ internal sealed class DispatchRetryRunner
         ILogger<DispatchRetryRunner> logger)
     {
         this.Policy = policy;
-        this.options = options;
+
+        // Copied once: the options stay resolvable and mutable, but the runner only ever uses what was validated.
+        this.maxAttempts = options.MaxAttempts;
+        this.delays = [.. options.Delays];
+        this.timeProvider = options.TimeProvider;
         this.logger = logger;
     }
 
@@ -30,7 +36,8 @@ internal sealed class DispatchRetryRunner
     /// <summary>
     /// Runs <paramref name="attempt"/> up to <see cref="DispatchRetryOptions.MaxAttempts"/> times, each in a fresh scope
     /// from the root factory, until it succeeds or the policy gives no reason to go on. The scope is disposed before
-    /// the wait, so a retry holds nothing of the failed attempt while it waits.
+    /// the wait, so a retry holds nothing of the failed attempt while it waits. A kept attempt's work runs after its
+    /// try, so its failure reaches the caller and is never offered to the policy.
     /// </summary>
     public async Task<TResult> RunAsync<TRequest, TResult>(
         IServiceProvider services,
@@ -39,78 +46,99 @@ internal sealed class DispatchRetryRunner
     {
         var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
         var requestType = typeof(TRequest);
-        var maxAttempts = this.options.MaxAttempts;
+        var maxAttempts = this.maxAttempts;
 
         for (var number = 1; ; number++)
         {
             ExceptionDispatchInfo? answer = null;
             var delay = TimeSpan.Zero;
+            var succeeded = false;
+            var result = default(TResult)!;
 
-            await using (var scope = scopeFactory.CreateAsyncScope())
+            var scope = scopeFactory.CreateAsyncScope();
+            var current = new DispatchAttempt(number, maxAttempts, scope.ServiceProvider);
+            try
             {
-                var previous = DispatchAttempt.Current;
-                var current = new DispatchAttempt(number, maxAttempts, scope.ServiceProvider);
-                DispatchAttempt.SetCurrent(current);
-                try
+                await using (scope)
                 {
-                    var result = await attempt(scope.ServiceProvider);
-                    current.Keep();
-                    if (number > 1)
+                    var previous = DispatchAttempt.Current;
+                    DispatchAttempt.SetCurrent(current);
+                    try
+                    {
+                        result = await attempt(scope.ServiceProvider);
+                        succeeded = true;
+                    }
+                    catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // The caller gave up: the answer, never a failure to offer the policy.
+                        answer = ExceptionDispatchInfo.Capture(exception);
+                    }
+#pragma warning disable CA1031 // Not swallowed: offered to the policy, then rethrown unless it is retried.
+                    catch (Exception exception)
+#pragma warning restore CA1031
+                    {
+                        // Asked here, inside the await using, so the policy reads the failed attempt's own services.
+                        var reason = this.AskPolicy(new DispatchAttemptFailure(
+                            requestType, exception, number, maxAttempts, scope.ServiceProvider));
+
+                        if (reason is null || number >= maxAttempts)
+                        {
+                            // Kept as the answer; its work runs below, outside this catch.
+                            if (reason is not null)
+                            {
+                                ConduitTelemetry.RecordDispatchRetry(TypeName(requestType), reason, exhausted: true);
+                            }
+
+                            answer = ExceptionDispatchInfo.Capture(exception);
+                        }
+                        else
+                        {
+                            current.Abandon();
+                            delay = this.NextDelay(number);
+                            ConduitTelemetry.RecordDispatchRetry(TypeName(requestType), reason, exhausted: false);
+
+                            // The loop runs on the dispatch's own context, so its one record shows each retry.
+                            MessageContext.Observe(new RetryAttempted(
+                                number,
+                                exception.Message,
+                                exception.GetType().FullName ?? exception.GetType().Name,
+                                delay.TotalMilliseconds));
+                            ConduitRuntime.LogDispatchRetrying(
+                                this.logger, TypeName(requestType), number, maxAttempts, reason, delay.TotalMilliseconds);
+                        }
+                    }
+                    finally
+                    {
+                        DispatchAttempt.SetCurrent(previous);
+                    }
+
+                    if (succeeded || answer is not null)
+                    {
+                        // Outside the try: kept work that throws is the caller's (in place of the result or the
+                        // attempt's own exception), never a failure of the attempt.
+                        current.Keep();
+                    }
+
+                    if (succeeded && number > 1)
                     {
                         ConduitRuntime.LogDispatchRetrySucceeded(this.logger, TypeName(requestType), number);
                     }
-
-                    return result;
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    // The caller gave up: the answer, never a failure to offer the policy.
-                    current.Keep();
-                    throw;
-                }
-#pragma warning disable CA1031 // Not swallowed: offered to the policy, then rethrown unless it is retried.
-                catch (Exception exception)
-#pragma warning restore CA1031
-                {
-                    // Asked here, inside the await using, so the policy reads the failed attempt's own services.
-                    var reason = this.AskPolicy(new DispatchAttemptFailure(
-                        requestType, exception, number, maxAttempts, scope.ServiceProvider));
+            }
+            finally
+            {
+                // The scope is disposed: a Current that flowed into work outliving the attempt now pins nothing.
+                current.ReleaseServices();
+            }
 
-                    if (reason is null || number >= maxAttempts)
-                    {
-                        current.Keep();
-                        if (reason is not null)
-                        {
-                            ConduitTelemetry.RecordDispatchRetry(TypeName(requestType), reason, exhausted: true);
-                        }
-
-                        answer = ExceptionDispatchInfo.Capture(exception);
-                    }
-                    else
-                    {
-                        current.Abandon();
-                        delay = this.NextDelay(number);
-                        ConduitTelemetry.RecordDispatchRetry(TypeName(requestType), reason, exhausted: false);
-
-                        // The loop runs on the dispatch's own context, so its one record shows each retry.
-                        MessageContext.Observe(new RetryAttempted(
-                            number,
-                            exception.Message,
-                            exception.GetType().FullName ?? exception.GetType().Name,
-                            delay.TotalMilliseconds));
-                        ConduitRuntime.LogDispatchRetrying(
-                            this.logger, TypeName(requestType), number, maxAttempts, reason, delay.TotalMilliseconds);
-                    }
-                }
-                finally
-                {
-                    DispatchAttempt.SetCurrent(previous);
-                }
+            if (succeeded)
+            {
+                return result;
             }
 
             answer?.Throw();
 
-            await Task.Delay(delay, this.options.TimeProvider, cancellationToken);
+            await Task.Delay(delay, this.timeProvider, cancellationToken);
         }
     }
 
@@ -133,7 +161,7 @@ internal sealed class DispatchRetryRunner
     /// <summary>The wait before attempt <paramref name="failedAttempt"/> + 1: jittered within its range.</summary>
     private TimeSpan NextDelay(int failedAttempt)
     {
-        var range = this.options.Delays[Math.Min(failedAttempt - 1, this.options.Delays.Count - 1)];
+        var range = this.delays[Math.Min(failedAttempt - 1, this.delays.Length - 1)];
 #pragma warning disable CA5394 // Jitter that spreads retries apart, not a secret.
         return range.Min + ((range.Max - range.Min) * Random.Shared.NextDouble());
 #pragma warning restore CA5394

@@ -109,6 +109,103 @@ public sealed class DispatchAttemptShould
     }
 
     [TestMethod]
+    public async Task A_throwing_kept_action_on_a_successful_attempt_reaches_the_caller_without_a_retry()
+    {
+        // Arrange -- the policy retries every failure it is asked about
+        await using var provider = BuildProvider();
+        var policy = (RecordingRetryPolicy)provider.GetRequiredService<IDispatchRetryPolicy>();
+        var keptFailure = new InvalidOperationException("kept work failed");
+        var calls = 0;
+
+        // Act
+        var act = () => ConduitRuntime.DispatchAttemptsAsync<RetryRequest, int>(
+            provider,
+            _ =>
+            {
+                calls++;
+                DispatchAttempt.Current!.OnKept(() => throw keptFailure);
+                return Task.FromResult(1);
+            },
+            CancellationToken.None);
+
+        // Assert -- the attempt succeeded, so it is never offered to the policy and never run again
+        var thrown = await act.Should().ThrowExactlyAsync<InvalidOperationException>();
+        thrown.Which.Should().BeSameAs(keptFailure);
+        calls.Should().Be(1);
+        policy.Failures.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task Keep_runs_every_queued_action_when_one_throws()
+    {
+        // Arrange
+        await using var provider = BuildProvider();
+        var keptFailure = new InvalidOperationException("first kept action failed");
+        var laterRuns = 0;
+
+        // Act
+        var act = () => ConduitRuntime.DispatchAttemptsAsync<RetryRequest, int>(
+            provider,
+            _ =>
+            {
+                DispatchAttempt.Current!.OnKept(() => throw keptFailure);
+                DispatchAttempt.Current!.OnKept(() => laterRuns++);
+                return Task.FromResult(1);
+            },
+            CancellationToken.None);
+
+        // Assert -- the second action ran, and the one failure is rethrown as itself
+        var thrown = await act.Should().ThrowExactlyAsync<InvalidOperationException>();
+        thrown.Which.Should().BeSameAs(keptFailure);
+        laterRuns.Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task Keep_aggregates_several_failing_actions()
+    {
+        // Arrange
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var attempt = new DispatchAttempt(1, 1, provider);
+        var first = new InvalidOperationException("first");
+        var second = new ArgumentException("second");
+        attempt.OnKept(() => throw first);
+        attempt.OnKept(() => throw second);
+
+        // Act
+        var act = attempt.Keep;
+
+        // Assert -- both, in the order they were queued
+        act.Should().ThrowExactly<AggregateException>()
+            .Which.InnerExceptions.Should().Equal(first, second);
+    }
+
+    [TestMethod]
+    public async Task The_first_decision_is_final()
+    {
+        // Arrange
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var kept = new DispatchAttempt(1, 2, provider);
+        var abandoned = new DispatchAttempt(1, 2, provider);
+        var keptRuns = 0;
+        var abandonedRuns = 0;
+        kept.OnKept(() => keptRuns++);
+        abandoned.OnKept(() => abandonedRuns++);
+
+        // Act -- a second, contrary decision on each
+        kept.Keep();
+        kept.Abandon();
+        kept.Keep();
+        abandoned.Abandon();
+        abandoned.Keep();
+        kept.OnKept(() => keptRuns++);
+        abandoned.OnKept(() => abandonedRuns++);
+
+        // Assert -- the kept attempt ran its queued work once and still runs new work; the abandoned one never does
+        keptRuns.Should().Be(2);
+        abandonedRuns.Should().Be(0);
+    }
+
+    [TestMethod]
     public async Task OnKept_runs_each_action_exactly_once_while_racing_the_decision()
     {
         // Arrange -- actions queued from many threads while the attempt is decided, some before and some after
@@ -155,6 +252,32 @@ public sealed class DispatchAttemptShould
         // Assert
         inside.Should().NotBeNull();
         DispatchAttempt.Current.Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task Drops_its_scopes_provider_once_the_scope_is_disposed()
+    {
+        // Arrange
+        await using var provider = BuildProvider();
+        var attempts = new List<DispatchAttempt>();
+        var servicesInside = new List<IServiceProvider?>();
+
+        // Act
+        await ConduitRuntime.DispatchAttemptsAsync<RetryRequest, int>(
+            provider,
+            attemptServices =>
+            {
+                attempts.Add(DispatchAttempt.Current!);
+                servicesInside.Add(DispatchAttempt.Current!.Services);
+                return attempts.Count == 1
+                    ? Task.FromException<int>(new InvalidOperationException("attempt 1"))
+                    : Task.FromResult(attempts.Count);
+            },
+            CancellationToken.None);
+
+        // Assert -- each attempt held its scope's provider while it ran, and neither pins it now
+        servicesInside.Should().OnlyContain(services => services != null);
+        attempts.Should().HaveCount(2).And.OnlyContain(attempt => attempt.Services == null);
     }
 
     [TestMethod]

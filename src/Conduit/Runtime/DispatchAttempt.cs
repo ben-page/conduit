@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace Conduit.Runtime;
 
 /// <summary>
@@ -37,15 +39,19 @@ public sealed class DispatchAttempt
     /// <summary>The most attempts the dispatch gets.</summary>
     public int MaxAttempts { get; }
 
-    /// <summary>The attempt scope's provider: a dispatch from it is nested in this attempt.</summary>
-    internal IServiceProvider Services { get; }
+    /// <summary>
+    /// The attempt scope's provider: a dispatch from it is nested in this attempt. Null once the scope is disposed, so a
+    /// <see cref="Current"/> that flowed into work outliving the attempt pins nothing (and matches no live provider).
+    /// </summary>
+    internal IServiceProvider? Services { get; private set; }
 
     /// <summary>
     /// Runs <paramref name="action"/> once this attempt is known to be kept: it succeeded, or its failure is the
     /// dispatch's answer (no reason to retry, or no attempts left). Queued while the attempt is undecided; called after
     /// the decision, it runs at once on the caller's thread if the attempt was kept, and is dropped if it was abandoned
     /// for a retry. Thread-safe. The work should not throw: an exception from it reaches whoever made the decision
-    /// (the dispatch's caller) or, after it, whoever called this.
+    /// (the dispatch's caller, in place of the dispatch's result or its own exception) or, after it, whoever called
+    /// this. It is never offered to the policy.
     /// </summary>
     public void OnKept(Action action)
     {
@@ -73,12 +79,21 @@ public sealed class DispatchAttempt
         CurrentAttempt.Value = attempt;
     }
 
-    /// <summary>Decides the attempt kept and runs the work queued on it, in order, outside the lock.</summary>
+    /// <summary>
+    /// Decides the attempt kept and runs the work queued on it, in order, outside the lock. A no-op once the attempt is
+    /// decided: the first decision is final. Every action runs even when one throws; then the one failure is rethrown
+    /// as itself, or several as an <see cref="AggregateException"/>.
+    /// </summary>
     internal void Keep()
     {
         List<Action>? work;
         lock (this.gate)
         {
+            if (this.decision != Decision.Undecided)
+            {
+                return;
+            }
+
             this.decision = Decision.Kept;
             work = this.keptWork;
             this.keptWork = null;
@@ -89,19 +104,54 @@ public sealed class DispatchAttempt
             return;
         }
 
+        List<Exception>? failures = null;
         foreach (var action in work)
         {
-            action();
+            try
+            {
+                action();
+            }
+#pragma warning disable CA1031 // Not swallowed: rethrown once every action has run.
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                (failures ??= []).Add(exception);
+            }
         }
+
+        if (failures is null)
+        {
+            return;
+        }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Throw(failures[0]);
+        }
+
+        throw new AggregateException(failures);
     }
 
-    /// <summary>Decides the attempt abandoned for a retry and drops the work queued on it.</summary>
+    /// <summary>
+    /// Decides the attempt abandoned for a retry and drops the work queued on it. A no-op once the attempt is decided.
+    /// </summary>
     internal void Abandon()
     {
         lock (this.gate)
         {
+            if (this.decision != Decision.Undecided)
+            {
+                return;
+            }
+
             this.decision = Decision.Abandoned;
             this.keptWork = null;
         }
+    }
+
+    /// <summary>Drops the reference to the attempt scope's provider, once the runner has disposed the scope.</summary>
+    internal void ReleaseServices()
+    {
+        this.Services = null;
     }
 }

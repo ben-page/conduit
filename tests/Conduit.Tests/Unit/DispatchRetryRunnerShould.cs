@@ -313,6 +313,35 @@ public sealed class DispatchRetryRunnerShould
     }
 
     [TestMethod]
+    public async Task Ignores_a_change_to_its_options_after_it_is_built()
+    {
+        // Arrange -- the runner is built by a first dispatch; then the resolvable options are emptied
+        await using var provider = BuildProvider();
+        await ConduitRuntime.DispatchAttemptsAsync<RetryRequest, int>(
+            provider, _ => Task.FromResult(1), CancellationToken.None);
+        var options = provider.GetRequiredService<DispatchRetryOptions>();
+        options.MaxAttempts = 1;
+        options.Delays.Clear();
+        var thrown = new List<Exception>();
+
+        // Act
+        var act = () => ConduitRuntime.DispatchAttemptsAsync<RetryRequest, int>(
+            provider,
+            _ =>
+            {
+                var exception = new InvalidOperationException($"attempt {thrown.Count + 1}");
+                thrown.Add(exception);
+                return Task.FromException<int>(exception);
+            },
+            CancellationToken.None);
+
+        // Assert -- still three attempts with the validated delays, and the last attempt's own exception
+        var failure = await act.Should().ThrowExactlyAsync<InvalidOperationException>();
+        failure.Which.Should().BeSameAs(thrown[^1]);
+        thrown.Should().HaveCount(3);
+    }
+
+    [TestMethod]
     public async Task Waits_the_configured_delay_before_each_retry()
     {
         // Arrange

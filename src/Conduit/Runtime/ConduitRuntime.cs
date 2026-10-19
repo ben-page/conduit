@@ -636,7 +636,7 @@ public static partial class ConduitRuntime
 
     private static readonly Action<ILogger, string, int, Exception?> LogExecutingPipelines =
         LoggerMessage.Define<string, int>(LogLevel.Debug, new EventId(16, "ExecutingPipelines"),
-            "Executing {Count} pipeline behavior(s) for '{Type}'");
+            "Executing pipeline behaviors for '{Type}': {Count}");
 
     // Dispatch retry logs (DispatchRetryRunner). Information: a retry is expected behaviour, and the failure it answers
     // is the host's to log (its own Warning carries the exception), so DispatchRetrying carries none.
