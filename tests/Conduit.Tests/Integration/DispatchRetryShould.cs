@@ -134,6 +134,28 @@ public class DispatchRetryShould
     }
 
     [TestMethod]
+    public async Task A_nested_wire_dispatch_shares_the_attempts_scope()
+    {
+        // Arrange -- the outer command sends an item through its injected IWireMediator, then fails retryably once
+        await using var host = await StartHostAsync(withPolicy: true);
+        var mediator = host.GetRequiredService<IMediator>();
+        var probe = host.GetRequiredService<RetryProbe>();
+
+        // Act
+        await mediator.ExecuteAsync(new WireNestingCommand(Failures: 1));
+
+        // Assert -- the item ran once per outer attempt, in that attempt's own scope, with no attempts of its own
+        var outer = probe.At(nameof(WireNestingCommand));
+        var item = probe.At(nameof(InnerCommand));
+        outer.Select(sighting => sighting.AttemptNumber).Should().Equal(1, 2);
+        item.Select(sighting => sighting.AttemptNumber).Should().Equal(1, 2);
+        item.Select(sighting => sighting.ScopeId).Should().Equal(outer.Select(sighting => sighting.ScopeId));
+        item.Select(sighting => sighting.MessageId).Should().NotIntersectWith(outer.Select(sighting => sighting.MessageId));
+        probe.All().Select(sighting => sighting.ScopeId).Distinct()
+            .Should().HaveCount(2, "two attempts create only two scopes");
+    }
+
+    [TestMethod]
     public async Task A_dispatch_from_a_fresh_scope_inside_an_attempt_is_independent()
     {
         // Arrange
@@ -187,7 +209,6 @@ public class DispatchRetryShould
         // Act
         await mediator.ExecuteAsync(new FlakyFireAndForgetCommand(Failures: 1));
         await probe.WaitForAsync(nameof(FlakyFireAndForgetCommand), 1, WaitTimeout);
-        await Task.Delay(TimeSpan.FromMilliseconds(200));
 
         // Assert -- the pipeline ran around the enqueue on the caller's provider, outside any attempt
         var behaved = probe.At(BehaviorSite(nameof(FlakyFireAndForgetCommand))).Should().ContainSingle().Subject;

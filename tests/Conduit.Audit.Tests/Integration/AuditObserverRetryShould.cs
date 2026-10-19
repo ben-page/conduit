@@ -11,14 +11,13 @@ namespace Conduit.Audit.Tests.Integration;
 /// <summary>
 /// With a dispatch retry policy, a sealed record whose context is bound to an attempt waits for that attempt to be
 /// kept: an abandoned attempt's nested records are dropped, the kept attempt's written, and a top-level or independent
-/// dispatch's record is written when it seals.
+/// dispatch's record is written when it seals. The owner's record is the channel's last write and the publisher
+/// drains in order, so once it has arrived every earlier write has too: the tests assert straight after waiting for it.
 /// </summary>
 [TestClass]
 [DoNotParallelize]
 public sealed class AuditObserverRetryShould
 {
-    private static readonly TimeSpan SettleTime = TimeSpan.FromMilliseconds(300);
-
     [TestCleanup]
     public void Cleanup()
     {
@@ -38,7 +37,6 @@ public sealed class AuditObserverRetryShould
         await sink.WaitForAsync(typeof(AuditRetryOwnerCommand), 1);
         await sink.WaitForAsync(typeof(AuditRetryNotedEvent), 1);
         await sink.WaitForAsync(typeof(AuditRetryInnerCommand), 1);
-        await Task.Delay(SettleTime);
 
         // Assert -- the owner's record and attempt 2's two nested records, nothing from attempt 1
         sink.Of(typeof(AuditRetryOwnerCommand)).Should().ContainSingle();
@@ -60,7 +58,6 @@ public sealed class AuditObserverRetryShould
         await sink.WaitForAsync(typeof(AuditRetryOwnerCommand), 1);
         await sink.WaitForAsync(typeof(AuditRetryNotedEvent), 1);
         await sink.WaitForAsync(typeof(AuditRetryInnerCommand), 1);
-        await Task.Delay(SettleTime);
 
         // Assert -- three attempts ran, and only the last one's nested records were written
         sink.Of(typeof(AuditRetryOwnerCommand)).Should().ContainSingle();
@@ -79,7 +76,6 @@ public sealed class AuditObserverRetryShould
         // Act
         await mediator.ExecuteAsync(new AuditRetryOwnerCommand(Failures: 2));
         await sink.WaitForAsync(typeof(AuditRetryOwnerCommand), 1);
-        await Task.Delay(SettleTime);
 
         // Assert
         var owner = sink.Of(typeof(AuditRetryOwnerCommand)).Should().ContainSingle().Subject;
@@ -99,7 +95,7 @@ public sealed class AuditObserverRetryShould
         // Act
         await mediator.ExecuteAsync(new AuditRetryIndependentCommand(Failures: 1));
         await sink.WaitForAsync(typeof(AuditRetryInnerCommand), 2);
-        await Task.Delay(SettleTime);
+        await sink.WaitForAsync(typeof(AuditRetryIndependentCommand), 1);
 
         // Assert -- the independent dispatch is not part of the attempt, so each of the two outer attempts' records stays
         sink.Of(typeof(AuditRetryInnerCommand)).Should().HaveCount(2);
@@ -120,7 +116,6 @@ public sealed class AuditObserverRetryShould
         await sink.WaitForAsync(typeof(AuditRetryOwnerCommand), 1);
         await sink.WaitForAsync(typeof(AuditRetryNotedEvent), 1);
         await sink.WaitForAsync(typeof(AuditRetryInnerCommand), 1);
-        await Task.Delay(SettleTime);
 
         // Assert
         sink.Of(typeof(AuditRetryOwnerCommand)).Should().ContainSingle();
