@@ -40,6 +40,9 @@ public static class ConduitTelemetry
     private static readonly Counter<long> ReplayedCount =
         MeterInstance.CreateCounter<long>("conduit.messages.replayed", description: "Number of messages replayed from the dead letter queue");
 
+    private static readonly Counter<long> DispatchRetryCount =
+        MeterInstance.CreateCounter<long>("conduit.dispatch.retries", description: "Number of failed dispatch attempts the retry policy gave a retry reason for, retried or exhausted");
+
     /// <summary>
     /// Starts an activity for internal operations (local dispatch, wire dispatch).
     /// Returns null when no listener is attached (zero-cost).
@@ -249,6 +252,18 @@ public static class ConduitTelemetry
     {
         ReplayedCount.Add(1,
             new KeyValuePair<string, object?>("conduit.message.type", messageType));
+    }
+
+    /// <summary>
+    /// Records a failed dispatch attempt the retry policy gave <paramref name="reason"/> for: <c>retried</c>, or
+    /// <c>exhausted</c> when no attempts were left.
+    /// </summary>
+    internal static void RecordDispatchRetry(string messageType, string reason, bool exhausted)
+    {
+        DispatchRetryCount.Add(1,
+            new KeyValuePair<string, object?>("conduit.message.type", messageType),
+            new KeyValuePair<string, object?>("conduit.retry.reason", reason),
+            new KeyValuePair<string, object?>("conduit.retry.outcome", exhausted ? "exhausted" : "retried"));
     }
 
     private static void SetMessageContextTags(Activity activity)

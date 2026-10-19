@@ -54,6 +54,14 @@ public sealed class MessageContext
     /// </summary>
     internal JsonElement? Payload { get; private set; }
 
+    /// <summary>
+    /// The dispatch attempt that owns this dispatch, or null: set by the generated mediator
+    /// (<see cref="ConduitRuntime.BindDispatchAttempt"/>) only for a dispatch from the current attempt's own scope. Work
+    /// that must not outlive an abandoned attempt (a nested dispatch's audit record) goes through its
+    /// <see cref="DispatchAttempt.OnKept"/>.
+    /// </summary>
+    public DispatchAttempt? Attempt { get; internal set; }
+
     private MessageContext(string messageId, string causationId, string conversationId,
         IReadOnlyDictionary<string, object?> properties)
     {

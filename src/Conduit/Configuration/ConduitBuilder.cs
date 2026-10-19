@@ -1,4 +1,5 @@
 using Conduit.Middleware;
+using Conduit.Runtime;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -213,6 +214,36 @@ public class ConduitBuilder
 
         this.Services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IInboundInterceptor, TypeFilterInterceptor>());
+        return this;
+    }
+
+    /// <summary>
+    /// Turns on retry at the dispatch boundary: every top-level dispatch of a type <typeparamref name="TPolicy"/>
+    /// covers runs each attempt in a fresh DI scope, and a failed attempt is retried while the policy gives a reason
+    /// and attempts remain (<see cref="IDispatchRetryPolicy"/>). Without this call nothing changes: each dispatch runs
+    /// once, on the caller's provider. Once per host.
+    /// </summary>
+    /// <typeparam name="TPolicy">The policy, registered as a singleton <see cref="IDispatchRetryPolicy"/>.</typeparam>
+    /// <param name="configure">Adjusts the attempts, the delays and the retry clock; validated here.</param>
+    /// <returns>This builder for chaining.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// The call was already made for these services, or the configured options are invalid.
+    /// </exception>
+    public ConduitBuilder AddDispatchRetry<TPolicy>(Action<DispatchRetryOptions>? configure = null)
+        where TPolicy : class, IDispatchRetryPolicy
+    {
+        if (this.Services.Any(descriptor => descriptor.ServiceType == typeof(DispatchRetryRunner)))
+        {
+            throw new InvalidOperationException("AddDispatchRetry was already called; a host has one retry policy.");
+        }
+
+        var options = new DispatchRetryOptions();
+        configure?.Invoke(options);
+        options.Validate();
+
+        this.Services.AddSingleton<IDispatchRetryPolicy, TPolicy>();
+        this.Services.AddSingleton(options);
+        this.Services.AddSingleton<DispatchRetryRunner>();
         return this;
     }
 }

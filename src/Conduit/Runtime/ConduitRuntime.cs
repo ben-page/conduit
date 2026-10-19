@@ -637,6 +637,76 @@ public static partial class ConduitRuntime
     private static readonly Action<ILogger, string, int, Exception?> LogExecutingPipelines =
         LoggerMessage.Define<string, int>(LogLevel.Debug, new EventId(16, "ExecutingPipelines"),
             "Executing {Count} pipeline behavior(s) for '{Type}'");
+
+    // Dispatch retry logs (DispatchRetryRunner). Information: a retry is expected behaviour, and the failure it answers
+    // is the host's to log (its own Warning carries the exception), so DispatchRetrying carries none.
+    private static readonly Action<ILogger, string, int, int, string, double, Exception?> LogDispatchRetryingMessage =
+        LoggerMessage.Define<string, int, int, string, double>(LogLevel.Information, new EventId(17, "DispatchRetrying"),
+            "Dispatching '{Type}' failed on attempt {Attempt} of {MaxAttempts} ({Reason}); retrying in {DelayMs:0} ms");
+
+    private static readonly Action<ILogger, string, int, Exception?> LogDispatchRetrySucceededMessage =
+        LoggerMessage.Define<string, int>(LogLevel.Information, new EventId(18, "DispatchRetrySucceeded"),
+            "Dispatching '{Type}' succeeded on attempt {Attempt}");
+
+    private static readonly Action<ILogger, string, string, Exception?> LogDispatchRetryPolicyFailedMessage =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(19, "DispatchRetryPolicyFailed"),
+            "Dispatch retry policy '{Policy}' threw while deciding whether to retry '{Type}'; not retrying (the exception is the policy's)");
+
+    /// <summary>
+    /// The retry boundary every generated handler-running method goes through. Runs <paramref name="attempt"/> once,
+    /// on <paramref name="services"/> itself, when no <see cref="IDispatchRetryPolicy"/> is registered
+    /// (<see cref="ConduitBuilder.AddDispatchRetry{TPolicy}"/> never called), when the dispatch is nested (it comes from
+    /// the current attempt's own scope), or when the policy does not cover <typeparamref name="TRequest"/>. Otherwise
+    /// it runs each attempt in a fresh scope from the root factory, retrying while the policy gives a reason and
+    /// attempts remain, and rethrows the kept attempt's exception. A <see cref="DispatchAttempt.Current"/> from any
+    /// other provider does not make a dispatch nested: it is independent and gets attempts of its own.
+    /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static Task<TResult> DispatchAttemptsAsync<TRequest, TResult>(
+        IServiceProvider services,
+        Func<IServiceProvider, Task<TResult>> attempt,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(attempt);
+
+        var runner = services.GetService<DispatchRetryRunner>();
+        if (runner is null)
+        {
+            return attempt(services);
+        }
+
+        if (DispatchAttempt.Current is { } current && ReferenceEquals(current.Services, services))
+        {
+            return attempt(services);
+        }
+
+        if (!runner.Policy.Covers(typeof(TRequest)))
+        {
+            return attempt(services);
+        }
+
+        return runner.RunAsync<TRequest, TResult>(services, attempt, cancellationToken);
+    }
+
+    /// <summary>
+    /// Records on <paramref name="context"/> the attempt that owns its dispatch: <see cref="DispatchAttempt.Current"/>
+    /// when the dispatching provider is that attempt's own scope (the nested rule), otherwise null. Called by the
+    /// generated mediator right after it starts a dispatch's context. A null context is a no-op.
+    /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static void BindDispatchAttempt(MessageContext? context, IServiceProvider services)
+    {
+        if (context is null)
+        {
+            return;
+        }
+
+        context.Attempt = DispatchAttempt.Current is { } current && ReferenceEquals(current.Services, services)
+            ? current
+            : null;
+    }
+
     /// <summary>
     /// Resolves the first route for the given message type. Returns the matched endpoint,
     /// or null for local dispatch. Used for commands and queries only — events broadcast
@@ -1003,5 +1073,16 @@ public static partial class ConduitRuntime
     /// <summary>Logs that an individual event listener threw an exception.</summary>
     public static void LogListenerFailure(ILogger logger, string listenerName, Exception exception)
         => LogListenerFailed(logger, listenerName, exception);
+
+    internal static void LogDispatchRetrying(
+        ILogger logger, string typeName, int attempt, int maxAttempts, string reason, double delayMs)
+        => LogDispatchRetryingMessage(logger, typeName, attempt, maxAttempts, reason, delayMs, null);
+
+    internal static void LogDispatchRetrySucceeded(ILogger logger, string typeName, int attempt)
+        => LogDispatchRetrySucceededMessage(logger, typeName, attempt, null);
+
+    internal static void LogDispatchRetryPolicyFailed(
+        ILogger logger, string policyName, string typeName, Exception exception)
+        => LogDispatchRetryPolicyFailedMessage(logger, policyName, typeName, exception);
 
 }
