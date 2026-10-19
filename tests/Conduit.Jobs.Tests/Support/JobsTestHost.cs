@@ -1,3 +1,4 @@
+using Conduit.Configuration;
 using Conduit.Generated;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Runtime;
@@ -28,7 +29,8 @@ public static class JobsTestHost
         string? connectionString = null,
         CapturingLoggerProvider? logs = null,
         WorkstationSpy? workstationSpy = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        Action<ConduitBuilder>? configureConduit = null)
     {
         ArgumentNullException.ThrowIfNull(configureJobs);
 
@@ -51,6 +53,8 @@ public static class JobsTestHost
 
             builder.Services.AddConduit(conduit =>
             {
+                configureConduit?.Invoke(conduit);
+
                 // The engine must be registered before AddJobs — that is where durability is decided.
                 if (connectionString is not null)
                 {
