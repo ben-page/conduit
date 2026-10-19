@@ -105,6 +105,69 @@ namespace App.Events
     }
 
     [TestMethod]
+    public void BindEveryDispatchContextToItsAttemptRightAfterStartingIt()
+    {
+        // Arrange
+        const string source = """
+            using Conduit.Handlers;
+            using Conduit.Messages;
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace App;
+
+            public record CreateOrder(string CustomerId) : ICommand<Guid>;
+
+            public record DeleteOrder(Guid Id) : ICommand;
+
+            public record GetOrder(Guid Id) : IQuery<string>;
+
+            public record OrderCreated(Guid Id) : IEvent;
+
+            public class CreateOrderHandler : ICommandHandler<CreateOrder, Guid>
+            {
+                public Task<Guid> HandleAsync(CreateOrder command, CancellationToken cancellationToken)
+                    => Task.FromResult(Guid.NewGuid());
+            }
+
+            public class DeleteOrderHandler : ICommandHandler<DeleteOrder>
+            {
+                public Task HandleAsync(DeleteOrder command, CancellationToken cancellationToken) => Task.CompletedTask;
+            }
+
+            public class GetOrderHandler : IQueryHandler<GetOrder, string>
+            {
+                public Task<string> HandleAsync(GetOrder query, CancellationToken cancellationToken)
+                    => Task.FromResult("order");
+            }
+            """;
+        const string attach =
+            "Conduit.Runtime.MessageContext.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());";
+        const string bind = "Conduit.Runtime.ConduitRuntime.BindDispatchAttempt(Conduit.Runtime.MessageContext.Current, serviceProvider);";
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator")!;
+        var lines = mediatorSource.Split('\n').Select(line => line.Trim()).ToList();
+
+        // Assert -- every context start (the in-process one per ExecuteAsync/FetchAsync/PublishAsync, and the wire one
+        // per DispatchRequestAsync/DispatchEventAsync) binds the context on the line after it attaches the observer
+        var attachLines = lines.Select((line, index) => (line, index)).Where(entry => entry.line == attach).ToList();
+        attachLines.Should().HaveCount(6, "three typed overloads, PublishAsync, and the two wire dispatch methods");
+        foreach (var (_, index) in attachLines)
+        {
+            lines[index + 1].Should().Be(bind);
+        }
+
+        lines.Count(line => line == bind).Should().Be(attachLines.Count);
+
+        var wireRequest = mediatorSource[mediatorSource.IndexOf("private async Task<object?> DispatchRequestAsync(", StringComparison.Ordinal)..];
+        wireRequest.IndexOf(bind, StringComparison.Ordinal)
+            .Should().BeLessThan(wireRequest.IndexOf("ConduitDispatch.Execute(", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void ReadWirePayloadsThroughTheRuntimeHelper()
     {
         // Arrange -- the same compilation EmitMediatorWithStronglyTypedOverloads uses (CreateOrder/DeleteOrder/GetOrder)

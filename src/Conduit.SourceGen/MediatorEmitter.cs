@@ -804,6 +804,7 @@ public static class MediatorEmitter
         // Attach this host's observer (DI singleton -> per-host) to the per-flow context, so audit
         // observation is isolated per host rather than routed through a process-global static.
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
+        EmitBindDispatchAttempt(sb);
 
         // Payload capture for non-DoNotAudit types -- only when an observer is attached, so a host without AddAudit
         // never serializes (MessageContext.HasObserver), and only for a type whose body is kept (CapturesAuditPayload:
@@ -875,10 +876,22 @@ public static class MediatorEmitter
         // The transport already started the context (StartDispatchFromTransport); attach this host's
         // observer from the mediator's scope before the first observation.
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
+        EmitBindDispatchAttempt(sb);
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
+    }
+
+    /// <summary>
+    /// Emits the call that records on the dispatch's context the attempt that owns it: the running attempt when this
+    /// mediator was resolved from that attempt's own scope (a nested dispatch), otherwise none. The context is started
+    /// before <c>ConduitDispatch</c> runs, so a top-level dispatch's context binds to none, and it stays one context
+    /// (one <c>MessageId</c>) across every attempt.
+    /// </summary>
+    private static void EmitBindDispatchAttempt(StringBuilder sb)
+    {
+        sb.AppendLine($"        {EmitConstants.ConduitRuntime}.BindDispatchAttempt({EmitConstants.MessageContext}.Current, serviceProvider);");
     }
 
     /// <summary>

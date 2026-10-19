@@ -87,11 +87,16 @@ public static class DispatchEmitter
         DispatchableTypeInfo type,
         HandlerInfo handler)
     {
+        var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Execute(");
-        sb.AppendLine($"        {EmitConstants.ToCSharpTypeRef(type.FullTypeName)} command,");
-        sb.AppendLine($"        IServiceProvider serviceProvider,");
-        sb.AppendLine($"        ConduitOptions conduitOptions,");
-        sb.AppendLine($"        CancellationToken cancellationToken)");
+        EmitDispatchParameters(sb, typeRef, "command");
+        sb.AppendLine("    {");
+        EmitAttemptsCall(sb, typeRef, type.ResultFullTypeName!, "ExecuteAttempt", "command", isVoidAttempt: false, returnsResult: true);
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine($"    private static async Task<{type.ResultFullTypeName}> ExecuteAttempt(");
+        EmitDispatchParameters(sb, typeRef, "command");
         sb.AppendLine("    {");
         EmitHandlerAndBehaviorBody(
             sb, type, handler, isVoid: false,
@@ -107,10 +112,14 @@ public static class DispatchEmitter
     {
         var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
         sb.AppendLine($"    public static async Task Execute(");
-        sb.AppendLine($"        {typeRef} command,");
-        sb.AppendLine($"        IServiceProvider serviceProvider,");
-        sb.AppendLine($"        ConduitOptions conduitOptions,");
-        sb.AppendLine($"        CancellationToken cancellationToken)");
+        EmitDispatchParameters(sb, typeRef, "command");
+        sb.AppendLine("    {");
+        EmitAttemptsCall(sb, typeRef, "object", "ExecuteAttempt", "command", isVoidAttempt: true, returnsResult: false);
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine($"    private static async Task ExecuteAttempt(");
+        EmitDispatchParameters(sb, typeRef, "command");
         sb.AppendLine("    {");
         EmitHandlerAndBehaviorBody(
             sb, type, handler, isVoid: true,
@@ -135,11 +144,16 @@ public static class DispatchEmitter
         DispatchableTypeInfo type,
         HandlerInfo handler)
     {
+        var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
         sb.AppendLine($"    public static async Task<{type.ResultFullTypeName}> Fetch(");
-        sb.AppendLine($"        {EmitConstants.ToCSharpTypeRef(type.FullTypeName)} query,");
-        sb.AppendLine($"        IServiceProvider serviceProvider,");
-        sb.AppendLine($"        ConduitOptions conduitOptions,");
-        sb.AppendLine($"        CancellationToken cancellationToken)");
+        EmitDispatchParameters(sb, typeRef, "query");
+        sb.AppendLine("    {");
+        EmitAttemptsCall(sb, typeRef, type.ResultFullTypeName!, "FetchAttempt", "query", isVoidAttempt: false, returnsResult: true);
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine($"    private static async Task<{type.ResultFullTypeName}> FetchAttempt(");
+        EmitDispatchParameters(sb, typeRef, "query");
         sb.AppendLine("    {");
         EmitHandlerAndBehaviorBody(
             sb, type, handler, isVoid: false,
@@ -202,12 +216,18 @@ public static class DispatchEmitter
         // ExecuteVoidWire — inline handler execution for wire-inbound dispatch.
         // Wire dispatch already provides fire-and-forget semantics (no reply), so the handler
         // must run inline within the DI scope. Using the background dispatcher here would cause
-        // the handler to execute after the scope is disposed.
+        // the handler to execute after the scope is disposed. It runs handlers, so it goes through
+        // the dispatch boundary (still answering the wire with Unit); the local Execute above only
+        // enqueues, so it does not.
         sb.AppendLine($"    public static async Task<object?> ExecuteVoidWire(");
-        sb.AppendLine($"        {typeRef} command,");
-        sb.AppendLine($"        IServiceProvider serviceProvider,");
-        sb.AppendLine($"        ConduitOptions conduitOptions,");
-        sb.AppendLine($"        CancellationToken cancellationToken)");
+        EmitDispatchParameters(sb, typeRef, "command");
+        sb.AppendLine("    {");
+        EmitAttemptsCall(sb, typeRef, "object", "ExecuteVoidWireAttempt", "command", isVoidAttempt: true, returnsResult: true);
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine($"    private static async Task ExecuteVoidWireAttempt(");
+        EmitDispatchParameters(sb, typeRef, "command");
         sb.AppendLine("    {");
         sb.AppendLine($"        var behaviors = {EmitConstants.ConduitRuntime}.ResolvePipelines<{typeRef}, object>(conduitOptions, serviceProvider);");
         sb.AppendLine($"        Func<Task<object>> handlerCall = () =>");
@@ -217,9 +237,60 @@ public static class DispatchEmitter
         sb.AppendLine($"            return {EmitConstants.ConduitRuntime}.VoidToObject(() => handler.HandleAsync(command, cancellationToken));");
         sb.AppendLine("        };");
         sb.AppendLine($"        await {EmitConstants.ConduitRuntime}.ExecuteWithBehaviors(command, behaviors, handlerCall, cancellationToken);");
-        sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
         sb.AppendLine("    }");
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Emits the four parameters every <c>ConduitDispatch</c> method takes: the request, the dispatching provider, the
+    /// options and the token.
+    /// </summary>
+    private static void EmitDispatchParameters(StringBuilder sb, string typeRef, string requestParamName)
+    {
+        sb.AppendLine($"        {typeRef} {requestParamName},");
+        sb.AppendLine($"        IServiceProvider serviceProvider,");
+        sb.AppendLine($"        ConduitOptions conduitOptions,");
+        sb.AppendLine($"        CancellationToken cancellationToken)");
+    }
+
+    /// <summary>
+    /// Emits a handler-running method's body: a call to <c>ConduitRuntime.DispatchAttemptsAsync</c> that runs
+    /// <paramref name="attemptMethod"/> (the method's pipeline and handler) over each attempt's provider.
+    /// </summary>
+    /// <remarks>
+    /// Without a retry policy, nested in an attempt, or not covered, the boundary runs the attempt once on
+    /// <c>serviceProvider</c> itself, so the dispatch behaves exactly as if the body were inline. A void attempt's
+    /// result is <c>Unit</c>; the explicit type arguments make the lambda a <c>Task&lt;object&gt;</c>.
+    /// </remarks>
+    private static void EmitAttemptsCall(
+        StringBuilder sb,
+        string typeRef,
+        string resultType,
+        string attemptMethod,
+        string requestParamName,
+        bool isVoidAttempt,
+        bool returnsResult)
+    {
+        var attemptCall = $"{attemptMethod}({requestParamName}, attemptServices, conduitOptions, cancellationToken)";
+        var awaitBoundary = returnsResult ? "return await" : "await";
+        if (isVoidAttempt)
+        {
+            sb.AppendLine($"        {awaitBoundary} {EmitConstants.ConduitRuntime}.DispatchAttemptsAsync<{typeRef}, {resultType}>(");
+            sb.AppendLine("            serviceProvider,");
+            sb.AppendLine("            async attemptServices =>");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                await {attemptCall};");
+            sb.AppendLine($"                return (object){EmitConstants.Unit}.Value;");
+            sb.AppendLine("            },");
+            sb.AppendLine("            cancellationToken);");
+        }
+        else
+        {
+            sb.AppendLine($"        {awaitBoundary} {EmitConstants.ConduitRuntime}.DispatchAttemptsAsync<{typeRef}, {resultType}>(");
+            sb.AppendLine("            serviceProvider,");
+            sb.AppendLine($"            attemptServices => {attemptCall},");
+            sb.AppendLine("            cancellationToken);");
+        }
     }
 
     private static void EmitHandlerAndBehaviorBody(
