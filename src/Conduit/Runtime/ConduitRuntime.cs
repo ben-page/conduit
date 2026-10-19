@@ -765,15 +765,23 @@ public static partial class ConduitRuntime
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(serviceProvider);
 
-        if (options.PipelineTypes.Count == 0)
+        return ResolvePipelines<TRequest, TResult>(options.PipelineTypes, serviceProvider);
+    }
+
+    /// <summary>Closes each of <paramref name="pipelineTypes"/>, in order, over the request and result types and resolves it.</summary>
+    private static IPipelineBehavior<TRequest, TResult>[] ResolvePipelines<TRequest, TResult>(
+        IReadOnlyList<Type> pipelineTypes,
+        IServiceProvider serviceProvider)
+    {
+        if (pipelineTypes.Count == 0)
         {
             return [];
         }
 
-        var behaviors = new IPipelineBehavior<TRequest, TResult>[options.PipelineTypes.Count];
-        for (var i = 0; i < options.PipelineTypes.Count; i++)
+        var behaviors = new IPipelineBehavior<TRequest, TResult>[pipelineTypes.Count];
+        for (var i = 0; i < pipelineTypes.Count; i++)
         {
-            var closedType = options.PipelineTypes[i]
+            var closedType = pipelineTypes[i]
                 .MakeGenericType(typeof(TRequest), typeof(TResult));
             behaviors[i] = (IPipelineBehavior<TRequest, TResult>)serviceProvider.GetRequiredService(closedType);
         }
@@ -837,7 +845,141 @@ public static partial class ConduitRuntime
         ArgumentNullException.ThrowIfNull(dispatch);
         LogWireRequestReceived(logger, messageType, null);
 
-        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "command", nameof(HandleWireRequest));
+        return await RunWireRequestAsync(
+            messageType,
+            interceptors,
+            () =>
+            {
+                var envelope = createEnvelope();
+                return dispatch(envelope.Type, envelope.Payload, cancellationToken);
+            },
+            logger,
+            translators,
+            nameof(HandleWireRequest),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs a wire request's inbound checks -- what <see cref="HandleWireRequest(string, IEnumerable{IInboundInterceptor}, Func{DispatchEnvelope}, Func{string, JsonElement, CancellationToken, Task{object}}, ILogger, IEnumerable{IWireExceptionTranslator}, CancellationToken)"/>
+    /// runs ahead of its handler -- and never the handler: the host's <see cref="IInboundInterceptor"/> gates (the
+    /// <c>[ClientVisible]</c> type filter), the read (<see cref="DeserializeWire{T}"/>), and every behavior of the host's
+    /// pipeline that is an <see cref="IInboundCheckBehavior"/>, in the pipeline's order, closed over the contract's own result
+    /// type as dispatch closes them. A refusal or an unexpected failure comes back as the wire answers it, through the same
+    /// gate loop and error mapping (the host's <see cref="IWireExceptionTranslator"/>s included); nothing escapes.
+    /// </summary>
+    /// <remarks>
+    /// It runs no other behavior (no transaction, no audit), not the contract's own <c>Validate</c>, and attaches no observer,
+    /// so it records nothing. A preflight is no transport's message: the gates run under no context, as for a wire request no
+    /// transport identified (so an inbox gate records nothing), and the checks in a fresh one; the caller's context is current
+    /// again when it returns. A contract this host routes elsewhere is admitted once the gates pass -- the wire forwards it
+    /// unread, so its checks are the receiving host's. A name the host's registry does not list as a command or query is
+    /// answered as the wire answers an unknown type (<c>InternalError</c>).
+    /// </remarks>
+    /// <param name="contractName">The request's wire type name (<see cref="Type.FullName"/>).</param>
+    /// <param name="payload">The request as the wire carries it.</param>
+    /// <param name="services">The provider the request would dispatch on: its gates, translators, pipeline and checks
+    /// resolve from it.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public static async Task<WirePreflightResult> PreflightWireRequestAsync(
+        string contractName,
+        JsonElement payload,
+        IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(contractName);
+        ArgumentNullException.ThrowIfNull(services);
+
+        var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(ConduitRuntime))
+            ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+        var checksRan = false;
+        var callerContext = MessageContext.Current;
+        MessageContext.RestoreContext(null);
+        try
+        {
+            var answer = await RunWireRequestAsync(
+                contractName,
+                services.GetServices<IInboundInterceptor>(),
+                async () =>
+                {
+                    await RunInboundChecksAsync(contractName, payload, services, cancellationToken);
+                    checksRan = true;
+                    return null;
+                },
+                logger,
+                services.GetServices<IWireExceptionTranslator>(),
+                nameof(PreflightWireRequestAsync),
+                cancellationToken);
+            return new WirePreflightResult(answer.Error is null && checksRan, answer.Error);
+        }
+        finally
+        {
+            MessageContext.RestoreContext(callerContext);
+        }
+    }
+
+    private static readonly System.Reflection.MethodInfo RunInboundChecksOfMethod =
+        typeof(ConduitRuntime).GetMethod(nameof(RunInboundChecksOfAsync), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+    /// <summary>
+    /// The body of a preflight, inside the wire's gate loop and error mapping: as the generated wire dispatch, a routed
+    /// contract is not read here and an unknown one is an <see cref="InvalidOperationException"/>; otherwise the contract's
+    /// checks run over its read payload.
+    /// </summary>
+    private static Task RunInboundChecksAsync(
+        string contractName, JsonElement payload, IServiceProvider services, CancellationToken cancellationToken)
+    {
+        var options = services.GetService<ConduitOptions>();
+        if (options is not null && ResolveRoute(options, contractName) is not null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var registry = services.GetService<ConduitTypeRegistry>();
+        var contract = registry?.CommandTypes.Concat(registry.QueryTypes)
+                .FirstOrDefault(type => string.Equals(type.FullName, contractName, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"Unknown dispatch type: {contractName}");
+        IReadOnlyList<Type> checks = options?.PipelineTypes.Where(typeof(IInboundCheckBehavior).IsAssignableFrom).ToArray() ?? [];
+
+        return RunInboundChecksOfMethod.MakeGenericMethod(contract, ResultTypeOf(contract))
+            .CreateDelegate<Func<JsonElement, IReadOnlyList<Type>, IServiceProvider, CancellationToken, Task>>()
+            (payload, checks, services, cancellationToken);
+    }
+
+    /// <summary>Reads the payload as the wire reads it and chains the checks around a step that does nothing.</summary>
+    private static async Task RunInboundChecksOfAsync<TRequest, TResult>(
+        JsonElement payload, IReadOnlyList<Type> checks, IServiceProvider services, CancellationToken cancellationToken)
+    {
+        var request = DeserializeWire<TRequest>(payload);
+        await ExecuteWithBehaviors(
+            request,
+            ResolvePipelines<TRequest, TResult>(checks, services),
+            static () => Task.FromResult(default(TResult)!),
+            cancellationToken);
+    }
+
+    /// <summary>The result type dispatch closes a contract's pipeline over: its <c>ICommand&lt;T&gt;</c> or
+    /// <c>IQuery&lt;T&gt;</c> argument, or <see cref="object"/> for a void command.</summary>
+    private static Type ResultTypeOf(Type contract) =>
+        contract.GetInterfaces()
+            .FirstOrDefault(type => type.IsGenericType
+                && (type.GetGenericTypeDefinition() == typeof(ICommand<>) || type.GetGenericTypeDefinition() == typeof(IQuery<>)))
+            ?.GetGenericArguments()[0]
+        ?? typeof(object);
+
+    /// <summary>
+    /// The part of a wire request every caller shares: the inbound gates, the dispatch context, <paramref name="body"/>, and
+    /// the exception-to-wire mapping. <paramref name="operation"/> names the activity.
+    /// </summary>
+    private static async Task<DispatchResult<object>> RunWireRequestAsync(
+        string messageType,
+        IEnumerable<IInboundInterceptor> interceptors,
+        Func<Task<object?>> body,
+        ILogger logger,
+        IEnumerable<IWireExceptionTranslator>? translators,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "command", operation);
 
         var previousContext = MessageContext.Current;
 
@@ -860,8 +1002,7 @@ public static partial class ConduitRuntime
                 MessageContext.StartDispatch();
             }
 
-            var envelope = createEnvelope();
-            var result = await dispatch(envelope.Type, envelope.Payload, cancellationToken);
+            var result = await body();
             activity?.SetStatus(ActivityStatusCode.Ok);
             return DispatchResult<object>.Ok(result);
         }
