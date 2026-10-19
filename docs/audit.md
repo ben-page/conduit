@@ -11,6 +11,7 @@
 - [Retention](#retention)
 - [Suppressing sensitive data](#suppressing-sensitive-data)
 - [What gets captured](#what-gets-captured)
+- [Records and retried attempts](#records-and-retried-attempts)
 - [Distributed mode](#distributed-mode)
 - [Limitations](#limitations)
 
@@ -254,6 +255,17 @@ A `DispatchAuditRecord` contains:
 | `Properties` | Contextual properties carried on the `MessageContext`. |
 | `Timestamp` | UTC timestamp of the dispatch. |
 | `Observations` | Ordered lifecycle observations (invoked, handler start/complete, retries, completed/failed). |
+
+## Records and retried attempts
+
+When the host uses [dispatch retry](dispatch-retry.md), a dispatch can run several attempts, and the audit trail describes the dispatch, not each attempt.
+
+- **The dispatch that owns the attempts** is one dispatch with one `MessageId` across every attempt, so it has one record. Each retry appears in its `Observations` as a `RetryAttempted`.
+- **A dispatch nested in an attempt** (a command the handler sends, an event it publishes, from the attempt's own scope) has a `MessageId` and a record of its own. The observer seals that record when the nested dispatch completes, which is mid-attempt, but **holds the write until the attempt is known to be kept**: it succeeded, or its failure is the dispatch's answer (no reason to retry, or no attempts left). If the attempt is abandoned for a retry, the held record is dropped. A retried dispatch therefore records the kept attempt's nested dispatches once, and an exhausted one records its last attempt's, which is what a failed dispatch without retry records.
+- **An independent dispatch** (one made from a different provider, such as a fresh scope opened inside an attempt) is written as soon as it seals. It committed on its own, so its record stays even when the outer attempt is abandoned.
+- **Without a retry policy**, every record is written as it seals.
+
+A record is sealed (its payload read and capped) at the moment the nested dispatch completes, so what is held is the finished record, not the live context.
 
 ## Distributed mode
 

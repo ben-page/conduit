@@ -40,10 +40,12 @@ IMediator.ExecuteAsync(command)
   |        |
   |        +-- endpoint == null  ->  LOCAL
   |                ConduitDispatch.Execute(command, serviceProvider, conduitOptions, ct)
-  |                    a. handler = serviceProvider.GetRequiredService<ICommandHandler<MyCommand, TResult>>()
-  |                    b. behaviors = ConduitRuntime.ResolvePipelines<MyCommand, TResult>(options, sp)
-  |                    c. ConduitRuntime.ExecuteWithBehaviors(command, behaviors, handlerCall, ct)
-  |                         -> behavior[0] ( behavior[1] ( ... ( handler.HandleAsync ) ) )
+  |                    ConduitRuntime.DispatchAttemptsAsync(serviceProvider, attempt, ct)   -- the attempt boundary
+  |                    for each attempt (one, on serviceProvider, unless a retry policy covers the type):
+  |                      a. handler = attemptServices.GetRequiredService<ICommandHandler<MyCommand, TResult>>()
+  |                      b. behaviors = ConduitRuntime.ResolvePipelines<MyCommand, TResult>(options, attemptServices)
+  |                      c. ConduitRuntime.ExecuteWithBehaviors(command, behaviors, handlerCall, ct)
+  |                           -> behavior[0] ( behavior[1] ( ... ( handler.HandleAsync ) ) )
   3. MessageContext.RestoreContext(previous)       -- in finally
 ```
 
@@ -60,6 +62,16 @@ Key facts verified against the code:
   generics from `options.PipelineTypes` in registration order. `ExecuteWithBehaviors` wraps
   them so the **first registered behavior is the outermost** (it iterates from the last index
   inward when building the `next` chain).
+- **The attempt boundary** is `ConduitRuntime.DispatchAttemptsAsync`. The generated `Execute`, `Fetch` and
+  `ExecuteVoidWire` hand it the old body (`ExecuteAttempt`, `FetchAttempt`, `ExecuteVoidWireAttempt`) as a
+  delegate over an `IServiceProvider`. With no `IDispatchRetryPolicy` registered, with a policy that does not
+  cover the type, or for a dispatch made from the running attempt's own scope, it runs the delegate once on
+  `serviceProvider` itself, so the dispatch behaves as if the body were inline. Otherwise it runs each attempt in
+  a fresh scope from the root `IServiceScopeFactory` and retries while the policy gives a reason. The wire path
+  (`DispatchRequestAsync`) calls the same `ConduitDispatch` methods, so it gets the same boundary. Step 1's
+  context start also calls `ConduitRuntime.BindDispatchAttempt`, which records on the new `MessageContext` the
+  attempt that owns it (set only when `serviceProvider` is that attempt's scope). See
+  [Dispatch Retry](dispatch-retry.md).
 - **No local handler and no route** → the generated code throws
   `InvalidOperationException("No local handler for Ns.MyCommand and no route matched.")`.
 
@@ -69,7 +81,10 @@ For a local `[FireAndForget]` void command, `ConduitDispatch.Execute` resolves t
 behaviors in the **caller** context, then enqueues the handler invocation to the
 `ConduitBackgroundDispatcher` (a `BackgroundService` with an unbounded `Channel<T>`) via
 `dispatcher.Enqueue(...)`, and returns immediately. This path never involves the outbox — there's
-no transport send to defer, only a local handler invocation.
+no transport send to defer, only a local handler invocation. It also sits outside the
+[attempt boundary](dispatch-retry.md#which-dispatches-are-covered): it runs no handler in the caller's
+flow, so `Execute` here is not routed through `DispatchAttemptsAsync`. The same command arriving over
+the wire runs through `ExecuteVoidWire`, which runs the handler inline and does use the boundary.
 
 For a **routed**, non-Immediate `[FireAndForget]` command, the generated mediator first checks for
 an `IOutboundInterceptor` (outbox capture) and offers it the envelope. `Intercept` returns `bool`:
@@ -226,6 +241,10 @@ type and a route-forwarded request capture none). Dispatch then runs the strongl
 `ResolvePipelines` + `ExecuteWithBehaviors` (same mechanism as local dispatch). Resilience,
 inbox/outbox, and validation behaviors live here.
 
+A host can run these checks for a request without running its handler:
+`ConduitRuntime.PreflightWireRequestAsync` runs the layer 1 gates, the read, and the pipeline's
+`IInboundCheckBehavior`s. See [Pipeline Behaviors → Inbound checks](pipeline-behaviors.md#inbound-checks-and-the-wire-preflight).
+
 **Layer 3 — handler.** The resolved `ICommandHandler` / `IQueryHandler` / `IEventListener` runs
 at the center of the chain, inside the DI scope created in step 3.
 
@@ -279,7 +298,8 @@ and the full capture-eligibility matrix.
 | Broker inbound orchestration + reply path | `src/Conduit/Runtime/BrokerTransportBase.cs` |
 | Background F&F execution | `src/Conduit/Runtime/ConduitBackgroundDispatcher.cs` |
 | Generated `ConduitMediator` body | `src/Conduit.SourceGen/MediatorEmitter.cs` |
-| Generated `ConduitDispatch.Execute` (handler + pipeline wiring) | `src/Conduit.SourceGen/DispatchEmitter.cs` |
+| Generated `ConduitDispatch.Execute` (handler + pipeline wiring, attempt boundary) | `src/Conduit.SourceGen/DispatchEmitter.cs` |
+| Attempt loop, scopes, delay, retry counter | `src/Conduit/Runtime/DispatchRetryRunner.cs`, `DispatchAttempt.cs` |
 
 See also: [Core Concepts](core-concepts.md), [Pipeline Behaviors](pipeline-behaviors.md),
 [Glossary](glossary.md).

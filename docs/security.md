@@ -30,6 +30,8 @@ Any inbound wire dispatch for a type not in the allowed set is rejected with `Fo
 
 The filter is transport-agnostic. It works the same whether the request arrives over HTTP, SignalR, or a service bus.
 
+`ConduitRuntime.PreflightWireRequestAsync` runs this filter, like every other registered `IInboundInterceptor`, without running the request's handler: a disallowed type comes back as the same `ForbiddenException` refusal the wire answers. See [Pipeline Behaviors → Inbound checks](pipeline-behaviors.md#inbound-checks-and-the-wire-preflight).
+
 ## [LocalOnly]
 
 ```csharp

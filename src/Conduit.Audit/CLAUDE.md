@@ -65,7 +65,7 @@ Deployment roles:
 1. Generated mediator calls `MessageContext.Observe(observation)` at dispatch boundaries (`DispatchInvoked`, `DispatchCompleted`, `DispatchFailed`)
 2. The context's attached observer (this host's `AuditObserver`, attached per dispatch by the generated mediator) receives it in `AuditObserver.OnObservation`
 3. Observer groups observations by `MessageId` in `DispatchGroup`, seals on terminal observation
-4. Sealed `DispatchAuditRecord` written to bounded `Channel<DispatchAuditRecord>`
+4. Sealed `DispatchAuditRecord` written to bounded `Channel<DispatchAuditRecord>`. `AuditObserver` seals at once (the payload is readable only then), and the **write** waits when `context.Attempt` is set: `attempt.OnKept(() => channel.TryWrite(sealed))` writes the record once the attempt is kept and drops it if the attempt is abandoned for a retry (see `docs/dispatch-retry.md`). `context.Attempt` is non-null only for a dispatch from a running attempt's own scope (the generated mediator binds it), so the dispatch that owns the attempts, an independent dispatch from another provider, and every dispatch in a host with no retry policy are written as they seal. The held record is a sealed value; stale-group eviction is unchanged. The owner's one record carries a `RetryAttempted` per retry. `OnKept` work should not throw: an exception reaches the dispatch's caller.
 5. `AuditBatchPublisher` drains channel, publishes `AuditBatch` event via mediator
 6. `LocalAuditListener` (or any `IEventListener<AuditBatch>`) persists to store
 

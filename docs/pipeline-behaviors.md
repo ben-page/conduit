@@ -5,6 +5,8 @@
 - [Registration](#registration)
 - [Unified across message types](#unified-across-message-types)
 - [Per-type filtering](#per-type-filtering)
+- [Inbound checks and the wire preflight](#inbound-checks-and-the-wire-preflight)
+- [Behaviors and retried dispatches](#behaviors-and-retried-dispatches)
 
 ## Overview
 
@@ -90,6 +92,49 @@ Check `typeof(TRequest)`, cast to an interface, look for attributes. If the beha
 
 A behavior does not call the message's `Validate()`. The generated dispatch calls it innermost — after every behavior, immediately before the handler — so a behavior that refuses (like the one above) never runs the caller's input, and every message is still validated before its handler runs.
 
+## Inbound checks and the wire preflight
+
+A host sometimes needs to know whether the wire would admit a request without running it: a batch endpoint that judges each item before it starts any, say. `ConduitRuntime.PreflightWireRequestAsync(contractName, payload, services, cancellationToken)` answers that. It returns a `WirePreflightResult(bool Admitted, DispatchError? Refusal)`:
+
+| Result | Meaning |
+|---|---|
+| `(true, null)` | admitted: every gate passed, the payload read as the contract, and every inbound check ran through |
+| `(false, error)` | refused: `error` is what the wire would answer, a `ConduitException`'s code and data, a translator's refusal (`IWireExceptionTranslator`), or an unexpected failure as `InternalError` with its reference |
+| `(false, null)` | an `IInboundInterceptor` gate discarded the request, which the wire answers with no error and no data |
+
+Nothing escapes as an exception.
+
+**Marking a check.** A pipeline behavior takes part in the preflight only if it also implements the marker `Conduit.Middleware.IInboundCheckBehavior`:
+
+```csharp
+public class AuthorizationBehavior<TRequest, TResult>(ICurrentUser user)
+    : IPipelineBehavior<TRequest, TResult>, IInboundCheckBehavior
+{
+    public Task<TResult> HandleAsync(TRequest request, Func<Task<TResult>> next, CancellationToken cancellationToken)
+    {
+        // Judges only: calls next() or throws a refusal; writes nothing the request depends on.
+        return next();
+    }
+}
+```
+
+The marker is a promise that the behavior only judges whether the request may run. An authorization check qualifies. A transaction, an audit, or a behavior that shapes the request does not, and must not carry it. The preflight reads the marker from the registered pipeline types, so a check added to the pipeline anywhere counts without further wiring.
+
+**What the preflight runs**, in order:
+
+1. The host's `IInboundInterceptor` gates, through the same gate loop the wire uses (`TypeFilterInterceptor` is one).
+2. If the contract is routed to another endpoint: stop and admit. The wire forwards a routed request unread, so its checks belong to the receiving host.
+3. The read: the contract is found by name among the registry's commands and queries and read from the payload with `DeserializeWire`, exactly as the wire reads it.
+4. Every pipeline behavior that is an `IInboundCheckBehavior`, in the pipeline's order, closed over the contract's own result type as dispatch closes them, around a step that does nothing.
+
+**What it never runs:** the handler, any pipeline behavior that is not an inbound check, and the contract's own `Validate()` (dispatch runs it innermost, after every behavior). A name the registry does not list as a command or query is answered as the wire answers an unknown type, `InternalError`. A contract the registry lists but no handler serves is still admitted if its checks pass.
+
+**It records nothing.** The gates run under no `MessageContext`, as for a wire request no transport identified, so an inbox gate records nothing. The checks run in a fresh context with no observer attached, so nothing is audited. The caller's context is current again when it returns. It starts no transaction and no retry attempt.
+
+## Behaviors and retried dispatches
+
+When the host registers a [dispatch retry policy](dispatch-retry.md), a behavior runs once **per attempt**, and every behavior and the handler of an attempt resolve from that attempt's own scope. A behavior that logs or times a dispatch sees each attempt separately; `DispatchAttempt.Current` (its `Number` and `MaxAttempts`) says which one. A behavior is never shared across attempts through the scope, only through singletons or `AsyncLocal` state.
+
 ## OpenTelemetry
 
 Conduit has built-in distributed tracing and metrics. Spans are created automatically for dispatch, wire dispatch, and transport send/receive. No pipeline behavior needed.
@@ -122,6 +167,7 @@ Trace context propagates through broker message headers (W3C `traceparent`/`trac
 | `conduit.transport.send.count` | Counter | `conduit.message.type`, `conduit.transport` |
 | `conduit.transport.send.duration` | Histogram (ms) | `conduit.message.type`, `conduit.transport` |
 | `conduit.transport.receive.count` | Counter | `conduit.message.type`, `conduit.transport`, `conduit.outcome` |
+| `conduit.dispatch.retries` | Counter | `conduit.message.type`, `conduit.retry.reason`, `conduit.retry.outcome` |
 
 All instrumentation is zero-cost when no OTel listener is attached.
 
@@ -180,4 +226,4 @@ The resilience behavior is automatically the outermost pipeline behavior, wrappi
 
 ---
 
-Previous: [RabbitMQ](transports/rabbitmq.md) | [Home](../README.md) | Next: [Error Handling](error-handling.md)
+Previous: [RabbitMQ](transports/rabbitmq.md) | [Home](../README.md) | Next: [Dispatch Retry](dispatch-retry.md)

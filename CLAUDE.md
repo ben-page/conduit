@@ -179,6 +179,7 @@ onboarding or answering "how does X work" questions:
 - [`docs/core-concepts.md`](docs/core-concepts.md) — messages, handlers, mediator, the mental model
 - [`docs/configuration-reference.md`](docs/configuration-reference.md) — `ConduitOptions` / builder reference
 - [`docs/pipeline-behaviors.md`](docs/pipeline-behaviors.md) — `IPipelineBehavior<,>` ordering and usage
+- [`docs/dispatch-retry.md`](docs/dispatch-retry.md) — `IDispatchRetryPolicy`, fresh scope per attempt, nested vs independent dispatches, the retry counter
 - [`docs/error-handling.md`](docs/error-handling.md) — `ConduitException`, `ErrorCode`, Problem Details
 - [`docs/modular-monolith.md`](docs/modular-monolith.md) — handler composition across modules in one process
 - [`docs/persistence.md`](docs/persistence.md) — choosing an engine, the tables each durable feature creates, one database for all of them
