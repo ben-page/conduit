@@ -47,6 +47,7 @@ AuditObserver  (set by AddAudit)
 AuditBatchPublisher  (background service, set by AddAudit)
   ├── drains the channel
   └── publishes batches as AuditBatch events via IMediator.PublishAsync
+      (a listener failure is logged and that batch dropped; the next batch is published as usual)
 
 LocalAuditListener : IEventListener<AuditBatch>  (set by AddAuditListener)
   └── persists each batch to IAuditStore  (whether the event was published
@@ -276,7 +277,7 @@ Because each service stamps its own records with the shared `MessageId`, the cen
 
 ## Limitations
 
-**Audit is best-effort, by design.** The capture channel is bounded and defaults to `DropOldest` — under sustained overload, the oldest unpersisted records are dropped rather than blocking or failing the dispatch. Audit must never take down the work it observes. If you need guaranteed capture, raise `ChannelCapacity` and choose a blocking `BackpressureMode`, accepting the dispatch-path cost.
+**Audit is best-effort, by design.** The capture channel is bounded and defaults to `DropOldest` — under sustained overload, the oldest unpersisted records are dropped rather than blocking or failing the dispatch. Audit must never take down the work it observes. A listener that fails (an audit store that cannot be written) loses its batch: `AuditBatch` is a plain event, so the failure throws out of the publish, and `AuditBatchPublisher` logs it at Error and drains the next batch rather than ending the service and the host with it. If you need guaranteed capture, raise `ChannelCapacity` and choose a blocking `BackpressureMode`, accepting the dispatch-path cost.
 
 **Persistence requires a listener.** `AddAudit()` alone emits `AuditBatch` events but stores nothing. Without either a local `AddAuditListener()` or a central collector, the events have no consumer and the records are discarded.
 
