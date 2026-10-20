@@ -343,6 +343,12 @@ delay has since elapsed. Either way the latency matches the immediate path above
 in the future is left for the sweep. Pickup is what writes the run, and it deletes the scope in the
 same breath.
 
+A trigger is a listener of its event, so for a plain (not `[FireAndForget]`) event it runs inline on
+the publisher's call, and a trigger whose run or scope write fails fails the publish: the publisher
+gets the `EventListenerException`, as from any inline listener, rather than an event acked with its
+work written nowhere. The job itself is at most started there, so a failure of the job's own run never
+reaches the publisher.
+
 A non-coalescing trigger's run key is `{trigger}@{event MessageId}`, which makes it idempotent
 against broker redelivery for free — no dedup store, no inbox required. That holds while the run is
 in flight and for `CompletedRetention` (default 1 day) after it succeeds; a redelivery later than that
