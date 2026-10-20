@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Exceptions;
 using Conduit.Generated;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
@@ -96,6 +97,49 @@ public class InlineListenerFailureShould
         // Assert
         thrown.GetBaseException().Should().BeOfType<InlineRootCauseException>()
             .Which.Message.Should().Be("root of A");
+    }
+
+    [TestMethod]
+    public async Task SkipTheTransportBroadcastWhenAnInlineListenerFails()
+    {
+        // Arrange
+        var transport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<EventSpy<string>>();
+            builder.Services.AddSingleton<IConduitTransport>(transport);
+            builder.Services.AddConduit();
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act
+        var act = async () => await mediator.PublishAsync(new InlineFailureEvent("x"));
+        await act.Should().ThrowAsync<EventListenerException>();
+
+        // Assert -- the publish failed, so its event is never announced
+        transport.SentEvents.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task BroadcastTheSameEventWhenEveryInlineListenerPasses()
+    {
+        // Arrange -- the control: only the passing listener, so the broadcast above is skipped by the failure alone
+        var transport = new SpyTransport();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<EventSpy<string>>();
+            builder.Services.AddSingleton<IConduitTransport>(transport);
+            builder.Services.AddConduit();
+            builder.Services.RemoveAll<Conduit.Handlers.IEventListener<InlineFailureEvent>>();
+            builder.Services.AddTransient<Conduit.Handlers.IEventListener<InlineFailureEvent>, InlinePassingListener>();
+        });
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.PublishAsync(new InlineFailureEvent("x"));
+
+        // Assert
+        transport.SentEvents.Should().ContainSingle(envelope => envelope.Type == typeof(InlineFailureEvent).FullName);
     }
 
     [TestMethod]
