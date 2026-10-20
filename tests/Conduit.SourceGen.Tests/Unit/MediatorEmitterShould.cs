@@ -86,8 +86,8 @@ namespace App.Events
         mediatorSource.Should().Contain("exceptions.Add(ex);");
         mediatorSource.Should().Contain("EventListenerException");
 
-        // PublishAsync catches EventListenerException (fire-and-forget)
-        mediatorSource.Should().Contain("catch (Conduit.Exceptions.EventListenerException ex)");
+        // The inline publish lets EventListenerException propagate; only the background enqueue (none here) catches it
+        mediatorSource.Should().NotContain("catch (Conduit.Exceptions.EventListenerException ex)");
 
         // Routing infrastructure via ConduitRuntime
         mediatorSource.Should().Contain("ConduitOptions conduitOptions");
@@ -316,6 +316,44 @@ namespace App.Events
         registrationSource.Should().NotBeNull();
         registrationSource.Should().Contain(
             "services.AddTransient<Conduit.ILocalEnvelopeDispatcher>(sp => sp.GetRequiredService<ConduitMediator>());");
+    }
+
+    [TestMethod]
+    public void CatchListenerFailureOnlyInTheFireAndForgetBackgroundPath()
+    {
+        // Arrange — one plain event (listeners inline) and one F&F event (listeners enqueued)
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+            using Conduit.Handlers;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace TestApp;
+
+            public record PlainEvent(string Detail) : IEvent;
+
+            [FireAndForget]
+            public record BackgroundEvent(string Detail) : IEvent;
+
+            public class PlainListener : IEventListener<PlainEvent>
+            {
+                public Task HandleAsync(PlainEvent e, CancellationToken ct) => Task.CompletedTask;
+            }
+            """;
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert — the background lambda logs the failure; the inline path has no catch, so it propagates
+        mediatorSource.Should().NotBeNull();
+        const string catchClause = "catch (Conduit.Exceptions.EventListenerException ex)";
+        mediatorSource!.Split(catchClause).Length.Should().Be(2, "only the F&F background lambda catches");
+        mediatorSource.Should().Contain("captured.GetType().FullName");
+        var catchIndex = mediatorSource.IndexOf(catchClause, StringComparison.Ordinal);
+        var enqueueIndex = mediatorSource.IndexOf("dispatcher.Enqueue(", StringComparison.Ordinal);
+        catchIndex.Should().BeGreaterThan(enqueueIndex);
     }
 
     [TestMethod]

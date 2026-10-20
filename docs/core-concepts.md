@@ -80,7 +80,7 @@ The same one-handler rule applies.
 
 ## Events
 
-Events represent something that already happened. They use pub/sub: zero, one, or many listeners can respond to the same event. Listeners run independently. If one throws, the rest still execute.
+Events represent something that already happened. They use pub/sub: zero, one, or many listeners can respond to the same event. Listeners run independently. If one throws, the rest still execute, and then `PublishAsync` throws an `EventListenerException` to the publisher (its `InnerException` is the first failure). A `[FireAndForget]` event's listeners run in the background, so their failures are logged instead.
 
 ```csharp
 using Conduit.Messages;

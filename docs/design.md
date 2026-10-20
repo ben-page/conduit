@@ -216,7 +216,7 @@ case OrderCreatedEvent e:
 // After switch: if (exceptions.Count > 0) throw new EventListenerException(...)
 ```
 
-A listener failure does not prevent other listeners from running. `PublishAsync` (local path) catches `EventListenerException` (fire-and-forget). `DispatchEventAsync` (wire path) lets it propagate so transports can retry/dead-letter.
+A listener failure does not prevent other listeners from running. `PublishAsync` (local path) and `DispatchEventAsync` (wire path) both let it propagate: to the publisher, and to the transport to retry/dead-letter. Its `InnerException` is the first listener failure in run order. Only a `[FireAndForget]` event's background listeners catch and log it, as nothing awaits them.
 
 Event behaviors are registered alongside command/query behaviors:
 

@@ -105,10 +105,8 @@ IMediator.PublishAsync(@event)
   |
   1. MessageContext.StartDispatch(options)
   2. local delivery:
-  |     try
-  |         await PublishLocalAsync(@event, ct)      -- private; local listeners only
-  |     catch (EventListenerException ex)
-  |         log + swallow                            -- local publish is fire-and-forget
+  |     await PublishLocalAsync(@event, ct)         -- private; local listeners only;
+  |                                                 -- EventListenerException propagates to the caller
   3. transport broadcast:
   |     foreach IConduitTransport in DI:
   |         transport.SendEventAsync(DispatchEnvelope("Ns.MyEvent", payload), ct)
@@ -154,9 +152,13 @@ Key facts:
   broadcast step offers the envelope to the interceptor and only calls `transport.SendEventAsync`
   directly when nothing captured it — so a plain event's transport delivery can also be deferred
   to the outbox, even though its local listeners already ran inline, above.
-- The error handling difference between paths matters: `PublishAsync` (local-origin) swallows
-  `EventListenerException`; the **wire path** (`DispatchEventAsync`, see below) lets it propagate
-  so the transport can retry / dead-letter.
+- **A listener failure fails the publish.** `PublishAsync` runs a plain event's listeners inline and
+  lets `EventListenerException` propagate to the publisher, as the **wire path** (`DispatchEventAsync`,
+  see below) does for the transport to retry / dead-letter. Its `InnerException` is the first listener
+  failure in run order, so `GetBaseException()` reaches the root cause. A failed publish skips the
+  transport broadcast that follows the local listeners. The exception is a `[FireAndForget]` event: its
+  listeners run in the background after the publisher has moved on, so `ConduitBackgroundDispatcher`'s
+  work item logs the `EventListenerException` and nothing is thrown.
 
 ---
 

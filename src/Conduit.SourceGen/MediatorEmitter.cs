@@ -453,15 +453,10 @@ public static class MediatorEmitter
             sb.AppendLine("        {");
         }
 
-        // Non-F&F events run local listeners inline
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
-        sb.AppendLine("            await PublishLocalAsync(serviceProvider, @event, cancellationToken);");
-        sb.AppendLine("        }");
-        sb.AppendLine($"        catch ({EmitConstants.NamespaceExceptions}.EventListenerException ex)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            logger.LogError(ex, \"One or more event listeners failed for {EventType}\", @event.GetType().FullName);");
-        sb.AppendLine("        }");
+        // Non-F&F events run local listeners inline. A listener failure propagates to the publisher
+        // (as on the wire path): a listener that saves on the publisher's transaction and fails leaves
+        // the publisher writing to a dead transaction, so swallowing it would only move the failure.
+        sb.AppendLine("        await PublishLocalAsync(serviceProvider, @event, cancellationToken);");
 
         if (fireAndForgetTypes.Count > 0)
         {
