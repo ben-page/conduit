@@ -69,6 +69,8 @@ Deployment roles:
 5. `AuditBatchPublisher` drains channel, publishes `AuditBatch` event via mediator (a failed publish is logged and the batch dropped)
 6. `LocalAuditListener` (or any `IEventListener<AuditBatch>`) persists to store
 
+- **Outbox delivery rows**: the outbox's local delivery (`ILocalEnvelopeDispatcher.PublishLocalEnvelopeAsync`, see Conduit.Durability) is an observed dispatch, so each delivery attempt seals its own `DispatchAuditRecord`: `MessageKind` `"Event"`, `MessageType` = the envelope type, a fresh `MessageId`, `CausationId` = the outbox entry's `MessageId`, `ConversationId` = the entry's, observations `DispatchInvoked` then the listener's handler observations then `DispatchCompleted`/`DispatchFailed`, and `Payload` always null (the publish record holds the body).
+
 ## Recursion suppression
 
 Recursion (auditing the `AuditBatch` publish itself) is prevented by `AuditObserver`, which explicitly skips `DispatchInvoked` observations where `MessageType` matches `AuditBatch`. `AuditBatch` is also marked `[DoNotAudit]`, but note that `[DoNotAudit]` only suppresses **payload capture** in the generated code (`MediatorEmitter` gates the `SetPayload` call on `!isDoNotAudit`) — `Observe()` calls are still emitted for `[DoNotAudit]` types. So the observer's type filter, not the attribute, is what actually breaks the recursion.

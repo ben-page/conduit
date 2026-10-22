@@ -264,7 +264,8 @@ public static partial class ConduitRuntime
     /// </summary>
     /// <remarks>
     /// Event wire paths (<c>DispatchEventAsync</c>, <c>PublishLocalEnvelopeAsync</c>) still read the payload raw, so an
-    /// unreadable event payload is a logged <see cref="JsonException"/>, not a 400.
+    /// unreadable event payload is a logged <see cref="JsonException"/>, not a 400. <c>PublishLocalEnvelopeAsync</c> reads inside an
+    /// observed dispatch that keeps no body, so its failed read is a failed delivery record.
     /// </remarks>
     public static T DeserializeWire<T>(JsonElement payload)
     {

@@ -3,6 +3,7 @@ using Conduit.Durability.Runtime.Outbox;
 using Conduit.Handlers;
 using Conduit.Messages;
 using Conduit.Middleware;
+using Conduit.Runtime;
 
 namespace Conduit.Durability.Tests.Support;
 
@@ -20,14 +21,40 @@ public class PlaceOrderHandler(IMediator mediator) : ICommandHandler<PlaceOrderC
     }
 }
 
-/// <summary>Counts local listener executions across scopes (registered singleton per test host).</summary>
+/// <summary>Counts local listener executions across scopes (registered singleton per test host). Optionally
+/// throws on its first call, and records the <c>MessageId</c> each call ran under.</summary>
 public sealed class ListenerProbe
 {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string?> messageIds = new();
     private int count;
+    private int throwsRemaining;
 
     public int Count => Volatile.Read(ref this.count);
 
-    public void Record() => Interlocked.Increment(ref this.count);
+    /// <summary>The <c>MessageContext.Current.MessageId</c> of each listener call, in call order.</summary>
+    public IReadOnlyList<string?> MessageIds => [.. this.messageIds];
+
+    /// <summary>The <c>MessageId</c> the listener's nested <see cref="ProbeNestedCommand"/> ran under.</summary>
+    public string? NestedMessageId { get; set; }
+
+    /// <summary>When set, the listener executes a <see cref="ProbeNestedCommand"/> on each call.</summary>
+    public bool ExecuteNested { get; set; }
+
+    /// <summary>Makes the next <paramref name="times"/> calls throw (after being recorded).</summary>
+    public void ThrowOnNextCalls(int times) => Volatile.Write(ref this.throwsRemaining, times);
+
+    public void Record()
+    {
+        Interlocked.Increment(ref this.count);
+        this.messageIds.Enqueue(MessageContext.Current?.MessageId);
+
+        if (Interlocked.Decrement(ref this.throwsRemaining) >= 0)
+        {
+            throw new InvalidOperationException("probe failure");
+        }
+
+        Interlocked.Exchange(ref this.throwsRemaining, 0);
+    }
 }
 
 [FireAndForget]
@@ -36,12 +63,28 @@ public record AuditTrailEvent(string Detail) : IEvent;
 [FireAndForget(Immediate = true)]
 public record LockoutStyleEvent(string Detail) : IEvent;
 
-public class AuditTrailListener(ListenerProbe probe) : IEventListener<AuditTrailEvent>
+public class AuditTrailListener(ListenerProbe probe, IMediator mediator) : IEventListener<AuditTrailEvent>
 {
-    public Task HandleAsync(AuditTrailEvent @event, CancellationToken cancellationToken)
+    public async Task HandleAsync(AuditTrailEvent @event, CancellationToken cancellationToken)
     {
         probe.Record();
-        return Task.CompletedTask;
+
+        if (probe.ExecuteNested)
+        {
+            await mediator.ExecuteAsync(new ProbeNestedCommand(), cancellationToken);
+        }
+    }
+}
+
+/// <summary>A command the audit-trail listener executes, to observe whose delivery it is caused by.</summary>
+public record ProbeNestedCommand : ICommand<Guid>;
+
+public class ProbeNestedHandler(ListenerProbe probe) : ICommandHandler<ProbeNestedCommand, Guid>
+{
+    public Task<Guid> HandleAsync(ProbeNestedCommand command, CancellationToken cancellationToken)
+    {
+        probe.NestedMessageId = MessageContext.Current?.MessageId;
+        return Task.FromResult(Guid.NewGuid());
     }
 }
 

@@ -151,10 +151,10 @@ namespace App.Events
         var mediatorSource = FindGeneratedSource(trees, "ConduitMediator")!;
         var lines = mediatorSource.Split('\n').Select(line => line.Trim()).ToList();
 
-        // Assert -- every context start (the in-process one per ExecuteAsync/FetchAsync/PublishAsync, and the wire one
-        // per DispatchRequestAsync/DispatchEventAsync) binds the context on the line after it attaches the observer
+        // Assert -- every context start (the in-process one per ExecuteAsync/FetchAsync/PublishAsync, the wire one
+        // per DispatchRequestAsync/DispatchEventAsync, and the outbox delivery's PublishLocalEnvelopeAsync) binds the context on the line after it attaches the observer
         var attachLines = lines.Select((line, index) => (line, index)).Where(entry => entry.line == attach).ToList();
-        attachLines.Should().HaveCount(6, "three typed overloads, PublishAsync, and the two wire dispatch methods");
+        attachLines.Should().HaveCount(7, "three typed overloads, PublishAsync, the two wire dispatch methods, and the outbox's local delivery");
         foreach (var (_, index) in attachLines)
         {
             lines[index + 1].Should().Be(bind);

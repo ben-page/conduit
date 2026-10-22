@@ -32,6 +32,12 @@ public interface ILocalEnvelopeDispatcher
     /// (with pipeline behaviors) against <paramref name="scopedServices"/> — callers supply a fresh
     /// scope per delivery, mirroring fire-and-forget's fresh-scope semantics.
     /// </summary>
+    /// <remarks>
+    /// The delivery is an observed dispatch: it runs in a child of the caller's current context (the outbox entry's,
+    /// restored by the caller) with a fresh <c>MessageId</c> caused by the entry, emits
+    /// <c>DispatchInvoked</c>/<c>DispatchCompleted</c>/<c>DispatchFailed</c> (kind <c>Event</c>) so each attempt is one
+    /// audit record, and restores the caller's context afterwards. It keeps no body: the publish record holds it.
+    /// </remarks>
     /// <param name="envelope">The stored envelope (type discriminator + JSON payload).</param>
     /// <param name="scopedServices">The scope to resolve listeners and behaviors from.</param>
     /// <param name="cancellationToken">Cancels listener execution.</param>
