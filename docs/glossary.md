@@ -174,7 +174,7 @@ occurrence is a point in time; a run is the ledger row for executing it.
 ### Run
 
 A row in `conduit_job_runs` representing one execution of an occurrence or an event trigger, keyed
-`{schedule}@{occurrenceUtcIso}` or `{trigger}@{eventMessageId}`. The table holds work, not history —
+`{schedule}@{occurrenceUtcIso}` or `{trigger}@{DeliveredMessageId}` (`MessageContext.DeliveredMessageId`, the id of the event being delivered). The table holds work, not history —
 a successful run's row is deleted, and history is [Audit](audit.md).
 
 ### Claim
