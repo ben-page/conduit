@@ -766,14 +766,15 @@ public static class MediatorEmitter
 
         // The delivery is an observed dispatch of its own: a child of the entry's restored context (a fresh MessageId,
         // CausationId = the entry's MessageId, the entry's ConversationId), so each attempt -- the flush's, then each
-        // relay redelivery -- is one request-log row, and a listener's nested dispatch is caused by that row. The
-        // body is deliberately not captured (no CaptureAuditPayload): the publish row already holds it, and the
-        // delivery record must never carry one.
+        // relay redelivery -- is one request-log row, and a listener's nested dispatch is caused by that row. Every
+        // attempt keeps the entry's MessageId as its DeliveredMessageId (StartLocalDelivery), which is what a
+        // listener's once-per-message work keys on. The body is deliberately not captured (no CaptureAuditPayload):
+        // the publish row already holds it, and the delivery record must never carry one.
         sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public async Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine($"        var previousContext = {EmitConstants.MessageContext}.Current;");
-        sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch();");
+        sb.AppendLine($"        {EmitConstants.MessageContext}.StartLocalDelivery();");
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
         EmitBindDispatchAttempt(sb);
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(envelope.Type, \"Event\"));");

@@ -338,11 +338,24 @@ event) before step 3 broadcasts — without the filter, a broker routing that br
 application would run the same listeners a second time, exactly as it would for a plain event
 published outside the outbox.
 
+**Step 2 is a dispatch of its own.** It runs in a child of the entry's message context, so inside a
+local listener `MessageContext.Current.MessageId` is a fresh id for that delivery attempt,
+`CausationId` is the outbox entry's `MessageId`, `ConversationId` is the entry's, and
+`DeliveredMessageId` is the entry's `MessageId` on every attempt. With [audit](audit.md) on, each
+attempt is one audit record — kind `Event`, no payload (the publish record holds the body), failed or
+completed — and a listener's nested dispatches are caused by it. A listener's log line names the
+attempt's `MessageId`; the attempt's audit record joins it to the entry through its `CausationId`.
+Step 3's transport send runs back in the entry's own context, so remote hosts receive the entry's
+`MessageId`.
+
 **Redelivery re-runs local listeners.** If a scheduled flush delivery fails partway, or never runs
 at all (e.g. a crash between commit and the background dispatcher draining the work item), the
 relay claims the same entry later and repeats the full contract — including local listeners.
 Outbox delivery is **at-least-once**, exactly like transport delivery; local listeners must be
-idempotent for the same reason transport-side consumers must be.
+idempotent for the same reason transport-side consumers must be. Key once-per-message work on
+`MessageContext.Current.DeliveredMessageId`, which a redelivery repeats, not on `MessageId`, which
+each attempt mints afresh — a [Conduit.Jobs event trigger](jobs.md#event-triggers) keys its run that
+way, so one entry delivered twice runs its job once.
 
 **Degraded mode without the source generator.** `ILocalEnvelopeDispatcher` is implemented by the
 generated mediator and resolved with `GetService` (not `GetRequiredService`). A host that never

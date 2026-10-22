@@ -130,4 +130,58 @@ public class MessageContextShould
         ids.Should().HaveCount(2);
         ids.Distinct().Should().HaveCount(2);
     }
+
+    [TestMethod]
+    public void DeliverItsOwnMessageOnADispatch()
+    {
+        // Act
+        var parent = MessageContext.StartDispatch();
+        var child = MessageContext.StartDispatch();
+
+        // Assert — a nested dispatch is a message of its own, so it does not inherit the parent's delivered id
+        parent.DeliveredMessageId.Should().Be(parent.MessageId);
+        child.DeliveredMessageId.Should().Be(child.MessageId);
+    }
+
+    [TestMethod]
+    public void DeliverTheWireMessageOnATransportDispatch()
+    {
+        // Act
+        var context = MessageContext.StartDispatchFromTransport("msg-123", "cause-456", "conv-789");
+
+        // Assert — a broker redelivery carries the same MessageId, so it is the same delivered message
+        context.DeliveredMessageId.Should().Be("msg-123");
+    }
+
+    [TestMethod]
+    public void DeliverTheCurrentMessageOnALocalDelivery()
+    {
+        // Arrange — the outbox restores the entry's context before delivering it
+        MessageContext.StartDispatchFromTransport("entry-1", null, "conv-1");
+
+        // Act
+        var first = MessageContext.StartLocalDelivery();
+        MessageContext.StartDispatchFromTransport("entry-1", null, "conv-1");
+        var second = MessageContext.StartLocalDelivery();
+        var nested = MessageContext.StartDispatch();
+
+        // Assert — each attempt is a dispatch of its own, but both deliver the entry
+        first.MessageId.Should().NotBe("entry-1").And.NotBe(second.MessageId);
+        first.CausationId.Should().Be("entry-1");
+        first.ConversationId.Should().Be("conv-1");
+        first.DeliveredMessageId.Should().Be("entry-1");
+        second.DeliveredMessageId.Should().Be("entry-1");
+        nested.DeliveredMessageId.Should().Be(nested.MessageId, "a listener's nested dispatch is a message of its own");
+    }
+
+    [TestMethod]
+    public void DeliverItsOwnMessageOnALocalDeliveryWithNoCurrentContext()
+    {
+        // Act
+        var context = MessageContext.StartLocalDelivery();
+
+        // Assert
+        context.DeliveredMessageId.Should().Be(context.MessageId);
+        context.CausationId.Should().Be(context.MessageId);
+    }
 }

@@ -43,6 +43,16 @@ public sealed class MessageContext
     public string ConversationId { get; }
 
     /// <summary>
+    /// The MessageId of the message whose delivery this dispatch is. A redelivery of one message — a broker's, or the
+    /// outbox relay's after a failed local delivery — carries the same value, while each outbox delivery attempt has its
+    /// own <see cref="MessageId"/>; so work a listener must do once per message (a job trigger's run key) keys on this.
+    /// Inside the outbox's local delivery (<see cref="StartLocalDelivery"/>) it is the outbox entry's MessageId; on a
+    /// wire-inbound dispatch and on every other dispatch it equals <see cref="MessageId"/>. A nested dispatch never
+    /// inherits it.
+    /// </summary>
+    public string DeliveredMessageId { get; }
+
+    /// <summary>
     /// User-defined key/value pairs attached to this dispatch via <see cref="DispatchOptions"/>.
     /// Empty when no options were provided.
     /// </summary>
@@ -63,12 +73,13 @@ public sealed class MessageContext
     public DispatchAttempt? Attempt { get; internal set; }
 
     private MessageContext(string messageId, string causationId, string conversationId,
-        IReadOnlyDictionary<string, object?> properties)
+        IReadOnlyDictionary<string, object?> properties, string? deliveredMessageId = null)
     {
         this.MessageId = messageId;
         this.CausationId = causationId;
         this.ConversationId = conversationId;
         this.Properties = properties;
+        this.DeliveredMessageId = deliveredMessageId ?? messageId;
     }
 
     /// <summary>
@@ -80,6 +91,19 @@ public sealed class MessageContext
     /// <see cref="MessageId"/>. Called by the generated mediator.
     /// </summary>
     public static MessageContext StartDispatch(DispatchOptions? options = null)
+        => StartChild(options, deliversParent: false);
+
+    /// <summary>
+    /// Creates the context for delivering the current context's message to this host's local listeners: a child
+    /// dispatch, as <see cref="StartDispatch"/> makes, whose <see cref="DeliveredMessageId"/> is the current context's
+    /// <see cref="MessageId"/>. Called by the generated outbox delivery (<c>PublishLocalEnvelopeAsync</c>), whose
+    /// caller has restored the outbox entry's context, so every attempt at one entry has its own
+    /// <see cref="MessageId"/> but the entry's <see cref="DeliveredMessageId"/>. With no current context it is a head
+    /// dispatch.
+    /// </summary>
+    public static MessageContext StartLocalDelivery() => StartChild(options: null, deliversParent: true);
+
+    private static MessageContext StartChild(DispatchOptions? options, bool deliversParent)
     {
         var parent = Current;
         var messageId = Guid.NewGuid().ToString("N");
@@ -102,7 +126,8 @@ public sealed class MessageContext
             messageId: messageId,
             causationId: parent?.MessageId ?? messageId,
             conversationId: parent?.ConversationId ?? messageId,
-            properties: properties)
+            properties: properties,
+            deliveredMessageId: deliversParent ? parent?.MessageId : null)
         {
             // Nested dispatches inherit the parent's observer; the mediator re-attaches the
             // host's observer for root dispatches via AttachObserver.

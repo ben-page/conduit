@@ -297,9 +297,15 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   02:00 today?". The cursor in `conduit_job_schedules` does. `CompleteAsync` and `MarkTerminalAsync`
   both delete/update **and** advance the cursor in one transaction — a crash between two separate
   writes leaves an occurrence that has run and looks like it has not.
+- **A non-coalescing trigger keys its run on `MessageContext.DeliveredMessageId`, not `MessageId`.**
+  The outbox's local delivery runs each attempt in a child context with a fresh `MessageId` (each
+  attempt is its own audit row), so keying on `MessageId` would run the job once per attempt when a
+  sibling listener fails the flush and the relay redelivers. `DeliveredMessageId` is the outbox entry's id on
+  every attempt, and equals `MessageId` on the wire path, so broker redelivery collapses as before.
+  Pinned by Durability's `OutboxEventTriggerShould`.
 - **A non-coalescing trigger run is kept on success, as `Completed`.** It has no cursor, so the row
-  is its only memory: deleting it made the `{trigger}@{MessageId}` key collapse only redeliveries that
-  raced the run, while the common redelivery — after a lost ack — arrives once the job has finished.
+  is its only memory: deleting it made the `{trigger}@{DeliveredMessageId}` key collapse only
+  redeliveries that raced the run, while the common redelivery — after a lost ack — arrives once the job has finished.
   `ClaimedJobExecutor` passes `retainRunKey` from `ScheduleRegistry.IsMessageKeyedTrigger`, and
   `CompleteAsync` turns the delete into an update that also clears the claim, so the row matches no
   Pending/Claiming query and only the unique key sees it. `JobCleanup` purges it after
@@ -404,7 +410,7 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   declaration. `BuildScope` writes `MessageType` from that same declared type, so a `Run` lambda
   returning a subtype does not leave `MessageType` naming the derived type while the first merge
   rewrites the payload as the base type.
-- **The coalescing path is not keyed on the event's `MessageId`**, so unlike a plain trigger it gets
+- **The coalescing path is not keyed on the event's `DeliveredMessageId`**, so unlike a plain trigger it gets
   no redelivery dedup from the unique run key. That is why the merge function has to be idempotent as
   well as widening, and why the user guide says so.
 

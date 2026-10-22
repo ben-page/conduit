@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Audit\Conduit.Audit.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Durability\Conduit.Durability.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Jobs\Conduit.Jobs.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Persistence.Sqlite\Conduit.Persistence.Sqlite.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Persistence.Postgres\Conduit.Persistence.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Persistence.SqlServer\Conduit.Persistence.SqlServer.csproj" />

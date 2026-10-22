@@ -271,9 +271,12 @@ CreateOrderCommand    (MessageId=A, CausationId=A, ConversationId=A)   ← head 
        └─ NotifyCommand  (MessageId=D, CausationId=C, ConversationId=A)
 ```
 
-Two factory methods:
+Three factory methods:
 - `MessageContext.StartDispatch()` — local dispatch, generates IDs, inherits from parent if nested
 - `MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId)` — inbound wire dispatch, all values from broker message properties
+- `MessageContext.StartLocalDelivery()` — the outbox's local delivery of an entry: a nested dispatch whose `DeliveredMessageId` is the entry's `MessageId`
+
+`DeliveredMessageId` is the id of the message whose delivery a dispatch is. It equals `MessageId` everywhere except inside the outbox's local delivery, where each attempt has a fresh `MessageId` but every attempt delivers the same entry — so a redelivery repeats it, and once-per-message work (a Conduit.Jobs trigger's run key) keys on it. A nested dispatch does not inherit it.
 
 Access via `MessageContext.Current` (static property). Set automatically by the generated mediator and `ConduitRuntime` wire dispatch. Context is set before the `IInboundInterceptor` chain runs.
 

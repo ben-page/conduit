@@ -152,8 +152,9 @@ jobs.On<PunchChanged>("workstation-rebuild")
 cheaper mistake. That is why there is no default merge and `AddJobs` rejects a `CoalesceBy` without
 one — "keep the newest and discard the rest" is exactly the narrowing this exists to prevent.
 
-**And be idempotent.** A non-coalescing trigger keys its run on the event's `MessageId`, so a broker
-redelivering one event collapses on the run key for free. A coalescing trigger keys on the coalesce
+**And be idempotent.** A non-coalescing trigger keys its run on the delivered event's id
+(`MessageContext.DeliveredMessageId`), so a broker or the outbox relay redelivering one event collapses
+on the run key for free. A coalescing trigger keys on the coalesce
 key instead and inherits none of that: a redelivered event is merged twice. Widening merges — keep
 the earlier instant, union a set, take a max — are idempotent by construction. An accumulating one is
 not, and will over-count:
@@ -291,7 +292,7 @@ finish out of order cannot move it back behind an occurrence that has already ru
 
 An event trigger has no cursor to fall back on, so a non-coalescing trigger run is the one success
 that is **not** deleted. Its row is kept with status `Completed` for `CompletedRetention` (default
-1 day) and then purged. Its run key is `{trigger}@{event MessageId}`, and the kept row is what makes a
+1 day) and then purged. Its run key is `{trigger}@{DeliveredMessageId}`, and the kept row is what makes a
 broker redelivering that event *after* the job finished — the usual shape, since redelivery follows a
 lost ack — collapse on the key instead of running the job a second time. Deleting it on success would
 only have caught redeliveries that raced the first run. A kept row has no claim and matches none of
@@ -349,8 +350,13 @@ gets the `EventListenerException`, as from any inline listener, rather than an e
 work written nowhere. The job itself is at most started there, so a failure of the job's own run never
 reaches the publisher.
 
-A non-coalescing trigger's run key is `{trigger}@{event MessageId}`, which makes it idempotent
-against broker redelivery for free — no dedup store, no inbox required. That holds while the run is
+A non-coalescing trigger's run key is `{trigger}@{DeliveredMessageId}`, which makes it idempotent
+against redelivery for free — no dedup store, no inbox required. `MessageContext.DeliveredMessageId` is
+the id of the event being delivered, not of the dispatch delivering it: on a broker delivery it is the
+event's own `MessageId`, and under an outbox it is the outbox entry's `MessageId` on every local
+delivery attempt, though each attempt runs as its own dispatch with a fresh `MessageId` (see
+[outbox.md](outbox.md#flush-and-relay-delivery-local-then-transport)). So a failed flush (another listener of the event threw)
+followed by the relay's redelivery writes one run, not two. That holds while the run is
 in flight and for `CompletedRetention` (default 1 day) after it succeeds; a redelivery later than that
 runs the job again. A coalescing trigger keys on
 the coalesce key instead, which is why its merge has to be idempotent as well as widening; see
@@ -698,7 +704,7 @@ kept for `CompletedRetention`; never history.
 | Column | Purpose |
 |---|---|
 | `Id` (PK, auto-increment) | Claim ordering |
-| `JobKey` (unique) | `{schedule}@{occurrenceUtcIso}`, `{trigger}@{eventMessageId}`, or `{trigger}@{coalesceKey}` for a coalescing trigger |
+| `JobKey` (unique) | `{schedule}@{occurrenceUtcIso}`, `{trigger}@{deliveredMessageId}`, or `{trigger}@{coalesceKey}` for a coalescing trigger |
 | `ScheduleName` | The declaring schedule or trigger; drives overlap and the cursor |
 | `Occurrence` | The occurrence this run is for, on schedule runs |
 | `MessageType`, `Payload` | The command to dispatch |

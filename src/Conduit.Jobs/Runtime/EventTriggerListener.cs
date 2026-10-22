@@ -56,9 +56,11 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
     /// <inheritdoc/>
     public async Task HandleAsync(TEvent @event, CancellationToken cancellationToken)
     {
-        // Keyed on the message id, so a broker redelivering the same event produces the same run key
-        // and the insert-or-ignore collapses it — idempotence for free, with no dedup store.
-        var messageId = MessageContext.Current?.MessageId ?? Guid.NewGuid().ToString("N");
+        // Keyed on the delivered message's id, not this dispatch's: a broker redelivering the same event,
+        // or the outbox relay redelivering an entry whose first local delivery failed, produces the same
+        // run key and the insert-or-ignore collapses it — idempotence for free, with no dedup store. Each
+        // outbox delivery attempt has its own MessageId, so keying on that would run the job once per attempt.
+        var messageId = MessageContext.Current?.DeliveredMessageId ?? Guid.NewGuid().ToString("N");
         var now = this.timeProvider.GetUtcNow();
 
         foreach (var trigger in this.registry.Triggers)

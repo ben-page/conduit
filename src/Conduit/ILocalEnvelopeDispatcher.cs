@@ -34,7 +34,8 @@ public interface ILocalEnvelopeDispatcher
     /// </summary>
     /// <remarks>
     /// The delivery is an observed dispatch: it runs in a child of the caller's current context (the outbox entry's,
-    /// restored by the caller) with a fresh <c>MessageId</c> caused by the entry, emits
+    /// restored by the caller) with a fresh <c>MessageId</c> caused by the entry and the entry's <c>MessageId</c> as its
+    /// <see cref="MessageContext.DeliveredMessageId"/>, emits
     /// <c>DispatchInvoked</c>/<c>DispatchCompleted</c>/<c>DispatchFailed</c> (kind <c>Event</c>) so each attempt is one
     /// audit record, and restores the caller's context afterwards. It keeps no body: the publish record holds it.
     /// </remarks>

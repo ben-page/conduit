@@ -164,3 +164,25 @@ public sealed class PostHandlerPublishBehavior<TRequest, TResult>(IMediator medi
         return result;
     }
 }
+
+/// <summary>The command a Conduit.Jobs event trigger on <see cref="AuditTrailEvent"/> runs.</summary>
+public sealed record TriggeredAuditJob(string Detail) : ICommand;
+
+/// <summary>Counts the triggered job's runs (registered singleton per test host).</summary>
+public sealed class TriggeredJobSpy
+{
+    private int runs;
+
+    public int Runs => Volatile.Read(ref this.runs);
+
+    public void Record() => Interlocked.Increment(ref this.runs);
+}
+
+public class TriggeredAuditJobHandler(TriggeredJobSpy spy) : ICommandHandler<TriggeredAuditJob>
+{
+    public Task HandleAsync(TriggeredAuditJob command, CancellationToken cancellationToken)
+    {
+        spy.Record();
+        return Task.CompletedTask;
+    }
+}
