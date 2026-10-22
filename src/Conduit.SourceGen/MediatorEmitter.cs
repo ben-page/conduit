@@ -639,7 +639,7 @@ public static class MediatorEmitter
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
 
-        EmitWireContextStart(sb, "type", "Request", "WireRequestKind(type)");
+        EmitWireContextStart(sb, "type", "Request", "WireRequestMetric(type)");
 
         sb.AppendLine("            // Forward to transport if the type matches a route (handles types not known locally)");
         sb.AppendLine("            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
@@ -696,22 +696,23 @@ public static class MediatorEmitter
         sb.AppendLine("    }");
         sb.AppendLine();
 
-        // The wire carries only a type name, so the dispatch metric's kind comes from the type's declaration. A type
-        // forwarded by route that this compilation does not know is a "request".
-        sb.AppendLine("    private static string WireRequestKind(string type) => type switch");
+        // The wire carries only a type name, and the caller chooses it, so the dispatch metric's tags come from this
+        // compilation's declarations: a declared type is tagged with its name and its kind, and any other name -- a type
+        // forwarded by route, or one nothing handles -- with UndeclaredMetricType, so a caller cannot mint a series.
+        sb.AppendLine("    private static (string Type, string Kind) WireRequestMetric(string type) => type switch");
         sb.AppendLine("    {");
 
         foreach (var cmd in commands.Concat(voidCommands))
         {
-            sb.AppendLine($"        \"{cmd.FullTypeName}\" => \"command\",");
+            sb.AppendLine($"        \"{cmd.FullTypeName}\" => (\"{cmd.FullTypeName}\", \"command\"),");
         }
 
         foreach (var query in queries)
         {
-            sb.AppendLine($"        \"{query.FullTypeName}\" => \"query\",");
+            sb.AppendLine($"        \"{query.FullTypeName}\" => (\"{query.FullTypeName}\", \"query\"),");
         }
 
-        sb.AppendLine("        _ => \"request\",");
+        sb.AppendLine($"        _ => (\"{UndeclaredMetricType}\", \"request\"),");
         sb.AppendLine("    };");
         sb.AppendLine();
     }
@@ -724,7 +725,7 @@ public static class MediatorEmitter
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
 
-        EmitWireContextStart(sb, "type", "Event", "\"event\"");
+        EmitWireContextStart(sb, "type", "Event", "EventMetric(type)");
 
         sb.AppendLine("            IEvent @event = type switch");
         sb.AppendLine("            {");
@@ -744,6 +745,19 @@ public static class MediatorEmitter
 
         EmitWireContextEnd(sb);
         sb.AppendLine("    }");
+        sb.AppendLine();
+
+        // An event envelope's type is bounded the same way as a wire request's (WireRequestMetric).
+        sb.AppendLine("    private static (string Type, string Kind) EventMetric(string type) => type switch");
+        sb.AppendLine("    {");
+
+        foreach (var evt in events)
+        {
+            sb.AppendLine($"        \"{evt.FullTypeName}\" => (\"{evt.FullTypeName}\", \"event\"),");
+        }
+
+        sb.AppendLine($"        _ => (\"{UndeclaredMetricType}\", \"event\"),");
+        sb.AppendLine("    };");
         sb.AppendLine();
     }
 
@@ -797,7 +811,7 @@ public static class MediatorEmitter
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
         EmitBindDispatchAttempt(sb);
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(envelope.Type, \"Event\"));");
-        EmitDispatchMetricStart(sb, "envelope.Type", "\"event\"");
+        EmitDispatchMetricStart(sb, "EventMetric(envelope.Type)");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            IEvent @event = envelope.Type switch");
@@ -856,7 +870,7 @@ public static class MediatorEmitter
         }
 
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
-        EmitDispatchMetricStart(sb, messageTypeExpr, $"\"{messageKind}\"");
+        EmitDispatchMetricStart(sb, $"({messageTypeExpr}, \"{messageKind}\")");
 
         sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
         sb.AppendLine("        try");
@@ -874,14 +888,20 @@ public static class MediatorEmitter
     }
 
     /// <summary>
-    /// Emits the dispatch's stopwatch and the type and kind its dispatch metric is tagged with. Every dispatch the
-    /// mediator observes -- in process, from the wire, or an outbox's local delivery -- is measured once, by
-    /// <see cref="EmitDispatchCompleted"/> or <see cref="EmitDispatchFailed"/>.
+    /// The <c>conduit.message.type</c> a wire or envelope dispatch's metric carries when this compilation does not
+    /// declare the type it names.
     /// </summary>
-    private static void EmitDispatchMetricStart(StringBuilder sb, string messageTypeExpr, string metricKindExpr)
+    internal const string UndeclaredMetricType = "(undeclared)";
+
+    /// <summary>
+    /// Emits the dispatch's stopwatch and the type and kind its dispatch metric is tagged with, from
+    /// <paramref name="metricExpr"/>, a <c>(Type, Kind)</c> tuple. Every dispatch the mediator observes -- in process,
+    /// from the wire, or an outbox's local delivery -- is measured once, by <see cref="EmitDispatchCompleted"/> or
+    /// <see cref="EmitDispatchFailed"/>.
+    /// </summary>
+    private static void EmitDispatchMetricStart(StringBuilder sb, string metricExpr)
     {
-        sb.AppendLine($"        var __dispatchType = {messageTypeExpr};");
-        sb.AppendLine($"        var __dispatchKind = {metricKindExpr};");
+        sb.AppendLine($"        var (__dispatchType, __dispatchKind) = {metricExpr};");
         sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
     }
 
@@ -928,14 +948,14 @@ public static class MediatorEmitter
     /// group reads it when it seals. Wire dispatch runs within the transport's context so uses simplified
     /// observation setup.
     /// </summary>
-    private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind, string metricKindExpr)
+    private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind, string metricExpr)
     {
         // The transport already started the context (StartDispatchFromTransport); attach this host's
         // observer from the mediator's scope before the first observation.
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
         EmitBindDispatchAttempt(sb);
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
-        EmitDispatchMetricStart(sb, messageTypeExpr, metricKindExpr);
+        EmitDispatchMetricStart(sb, metricExpr);
         sb.AppendLine("        try");
         sb.AppendLine("        {");
     }

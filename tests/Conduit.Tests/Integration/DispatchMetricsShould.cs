@@ -72,11 +72,12 @@ public sealed class DispatchMetricsShould
     }
 
     [TestMethod]
-    public async Task RecordAForwardedRequestOfAnUndeclaredTypeAsARequest()
+    public async Task RecordAForwardedRequestOfAnUndeclaredTypeUnderNoNameOfTheCallers()
     {
         // Arrange -- the namespace is routed away and holds no message this compilation declares
         var forwardedType = typeof(ForwardedMetricsNamespace).Namespace + ".UndeclaredRequest";
-        using var metrics = new DispatchMetrics(forwardedType);
+        using var named = new DispatchMetrics(forwardedType);
+        using var metrics = new DispatchMetrics(Undeclared);
         var spyTransport = new SpyTransport { RequestResult = "forwarded" };
         await using var provider = BuildProvider(conduit => conduit.AddEndpoint("remote", endpoint =>
         {
@@ -91,7 +92,28 @@ public sealed class DispatchMetricsShould
         // Assert
         result.Error.Should().BeNull();
         spyTransport.SentRequests.Should().ContainSingle();
-        metrics.Counts.Should().ContainSingle().Which.Should().Be(new Measurement(1, "request", "success"));
+        named.Counts.Should().BeEmpty("the caller chose the name");
+        // Contain, not ContainSingle: another test may dispatch an undeclared type at the same time
+        metrics.Counts.Should().Contain(new Measurement(1, "request", "success"));
+    }
+
+    [TestMethod]
+    public async Task RecordAWireRequestNothingDeclaresAsAnUndeclaredError()
+    {
+        // Arrange -- no route, no handler: the dispatch fails on the unknown name
+        var madeUpType = "Made.Up." + Guid.NewGuid().ToString("N");
+        using var named = new DispatchMetrics(madeUpType);
+        using var metrics = new DispatchMetrics(Undeclared);
+        await using var provider = BuildProvider();
+        var envelope = new DispatchEnvelope(madeUpType, JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        var result = await provider.GetRequiredService<IWireMediator>().HandleWireRequestAsync(envelope, CancellationToken.None);
+
+        // Assert
+        result.Error.Should().NotBeNull();
+        named.Counts.Should().BeEmpty("a made-up name must not become a series");
+        metrics.Counts.Should().Contain(new Measurement(1, "request", "error"));
     }
 
     [TestMethod]
@@ -124,6 +146,8 @@ public sealed class DispatchMetricsShould
         metrics.Counts.Should().ContainSingle().Which.Should().Be(new Measurement(1, "event", "success"));
         metrics.Durations.Should().ContainSingle().Which.Kind.Should().Be("event");
     }
+
+    private const string Undeclared = "(undeclared)";
 
     private static ServiceProvider BuildProvider(Action<Conduit.Configuration.ConduitBuilder>? configure = null)
     {
