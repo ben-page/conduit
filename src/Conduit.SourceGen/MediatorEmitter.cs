@@ -639,7 +639,7 @@ public static class MediatorEmitter
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
 
-        EmitWireContextStart(sb, "type", "Request");
+        EmitWireContextStart(sb, "type", "Request", "WireRequestKind(type)");
 
         sb.AppendLine("            // Forward to transport if the type matches a route (handles types not known locally)");
         sb.AppendLine("            var endpoint = ConduitRuntime.ResolveRoute(conduitOptions, type);");
@@ -695,6 +695,25 @@ public static class MediatorEmitter
         EmitWireContextEnd(sb);
         sb.AppendLine("    }");
         sb.AppendLine();
+
+        // The wire carries only a type name, so the dispatch metric's kind comes from the type's declaration. A type
+        // forwarded by route that this compilation does not know is a "request".
+        sb.AppendLine("    private static string WireRequestKind(string type) => type switch");
+        sb.AppendLine("    {");
+
+        foreach (var cmd in commands.Concat(voidCommands))
+        {
+            sb.AppendLine($"        \"{cmd.FullTypeName}\" => \"command\",");
+        }
+
+        foreach (var query in queries)
+        {
+            sb.AppendLine($"        \"{query.FullTypeName}\" => \"query\",");
+        }
+
+        sb.AppendLine("        _ => \"request\",");
+        sb.AppendLine("    };");
+        sb.AppendLine();
     }
 
     private static void EmitWirePublish(StringBuilder sb, List<DispatchableTypeInfo> events)
@@ -705,7 +724,7 @@ public static class MediatorEmitter
         sb.AppendLine("        CancellationToken cancellationToken)");
         sb.AppendLine("    {");
 
-        EmitWireContextStart(sb, "type", "Event");
+        EmitWireContextStart(sb, "type", "Event", "\"event\"");
 
         sb.AppendLine("            IEvent @event = type switch");
         sb.AppendLine("            {");
@@ -778,7 +797,7 @@ public static class MediatorEmitter
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
         EmitBindDispatchAttempt(sb);
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}(envelope.Type, \"Event\"));");
-        sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
+        EmitDispatchMetricStart(sb, "envelope.Type", "\"event\"");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            IEvent @event = envelope.Type switch");
@@ -794,12 +813,7 @@ public static class MediatorEmitter
         sb.AppendLine("            await PublishLocalAsync(scopedServices, @event, cancellationToken);");
         EmitDispatchCompleted(sb, "            ");
         sb.AppendLine("        }");
-        sb.AppendLine("        catch (Exception __ex)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(__failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
-        sb.AppendLine("            throw;");
-        sb.AppendLine("        }");
+        EmitDispatchFailed(sb);
         sb.AppendLine("        finally");
         sb.AppendLine("        {");
         sb.AppendLine($"            {EmitConstants.MessageContext}.RestoreContext(previousContext);");
@@ -842,7 +856,7 @@ public static class MediatorEmitter
         }
 
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
-        sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
+        EmitDispatchMetricStart(sb, messageTypeExpr, $"\"{messageKind}\"");
 
         sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
         sb.AppendLine("        try");
@@ -852,12 +866,7 @@ public static class MediatorEmitter
     private static void EmitContextEnd(StringBuilder sb)
     {
         sb.AppendLine("        }");
-        sb.AppendLine("        catch (Exception __ex)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(__failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
-        sb.AppendLine("            throw;");
-        sb.AppendLine("        }");
+        EmitDispatchFailed(sb);
         sb.AppendLine("        finally");
         sb.AppendLine("        {");
         sb.AppendLine($"            {EmitConstants.MessageContext}.RestoreContext(previousContext);");
@@ -865,13 +874,40 @@ public static class MediatorEmitter
     }
 
     /// <summary>
-    /// Emits DispatchCompleted observation with elapsed time tracking.
+    /// Emits the dispatch's stopwatch and the type and kind its dispatch metric is tagged with. Every dispatch the
+    /// mediator observes -- in process, from the wire, or an outbox's local delivery -- is measured once, by
+    /// <see cref="EmitDispatchCompleted"/> or <see cref="EmitDispatchFailed"/>.
+    /// </summary>
+    private static void EmitDispatchMetricStart(StringBuilder sb, string messageTypeExpr, string metricKindExpr)
+    {
+        sb.AppendLine($"        var __dispatchType = {messageTypeExpr};");
+        sb.AppendLine($"        var __dispatchKind = {metricKindExpr};");
+        sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
+    }
+
+    /// <summary>
+    /// Emits DispatchCompleted observation and the successful dispatch's metric, with elapsed time tracking.
     /// Uses a nested block to avoid variable name conflicts across return paths.
     /// </summary>
     private static void EmitDispatchCompleted(StringBuilder sb, string indent)
     {
         sb.AppendLine($"{indent}{{ var __elapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"{indent}{EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchCompleted}(__elapsed)); }}");
+        sb.AppendLine($"{indent}{EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchCompleted}(__elapsed));");
+        sb.AppendLine($"{indent}{EmitConstants.ConduitTelemetry}.RecordDispatch(__dispatchType, __dispatchKind, success: true, __elapsed); }}");
+    }
+
+    /// <summary>
+    /// Emits the catch that observes DispatchFailed and records the failed dispatch's metric, then rethrows.
+    /// </summary>
+    private static void EmitDispatchFailed(StringBuilder sb)
+    {
+        sb.AppendLine("        catch (Exception __ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
+        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(__failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
+        sb.AppendLine($"            {EmitConstants.ConduitTelemetry}.RecordDispatch(__dispatchType, __dispatchKind, success: false, __failElapsed);");
+        sb.AppendLine("            throw;");
+        sb.AppendLine("        }");
     }
 
     /// <summary>
@@ -892,14 +928,14 @@ public static class MediatorEmitter
     /// group reads it when it seals. Wire dispatch runs within the transport's context so uses simplified
     /// observation setup.
     /// </summary>
-    private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind)
+    private static void EmitWireContextStart(StringBuilder sb, string messageTypeExpr, string messageKind, string metricKindExpr)
     {
         // The transport already started the context (StartDispatchFromTransport); attach this host's
         // observer from the mediator's scope before the first observation.
         sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
         EmitBindDispatchAttempt(sb);
         sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
-        sb.AppendLine("        var __sw = Stopwatch.GetTimestamp();");
+        EmitDispatchMetricStart(sb, messageTypeExpr, metricKindExpr);
         sb.AppendLine("        try");
         sb.AppendLine("        {");
     }
@@ -922,11 +958,6 @@ public static class MediatorEmitter
     private static void EmitWireContextEnd(StringBuilder sb)
     {
         sb.AppendLine("        }");
-        sb.AppendLine("        catch (Exception __ex)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            var __failElapsed = Stopwatch.GetElapsedTime(__sw).TotalMilliseconds;");
-        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchFailed}(__failElapsed, __ex.Message, __ex.GetType().FullName ?? __ex.GetType().Name));");
-        sb.AppendLine("            throw;");
-        sb.AppendLine("        }");
+        EmitDispatchFailed(sb);
     }
 }

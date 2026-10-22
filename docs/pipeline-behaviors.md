@@ -169,6 +169,8 @@ Trace context propagates through broker message headers (W3C `traceparent`/`trac
 | `conduit.transport.receive.count` | Counter | `conduit.message.type`, `conduit.transport`, `conduit.outcome` |
 | `conduit.dispatch.retries` | Counter | `conduit.message.type`, `conduit.retry.reason`, `conduit.retry.outcome` |
 
+`conduit.dispatch.count` and `conduit.dispatch.duration` measure every dispatch the mediator runs once: in-process `ExecuteAsync`/`FetchAsync`/`PublishAsync`, a wire request or event arriving over any transport, and an outbox's delivery to this host's listeners. `conduit.message.kind` is `command`, `query` or `event` (a wire request takes its type's declared kind; a route-forwarded type the host does not declare is `request`). `conduit.outcome` is `error` when the dispatch threw, `success` otherwise. A dispatch from inside a handler is measured as its own dispatch, and a request routed to another service is measured on both hosts.
+
 All instrumentation is zero-cost when no OTel listener is attached.
 
 ## Resilience (Polly)
