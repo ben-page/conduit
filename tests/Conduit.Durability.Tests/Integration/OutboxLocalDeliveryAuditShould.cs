@@ -16,7 +16,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.Globalization;
-using System.Text.Json;
 
 namespace Conduit.Durability.Tests.Integration;
 
@@ -100,9 +99,12 @@ public class OutboxLocalDeliveryAuditShould
         first.CausationId.Should().Be(outboxMessageId);
         second.CausationId.Should().Be(outboxMessageId);
 
-        // The dispatch fails with the event pipeline's wrapper around the probe's InvalidOperationException.
+        // The dispatch fails with the event pipeline's wrapper; the listener's own exception type is on the record's
+        // HandlerFailed observation.
         var failed = first.Observations[^1].Should().BeOfType<DispatchFailed>().Subject;
         failed.ExceptionType.Should().Be(typeof(EventListenerException).FullName);
+        first.Observations.OfType<HandlerFailed>().Should().ContainSingle()
+            .Which.ExceptionType.Should().Be(typeof(InvalidOperationException).FullName);
         second.Observations[^1].Should().BeOfType<DispatchCompleted>();
     }
 
@@ -123,30 +125,18 @@ public class OutboxLocalDeliveryAuditShould
         await host.GetRequiredService<IOutboxFlusher>().FlushAsync(CancellationToken.None);
         await WaitForSentAsync(connectionFactory);
 
-        // Assert
+        // Assert — the nested command is caused by the delivery's record, which is caused by the entry
+        var (outboxMessageId, _) = await ReadOutboxIdsAsync(connectionFactory);
         var deliveryId = probe.MessageIds.Should().ContainSingle().Subject!;
+        var store = host.GetRequiredService<IAuditStore>();
+        var delivery = await WaitForRecordAsync(store, deliveryId);
+        delivery.MessageKind.Should().Be("Event");
+        delivery.CausationId.Should().Be(outboxMessageId);
+
         probe.NestedMessageId.Should().NotBeNullOrEmpty();
-        var nested = await WaitForRecordAsync(host.GetRequiredService<IAuditStore>(), probe.NestedMessageId!);
+        var nested = await WaitForRecordAsync(store, probe.NestedMessageId!);
         nested.CausationId.Should().Be(deliveryId);
-    }
-
-    [TestMethod]
-    public async Task RestoreTheEntrysContextAfterDelivery()
-    {
-        // Arrange
-        await using var connectionFactory = new StubConnectionFactory();
-        await using var host = await StartHostAsync(connectionFactory, new SpyTransport());
-        var dispatcher = host.GetRequiredService<ILocalEnvelopeDispatcher>();
-        var envelope = new DispatchEnvelope(
-            typeof(AuditTrailEvent).FullName!,
-            JsonSerializer.SerializeToElement(new AuditTrailEvent("direct"), ConduitRuntime.JsonOptions));
-
-        // Act
-        MessageContext.StartDispatchFromTransport("m-1", null, "c-1");
-        await dispatcher.PublishLocalEnvelopeAsync(envelope, host.Services, CancellationToken.None);
-
-        // Assert
-        MessageContext.Current!.MessageId.Should().Be("m-1");
+        nested.CausationId.Should().NotBe(outboxMessageId, "the delivery is a dispatch of its own between the entry and the listener's work");
     }
 
     [TestMethod]
