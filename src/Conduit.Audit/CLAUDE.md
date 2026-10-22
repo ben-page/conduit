@@ -69,7 +69,7 @@ Deployment roles:
 5. `AuditBatchPublisher` drains channel, publishes `AuditBatch` event via mediator (a failed publish is logged and the batch dropped)
 6. `LocalAuditListener` (or any `IEventListener<AuditBatch>`) persists to store
 
-- **Outbox delivery rows**: the outbox's local delivery (`ILocalEnvelopeDispatcher.PublishLocalEnvelopeAsync`, see Conduit.Durability) is an observed dispatch, so each delivery attempt seals its own `DispatchAuditRecord`: `MessageKind` `"Event"`, `MessageType` = the envelope type, a fresh `MessageId`, `CausationId` = the outbox entry's `MessageId`, `ConversationId` = the entry's, observations `DispatchInvoked` then the listener's handler observations then `DispatchCompleted`/`DispatchFailed`, and `Payload` always null (the publish record holds the body).
+- **Outbox delivery rows**: the outbox's local delivery (`ILocalEnvelopeDispatcher.PublishLocalEnvelopeAsync`, see Conduit.Durability) is an observed dispatch, so each delivery attempt seals its own `DispatchAuditRecord`: `MessageKind` `"Event"`, `MessageType` = the envelope type, a fresh `MessageId`, `CausationId` = the outbox entry's `MessageId`, `ConversationId` = the entry's, observations `DispatchInvoked` then the listener's handler observations then `DispatchCompleted`/`DispatchFailed`, and `Payload` always null (the publish record holds the body). `MessageKind` `"Event"` and the publish record's `"event"` differ only by case, so a case-insensitive store collation cannot tell them apart in SQL.
 
 ## Recursion suppression
 

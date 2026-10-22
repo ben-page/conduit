@@ -250,7 +250,7 @@ A `DispatchAuditRecord` contains:
 | Field | Description |
 |---|---|
 | `MessageId`, `ConversationId`, `CausationId` | Correlation IDs from `MessageContext`. Records across services join on `MessageId`. |
-| `MessageType`, `MessageKind` | Full type name, and the kind: `command` / `query` / `event` for an in-process dispatch; `Request` (command or query) / `Event` for a wire-inbound one. |
+| `MessageType`, `MessageKind` | Full type name, and the kind: `command` / `query` / `event` for an in-process dispatch; `Request` (command or query) / `Event` for a wire-inbound one, and `Event` for each attempt at the outbox's local delivery of an entry (caused by the entry, no `Payload` — the `event` publish record holds the body; see [outbox.md](outbox.md#flush-and-relay-delivery-local-then-transport)). The kinds differ only by case, so a store whose collation ignores case needs a case-sensitive comparison to tell them apart. |
 | `ServiceName` | The emitting service (from `AddAudit().ServiceName`). |
 | `Payload` | The serialized message body — unless suppressed via `[DoNotAudit]` or `SuppressPayload<T>()`. A body over `MaxPayloadBytes` (64 KB by default) is stored shortened with a `$truncated` marker (see [Payload size cap](#payload-size-cap)). |
 | `Properties` | Contextual properties carried on the `MessageContext`. |
