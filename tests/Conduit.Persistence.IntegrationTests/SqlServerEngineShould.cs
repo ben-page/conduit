@@ -15,10 +15,11 @@ namespace Conduit.Persistence.IntegrationTests;
 public sealed class SqlServerEngineShould : PersistenceEngineTestBase
 {
     private static MsSqlContainer? container;
-    private static string? baseConnectionString;
-    private static bool isAvailable;
+    internal static string? BaseConnectionString { get; private set; }
 
-    protected override bool IsAvailable => isAvailable;
+    internal static bool IsContainerAvailable { get; private set; }
+
+    protected override bool IsAvailable => IsContainerAvailable;
 
     protected override ISqlDialect Dialect { get; } = new SqlServerDialect();
 
@@ -32,13 +33,13 @@ public sealed class SqlServerEngineShould : PersistenceEngineTestBase
                 .WithLabel("conduit-test", "persistence-sqlserver")
                 .Build();
             await container.StartAsync();
-            baseConnectionString = container.GetConnectionString();
-            isAvailable = true;
+            BaseConnectionString = container.GetConnectionString();
+            IsContainerAvailable = true;
         }
         catch (Exception exception)
         {
             container = null;
-            isAvailable = false;
+            IsContainerAvailable = false;
             Console.WriteLine($"SQL Server container not available: {exception.Message}");
         }
     }
@@ -58,7 +59,7 @@ public sealed class SqlServerEngineShould : PersistenceEngineTestBase
     {
         var databaseName = $"conduit_{Guid.NewGuid():N}";
 
-        await using (var admin = new SqlConnection(baseConnectionString))
+        await using (var admin = new SqlConnection(BaseConnectionString))
         {
             await admin.OpenAsync();
             await using var command = admin.CreateCommand();
@@ -66,7 +67,7 @@ public sealed class SqlServerEngineShould : PersistenceEngineTestBase
             await command.ExecuteNonQueryAsync();
         }
 
-        var builder = new SqlConnectionStringBuilder(baseConnectionString) { InitialCatalog = databaseName };
+        var builder = new SqlConnectionStringBuilder(BaseConnectionString) { InitialCatalog = databaseName };
         return new SqlServerConduitConnectionFactory(builder.ConnectionString);
     }
 }
