@@ -87,7 +87,7 @@ with `CreatedAtColumn` mapped to **`RunAt`**. The eligibility comparison against
 reads as "this job is due", so `ISqlDialect.BuildClaimPendingSql` becomes the jobs claim with **zero
 new per-engine SQL** — and the Postgres/MySQL `FOR UPDATE SKIP LOCKED` and SQL Server
 `ROWLOCK/UPDLOCK/READPAST` variants come along free — SQL Server's with its batch-level READ COMMITTED pin,
-so a jobs sweep on a pooled session left at Snapshot claims too. Do not add a literal `CreatedAt` column; the
+so a jobs sweep on a pooled session left at Snapshot (SQL Server 2022, SqlClient 7.1.1) claims too. Do not add a literal `CreatedAt` column; the
 mapping is the whole trick.
 
 `BuildInsertOrIgnoreSql`'s third argument is a **conflict target**, not necessarily the primary key.

@@ -9,8 +9,8 @@ using Microsoft.Data.SqlClient;
 namespace Conduit.Persistence.IntegrationTests;
 
 /// <summary>
-/// Characterizes SQL Server (and Microsoft.Data.SqlClient's pool), not Conduit: a pooled session keeps the
-/// isolation level its last transaction set, and a <c>READPAST</c> claim cannot run at some of those levels
+/// Characterizes SQL Server (and Microsoft.Data.SqlClient's pool), not Conduit, as measured on SQL Server 2022
+/// with Microsoft.Data.SqlClient 7.1.1: a pooled session keeps the isolation level its last transaction set, and a <c>READPAST</c> claim cannot run at some of those levels
 /// (SQL error 650). This is why <c>SqlServerDialect</c>'s claims pin their own level (DMS-6190). If it ever
 /// fails, the pin is redundant but harmless: delete this test and keep the pin.
 /// </summary>
@@ -34,12 +34,10 @@ public sealed class SqlServerPooledSessionShould
     // Serializable, and accepts it at Read Uncommitted (measured on SQL Server 2022, carried levels 5, 4, 1).
     private const int ReadPastIncompatibleIsolationError = 650;
 
-    private static readonly IsolationLevel[] LevelsThatRaiseError650 = [IsolationLevel.Snapshot, IsolationLevel.Serializable];
-
     [TestInitialize]
     public void TestInitialize()
     {
-        if (!SqlServerEngineShould.IsContainerAvailable)
+        if (!SqlServerContainer.IsAvailable)
         {
             Assert.Inconclusive("SqlServerPooledSessionShould: SQL Server container not available.");
         }
@@ -66,25 +64,53 @@ public sealed class SqlServerPooledSessionShould
     }
 
     [TestMethod]
-    [SuppressMessage("Design", "CA1030:Use events where appropriate",
-        Justification = "A test name, not an API: it states that the claim raises SQL error 650.")]
-    [DataRow(IsolationLevel.Snapshot)]
-    [DataRow(IsolationLevel.Serializable)]
-    [DataRow(IsolationLevel.ReadUncommitted)]
-    public async Task RaiseError650ForAReadPastClaimAtACarriedLevel(IsolationLevel level)
+    [DataRow(IsolationLevel.Snapshot, 5)]
+    [DataRow(IsolationLevel.Serializable, 4)]
+    public async Task RefuseAReadPastClaimAtACarriedLevel(IsolationLevel level, int expectedSessionLevel)
     {
         // Arrange
+        var session = await OpenSessionCarryingAsync(level);
+
+        // Act
+        var error = await RunUnpinnedClaimAsync(session.Connection);
+
+        // Assert
+        session.CarriedLevel.Should().Be(expectedSessionLevel);
+        error.Should().NotBeNull($"a session carrying {level} refuses READPAST");
+        error!.Number.Should().Be(ReadPastIncompatibleIsolationError);
+    }
+
+    [TestMethod]
+    public async Task RunAReadPastClaimAtCarriedReadUncommitted()
+    {
+        // Arrange
+        var session = await OpenSessionCarryingAsync(IsolationLevel.ReadUncommitted);
+
+        // Act
+        var error = await RunUnpinnedClaimAsync(session.Connection);
+
+        // Assert
+        session.CarriedLevel.Should().Be(1);
+        error.Should().BeNull("a session carrying Read Uncommitted runs the claim");
+    }
+
+    private static async Task<(SqlConnection Connection, int CarriedLevel)> OpenSessionCarryingAsync(IsolationLevel level)
+    {
         var probeConnectionString = await CreateProbeDatabaseAsync();
         var store = new DbConnectionOutboxStore(
             new SqlServerConduitConnectionFactory(WithoutProbePool(probeConnectionString)),
             new SqlServerDialect());
         await store.EnsureTableExistsAsync(CancellationToken.None);
         var firstClientConnectionId = await RunTransactionAtAsync(probeConnectionString, level);
-        await using var reused = new SqlConnection(probeConnectionString);
+        var reused = new SqlConnection(probeConnectionString);
         await reused.OpenAsync();
-        reused.ClientConnectionId.Should().Be(firstClientConnectionId);
-        var carriedLevel = await ReadSessionIsolationLevelAsync(reused);
-        await using var claim = reused.CreateCommand();
+        reused.ClientConnectionId.Should().Be(firstClientConnectionId, "the pool holds one physical session");
+        return (reused, await ReadSessionIsolationLevelAsync(reused));
+    }
+
+    private static async Task<SqlException?> RunUnpinnedClaimAsync(SqlConnection connection)
+    {
+        await using var claim = connection.CreateCommand();
         claim.CommandText = UnpinnedClaimPendingSql;
         var now = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         claim.Parameters.AddWithValue("@ClaimToken", Guid.NewGuid().ToString("N"));
@@ -94,26 +120,18 @@ public sealed class SqlServerPooledSessionShould
         claim.Parameters.AddWithValue("@BatchSize", 10);
         claim.Parameters.AddWithValue("@PendingStatus", 0);
         claim.Parameters.AddWithValue("@ClaimingStatus", 3);
-
-        // Act
-        Exception? error = null;
         try
         {
             await claim.ExecuteNonQueryAsync();
+            return null;
         }
         catch (SqlException exception)
         {
-            error = exception;
+            return exception;
         }
-
-        // Assert
-        if (LevelsThatRaiseError650.Contains(level))
+        finally
         {
-            error.Should().BeOfType<SqlException>().Which.Number.Should().Be(ReadPastIncompatibleIsolationError);
-        }
-        else
-        {
-            error.Should().BeNull($"a session carrying {level} runs the claim");
+            await connection.DisposeAsync();
         }
     }
 
@@ -123,7 +141,7 @@ public sealed class SqlServerPooledSessionShould
     private static async Task<string> CreateProbeDatabaseAsync()
     {
         var databaseName = $"pool_probe_{Guid.NewGuid():N}";
-        await using (var admin = new SqlConnection(SqlServerEngineShould.BaseConnectionString))
+        await using (var admin = new SqlConnection(SqlServerContainer.BaseConnectionString))
         {
             await admin.OpenAsync();
             await using var command = admin.CreateCommand();
@@ -133,7 +151,7 @@ public sealed class SqlServerPooledSessionShould
         }
 
         // A pool private to the test, capped at one physical session, so the reuse is certain.
-        var builder = new SqlConnectionStringBuilder(SqlServerEngineShould.BaseConnectionString)
+        var builder = new SqlConnectionStringBuilder(SqlServerContainer.BaseConnectionString)
         {
             InitialCatalog = databaseName,
             ApplicationName = $"pool-probe-{Guid.NewGuid():N}",

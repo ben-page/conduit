@@ -14,7 +14,8 @@ namespace Conduit.Persistence.IntegrationTests;
 
 /// <summary>
 /// The SQL Server claims run whatever isolation level the pooled session was left at. <c>READPAST</c> raises
-/// SQL error 650 at Snapshot and Serializable (measured in <see cref="SqlServerPooledSessionShould"/>), and a
+/// SQL error 650 at Snapshot and Serializable (measured in <see cref="SqlServerPooledSessionShould"/> on
+/// SQL Server 2022 with Microsoft.Data.SqlClient 7.1.1), and a
 /// host's own transactions at those levels leave a pooled session behind, so the outbox relay, the outbox
 /// flush and the jobs sweep each pin READ COMMITTED themselves (DMS-6190). Read Uncommitted is not a claim row:
 /// the claim already succeeds there, so only the session-level test covers it.
@@ -32,7 +33,7 @@ public sealed class SqlServerClaimIsolationShould
     [TestInitialize]
     public void TestInitialize()
     {
-        if (!SqlServerEngineShould.IsContainerAvailable)
+        if (!SqlServerContainer.IsAvailable)
         {
             Assert.Inconclusive("SqlServerClaimIsolationShould: SQL Server container not available.");
         }
@@ -92,10 +93,13 @@ public sealed class SqlServerClaimIsolationShould
     {
         // Arrange
         var databases = await CreateDatabaseAsync();
-        var plain = new SqlServerDbJobStoreSetup(databases.SetupConnectionString);
-        await plain.Store.EnsureTablesExistAsync(CancellationToken.None);
+        var plain = new DbJobStore(
+            new SqlServerConduitConnectionFactory(databases.SetupConnectionString),
+            new SqlServerDialect(),
+            JobsOptionsForTest);
+        await plain.EnsureTablesExistAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
-        await plain.Store.TryMaterializeAsync(NewJobRun("nightly@fixed", now.AddMinutes(-1)), CancellationToken.None);
+        await plain.TryMaterializeAsync(NewJobRun("nightly@fixed", now.AddMinutes(-1)), CancellationToken.None);
         var claiming = new DbJobStore(
             new IsolationLevelSettingConnectionFactory(
                 new SqlServerConduitConnectionFactory(databases.ClaimConnectionString), level),
@@ -111,9 +115,10 @@ public sealed class SqlServerClaimIsolationShould
 
     /// <summary>
     /// Characterizes SQL Server and SqlClient, not the fix: after a claim the session reads the level it
-    /// carried (5, 4, 1). SqlClient sends a parameterized command through sp_executesql, whose SET reverts on
-    /// exit, so the pin neither repairs nor disturbs the session. It passes before and after the fix by
-    /// design; the claim tests above carry the RED to GREEN proof.
+    /// carried (5, 4, 1), measured on SQL Server 2022 with Microsoft.Data.SqlClient 7.1.1. The likely reason
+    /// (inferred, not measured) is that SqlClient sends a parameterized command through sp_executesql, and a
+    /// SET inside it reverts on return. It passes before and after the fix by design; the claim tests above
+    /// carry the RED to GREEN proof.
     /// </summary>
     [TestMethod]
     [DataRow(IsolationLevel.Snapshot, 5)]
@@ -133,15 +138,7 @@ public sealed class SqlServerClaimIsolationShould
             new SqlServerDialect());
 
         // Act: the claim's connection goes back to a pool capped at one session, so this reads that session
-        try
-        {
-            await claiming.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
-        }
-        catch (SqlException)
-        {
-            // The level assertion below is the evidence either way.
-        }
-
+        var claimed = await claiming.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
         await using var reused = new SqlConnection(databases.ClaimConnectionString);
         await reused.OpenAsync();
         await using var read = reused.CreateCommand();
@@ -149,6 +146,7 @@ public sealed class SqlServerClaimIsolationShould
         var sessionLevel = Convert.ToInt32(await read.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
 
         // Assert
+        claimed.Should().ContainSingle().Which.MessageId.Should().Be("m1");
         sessionLevel.Should().Be(expectedSessionLevel);
     }
 
@@ -158,7 +156,7 @@ public sealed class SqlServerClaimIsolationShould
     private static async Task<(string SetupConnectionString, string ClaimConnectionString)> CreateDatabaseAsync()
     {
         var databaseName = $"claim_isolation_{Guid.NewGuid():N}";
-        await using (var admin = new SqlConnection(SqlServerEngineShould.BaseConnectionString))
+        await using (var admin = new SqlConnection(SqlServerContainer.BaseConnectionString))
         {
             await admin.OpenAsync();
             await using var command = admin.CreateCommand();
@@ -167,14 +165,14 @@ public sealed class SqlServerClaimIsolationShould
             await command.ExecuteNonQueryAsync();
         }
 
-        var setup = new SqlConnectionStringBuilder(SqlServerEngineShould.BaseConnectionString)
+        var setup = new SqlConnectionStringBuilder(SqlServerContainer.BaseConnectionString)
         {
             InitialCatalog = databaseName,
             ApplicationName = $"claim-isolation-setup-{Guid.NewGuid():N}",
         };
 
         // A pool private to the claim, capped at one physical session, so the level it is left at is certain.
-        var claim = new SqlConnectionStringBuilder(SqlServerEngineShould.BaseConnectionString)
+        var claim = new SqlConnectionStringBuilder(SqlServerContainer.BaseConnectionString)
         {
             InitialCatalog = databaseName,
             ApplicationName = $"claim-isolation-claim-{Guid.NewGuid():N}",
@@ -211,12 +209,4 @@ public sealed class SqlServerClaimIsolationShould
         RunAt = runAt,
         Status = JobRunStatus.Pending,
     };
-
-    private sealed class SqlServerDbJobStoreSetup(string connectionString)
-    {
-        public DbJobStore Store { get; } = new(
-            new SqlServerConduitConnectionFactory(connectionString),
-            new SqlServerDialect(),
-            JobsOptionsForTest);
-    }
 }

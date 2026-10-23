@@ -11,12 +11,12 @@ public static class AssemblySetup
     [AssemblyInitialize]
     public static Task Initialize(TestContext context) => Task.WhenAll(
         PostgresEngineShould.InitializeContainer(),
-        SqlServerEngineShould.InitializeContainer(),
+        SqlServerContainer.InitializeAsync(),
         MySqlEngineShould.InitializeContainer());
 
     [AssemblyCleanup]
     public static Task Cleanup() => Task.WhenAll(
         PostgresEngineShould.CleanupContainer(),
-        SqlServerEngineShould.CleanupContainer(),
+        SqlServerContainer.CleanupAsync(),
         MySqlEngineShould.CleanupContainer());
 }

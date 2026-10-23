@@ -100,11 +100,12 @@ public sealed class SqlServerDialect : ISqlDialect
     /// <inheritdoc/>
     // The claim sets READ COMMITTED itself, ahead of the UPDATE, for three reasons:
     //  - READPAST is accepted only under READ COMMITTED or REPEATABLE READ; any other level raises SQL error 650.
-    //  - A pooled session keeps the level its last transaction set (SqlServerPooledSessionShould), and a host's
-    //    own Snapshot transactions (DMS-6190) leave one behind.
-    //  - The pin is scoped to the claim's own batch and reverts on return, so the connection goes back to the
-    //    pool at whatever level it carried (SqlServerClaimIsolationShould measures the level after a claim).
-    //    The mechanism: SqlClient sends a parameterized command through sp_executesql, whose SET reverts on exit.
+    //  - A pooled session keeps the level its last transaction set (measured on SQL Server 2022 with
+    //    Microsoft.Data.SqlClient 7.1.1: SqlServerPooledSessionShould), and a host's own Snapshot
+    //    transactions (DMS-6190) leave one behind.
+    //  - After a claim the session still reads the level it carried (SqlServerClaimIsolationShould), so the
+    //    connection goes back to the pool at that level. The likely reason (inferred, not measured): SqlClient
+    //    sends a parameterized command through sp_executesql, and a SET inside it reverts on return.
     public string BuildClaimPendingSql(IClaimableTableSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
@@ -133,11 +134,12 @@ public sealed class SqlServerDialect : ISqlDialect
     /// <inheritdoc/>
     // The claim sets READ COMMITTED itself, ahead of the UPDATE, for three reasons:
     //  - READPAST is accepted only under READ COMMITTED or REPEATABLE READ; any other level raises SQL error 650.
-    //  - A pooled session keeps the level its last transaction set (SqlServerPooledSessionShould), and a host's
-    //    own Snapshot transactions (DMS-6190) leave one behind.
-    //  - The pin is scoped to the claim's own batch and reverts on return, so the connection goes back to the
-    //    pool at whatever level it carried (SqlServerClaimIsolationShould measures the level after a claim).
-    //    The mechanism: SqlClient sends a parameterized command through sp_executesql, whose SET reverts on exit.
+    //  - A pooled session keeps the level its last transaction set (measured on SQL Server 2022 with
+    //    Microsoft.Data.SqlClient 7.1.1: SqlServerPooledSessionShould), and a host's own Snapshot
+    //    transactions (DMS-6190) leave one behind.
+    //  - After a claim the session still reads the level it carried (SqlServerClaimIsolationShould), so the
+    //    connection goes back to the pool at that level. The likely reason (inferred, not measured): SqlClient
+    //    sends a parameterized command through sp_executesql, and a SET inside it reverts on return.
     public string BuildClaimByIdsSql(IClaimableTableSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
