@@ -28,7 +28,8 @@ internal sealed class IsolationLevelSettingConnectionFactory : IConduitConnectio
             IsolationLevel.RepeatableRead => "REPEATABLE READ",
             IsolationLevel.Serializable => "SERIALIZABLE",
             IsolationLevel.Snapshot => "SNAPSHOT",
-            IsolationLevel.Unspecified or IsolationLevel.Chaos => throw new ArgumentOutOfRangeException(nameof(level), level, "Not a SQL Server session level."),
+            IsolationLevel.Unspecified or IsolationLevel.Chaos =>
+                throw new ArgumentOutOfRangeException(nameof(level), level, "Not a SQL Server session level."),
             _ => throw new ArgumentOutOfRangeException(nameof(level), level, "Not a SQL Server session level."),
         };
     }
