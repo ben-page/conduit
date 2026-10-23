@@ -178,7 +178,7 @@ Each `Use*` method registers the appropriate SQL dialect and connection factory.
 | Method | Database | Claiming mechanism |
 |---|---|---|
 | `conduit.UseSqlite(connectionString)` | SQLite | Single-writer (atomic `UPDATE` + read-back by token) |
-| `conduit.UseSqlServer(connectionString)` | SQL Server | `WITH (ROWLOCK, UPDLOCK, READPAST)` in the claim subquery |
+| `conduit.UseSqlServer(connectionString)` | SQL Server | `WITH (ROWLOCK, UPDLOCK, READPAST)` in the claim subquery, after `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` in the same batch: `READPAST` refuses Snapshot and Serializable (SQL 650), and a pooled session keeps the level its last transaction set |
 | `conduit.UsePostgres(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 | `conduit.UseMySql(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 

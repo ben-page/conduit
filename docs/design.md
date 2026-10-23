@@ -1128,7 +1128,7 @@ The outbox guarantees at-least-once delivery for fire-and-forget messages (event
 
 **Relay:** `OutboxRelay` is a `BackgroundService` that polls the outbox table for pending entries older than a configurable grace period. It sends each entry via the appropriate transport (routing via `ConduitRuntime.ResolveRoute` for commands, broadcast for events) and marks entries as sent. Failed entries are retried up to `MaxRetries`, then marked as permanently failed. Uses `SKIP LOCKED` (or equivalent) for concurrent relay instances.
 
-**Store abstraction:** `IOutboxStore` is the persistence interface. The built-in `DbConnectionOutboxStore` uses raw ADO.NET with `IOutboxDialect` for database-specific SQL. Four dialects ship: SQLite, SQL Server (`ROWLOCK + UPDLOCK + READPAST`), PostgreSQL (`FOR UPDATE SKIP LOCKED`), MySQL 8.0+ (`FOR UPDATE SKIP LOCKED`). Custom stores (Cosmos DB, MongoDB, etc.) implement `IOutboxStore` directly.
+**Store abstraction:** `IOutboxStore` is the persistence interface. The built-in `DbConnectionOutboxStore` uses raw ADO.NET with `IOutboxDialect` for database-specific SQL. Four dialects ship: SQLite, SQL Server (`ROWLOCK + UPDLOCK + READPAST`, under a batch-level `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`), PostgreSQL (`FOR UPDATE SKIP LOCKED`), MySQL 8.0+ (`FOR UPDATE SKIP LOCKED`). Custom stores (Cosmos DB, MongoDB, etc.) implement `IOutboxStore` directly.
 
 **Registration:** `conduit.AddOutbox(outbox => outbox.UseSqlite(...))` registers the capture, behavior, relay, store, and options in one call.
 

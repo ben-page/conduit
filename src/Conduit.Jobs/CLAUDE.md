@@ -86,7 +86,8 @@ named for what the host still does. It is deliberately not coupled to `ProducerO
 with `CreatedAtColumn` mapped to **`RunAt`**. The eligibility comparison against `@GraceCutoff` then
 reads as "this job is due", so `ISqlDialect.BuildClaimPendingSql` becomes the jobs claim with **zero
 new per-engine SQL** — and the Postgres/MySQL `FOR UPDATE SKIP LOCKED` and SQL Server
-`ROWLOCK/UPDLOCK/READPAST` variants come along free. Do not add a literal `CreatedAt` column; the
+`ROWLOCK/UPDLOCK/READPAST` variants come along free — SQL Server's with its batch-level READ COMMITTED pin,
+so a jobs sweep on a pooled session left at Snapshot claims too. Do not add a literal `CreatedAt` column; the
 mapping is the whole trick.
 
 `BuildInsertOrIgnoreSql`'s third argument is a **conflict target**, not necessarily the primary key.
