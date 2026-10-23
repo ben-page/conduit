@@ -4,8 +4,8 @@ using System.Globalization;
 namespace Conduit.Persistence.SqlServer;
 
 /// <summary>
-/// SQL Server engine dialect. Concurrent claiming uses the <c>WITH (ROWLOCK, UPDLOCK, READPAST)</c>
-/// table hint plus <c>TOP (@BatchSize)</c> on the inner row-selection subquery. The persistence
+/// SQL Server engine dialect. Concurrent claiming pins <c>SET TRANSACTION ISOLATION LEVEL READ COMMITTED</c>
+/// beside the <c>WITH (ROWLOCK, UPDLOCK, READPAST)</c> table hint, plus <c>TOP (@BatchSize)</c> on the inner row-selection subquery. The persistence
 /// stores write timestamps as round-trippable ISO 8601 text and read them back with
 /// <c>reader.GetString(...)</c>, so timestamp columns are <c>NVARCHAR(MAX)</c> and
 /// <see cref="TimestampDbType"/> is <see cref="DbType.String"/>. A native <c>DATETIME2</c> column
@@ -98,6 +98,13 @@ public sealed class SqlServerDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
+    // The claim sets READ COMMITTED itself, ahead of the UPDATE, for three reasons:
+    //  - READPAST is accepted only under READ COMMITTED or REPEATABLE READ; any other level raises SQL error 650.
+    //  - A pooled session keeps the level its last transaction set (SqlServerPooledSessionShould), and a host's
+    //    own Snapshot transactions (DMS-6190) leave one behind.
+    //  - The pin is scoped to the claim's own batch and reverts on return, so the connection goes back to the
+    //    pool at whatever level it carried (SqlServerClaimIsolationShould measures the level after a claim).
+    //    The mechanism: SqlClient sends a parameterized command through sp_executesql, whose SET reverts on exit.
     public string BuildClaimPendingSql(IClaimableTableSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
@@ -105,6 +112,7 @@ public sealed class SqlServerDialect : ISqlDialect
         return string.Format(
             CultureInfo.InvariantCulture,
             """
+            SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
             UPDATE {0}
             SET {2} = @ClaimingStatus, {4} = @ClaimedAt, {5} = @ClaimToken
             WHERE {1} IN (
@@ -123,6 +131,13 @@ public sealed class SqlServerDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
+    // The claim sets READ COMMITTED itself, ahead of the UPDATE, for three reasons:
+    //  - READPAST is accepted only under READ COMMITTED or REPEATABLE READ; any other level raises SQL error 650.
+    //  - A pooled session keeps the level its last transaction set (SqlServerPooledSessionShould), and a host's
+    //    own Snapshot transactions (DMS-6190) leave one behind.
+    //  - The pin is scoped to the claim's own batch and reverts on return, so the connection goes back to the
+    //    pool at whatever level it carried (SqlServerClaimIsolationShould measures the level after a claim).
+    //    The mechanism: SqlClient sends a parameterized command through sp_executesql, whose SET reverts on exit.
     public string BuildClaimByIdsSql(IClaimableTableSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
@@ -130,6 +145,7 @@ public sealed class SqlServerDialect : ISqlDialect
         return string.Format(
             CultureInfo.InvariantCulture,
             """
+            SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
             UPDATE {0}
             SET {3} = @ClaimingStatus, {5} = @ClaimedAt, {6} = @ClaimToken
             WHERE {1} IN (

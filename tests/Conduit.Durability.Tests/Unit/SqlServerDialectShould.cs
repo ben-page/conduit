@@ -83,6 +83,7 @@ public class SqlServerDialectShould
         var sql = this.dialect.BuildClaimPendingSql(OutboxTableSchema.Default);
 
         sql.Should().Be("""
+            SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
             UPDATE conduit_outbox
             SET Status = @ClaimingStatus, ClaimedAt = @ClaimedAt, ClaimToken = @ClaimToken
             WHERE Id IN (
@@ -100,6 +101,7 @@ public class SqlServerDialectShould
         var sql = this.dialect.BuildClaimByIdsSql(OutboxTableSchema.Default);
 
         sql.Should().Be("""
+            SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
             UPDATE conduit_outbox
             SET Status = @ClaimingStatus, ClaimedAt = @ClaimedAt, ClaimToken = @ClaimToken
             WHERE Id IN (
