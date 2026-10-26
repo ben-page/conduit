@@ -382,7 +382,8 @@ durability.AddOutbox(outbox =>
   inherit the bag — see them. A relay redelivery after a failed flush runs under exactly the bag the
   flush did. An entry with a `NULL` column (one written before the host opted in) is delivered with an
   empty bag, as before. A stored key the host no longer lists, or whose value no longer reads as its
-  declared type, is dropped rather than failing the delivery.
+  declared type, is dropped rather than failing the delivery, and a column that is not a JSON object
+  (truncated, or edited by hand) restores as an empty bag.
 - **List only keys the server sets.** A restored value is trusted by every listener and nested
   dispatch, so a listed key must come from an `IDispatchContextEnricher` that removes any client-sent
   value before it stamps its own. A transport seeds a context from the caller's headers, and with no

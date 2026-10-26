@@ -96,7 +96,8 @@ internal static class OutboxProperties
     /// declares for its key, or <see langword="null"/> when there are none — a NULL column (an entry written before
     /// the host listed any property) delivers with an empty bag, exactly as before. A stored key the host no longer
     /// lists, or whose value no longer reads as its declared type (the host changed it after the entry was written),
-    /// is dropped rather than failing the delivery.
+    /// is dropped rather than failing the delivery; so is the whole column when it is not a JSON object (truncated or
+    /// edited by hand), which would otherwise fail every retry of the entry.
     /// </summary>
     internal static IReadOnlyDictionary<string, object?>? Read(string? json, IDictionary<string, Type>? persisted)
     {
@@ -105,7 +106,17 @@ internal static class OutboxProperties
             return null;
         }
 
-        using var document = JsonDocument.Parse(json);
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        using var owned = document;
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
             return null;

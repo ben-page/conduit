@@ -198,6 +198,19 @@ public class OutboxDispatchPropertiesShould
         restored!.Keys.Should().BeEquivalentTo("b");
     }
 
+    [TestMethod]
+    public void RestoreNothingFromAColumnThatIsNotJson()
+    {
+        // Arrange — a truncated or hand-edited column.
+        var persisted = new Dictionary<string, Type> { ["a"] = typeof(string) };
+
+        // Act
+        var restored = OutboxProperties.Read("""{"a":"alp""", persisted);
+
+        // Assert — the entry is delivered with an empty bag rather than failing every retry.
+        restored.Should().BeNull();
+    }
+
     private static OutboxOptions ListedOptions()
     {
         var options = new OutboxOptions { AutoCreateTable = false, GracePeriod = TimeSpan.Zero };
