@@ -1,4 +1,4 @@
-using Conduit.Attributes;
+﻿using Conduit.Attributes;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Handlers;
 using Conduit.Messages;
@@ -22,10 +22,11 @@ public class PlaceOrderHandler(IMediator mediator) : ICommandHandler<PlaceOrderC
 }
 
 /// <summary>Counts local listener executions across scopes (registered singleton per test host). Optionally
-/// throws on its first call, and records the <c>MessageId</c> each call ran under.</summary>
+/// throws on its first call, and records the <c>MessageId</c> and properties each call ran under.</summary>
 public sealed class ListenerProbe
 {
     private readonly System.Collections.Concurrent.ConcurrentQueue<string?> messageIds = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<IReadOnlyDictionary<string, object?>> properties = new();
     private int count;
     private int throwsRemaining;
 
@@ -33,6 +34,9 @@ public sealed class ListenerProbe
 
     /// <summary>The <c>MessageContext.Current.MessageId</c> of each listener call, in call order.</summary>
     public IReadOnlyList<string?> MessageIds => [.. this.messageIds];
+
+    /// <summary>The <c>MessageContext.Current.Properties</c> of each listener call, in call order.</summary>
+    public IReadOnlyList<IReadOnlyDictionary<string, object?>> Properties => [.. this.properties];
 
     /// <summary>The <c>MessageId</c> the listener's nested <see cref="ProbeNestedCommand"/> ran under.</summary>
     public string? NestedMessageId { get; set; }
@@ -47,6 +51,7 @@ public sealed class ListenerProbe
     {
         Interlocked.Increment(ref this.count);
         this.messageIds.Enqueue(MessageContext.Current?.MessageId);
+        this.properties.Enqueue(MessageContext.Current?.Properties ?? new Dictionary<string, object?>());
 
         if (Interlocked.Decrement(ref this.throwsRemaining) >= 0)
         {

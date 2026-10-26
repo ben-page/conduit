@@ -1,6 +1,8 @@
 using System.Data.Common;
 using System.Globalization;
+using Conduit.Durability.Configuration;
 using Conduit.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Durability.Persistence.Outbox;
 
@@ -21,8 +23,18 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
     private static readonly IClaimableTableSchema Schema = OutboxTableSchema.Default;
 
+    // The Properties column is written and read only by a host that lists persisted properties
+    // (OutboxOptions.PersistedProperties), so a host that lists none never touches it: its outbox table may
+    // predate the column.
     private const string SelectClaimedEntriesSql = """
         SELECT Id, MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, SentAt, RetryCount
+        FROM conduit_outbox
+        WHERE ClaimToken = @ClaimToken
+        ORDER BY Id
+        """;
+
+    private const string SelectClaimedEntriesWithPropertiesSql = """
+        SELECT Id, MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, SentAt, RetryCount, Properties
         FROM conduit_outbox
         WHERE ClaimToken = @ClaimToken
         ORDER BY Id
@@ -37,6 +49,11 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     private const string InsertEntrySql = """
         INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount)
         VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0)
+        """;
+
+    private const string InsertEntryWithPropertiesSql = """
+        INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount, Properties)
+        VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0, @Properties)
         """;
 
     private const string MarkSentSql = "UPDATE conduit_outbox SET Status = 1, SentAt = @SentAt WHERE Id = @Id";
@@ -55,12 +72,24 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     private readonly string createTableSql;
     private readonly string claimPendingSql;
     private readonly string claimByMessageIdsSql;
+    private readonly bool persistsProperties;
 
     /// <summary>Initializes a new instance of <see cref="DbConnectionOutboxStore"/>.</summary>
-    public DbConnectionOutboxStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+    /// <param name="connectionFactory">The engine's connection factory.</param>
+    /// <param name="dialect">The engine's SQL dialect.</param>
+    /// <param name="options">
+    /// The outbox options: when <see cref="OutboxOptions.PersistedProperties"/> lists a key, the store writes and
+    /// reads the <c>Properties</c> column. Null, or none listed, leaves the column untouched.
+    /// </param>
+    public DbConnectionOutboxStore(
+        IConduitConnectionFactory connectionFactory,
+        ISqlDialect dialect,
+        IOptions<OutboxOptions>? options = null)
         : base(connectionFactory)
     {
         ArgumentNullException.ThrowIfNull(dialect);
+
+        this.persistsProperties = options?.Value.PersistedProperties.Count > 0;
 
         this.createTableSql = BuildCreateTableSql(dialect);
         this.claimPendingSql = dialect.BuildClaimPendingSql(Schema);
@@ -84,7 +113,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             await ExecuteOnConnectionAsync(
                 connection,
                 transaction,
-                InsertEntrySql,
+                this.persistsProperties ? InsertEntryWithPropertiesSql : InsertEntrySql,
                 command =>
                 {
                     DbParameterHelper.Add(command, "@MessageId", entry.MessageId);
@@ -93,6 +122,10 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                     DbParameterHelper.Add(command, "@Type", entry.Type);
                     DbParameterHelper.Add(command, "@Payload", entry.Payload);
                     DbParameterHelper.Add(command, "@CreatedAt", entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
+                    if (this.persistsProperties)
+                    {
+                        DbParameterHelper.Add(command, "@Properties", (object?)entry.Properties ?? DBNull.Value);
+                    }
                 },
                 cancellationToken);
         }
@@ -127,10 +160,11 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             },
             cancellationToken);
 
+        var withProperties = this.persistsProperties;
         return await this.ExecuteReaderAsync(
-            SelectClaimedEntriesSql,
+            withProperties ? SelectClaimedEntriesWithPropertiesSql : SelectClaimedEntriesSql,
             command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
-            ReadEntry,
+            reader => ReadEntry(reader, withProperties),
             cancellationToken);
     }
 
@@ -255,13 +289,14 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                 SentAt {dialect.NullableTimestampType},
                 RetryCount {dialect.IntegerType} NOT NULL DEFAULT 0,
                 ClaimedAt {dialect.NullableTimestampType},
-                ClaimToken {dialect.NullableTextType}
+                ClaimToken {dialect.NullableTextType},
+                Properties {dialect.NullableTextType}
             """;
 
         return dialect.BuildCreateTableIfNotExistsSql("conduit_outbox", columns);
     }
 
-    private static OutboxEntry ReadEntry(DbDataReader reader)
+    private static OutboxEntry ReadEntry(DbDataReader reader, bool withProperties)
     {
         var sentAtOrdinal = reader.GetOrdinal("SentAt");
         var sentAtRaw = reader.IsDBNull(sentAtOrdinal) ? null : reader.GetString(sentAtOrdinal);
@@ -271,6 +306,13 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
         var causationIdOrdinal = reader.GetOrdinal("CausationId");
         var causationId = reader.IsDBNull(causationIdOrdinal) ? null : reader.GetString(causationIdOrdinal);
+
+        string? properties = null;
+        if (withProperties)
+        {
+            var propertiesOrdinal = reader.GetOrdinal("Properties");
+            properties = reader.IsDBNull(propertiesOrdinal) ? null : reader.GetString(propertiesOrdinal);
+        }
 
         return new OutboxEntry
         {
@@ -292,6 +334,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                 DateTimeStyles.RoundtripKind),
             SentAt = sentAt,
             RetryCount = reader.GetInt32(reader.GetOrdinal("RetryCount")),
+            Properties = properties,
         };
     }
 }

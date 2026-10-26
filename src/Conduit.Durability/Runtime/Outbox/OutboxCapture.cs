@@ -234,11 +234,13 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 
                 try
                 {
-                    // Restore original MessageContext for correlation
+                    // Restore original MessageContext for correlation, with the publishing
+                    // dispatch's persisted properties (OutboxOptions.PersistedProperties)
                     MessageContext.StartDispatchFromTransport(
                         written.MessageId,
                         written.CausationId,
-                        written.ConversationId);
+                        written.ConversationId,
+                        written.Properties);
 
                     // Local listeners first, from a fresh scope (mirrors fire-and-forget's
                     // fresh-scope semantics); then transports; then mark sent. Any failure leaves

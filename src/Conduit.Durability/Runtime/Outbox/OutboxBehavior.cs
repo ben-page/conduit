@@ -1,6 +1,8 @@
 ﻿using Conduit.Middleware;
+using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Durability.Runtime.Outbox;
 
@@ -15,12 +17,14 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// written by the first pipeline to finish after it was captured. An envelope captured after the
 /// last behavior in the scope has exited (a host's outermost behavior publishing after its
 /// <c>next()</c>) is written by <see cref="IOutboxPendingWriter"/>. When the pipeline faults, the
-/// unwritten envelopes it captured are dropped.
+/// unwritten envelopes it captured are dropped. Each entry carries the dispatch properties
+/// <paramref name="options"/> lists (<see cref="OutboxOptions.PersistedProperties"/>); null carries none.
 /// </remarks>
 public sealed class OutboxBehavior<TRequest, TResult>(
     OutboxCapture capture,
     IOutboxStore store,
-    IConduitConnectionFactory connectionFactory) : IPipelineBehavior<TRequest, TResult>
+    IConduitConnectionFactory connectionFactory,
+    IOptions<OutboxOptions>? options = null) : IPipelineBehavior<TRequest, TResult>
 {
     /// <inheritdoc />
     public async Task<TResult> HandleAsync(
@@ -39,7 +43,8 @@ public sealed class OutboxBehavior<TRequest, TResult>(
         try
         {
             var result = await next();
-            await OutboxPendingWriter.WriteUnwrittenAsync(capture, store, connectionFactory, cancellationToken);
+            await OutboxPendingWriter.WriteUnwrittenAsync(
+                capture, store, connectionFactory, options?.Value.PersistedProperties, cancellationToken);
             return result;
         }
         catch

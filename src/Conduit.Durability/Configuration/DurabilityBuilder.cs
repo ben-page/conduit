@@ -28,10 +28,14 @@ public sealed class DurabilityBuilder
     }
 
     /// <summary>Adds the transactional outbox.</summary>
+    /// <exception cref="OptionsValidationException">
+    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key.
+    /// </exception>
     public DurabilityBuilder AddOutbox(Action<OutboxOptions>? configure = null)
     {
         var options = new OutboxOptions();
         configure?.Invoke(options);
+        options.Validate();
 
         this.Services.TryAddScoped<IOutboxStore, DbConnectionOutboxStore>();
 

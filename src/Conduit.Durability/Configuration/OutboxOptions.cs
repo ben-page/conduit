@@ -1,3 +1,6 @@
+using Conduit.Durability.Runtime.Outbox;
+using Microsoft.Extensions.Options;
+
 namespace Conduit.Durability.Configuration;
 
 /// <summary>
@@ -38,4 +41,42 @@ public sealed class OutboxOptions
     /// captured and still deliver locally, exactly as without an outbox. Default: <see langword="false"/>.
     /// </summary>
     public bool CaptureOnly { get; set; }
+
+    /// <summary>
+    /// The dispatch properties (<see cref="Conduit.Runtime.MessageContext.Properties"/>) an outbox entry carries, each
+    /// key with the type its value has. The publishing dispatch's values for these keys are written to the entry's
+    /// <c>Properties</c> column, and both delivery paths — the post-commit flush and the relay — restore them on the
+    /// context the listeners run under, so a listener (and every dispatch it makes) sees, for example, the publishing
+    /// user. Supported types are <see cref="string"/>, <see cref="int"/>, <see cref="long"/>, <see cref="bool"/> and
+    /// <see cref="Guid"/>; <c>AddOutbox</c> refuses any other with <see cref="OptionsValidationException"/>.
+    /// Default: empty — nothing is carried, and the store neither writes nor reads the <c>Properties</c> column, so
+    /// an outbox table created before the column existed keeps working. A host that lists a key must have the column
+    /// (<see cref="AutoCreateTable"/> creates it only with a new table).
+    /// </summary>
+    public IDictionary<string, Type> PersistedProperties { get; } = new Dictionary<string, Type>(StringComparer.Ordinal);
+
+    /// <summary>Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type.</summary>
+    /// <exception cref="OptionsValidationException">An entry is invalid; each failure names its key.</exception>
+    internal void Validate()
+    {
+        var failures = new List<string>();
+        foreach (var (key, type) in this.PersistedProperties)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                failures.Add("OutboxOptions.PersistedProperties has an empty key.");
+            }
+            else if (type is null || !OutboxProperties.SupportedTypes.Contains(type))
+            {
+                failures.Add(
+                    $"OutboxOptions.PersistedProperties['{key}'] is {type?.FullName ?? "null"}; " +
+                    "the supported types are string, int, long, bool and Guid.");
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new OptionsValidationException(Options.DefaultName, typeof(OutboxOptions), failures);
+        }
+    }
 }

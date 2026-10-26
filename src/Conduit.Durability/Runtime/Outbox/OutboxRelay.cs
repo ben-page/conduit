@@ -105,11 +105,14 @@ public sealed partial class OutboxRelay(
                 var payload = JsonSerializer.Deserialize<JsonElement>(entry.Payload, ConduitRuntime.JsonOptions);
                 var envelope = new DispatchEnvelope(entry.Type, payload);
 
-                // Restore original MessageContext for correlation
+                // Restore original MessageContext for correlation, with the publishing dispatch's
+                // persisted properties: the same bag the post-commit flush delivered under, and an empty
+                // one for an entry that carries none (Properties NULL)
                 MessageContext.StartDispatchFromTransport(
                     entry.MessageId,
                     entry.CausationId,
-                    entry.ConversationId);
+                    entry.ConversationId,
+                    OutboxProperties.Read(entry.Properties, options.Value.PersistedProperties));
 
                 // Same delivery contract as the post-commit flush: local listeners first (fresh
                 // scope per entry), then transports, then mark sent. Redelivery re-runs local

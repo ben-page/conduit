@@ -199,7 +199,7 @@ conduit.UseMySql("Server=localhost;Database=MyApp;...");
 conduit.AddDurability(durability => durability.AddOutbox());
 ```
 
-The outbox table (`conduit_outbox`) is created automatically on startup. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations.
+The outbox table (`conduit_outbox`) is created automatically on startup. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations. A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL); an existing table is never altered, so a host that [carries dispatch properties](#carrying-dispatch-properties) on a table created before the column existed must add it itself.
 
 ## Custom stores
 
@@ -235,6 +235,7 @@ conduit.AddDurability(durability =>
         outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries older than this (default: 7d); Zero disables
         outbox.FailedRetention = null;                          // delete Failed entries older than this (default: null = follow CompletedRetention); Zero keeps them forever
         outbox.CleanupInterval = TimeSpan.FromHours(1);         // how often cleanup runs (default: 1h)
+        outbox.PersistedProperties["UserId"] = typeof(int);     // dispatch properties an entry carries (default: none)
     });
 });
 ```
@@ -356,6 +357,38 @@ idempotent for the same reason transport-side consumers must be. Key once-per-me
 `MessageContext.Current.DeliveredMessageId`, which a redelivery repeats, not on `MessageId`, which
 each attempt mints afresh — a [Conduit.Jobs event trigger](jobs.md#event-triggers) keys its run that
 way, so one entry delivered twice runs its job once.
+
+### Carrying dispatch properties
+
+By default an entry carries only its correlation ids, so step 2 runs under a context with an empty
+`MessageContext.Current.Properties`: whatever the publishing dispatch held — the user a transport
+enricher stamped, say — is gone, and a listener (with every dispatch it makes) runs as nobody. A host
+opts in, key by key, with the type each value has:
+
+```csharp
+durability.AddOutbox(outbox =>
+{
+    outbox.PersistedProperties["UserId"] = typeof(int);
+    outbox.PersistedProperties["DeviceId"] = typeof(Guid);
+});
+```
+
+- **What is written.** When an entry is written, the publishing dispatch's values for the listed keys
+  are stored in its `Properties` column as a JSON object (`{"UserId":42,"DeviceId":"…"}`). A listed key
+  that is absent, or whose value is `null`, is left out; with none present the column is `NULL`. A
+  value of another type than its key declares fails the write with an `InvalidOperationException`.
+- **What is restored.** The flush and the relay both start the entry's context with those values,
+  each restored as its declared type, so step 2's listeners — and their nested dispatches, which
+  inherit the bag — see them. A relay redelivery after a failed flush runs under exactly the bag the
+  flush did. An entry with a `NULL` column (one written before the host opted in) is delivered with an
+  empty bag, as before. A stored key the host no longer lists, or whose value no longer reads as its
+  declared type, is dropped rather than failing the delivery.
+- **Supported types** are `string`, `int`, `long`, `bool` and `Guid`. `AddOutbox` refuses any other,
+  and an empty key, with an `OptionsValidationException` at startup.
+- **The column.** A host that lists no key never writes or reads `Properties`, so its table may predate
+  the column. A host that lists one needs the column: `AutoCreateTable` adds it only when it creates the
+  table, so with an existing table — or `AutoCreateTable = false` — add it by migration (on SQL Server,
+  `ALTER TABLE conduit_outbox ADD Properties NVARCHAR(MAX) NULL`).
 
 **Degraded mode without the source generator.** `ILocalEnvelopeDispatcher` is implemented by the
 generated mediator and resolved with `GetService` (not `GetRequiredService`). A host that never

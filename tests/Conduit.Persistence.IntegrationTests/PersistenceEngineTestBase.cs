@@ -2,6 +2,7 @@
 using AwesomeAssertions;
 using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
+using Conduit.Durability.Configuration;
 using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Inbox;
@@ -135,6 +136,44 @@ public abstract class PersistenceEngineTestBase
 
         // Act — mark one sent, then re-claim: only the still-pending one comes back.
         await store.MarkSentAsync(claimed[0].Id, CancellationToken.None);
+    }
+
+    [TestMethod]
+    public async Task RoundTripOutboxPropertiesThroughSaveAndClaim()
+    {
+        // Arrange — a host that lists properties reads and writes the Properties column; one row carries them,
+        // the other (a row written before the host listed any) holds NULL.
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var options = new OutboxOptions();
+        options.PersistedProperties["UserId"] = typeof(int);
+        var store = new DbConnectionOutboxStore(factory, this.Dialect, Options.Create(options));
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        const string properties = """{"UserId":42,"DeviceId":"6f9619ff-8b86-d011-b42d-00c04fc964ff"}""";
+        var createdAt = DateTime.UtcNow.AddMinutes(-1);
+        await using (var connection = await factory.CreateConnectionAsync(CancellationToken.None))
+        await using (var transaction = await connection.BeginTransactionAsync(CancellationToken.None))
+        {
+            await store.SaveAsync(
+                [
+                    new OutboxEntry
+                    {
+                        MessageId = "with", ConversationId = "conv-1", Type = "Test.Event", Payload = "{}",
+                        CreatedAt = createdAt, Properties = properties,
+                    },
+                    NewEntry("without", createdAt),
+                ],
+                transaction,
+                CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        // Act
+        var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        claimed.Single(e => e.MessageId == "with").Properties.Should().Be(properties);
+        claimed.Single(e => e.MessageId == "without").Properties.Should().BeNull();
     }
 
     [TestMethod]

@@ -1,32 +1,39 @@
+using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
 using Conduit.Runtime;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Durability.Runtime.Outbox;
 
 /// <summary>
 /// The scoped <see cref="IOutboxPendingWriter"/>. Its write is the one
 /// <see cref="OutboxBehavior{TRequest,TResult}"/> runs at the end of every pipeline
-/// (<see cref="WriteUnwrittenAsync"/>), so the two cannot drift.
+/// (<see cref="WriteUnwrittenAsync"/>), so the two cannot drift. <paramref name="options"/> names
+/// the dispatch properties each entry carries (<see cref="OutboxOptions.PersistedProperties"/>);
+/// null carries none.
 /// </summary>
 public sealed class OutboxPendingWriter(
     OutboxCapture capture,
     IOutboxStore store,
-    IConduitConnectionFactory connectionFactory) : IOutboxPendingWriter
+    IConduitConnectionFactory connectionFactory,
+    IOptions<OutboxOptions>? options = null) : IOutboxPendingWriter
 {
     /// <inheritdoc />
     public Task WritePendingAsync(CancellationToken cancellationToken = default)
-        => WriteUnwrittenAsync(capture, store, connectionFactory, cancellationToken);
+        => WriteUnwrittenAsync(capture, store, connectionFactory, options?.Value.PersistedProperties, cancellationToken);
 
     /// <summary>
     /// Writes <paramref name="capture"/>'s unwritten envelopes through the current transaction and
     /// records them as written (<see cref="OutboxCapture.AddWrittenMessages"/>) once the save has
-    /// succeeded. Nothing happens when nothing is unwritten or no transaction is active.
+    /// succeeded. Nothing happens when nothing is unwritten or no transaction is active. Each entry
+    /// carries the current context's values for the <paramref name="persistedProperties"/> keys.
     /// </summary>
     internal static async Task WriteUnwrittenAsync(
         OutboxCapture capture,
         IOutboxStore store,
         IConduitConnectionFactory connectionFactory,
+        IDictionary<string, Type>? persistedProperties,
         CancellationToken cancellationToken)
     {
         var captured = capture.Unwritten;
@@ -52,6 +59,12 @@ public sealed class OutboxPendingWriter(
         var conversationId = context?.ConversationId ?? Guid.NewGuid().ToString("N");
         var causationId = context?.MessageId;
 
+        // The publishing dispatch's listed properties (the host's user, say) ride the entry, so its
+        // delivery — by the flush below or a relay redelivery — runs under them. The flush gets them in
+        // the shape the relay reads back from the column, so the two paths cannot differ.
+        var properties = OutboxProperties.Write(context?.Properties, persistedProperties);
+        var restoredProperties = OutboxProperties.Read(properties, persistedProperties);
+
         var entries = new List<OutboxEntry>(captured.Count);
         foreach (var envelope in captured)
         {
@@ -63,6 +76,7 @@ public sealed class OutboxPendingWriter(
                 Type = envelope.Type,
                 Payload = envelope.Payload.GetRawText(),
                 CreatedAt = DateTime.UtcNow,
+                Properties = properties,
             });
         }
 
@@ -74,6 +88,7 @@ public sealed class OutboxPendingWriter(
                 entry.MessageId,
                 entry.ConversationId,
                 entry.CausationId,
-                captured[index])).ToList());
+                captured[index],
+                restoredProperties)).ToList());
     }
 }

@@ -25,4 +25,10 @@ public sealed class OutboxEntry
     public DateTime? SentAt { get; init; }
     /// <summary>Number of relay send attempts.</summary>
     public int RetryCount { get; init; }
+    /// <summary>
+    /// The publishing dispatch's properties that the host lists in
+    /// <see cref="Configuration.OutboxOptions.PersistedProperties"/>, as a JSON object; delivery restores them on the
+    /// listener's context. Null when none of them was present, and on every entry of a host that lists none.
+    /// </summary>
+    public string? Properties { get; init; }
 }

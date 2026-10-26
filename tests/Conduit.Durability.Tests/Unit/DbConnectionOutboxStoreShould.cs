@@ -3,6 +3,8 @@ using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.TestUtils;
+using Conduit.Durability.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -94,6 +96,57 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
 
         var second = claimed.Single(e => e.MessageId == "msg-2");
         second.CausationId.Should().Be("msg-1");
+    }
+
+    [TestMethod]
+    public async Task SaveAndClaimWithoutThePropertiesColumnWhenNoneAreListed()
+    {
+        // Arrange — a table created before the Properties column existed, and a host that lists no properties:
+        // the store must neither write nor read the column, so that host behaves exactly as before.
+        await using var legacyFactory = new StubConnectionFactory();
+        using (var create = legacyFactory.Connection.CreateCommand())
+        {
+            create.CommandText = """
+                CREATE TABLE conduit_outbox (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    MessageId TEXT NOT NULL,
+                    ConversationId TEXT NOT NULL,
+                    CausationId TEXT,
+                    Type TEXT NOT NULL,
+                    Payload TEXT NOT NULL,
+                    Status INTEGER NOT NULL DEFAULT 0,
+                    CreatedAt TEXT NOT NULL,
+                    SentAt TEXT,
+                    RetryCount INTEGER NOT NULL DEFAULT 0,
+                    ClaimedAt TEXT,
+                    ClaimToken TEXT)
+                """;
+            await create.ExecuteNonQueryAsync();
+        }
+
+        var legacyStore = new DbConnectionOutboxStore(
+            legacyFactory, new SqliteDialect(), Options.Create(new OutboxOptions()));
+        await legacyFactory.BeginTransactionAsync();
+
+        // Act
+        await legacyStore.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = "msg-legacy",
+                    ConversationId = "conv-1",
+                    Type = "Orders.Commands.CreateOrder",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            legacyFactory.GetCurrentTransaction()!,
+            CancellationToken.None);
+        await legacyFactory.CommitAsync();
+        var claimed = await legacyStore.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        claimed.Should().ContainSingle().Which.Properties.Should().BeNull();
     }
 
     [TestMethod]
