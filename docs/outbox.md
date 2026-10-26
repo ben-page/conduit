@@ -383,6 +383,11 @@ durability.AddOutbox(outbox =>
   flush did. An entry with a `NULL` column (one written before the host opted in) is delivered with an
   empty bag, as before. A stored key the host no longer lists, or whose value no longer reads as its
   declared type, is dropped rather than failing the delivery.
+- **List only keys the server sets.** A restored value is trusted by every listener and nested
+  dispatch, so a listed key must come from an `IDispatchContextEnricher` that removes any client-sent
+  value before it stamps its own. A transport seeds a context from the caller's headers, and with no
+  enricher registered `DispatchContextEnrichment.Apply` hands those headers on unchanged: listing such
+  a key would let a caller choose who a listener runs as.
 - **Supported types** are `string`, `int`, `long`, `bool` and `Guid`. `AddOutbox` refuses any other,
   and an empty key, with an `OptionsValidationException` at startup.
 - **The column.** A host that lists no key never writes or reads `Properties`, so its table may predate
