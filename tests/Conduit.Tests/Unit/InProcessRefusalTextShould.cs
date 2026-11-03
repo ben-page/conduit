@@ -165,12 +165,22 @@ public sealed class InProcessRefusalTextShould
     public async Task SetTheActivityStatusFromTheEnglishMessage()
     {
         // Arrange
+        // A root activity of this test's own, so the dispatch's activity is its child and the listener keeps only
+        // this trace: methods run in parallel, and other tests' Conduit activities reach a process-wide listener.
+        using var root = new Activity("InProcessRefusalTextShould.Scope").Start();
+        var traceId = root.TraceId;
         string? statusDescription = null;
         using var listener = new ActivityListener
         {
             ShouldListenTo = static source => source.Name == "Conduit",
             Sample = SampleAllData,
-            ActivityStopped = activity => statusDescription = activity.StatusDescription,
+            ActivityStopped = activity =>
+            {
+                if (activity.TraceId == traceId)
+                {
+                    statusDescription = activity.StatusDescription;
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
 

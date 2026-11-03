@@ -224,7 +224,7 @@ builds it from the exception's status and message **only**:
 
 ```
 Handler throws ConduitException
-  -> Results.Problem(detail: ex.Message, statusCode: ex.Code.HttpStatusCode, title: ex.Code.Value)
+  -> Results.Problem(detail: ex.Message, or ex.Text written in the reader's language, statusCode: ex.Code.HttpStatusCode, title: ex.Code.Value)
 ```
 
 `detail` is `ex.Message`, or the refusal's `Text` written in the reader's language when it names its sentence
