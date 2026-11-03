@@ -5,13 +5,15 @@ using Microsoft.Extensions.Logging;
 namespace Conduit.Jobs.Runtime;
 
 /// <summary>
-/// The non-durable scheduler: one timer loop per declared schedule, dispatching straight through
+/// The non-durable scheduler: one timer loop per declared timed schedule, dispatching straight through
 /// <see cref="IMediator"/>. Used when no persistence engine is registered.
 /// </summary>
 /// <remarks>
 /// There is nothing to coordinate through, so the schedule fires on <b>every</b> host. That is a
 /// materially weaker guarantee than the durable path, so it is logged as a Warning per schedule at
-/// startup rather than left for someone to discover from duplicated work. All time comes from the
+/// startup rather than left for someone to discover from duplicated work. An on-demand schedule gets
+/// neither a loop nor the Warning: it never fires on its own, and <see cref="InMemoryJobs"/> runs a
+/// manual run inline on the host it was called on. All time comes from the
 /// injected <see cref="TimeProvider"/>, never the ambient clock, so occurrence computation is
 /// deterministically testable.
 /// </remarks>
@@ -49,10 +51,12 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
     /// <inheritdoc/>
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        this.readiness.Expect(this.registry.Schedules.Count);
+        // An on-demand schedule has no timetable, so it gets no loop and fires on no host by itself.
+        var timed = this.registry.Schedules.Where(schedule => !schedule.IsOnDemand).ToList();
+        this.readiness.Expect(timed.Count);
 
-        var loops = new List<Task>(this.registry.Schedules.Count);
-        foreach (var schedule in this.registry.Schedules)
+        var loops = new List<Task>(timed.Count);
+        foreach (var schedule in timed)
         {
             LogRunsOnEveryHost(this.logger, schedule.Name);
             loops.Add(this.RunScheduleAsync(schedule, stoppingToken));

@@ -11,7 +11,10 @@ namespace Conduit.Jobs;
 /// </remarks>
 public interface IJobs
 {
-    /// <summary>Lists every declared schedule with its next occurrence and pause state.</summary>
+    /// <summary>
+    /// Lists every declared schedule with its next occurrence and pause state. An on-demand schedule is
+    /// listed too, with <see cref="JobScheduleInfo.IsOnDemand"/> set and no next occurrence.
+    /// </summary>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The declared schedules.</returns>
     public Task<IReadOnlyList<JobScheduleInfo>> GetSchedulesAsync(CancellationToken cancellationToken);
@@ -78,7 +81,8 @@ public interface IJobs
 
     /// <summary>
     /// Queues an extra run of a schedule now, without disturbing its cursor — the occurrence it was
-    /// already waiting for still happens.
+    /// already waiting for still happens. For an on-demand schedule (<c>OnDemand()</c>) this is the
+    /// only way a run starts.
     /// </summary>
     /// <remarks>
     /// The schedule's overlap rule applies to a manual run as it does to an occurrence. Without

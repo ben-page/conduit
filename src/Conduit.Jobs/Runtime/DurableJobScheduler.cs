@@ -16,10 +16,12 @@ namespace Conduit.Jobs.Runtime;
 /// one</i>, which one atomic row claim answers.
 /// </summary>
 /// <remarks>
-/// Two kinds of loop run here. One per schedule waits until its next occurrence and materializes it;
-/// a single sweep claims whatever is due — including a retry, a delayed event trigger, and the
-/// occurrence a crashed host abandoned — and waits until the next pending run is due rather than
-/// polling. All time comes from the injected <see cref="TimeProvider"/>.
+/// Two kinds of loop run here. One per timed schedule waits until its next occurrence and
+/// materializes it; a single sweep claims whatever is due — including a retry, a delayed event
+/// trigger, a manual run, and the occurrence a crashed host abandoned — and waits until the next
+/// pending run is due rather than polling. An on-demand schedule gets no loop of its own: its only
+/// runs are manual ones, which the sweep claims. All time comes from the injected
+/// <see cref="TimeProvider"/>.
 /// </remarks>
 internal sealed partial class DurableJobScheduler : BackgroundService
 {
@@ -75,10 +77,15 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     /// <inheritdoc/>
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        this.readiness.Expect(this.registry.Schedules.Count + 1);
+        // An on-demand schedule has no timetable, so it gets no loop: no cursor read, no misfire walk,
+        // no occurrence and no start-up run. Its schedule row (reconciled by the initializer) holds only
+        // its pause flag and a cursor nothing moves, since a manual run is not an occurrence: null
+        // unless the schedule was once declared with a timetable.
+        var timed = this.registry.Schedules.Where(schedule => !schedule.IsOnDemand).ToList();
+        this.readiness.Expect(timed.Count + 1);
 
-        var loops = new List<Task>(this.registry.Schedules.Count + 1);
-        foreach (var schedule in this.registry.Schedules)
+        var loops = new List<Task>(timed.Count + 1);
+        foreach (var schedule in timed)
         {
             loops.Add(this.RunScheduleAsync(schedule, stoppingToken));
         }

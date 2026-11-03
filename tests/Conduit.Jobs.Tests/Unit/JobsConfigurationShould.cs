@@ -107,6 +107,106 @@ public class JobsConfigurationShould
     }
 
     [TestMethod]
+    public void BuildAnOnDemandScheduleWithNoTimetable()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("rederive")
+                .OnDemand()
+                .AllowOverlap()
+                .MaxRuntime(TimeSpan.FromMinutes(10))
+                .Run(() => new NoopJob());
+
+        // Act
+        var registry = RegistryFor(Configure);
+
+        // Assert — overlap and the runtime ceiling carry as for any schedule; the timetable is empty
+        var schedule = registry.Schedules.Should().ContainSingle().Subject;
+        schedule.IsOnDemand.Should().BeTrue();
+        schedule.AllowsOverlap.Should().BeTrue();
+        schedule.MaxRuntime.Should().Be(TimeSpan.FromMinutes(10));
+        schedule.RunsAtStart.Should().BeFalse();
+        schedule.NextOccurrenceAfter(DateTimeOffset.MinValue).Should().BeNull();
+    }
+
+    [TestMethod]
+    public void IgnoreAMisfirePolicyOnAnOnDemandSchedule_AsOnAnIntervalSchedule()
+    {
+        // Arrange — an on-demand schedule has nothing to miss
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.Schedule("rederive").OnDemand().OnMisfire(MisfirePolicy.RunImmediately).Run(() => new NoopJob());
+            jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).OnMisfire(MisfirePolicy.RunImmediately).Run(() => new NoopJob());
+        }
+
+        // Act
+        var registry = RegistryFor(Configure);
+
+        // Assert
+        registry.Schedules.Select(schedule => schedule.Misfire).Should().AllBeEquivalentTo(MisfirePolicy.Skip);
+    }
+
+    [TestMethod]
+    public void RejectAScheduleDeclaringBothCronAndOnDemand()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("rederive").Cron("0 2 * * *").OnDemand().Run(() => new NoopJob());
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*'rederive'*both Cron(...) and OnDemand()*Choose one*");
+    }
+
+    [TestMethod]
+    public void RejectAScheduleDeclaringBothIntervalAndOnDemand()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("rederive").OnDemand().Every(TimeSpan.FromMinutes(5)).Run(() => new NoopJob());
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*'rederive'*both Every(...) and OnDemand()*Choose one*");
+    }
+
+    [TestMethod]
+    public void RefuseRunAtStartOnAnOnDemandSchedule()
+    {
+        // Arrange — a run at every start would give the schedule a timetable after all
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("rederive").OnDemand().RunAtStart().Run(() => new NoopJob());
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*'rederive'*RunAtStart()*OnDemand()*");
+    }
+
+    [TestMethod]
+    public void RejectAScheduleDeclaringNoTimetableNamingEveryKind()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.Schedule("rollup").Run(() => new NoopJob());
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*'rollup'*Cron(...)*Every(...)*OnDemand()*");
+    }
+
+    [TestMethod]
     public void RejectDuplicateTriggerNames()
     {
         // Arrange — two triggers on one event type both default to the event's type name, so they

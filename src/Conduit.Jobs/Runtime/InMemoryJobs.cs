@@ -36,7 +36,10 @@ internal sealed class InMemoryJobs : IJobs
                 schedule.NextOccurrenceAfter(now),
                 LastCompletedOccurrence: null,
                 this.state.IsPaused(schedule.Name),
-                PausedAt: null)),
+                PausedAt: null)
+            {
+                IsOnDemand = schedule.IsOnDemand,
+            }),
         ];
 
         return Task.FromResult(schedules);

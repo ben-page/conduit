@@ -78,7 +78,7 @@ public sealed class JobsBuilder
         set => this.Options.ManageOnly = value;
     }
 
-    /// <summary>Begins declaring a recurring schedule.</summary>
+    /// <summary>Begins declaring a schedule: recurring, or on demand (run only by hand).</summary>
     /// <param name="name">The schedule's unique name. Used as its database key.</param>
     /// <returns>A builder for the schedule.</returns>
     public ScheduleBuilder Schedule(string name)

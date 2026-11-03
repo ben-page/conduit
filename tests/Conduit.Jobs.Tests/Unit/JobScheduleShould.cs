@@ -39,6 +39,43 @@ public class JobScheduleShould
     }
 
     [TestMethod]
+    public void ComputeNoOccurrenceForAnOnDemandSchedule()
+    {
+        // Arrange
+        var schedule = JobSchedule.FromOnDemand("rederive", allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+
+        // Act — from anywhere on the timeline, the start of time included
+        var occurrences = new[]
+        {
+            DateTimeOffset.MinValue,
+            new DateTimeOffset(2026, 3, 1, 3, 2, 0, TimeSpan.Zero),
+            DateTimeOffset.MaxValue,
+        }.Select(schedule.NextOccurrenceAfter);
+
+        // Assert
+        occurrences.Should().AllSatisfy(next => next.Should().BeNull());
+        schedule.IsOnDemand.Should().BeTrue();
+        schedule.Misfire.Should().Be(MisfirePolicy.Skip);
+        schedule.RunsAtStart.Should().BeFalse();
+    }
+
+    [TestMethod]
+    public void MarkOnlyAnOnDemandScheduleAsOnDemand()
+    {
+        // Arrange
+        var cron = JobSchedule.FromCron("nightly", "0 2 * * *", TimeZoneInfo.Utc,
+            MisfirePolicy.Skip, allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+        var interval = JobSchedule.FromInterval("warm", TimeSpan.FromMinutes(5),
+            allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+
+        // Act
+        var flags = new[] { cron.IsOnDemand, interval.IsOnDemand };
+
+        // Assert
+        flags.Should().AllBeEquivalentTo(false);
+    }
+
+    [TestMethod]
     public void RunOnceAtTheTransitionForTheHourThatDoesNotExistOnASpringForward()
     {
         // Arrange — Europe/London skips 01:00-02:00 on 2026-03-29, so local 01:30 never occurs

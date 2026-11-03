@@ -5,9 +5,9 @@ using Cronos;
 namespace Conduit.Jobs.Runtime;
 
 /// <summary>
-/// An immutable, code-declared recurring schedule. Occurrence computation is deterministic, so every
-/// host reaches the same answer without coordinating — the database decides only who runs an
-/// occurrence, never when it is due.
+/// An immutable, code-declared schedule: recurring (cron or interval), or on demand, with no
+/// occurrences at all. Occurrence computation is deterministic, so every host reaches the same answer
+/// without coordinating — the database decides only who runs an occurrence, never when it is due.
 /// </summary>
 public sealed class JobSchedule
 {
@@ -60,6 +60,13 @@ public sealed class JobSchedule
     /// interval schedule can carry it.
     /// </summary>
     public bool RunsAtStart { get; }
+
+    /// <summary>
+    /// Whether the schedule has no timetable and runs only when <see cref="IJobs.TriggerNowAsync"/>
+    /// starts it. <see cref="NextOccurrenceAfter"/> yields nothing for it, ever, so neither scheduler
+    /// materializes, misfires or catches up anything for it.
+    /// </summary>
+    public bool IsOnDemand => this.cron is null && this.interval is null;
 
     /// <summary>Creates a cron-driven schedule.</summary>
     /// <param name="name">The schedule's unique name.</param>
@@ -123,12 +130,41 @@ public sealed class JobSchedule
     }
 
     /// <summary>
+    /// Creates an on-demand schedule: no timetable, so it runs only when
+    /// <see cref="IJobs.TriggerNowAsync"/> starts it. Like an interval schedule it has no misfire
+    /// policy (<see cref="Misfire"/> is <see cref="MisfirePolicy.Skip"/>, and there is nothing to
+    /// miss), its <see cref="TimeZone"/> is UTC and unused, and it never runs at start.
+    /// </summary>
+    /// <param name="name">The schedule's unique name.</param>
+    /// <param name="allowsOverlap">Whether a manual run may start while a previous one is outstanding.</param>
+    /// <param name="maxRuntime">Optional ceiling on a single run's duration.</param>
+    /// <param name="createCommand">Builds the command dispatched for one run.</param>
+    /// <returns>The declared schedule.</returns>
+    public static JobSchedule FromOnDemand(
+        string name,
+        bool allowsOverlap,
+        TimeSpan? maxRuntime,
+        Func<ICommand> createCommand)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(createCommand);
+
+        return new JobSchedule(
+            name, cron: null, interval: null, TimeZoneInfo.Utc,
+            MisfirePolicy.Skip, allowsOverlap, maxRuntime, createCommand, runsAtStart: false);
+    }
+
+    /// <summary>
     /// The first occurrence strictly after <paramref name="after"/>, or <see langword="null"/> if the
-    /// expression yields none. Cronos resolves DST transitions: an occurrence in a skipped local hour
-    /// is not produced, and one in a repeated local hour is produced once.
+    /// expression yields none or the schedule is <see cref="IsOnDemand">on demand</see>. Cronos
+    /// resolves DST transitions: an occurrence in a skipped local hour is not produced, and one in a
+    /// repeated local hour is produced once.
     /// </summary>
     /// <param name="after">The instant to search forward from, exclusive.</param>
-    /// <returns>The next occurrence, or <see langword="null"/> when the expression yields none.</returns>
+    /// <returns>
+    /// The next occurrence, or <see langword="null"/> when the expression yields none or the schedule
+    /// is on demand.
+    /// </returns>
     public DateTimeOffset? NextOccurrenceAfter(DateTimeOffset after)
     {
         if (this.interval is { } every)
@@ -136,6 +172,7 @@ public sealed class JobSchedule
             return after + every;
         }
 
-        return this.cron!.GetNextOccurrence(after, this.TimeZone, inclusive: false);
+        // An on-demand schedule has no timetable, so it has no occurrence, ever.
+        return this.cron?.GetNextOccurrence(after, this.TimeZone, inclusive: false);
     }
 }

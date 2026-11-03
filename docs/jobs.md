@@ -3,6 +3,7 @@
 - [Two kinds of job](#two-kinds-of-job)
 - [Declaring jobs](#declaring-jobs)
   - [Recurring schedules](#recurring-schedules)
+  - [On-demand schedules](#on-demand-schedules)
   - [Event triggers](#event-triggers)
   - [Coalescing a burst into the work it represents](#coalescing-a-burst-into-the-work-it-represents)
 - [Durability is inferred, not declared](#durability-is-inferred-not-declared)
@@ -93,6 +94,7 @@ builder.Services.AddConduit(conduit =>
 |---|---|
 | `Cron(expression)` | Five cron fields, or six to include seconds. UTC unless `InTimeZone` says otherwise. |
 | `Every(TimeSpan)` | A fixed interval. Interval schedules have no misfire policy. |
+| `OnDemand()` | No timetable: runs only when `IJobs.TriggerNowAsync` starts it. See [On-demand schedules](#on-demand-schedules). |
 | `InTimeZone(id)` | Evaluate the cron expression in this timezone. |
 | `OnMisfire(policy)` | What to do about occurrences missed while the application was down. |
 | `RunAtStart()` | One run when the host starts — interval schedules only; not an occurrence. See [Run at start](#run-at-start). |
@@ -100,14 +102,51 @@ builder.Services.AddConduit(conduit =>
 | `MaxRuntime(TimeSpan)` | Cancel a run that exceeds this duration. |
 | `Run(() => command)` | The command to dispatch. Completes the declaration. |
 
-A schedule's name is its database key, so names must be unique — `AddJobs` rejects duplicates at
-startup, and rejects a trigger whose name collides with a schedule's.
+A schedule declares exactly one of `Cron(...)`, `Every(...)` and `OnDemand()`; none, or any two,
+fails at startup naming the schedule. A schedule's name is its database key, so names must be
+unique — `AddJobs` rejects duplicates at startup, and rejects a trigger whose name collides with a
+schedule's.
 
 Cron is parsed by [Cronos](https://github.com/HangfireIO/Cronos), chosen for DST correctness. On a
 spring-forward, a daily job whose local time does not exist that day runs once at the instant the
 clock jumps, rather than being silently dropped; on a fall-back, a job in the repeated local hour
 runs once rather than twice. Both are asserted by tests, because both are what a naive parser gets
 wrong twice a year.
+
+### On-demand schedules
+
+`OnDemand()` declares a schedule with no timetable: nothing ever starts it on its own, only
+[`IJobs.TriggerNowAsync`](#operating-jobs-with-ijobs). Use it for one-off maintenance an operator
+starts by hand — a re-derivation to run once after a deploy, a repair to run once someone has looked
+at the data — so the job is declared, listed and run like every other job rather than through a
+one-off script.
+
+```csharp
+jobs.Schedule("rederive-totals")
+    .OnDemand()
+    .MaxRuntime(TimeSpan.FromHours(1))
+    .Run(() => new RederiveTotals());
+
+// Later, from an admin endpoint or a CLI command:
+await jobs.TriggerNowAsync("rederive-totals", cancellationToken);
+```
+
+- **Neither scheduler starts it.** It has no occurrences, so no loop waits for one: nothing is
+  computed, written or caught up for it however long a host runs, and a restart does not run it. Its
+  `conduit_job_schedules` row holds its pause flag and a cursor that nothing moves (a manual run is
+  not an occurrence), so it needs no new column.
+- **A manual run of it is a manual run of any schedule.** The [overlap](#overlap) rule refuses a
+  second trigger with `JobOverlapException` while a run is outstanding unless `AllowOverlap()` is
+  declared; `MaxRuntime`, retries and [run history](#run-history) apply; and trigger-now does not
+  consult pause, so pausing an on-demand schedule changes nothing. With a database the run is claimed
+  on a runner host's next sweep, within `ClaimTimeout` (default 2 minutes); without one it runs inline
+  on the host that was called, and the call returns when it finishes.
+- **Listed like any schedule.** `GetSchedulesAsync` includes it, with `IsOnDemand` set and no
+  `NextOccurrence`.
+- **It is not combined with a timetable.** `OnDemand()` with `Cron(...)` or `Every(...)` fails at
+  startup naming both, and so does `RunAtStart()`, which would start it at every host start.
+  `OnMisfire(...)` and `InTimeZone(...)` are accepted and have no effect, as on an `Every(...)`
+  schedule.
 
 ### Event triggers
 
@@ -263,8 +302,8 @@ about **who runs this one**. There is no poll loop looking for work that has com
 steady-state traffic is proportional to occurrences rather than to the passage of time.
 
 A sweep does exist, but it is not a poll for due-ness: it exists to pick up runs whose timing is not
-derivable from a declaration — a retry waiting out its backoff, a delayed event trigger, and the run
-a crashed host abandoned. It sleeps until the earliest pending run is due, capped at `ClaimTimeout`
+derivable from a declaration — a retry waiting out its backoff, a delayed event trigger, a manual
+run (the only kind an on-demand schedule has), and the run a crashed host abandoned. It sleeps until the earliest pending run is due, capped at `ClaimTimeout`
 so an abandoned claim is still recovered when nothing else is scheduled.
 
 ### Why the runs table is deleted on success
@@ -569,7 +608,8 @@ the host that received the call would be useless. It deliberately leaves the cur
 resuming picks up from the next occurrence.
 
 **Trigger-now** queues an extra run immediately, with no occurrence attached, so running a job by
-hand cannot swallow the occurrence the schedule was already waiting for. It honours the schedule's
+hand cannot swallow the occurrence the schedule was already waiting for. For an
+[on-demand schedule](#on-demand-schedules) it is the only way a run starts. It honours the schedule's
 [overlap](#overlap) rule: without `AllowOverlap()` it throws `JobOverlapException` (naming the
 schedule in `ScheduleName`) while a run is outstanding, and queues nothing. The exception is
 deliberately not a `ConflictException` — that is a wire refusal, and whether an overlap is a client's
@@ -629,12 +669,13 @@ empty page, the same honest degradation `GetFailedAsync` and `GetPendingAsync` u
 
 ## Without a database
 
-No engine means no tables. Each host runs one timer loop per schedule, waiting on the injected
-`TimeProvider`, and dispatches directly.
+No engine means no tables. Each host runs one timer loop per timed schedule, waiting on the injected
+`TimeProvider`, and dispatches directly. An [on-demand schedule](#on-demand-schedules) gets no loop.
 
 - The schedule fires **on every host**. A Warning is logged at startup naming each schedule and
   saying so, because the guarantee is materially weaker and should be visible in any real
-  deployment's logs rather than discovered from duplicated work.
+  deployment's logs rather than discovered from duplicated work. An on-demand schedule gets none: it
+  fires on no host by itself.
 - `IJobs` degrades honestly: queries answer from the in-memory registry, the run lists are empty
   because there is no ledger, and pause, trigger-now and cancel affect only the host they were
   called on. Trigger-now runs the command inline; the overlap rule then means "not while a run of

@@ -3,7 +3,10 @@ using Conduit.Messages;
 
 namespace Conduit.Jobs.Configuration;
 
-/// <summary>Fluent declaration of one recurring schedule.</summary>
+/// <summary>
+/// Fluent declaration of one schedule: recurring (<see cref="Cron"/> or <see cref="Every"/>), or
+/// <see cref="OnDemand"/>, run only by hand.
+/// </summary>
 public sealed class ScheduleBuilder
 {
     private readonly string name;
@@ -15,6 +18,7 @@ public sealed class ScheduleBuilder
     private bool allowsOverlap;
     private TimeSpan? maxRuntime;
     private bool runsAtStart;
+    private bool onDemand;
 
     internal ScheduleBuilder(string name, Action<JobSchedule> onBuilt)
     {
@@ -40,6 +44,32 @@ public sealed class ScheduleBuilder
         return this;
     }
 
+    /// <summary>
+    /// Declares a schedule with no timetable, which runs only when <see cref="IJobs.TriggerNowAsync"/>
+    /// starts it — for one-off maintenance an operator starts by hand, such as a re-derivation run
+    /// once after a deploy.
+    /// </summary>
+    /// <remarks>
+    /// Neither scheduler ever starts it on its own: it has no occurrences, so nothing is computed,
+    /// materialized or caught up for it however long a host runs or however often it restarts, and its
+    /// cursor (<see cref="JobScheduleInfo.LastCompletedOccurrence"/>) never moves. A manual run of it is
+    /// exactly a manual run of any schedule: the overlap rule (refused with
+    /// <see cref="JobOverlapException"/> while a run is outstanding, unless <see cref="AllowOverlap"/>
+    /// is declared), <see cref="MaxRuntime"/>, retries and run history all apply, and trigger-now does
+    /// not consult pause. <see cref="IJobs.GetSchedulesAsync"/> lists it with
+    /// <see cref="JobScheduleInfo.IsOnDemand"/> set and no next occurrence. On-demand schedules have no
+    /// misfire policy: <see cref="OnMisfire"/> is accepted and has no effect, as on an
+    /// <see cref="Every"/> schedule, and so is <see cref="InTimeZone"/>. Declaring it together with
+    /// <see cref="Cron"/>, <see cref="Every"/> or <see cref="RunAtStart"/> is rejected at startup.
+    /// Without a persistence engine the manual run executes inline on the host it was triggered on.
+    /// </remarks>
+    /// <returns>This builder for chaining.</returns>
+    public ScheduleBuilder OnDemand()
+    {
+        this.onDemand = true;
+        return this;
+    }
+
     /// <summary>Evaluates the cron expression in this timezone instead of UTC.</summary>
     /// <param name="timeZoneId">The IANA or Windows timezone identifier.</param>
     /// <returns>This builder for chaining.</returns>
@@ -49,7 +79,11 @@ public sealed class ScheduleBuilder
         return this;
     }
 
-    /// <summary>Chooses what happens to occurrences missed while the application was down.</summary>
+    /// <summary>
+    /// Chooses what happens to occurrences missed while the application was down. Only a cron schedule
+    /// has a misfire policy; an <see cref="Every"/> or <see cref="OnDemand"/> schedule accepts this and
+    /// ignores it.
+    /// </summary>
     /// <param name="policy">The misfire policy.</param>
     /// <returns>This builder for chaining.</returns>
     public ScheduleBuilder OnMisfire(MisfirePolicy policy)
@@ -82,7 +116,8 @@ public sealed class ScheduleBuilder
     /// <summary>
     /// Runs the schedule once when its host's scheduler starts, as well as on its timetable. For
     /// <see cref="Every"/> schedules only; a cron schedule catches a missed occurrence up with
-    /// <see cref="OnMisfire"/>(<see cref="MisfirePolicy.RunImmediately"/>) instead.
+    /// <see cref="OnMisfire"/>(<see cref="MisfirePolicy.RunImmediately"/>) instead, and an
+    /// <see cref="OnDemand"/> schedule refuses it, since it would start the schedule on its own.
     /// </summary>
     /// <remarks>
     /// The start-up run is not an occurrence. It is written the way <see cref="IJobs.TriggerNowAsync"/>
@@ -102,21 +137,33 @@ public sealed class ScheduleBuilder
     }
 
     /// <summary>Declares the command to dispatch, completing the schedule.</summary>
-    /// <param name="createCommand">Builds the command dispatched for one occurrence.</param>
+    /// <param name="createCommand">Builds the command dispatched for one run.</param>
     public void Run(Func<ICommand> createCommand)
     {
         ArgumentNullException.ThrowIfNull(createCommand);
 
-        if (this.cronExpression is null && this.interval is null)
+        if (this.cronExpression is null && this.interval is null && !this.onDemand)
         {
             throw new InvalidOperationException(
-                $"Job schedule '{this.name}' declares neither Cron(...) nor Every(...).");
+                $"Job schedule '{this.name}' declares none of Cron(...), Every(...) and OnDemand(). Declare one.");
         }
 
         if (this.cronExpression is not null && this.interval is not null)
         {
             throw new InvalidOperationException(
                 $"Job schedule '{this.name}' declares both Cron(...) and Every(...). Choose one.");
+        }
+
+        if (this.cronExpression is not null && this.onDemand)
+        {
+            throw new InvalidOperationException(
+                $"Job schedule '{this.name}' declares both Cron(...) and OnDemand(). Choose one.");
+        }
+
+        if (this.interval is not null && this.onDemand)
+        {
+            throw new InvalidOperationException(
+                $"Job schedule '{this.name}' declares both Every(...) and OnDemand(). Choose one.");
         }
 
         if (this.runsAtStart && this.cronExpression is not null)
@@ -126,11 +173,29 @@ public sealed class ScheduleBuilder
                 "schedules; a cron schedule catches a missed occurrence up with OnMisfire(MisfirePolicy.RunImmediately).");
         }
 
-        var schedule = this.cronExpression is not null
-            ? JobSchedule.FromCron(this.name, this.cronExpression, this.timeZone, this.misfire,
-                this.allowsOverlap, this.maxRuntime, createCommand)
-            : JobSchedule.FromInterval(this.name, this.interval!.Value, this.allowsOverlap,
+        if (this.runsAtStart && this.onDemand)
+        {
+            throw new InvalidOperationException(
+                $"Job schedule '{this.name}' declares RunAtStart() on an OnDemand() schedule. An on-demand schedule runs " +
+                "only when IJobs.TriggerNowAsync starts it, and RunAtStart() would start it at every host start. Remove " +
+                "one of them.");
+        }
+
+        JobSchedule schedule;
+        if (this.cronExpression is not null)
+        {
+            schedule = JobSchedule.FromCron(this.name, this.cronExpression, this.timeZone, this.misfire,
+                this.allowsOverlap, this.maxRuntime, createCommand);
+        }
+        else if (this.onDemand)
+        {
+            schedule = JobSchedule.FromOnDemand(this.name, this.allowsOverlap, this.maxRuntime, createCommand);
+        }
+        else
+        {
+            schedule = JobSchedule.FromInterval(this.name, this.interval!.Value, this.allowsOverlap,
                 this.maxRuntime, createCommand, this.runsAtStart);
+        }
 
         this.onBuilt(schedule);
     }

@@ -1,7 +1,8 @@
 # Conduit.Jobs
 
-Background jobs — code-declared recurring schedules and event triggers, both executing as ordinary
-mediator commands. Configured via `conduit.AddJobs()`. User docs: [jobs](../../docs/jobs.md).
+Background jobs — code-declared schedules (recurring by `Cron(...)` or `Every(...)`, or `OnDemand()`
+with no timetable) and event triggers, all executing as ordinary mediator commands. Configured via
+`conduit.AddJobs()`. User docs: [jobs](../../docs/jobs.md).
 
 ## Persistence engine (Conduit.Persistence)
 
@@ -294,6 +295,20 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
 
 ## Non-obvious decisions
 
+- **An on-demand schedule gets no loop, in either scheduler.** `JobSchedule.IsOnDemand` is "no cron
+  and no interval"; `NextOccurrenceAfter` returns null for it, and both `ExecuteAsync`s drop it before
+  counting loops for `JobSchedulerReadiness.Expect`. Dropping it is load-bearing, not tidiness: a
+  schedule loop whose first `NextOccurrenceAfter` is null exits without ever reporting armed, so an
+  on-demand schedule given a loop would hold `Ready` (and every `JobsTestHost`) forever. Its only runs
+  are trigger-now's, which the sweep claims like any manual run, and it touches no persisted shape:
+  the initializer still reconciles its row (pause and the overlap lock need one) and its cursor never
+  moves, because a manual run has no occurrence. `OnMisfire(...)` and `InTimeZone(...)` are accepted
+  and ignored as on `Every(...)` — `FromOnDemand` fixes `Misfire` at `Skip`, so the no-engine misfire
+  rejection never fires for it — while `RunAtStart()` and a second timetable are rejected in
+  `ScheduleBuilder.Run`. The in-memory scheduler logs no "fires on every host" Warning for it.
+  `JobScheduleInfo.IsOnDemand` is an init property rather than a sixth positional parameter so the
+  record's constructor and `Deconstruct` keep their signatures. `OnDemandScheduleShould` pins it: each
+  never-runs test runs an hourly control beside it, so the scheduler is provably live.
 - **Two tables.** The runs table is deleted on success, so it cannot answer "did we already run
   02:00 today?". The cursor in `conduit_job_schedules` does. `CompleteAsync` and `MarkTerminalAsync`
   both delete/update **and** advance the cursor in one transaction — a crash between two separate

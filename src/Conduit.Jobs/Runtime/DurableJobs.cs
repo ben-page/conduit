@@ -44,7 +44,10 @@ internal sealed class DurableJobs : IJobs
                     schedule.NextOccurrenceAfter(row?.LastCompletedOccurrence ?? now),
                     row?.LastCompletedOccurrence,
                     row?.IsPaused ?? false,
-                    row?.PausedAt);
+                    row?.PausedAt)
+                {
+                    IsOnDemand = schedule.IsOnDemand,
+                };
             }),
         ];
     }
