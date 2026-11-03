@@ -168,6 +168,36 @@ namespace App.Events
     }
 
     [TestMethod]
+    public void PassTheServiceProviderToTheWire()
+    {
+        // Arrange
+        const string source = """
+            using Conduit.Handlers;
+            using Conduit.Messages;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace App.Commands
+            {
+                public record Ping : ICommand;
+
+                public class PingHandler : ICommandHandler<Ping>
+                {
+                    public Task HandleAsync(Ping command, CancellationToken cancellationToken) => Task.CompletedTask;
+                }
+            }
+            """;
+
+        // Act
+        var (trees, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+
+        // Assert -- the runtime resolves translators, the renderer and the culture resolver itself
+        mediatorSource.Should().Contain("=> ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, serviceProvider, cancellationToken);");
+        mediatorSource.Should().NotContain("GetServices<Conduit.Runtime.IWireExceptionTranslator>()");
+    }
+
+    [TestMethod]
     public void ReadWirePayloadsThroughTheRuntimeHelper()
     {
         // Arrange -- the same compilation EmitMediatorWithStronglyTypedOverloads uses (CreateOrder/DeleteOrder/GetOrder)

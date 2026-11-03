@@ -278,7 +278,7 @@ public static class MediatorEmitter
         sb.AppendLine("    public Task<DispatchResult<object>> HandleWireRequestAsync(");
         sb.AppendLine("        DispatchEnvelope envelope,");
         sb.AppendLine("        CancellationToken cancellationToken)");
-        sb.AppendLine("        => ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, serviceProvider.GetServices<Conduit.Runtime.IWireExceptionTranslator>(), cancellationToken);");
+        sb.AppendLine("        => ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, serviceProvider, cancellationToken);");
         sb.AppendLine();
 
         // HandleWireEventAsync -- delegates to ConduitRuntime
