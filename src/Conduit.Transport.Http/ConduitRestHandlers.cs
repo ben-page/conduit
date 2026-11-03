@@ -5,6 +5,9 @@ using Conduit.Transport.Http.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Transport.Http;
 
@@ -42,7 +45,7 @@ public static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return ToProblem(ex);
+                    return ToProblem(ex, httpContext);
                 }
             });
     }
@@ -73,7 +76,7 @@ public static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return ToProblem(ex);
+                    return ToProblem(ex, request.HttpContext);
                 }
             });
     }
@@ -98,7 +101,7 @@ public static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return ToProblem(ex);
+                    return ToProblem(ex, httpContext);
                 }
             });
     }
@@ -128,7 +131,7 @@ public static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return ToProblem(ex);
+                    return ToProblem(ex, request.HttpContext);
                 }
             });
     }
@@ -153,7 +156,7 @@ public static class ConduitRestHandlers
                 }
                 catch (ConduitException ex)
                 {
-                    return ToProblem(ex);
+                    return ToProblem(ex, httpContext);
                 }
             });
     }
@@ -162,10 +165,19 @@ public static class ConduitRestHandlers
         request.ContentType is not null
         && request.ContentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase);
 
-    private static IResult ToProblem(ConduitException ex)
+    private static IResult ToProblem(ConduitException ex, HttpContext httpContext)
     {
+        // Resolved here, on the failure path only; a host that registers neither keeps today's English detail.
+        var services = httpContext.RequestServices;
+        var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(ConduitRestHandlers))
+            ?? NullLogger.Instance;
+        var culture = RefusalRendering.ResolveCulture(
+            services.GetService<IDispatchCultureResolver>(), MessageContext.Current, logger);
+        var detail = RefusalRendering.Render(
+            ex.Text, ex.Message, services.GetService<IRefusalTextRenderer>(), culture, logger);
+
         return Results.Problem(
-            detail: ex.Message,
+            detail: detail,
             statusCode: ex.Code.HttpStatusCode,
             title: ex.Code.Value);
     }
