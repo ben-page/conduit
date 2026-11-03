@@ -109,6 +109,7 @@ The flow:
 3. The server-mode `SignalRTransport` broadcasts the event to all connected clients.
 4. Browser receives `OrderPlacedEvent` on the same connection.
 5. The `Dispatch` call also returns the command result as a `DispatchResult`.
+   A failed result's message and details are written in the reader's language on the way out when the host registers an `IDispatchCultureResolver` and an `IRefusalTextRenderer` ([A refusal in the reader's language](../error-handling.md#a-refusal-in-the-readers-language)).
 
 The command response and the event arrive independently. The response is the return value of `Dispatch`. The event arrives as a push.
 

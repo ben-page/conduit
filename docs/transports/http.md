@@ -111,6 +111,8 @@ throw new NotFoundException($"Todo {query.Id} not found");
 // }
 ```
 
+A refusal that names its sentence has `detail` written in the reader's language, and the dispatch endpoint writes the `Message` of its error answer the same way, when the host registers an `IDispatchCultureResolver` and an `IRefusalTextRenderer` ([A refusal in the reader's language](../error-handling.md#a-refusal-in-the-readers-language)).
+
 See [Error Handling](../error-handling.md) for built-in error codes and custom error code support.
 
 ## Wire dispatch

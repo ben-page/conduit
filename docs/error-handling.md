@@ -188,22 +188,25 @@ throw new ConflictException("Order 42 was already shipped")
     sentence in that culture, or null to keep the throw site's English. Conduit calls it for every culture the
     resolver answers, English included, so a host that answers null for English keeps one source of English: the
     throw site.
-- **Rendering happens once, where a refusal becomes a response.** `HandleWireRequest` (the envelope endpoint, the
-  SignalR hub, broker replies, and a host's batch items, which dispatch through it) and `PreflightWireRequestAsync`
-  share one mapping that writes the message and each detail. `ConduitRestHandlers` writes a RESTful endpoint's
-  `detail` the same way. The generated mediator hands `HandleWireRequest` its `IServiceProvider` (the
-  `HandleWireRequest(..., ILogger logger, IServiceProvider services, CancellationToken)` overload), and the runtime
-  resolves the translators, the renderer and the resolver from it. The culture is resolved only on a failure, inside
-  the catch, while the dispatch's own context is still current. A preflight resolves it from the caller's context,
-  which it set aside, because its checks run in a fresh one.
+- **Three edges write it, once, where an answer leaves the server for a person.** The envelope endpoint
+  (`MapConduitEndpoint`) and the SignalR hub (`ConduitHub.Dispatch`) call `RefusalRendering.RenderResult` on the
+  `DispatchResult` they are about to send; a RESTful endpoint's `detail` goes through `RefusalRendering.RenderMessage`.
+  Everything in process stays English: a caller of `HandleWireRequestAsync` or `PreflightWireRequestAsync` (a host's
+  batch, a preflight) gets the English message with `DispatchError.Text` carrying the sentence's name and values, and
+  each detail keeps its own `Text`. A host that hands such an answer to a person either calls `RenderResult` at its own
+  edge or rethrows a refusal carrying the `Text`, so the answer is written once. `DispatchError.Text` is `[JsonIgnore]`
+  like the others, so a broker reply is English. The generated mediator hands `HandleWireRequest` its
+  `IServiceProvider` (the `HandleWireRequest(..., ILogger logger, IServiceProvider services, CancellationToken)`
+  overload), and the runtime resolves only the translators from it. The renderer and resolver are looked up at the
+  edge, and only when there is text to render: a success, or a failure with no `Text`, makes no lookup.
 - **Conduit never sets `CultureInfo.CurrentCulture` or `CurrentUICulture`,** so dates and numbers in server-side text
   keep their format. Host code that needs the reader's language for something else, such as a notification or an
   email, calls the same resolver with `MessageContext.Current`.
 - **The answer is English, byte-identical to a refusal without `Text`,** whenever no resolver or renderer is
   registered, the resolver answers null or throws, the refusal or detail has no `Text`, or the renderer answers null,
-  empty or whitespace, or throws. Each detail renders on its own: one that fails stays English and the others still
-  render. A failure is logged at Error: EventId 20 `RefusalTextRenderFailed` (with the text's name, the culture and
-  the renderer's exception) and EventId 21 `DispatchCultureResolveFailed`.
+  empty or whitespace, or throws, or a resolver or renderer cannot be resolved from DI. Each detail renders on its own: one that fails stays English and the others still
+  render. A failure is logged at Error, under `RefusalRendering`'s category: EventId 20 `RefusalTextRenderFailed`
+  (with the text's name, the culture and the renderer's exception) and EventId 21 `DispatchCultureResolveFailed`.
 - **A client can set the property when no enricher writes it.** `ConduitHub` seeds a dispatch's properties with the
   client's `headers`, and an enricher's writes win only for the keys it writes. So an enricher that owns the language
   key must write it, or remove the client's, on every dispatch, and a resolver must accept only values it maps, as
@@ -224,8 +227,8 @@ Handler throws ConduitException
   -> Results.Problem(detail: ex.Message, statusCode: ex.Code.HttpStatusCode, title: ex.Code.Value)
 ```
 
-`detail` is `ex.Message` written in the reader's language when the refusal names its sentence
-([A refusal in the reader's language](#a-refusal-in-the-readers-language)).
+`detail` is `ex.Message`, or the refusal's `Text` written in the reader's language when it names its sentence
+(`RefusalRendering.RenderMessage`; see [A refusal in the reader's language](#a-refusal-in-the-readers-language)).
 
 The `HttpStatusCode` from `ErrorCode` is used directly, so custom error codes like `InsufficientCredit` with status
 422 work automatically. But `ToProblem` never reads `ex.Details`, `ex.GetClientType()`, or `ex.GetClientData()` — a
@@ -242,14 +245,17 @@ refusal's status, and — for a client-typed refusal — its type name and data 
 ```
 Handler throws ConduitException
   -> DispatchResult.Fail(ex)
-     -> DispatchError { Code, Message, Details, Status, Type, Data }
+     -> DispatchError { Code, Message, Details, Status, Type, Data }  (and Text, never serialized)
+  -> RefusalRendering.RenderResult(result, services, MessageContext.Current)   (the endpoint; the hub does the same)
+     -> Message and each detail's Message written in the reader's language when they carry Text
 ```
 
 `Type` and `Data` are set only when `ConduitException.IsClientTyped` is true for the exception's runtime type;
 otherwise both are `null`. When `Type` is set, `Data` is never `null` on the wire — a data-less typed refusal still
 sends `{}` (see [Client-typed refusals](#client-typed-refusals)).
 
-`Message` and each detail's `Message` are written in the reader's language when they name their sentence
+`HandleWireRequest` answers in English and carries the sentence's name in `DispatchError.Text`. The envelope endpoint
+and the hub then write `Message` and each detail's `Message` in the reader's language
 ([A refusal in the reader's language](#a-refusal-in-the-readers-language)); the exception itself is not changed.
 
 The HTTP transport's `MapConduitEndpoint` returns the whole `DispatchResult` as JSON (`Results.Json`), status-coded
@@ -262,7 +268,7 @@ caveat for them.
 
 ### Unhandled exceptions
 
-On the envelope endpoint, a non-`ConduitException` error is first offered to the host's translators (next section). One that no translator claims is logged at Error level and returned as `InternalError` (status 500) with the fixed message `"An unexpected error occurred."`. The original message is never leaked to the caller. That message is named `ConduitTextNames.UnexpectedError`, so a host's catalog can translate it.
+On the envelope endpoint, a non-`ConduitException` error is first offered to the host's translators (next section). One that no translator claims is logged at Error level and returned as `InternalError` (status 500) with the fixed message `"An unexpected error occurred."`. The original message is never leaked to the caller. That message is named `ConduitTextNames.UnexpectedError` (carried in `DispatchError.Text`), so the edge can write it from a host's catalog in the reader's language.
 
 The support reference is a structured field, `DispatchError.Reference` (`reference?: string` in the generated `ConduitError`), never message text. It is the dispatch's `ConversationId` when that is log-safe (`^[A-Za-z0-9-]{1,64}$`; the id is caller-supplied, so anything else could forge log lines), otherwise a minted 32-hex id, and the Error log line (EventId 1) carries the same value so support can grep for what the user quotes. Refusals carry none. An older server sends none, so a client treats the field as optional and the message still reads as a sentence on its own.
 
@@ -276,7 +282,7 @@ The support reference is a structured field, `DispatchError.Reference` (`referen
 mediator hands `HandleWireRequest` its service provider, and the runtime resolves the translators from it.
 
 - The first translator that returns a `ConduitException` wins. Its refusal goes back like any other refusal
-  (status, details, client type and data, its `Text` written in the reader's language), with no support reference. The use is logged at Information level
+  (status, details, client type and data, and its `Text` for the edge to write in the reader's language), with no support reference. The use is logged at Information level
   (EventId 6, `WireExceptionTranslated`) with the original exception, because a translated exception escaped the
   pipeline and someone may want to know where.
 - A translator that returns `null` passes. When every translator passes, the error becomes `InternalError` as above.
@@ -290,7 +296,7 @@ Typical use: a data layer's concurrency exception that escaped the pipeline beco
 ### Wire events
 
 Wire events are fire-and-forget. Exceptions are caught and logged. No error is returned to the caller, so nothing is
-rendered in the reader's language.
+written in the reader's language.
 
 ## ErrorCode equality
 

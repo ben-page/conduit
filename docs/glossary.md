@@ -99,13 +99,13 @@ layer's concurrency exception to `PreconditionFailedException` (412). See
 The name of a refusal's sentence in the host's catalog, plus the values that fill it, carried beside the English
 message by `ConduitException.Text` and `DispatchErrorDetail.Text`. A value that is itself a word is a `TextName`,
 translated before it fills the sentence. Never on the wire: Conduit writes the sentence in the reader's language
-where the refusal becomes a response, through the host's `IRefusalTextRenderer`, and keeps the English everywhere
-else. See [Error handling → A refusal in the reader's language](error-handling.md#a-refusal-in-the-readers-language).
+where an answer leaves the server for a person (the envelope endpoint, the hub, REST), through the host's
+`IRefusalTextRenderer`, and keeps the English everywhere else. See [Error handling → A refusal in the reader's language](error-handling.md#a-refusal-in-the-readers-language).
 
 ### Culture resolver (`IDispatchCultureResolver`)
 
 A host service that answers the reader's culture for a dispatch from its `MessageContext`, or null for English.
-Conduit asks it only where a refusal becomes a response and never sets the thread's culture from it.
+Conduit asks it only where an answer leaves the server for a person and never sets the thread's culture from it.
 `DispatchPropertyCultureResolver` is the ready-made one: one dispatch property mapped to cultures, anything unmapped
 answering null. See [Error handling → A refusal in the reader's language](error-handling.md#a-refusal-in-the-readers-language).
 
