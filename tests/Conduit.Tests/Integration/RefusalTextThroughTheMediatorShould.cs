@@ -9,8 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Conduit.Tests.Integration;
 
 /// <summary>
-/// Verifies the generated mediator hands the runtime its service provider, so a refusal that comes out of
-/// <see cref="IWireMediator.HandleWireRequestAsync"/> is written in the reader's language.
+/// Verifies a refusal that comes out of <see cref="IWireMediator.HandleWireRequestAsync"/> in process stays
+/// English and carries its <see cref="DispatchError.Text"/> for the edge that writes it in the reader's language.
 /// </summary>
 [TestClass]
 [DoNotParallelize]
@@ -47,7 +47,7 @@ public class RefusalTextThroughTheMediatorShould
     }
 
     [TestMethod]
-    public async Task AnswerInTheReadersLanguage()
+    public async Task AnswerInEnglishWithTheTextUnderASpanishReader()
     {
         // Arrange -- a handler that refuses with the named sentence "orders.shipped"
 
@@ -56,7 +56,8 @@ public class RefusalTextThroughTheMediatorShould
 
         // Assert
         result.Error.Should().NotBeNull();
-        result.Error!.Message.Should().Be("es:orders.shipped");
+        result.Error!.Message.Should().Be("Order was already shipped");
+        result.Error.Text!.Name.Should().Be("orders.shipped");
     }
 
     [TestMethod]

@@ -49,25 +49,16 @@ public sealed record DispatchResult<T>
     public static DispatchResult<T> Fail(Exceptions.ConduitException exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        return Fail(exception, exception.Message, exception.Details);
-    }
-
-    /// <summary>As <see cref="Fail(Exceptions.ConduitException)"/>, but with the given message and details in place of
-    /// the exception's own -- what the runtime passes once it has written them in the reader's language. The exception
-    /// is not changed.</summary>
-    public static DispatchResult<T> Fail(
-        Exceptions.ConduitException exception, string message, IReadOnlyList<DispatchErrorDetail>? details)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
         var type = exception.GetClientType();
         var data = exception.GetClientData();
         return new()
         {
-            Error = new DispatchError(exception.Code.Value, message, details)
+            Error = new DispatchError(exception.Code.Value, exception.Message, exception.Details)
             {
                 Status = exception.Code.HttpStatusCode,
                 Type = type,
                 Reference = exception.Reference,
+                Text = exception.Text,
                 // A typed refusal's data is never null on the wire -- even when a consumer's GetClientData
                 // override returns null -- because the client narrows on Type alone and expects an object.
                 Data = data is null
@@ -109,4 +100,10 @@ public sealed record DispatchError(
     /// greppable in the log line that carries the same value. Null on a refusal and from a server that predates it.
     /// <see cref="Exceptions.ConduitException.Reference"/> forwards onto it.</summary>
     public string? Reference { get; init; }
+
+    /// <summary>The refusal's sentence name and values, for the edge that writes it in the reader's language. Never
+    /// serialized, so the wire, broker replies and generated clients are unchanged: it does not cross a broker, and a
+    /// remote refusal reaches its caller in English.</summary>
+    [JsonIgnore]
+    public Conduit.Exceptions.RefusalText? Text { get; init; }
 }

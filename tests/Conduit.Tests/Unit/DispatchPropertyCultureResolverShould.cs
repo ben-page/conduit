@@ -87,4 +87,21 @@ public sealed class DispatchPropertyCultureResolverShould
         // Assert
         culture.Should().BeNull();
     }
+
+    [TestMethod]
+    public void RefuseAMapWithTwoKeysThatDifferOnlyByCase()
+    {
+        // Arrange
+        var map = new Dictionary<string, CultureInfo>
+        {
+            ["es"] = CultureInfo.GetCultureInfo("es-MX"),
+            ["ES"] = CultureInfo.GetCultureInfo("es-ES"),
+        };
+
+        // Act
+        var create = () => new DispatchPropertyCultureResolver("lang", map);
+
+        // Assert
+        create.Should().Throw<ArgumentException>().Which.Message.Should().Contain("differ only by case");
+    }
 }

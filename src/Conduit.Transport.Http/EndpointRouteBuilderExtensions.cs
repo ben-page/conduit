@@ -33,7 +33,11 @@ public static class EndpointRouteBuilderExtensions
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
             HttpDispatchContext.Start(httpRequest.HttpContext, enrichers);
 
-            var result = await mediator.HandleWireRequestAsync(envelope, cancellationToken);
+            // The edge where the answer leaves the server for a person: the refusal is written in the reader's language here.
+            var result = RefusalRendering.RenderResult(
+                await mediator.HandleWireRequestAsync(envelope, cancellationToken),
+                httpRequest.HttpContext.RequestServices,
+                MessageContext.Current);
 
             if (result.Error is not null)
             {

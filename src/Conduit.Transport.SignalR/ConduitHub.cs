@@ -12,11 +12,14 @@ namespace Conduit.Transport.SignalR;
 /// Registered <see cref="IDispatchContextEnricher"/> instances contribute server-trusted
 /// properties (e.g. the authenticated user id) over the client-supplied headers.
 /// A host that registers a <see cref="ConduitServerInfo"/> has it sent to each client as it connects.
+/// A failed dispatch's message and details are written in the reader's language on the way out
+/// (<see cref="RefusalRendering.RenderResult{T}"/>, from the hub invocation's service scope).
 /// </summary>
 public class ConduitHub(
     IWireMediator mediator,
     IEnumerable<IDispatchContextEnricher> enrichers,
-    IEnumerable<ConduitServerInfo> serverInfo) : Hub
+    IEnumerable<ConduitServerInfo> serverInfo,
+    IServiceProvider services) : Hub
 {
     /// <summary>The client method <see cref="OnConnectedAsync"/> invokes with the <see cref="ConduitServerInfo"/>.</summary>
     public const string ServerInfoMethod = "ConduitServerInfo";
@@ -41,7 +44,8 @@ public class ConduitHub(
     }
 
     /// <summary>
-    /// Dispatches a command or query received from a SignalR client.
+    /// Dispatches a command or query received from a SignalR client. A refusal that carries a message name is written
+    /// in the reader's language here, where the answer leaves the server.
     /// </summary>
     /// <param name="type">The fully-qualified message type name.</param>
     /// <param name="payload">The JSON payload to deserialize.</param>
@@ -56,9 +60,12 @@ public class ConduitHub(
     {
         this.StartMessageContext(context, headers);
 
-        return await mediator.HandleWireRequestAsync(
-            new DispatchEnvelope(type, payload),
-            this.Context.ConnectionAborted);
+        return RefusalRendering.RenderResult(
+            await mediator.HandleWireRequestAsync(
+                new DispatchEnvelope(type, payload),
+                this.Context.ConnectionAborted),
+            services,
+            MessageContext.Current);
     }
 
     /// <summary>

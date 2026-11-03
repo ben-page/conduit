@@ -7,7 +7,7 @@ using Conduit.Tests.Support;
 namespace Conduit.Tests.Unit;
 
 [TestClass]
-public class RefusalTextShould
+public sealed class RefusalTextShould
 {
     [TestMethod]
     public void StayOffTheClientData()

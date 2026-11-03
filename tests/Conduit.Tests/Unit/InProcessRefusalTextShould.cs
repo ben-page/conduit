@@ -1,9 +1,10 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Configuration;
-using Conduit.Generated;
 using Conduit.Exceptions;
+using Conduit.Generated;
 using Conduit.Middleware;
 using Conduit.Runtime;
 using Conduit.TestUtils;
@@ -14,7 +15,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Conduit.Tests.Unit;
 
 [TestClass]
-public sealed class WireRefusalTextShould
+public sealed class InProcessRefusalTextShould
 {
     private sealed class StaleWrite : Exception;
 
@@ -73,19 +74,20 @@ public sealed class WireRefusalTextShould
         new("Order was already shipped") { Text = new RefusalText("orders.shipped") };
 
     [TestMethod]
-    public async Task AnswerARefusalInTheReadersLanguage()
+    public async Task AnswerARefusalInEnglishWithItsTextUnderASpanishReader()
     {
         // Arrange / Act
         var result = await DispatchAsync(Shipped(), "es");
 
         // Assert
-        result.Error!.Message.Should().Be("es:orders.shipped");
+        result.Error!.Message.Should().Be("Order was already shipped");
+        result.Error.Text!.Name.Should().Be("orders.shipped");
         result.Error.Code.Should().Be("Conflict");
         result.Error.Status.Should().Be(409);
     }
 
     [TestMethod]
-    public async Task RenderTheDetails()
+    public async Task KeepTheDetailsEnglishEachWithItsText()
     {
         // Arrange
         var refusal = new DetailedRefusal(
@@ -98,8 +100,10 @@ public sealed class WireRefusalTextShould
         var result = await DispatchAsync(refusal, "es");
 
         // Assert
-        var detail = result.Error!.Details.Should().ContainSingle().Which;
-        detail.Message.Should().Be("es:qty.max");
+        result.Error!.Message.Should().Be("Order was invalid");
+        var detail = result.Error.Details.Should().ContainSingle().Which;
+        detail.Message.Should().Be("Too many");
+        detail.Text!.Name.Should().Be("qty.max");
         detail.Field.Should().Be("qty");
     }
 
@@ -130,34 +134,58 @@ public sealed class WireRefusalTextShould
 
         // Assert
         result.Error!.Message.Should().Be("Order was already shipped");
+        result.Error.Text!.Name.Should().Be("orders.shipped");
     }
 
     [TestMethod]
-    public async Task RenderATranslatedRefusal()
+    public async Task CarryTheTextOfATranslatedRefusal()
     {
         // Arrange / Act
         var result = await DispatchAsync(new StaleWrite(), "es", withTranslator: true);
 
         // Assert
-        result.Error!.Message.Should().Be("es:stale");
+        result.Error!.Message.Should().Be("Someone else changed this.");
+        result.Error.Text!.Name.Should().Be("stale");
         result.Error.Code.Should().Be("PreconditionFailed");
     }
 
     [TestMethod]
-    public async Task RenderTheUnexpectedErrorSentence()
+    public async Task AnswerTheUnexpectedErrorInEnglishWithItsTextAndReference()
     {
         // Arrange / Act
-        var spanish = await DispatchAsync(new InvalidOperationException("SELECT * FROM secrets"), "es");
-        var english = await DispatchAsync(new InvalidOperationException("SELECT * FROM secrets"), lang: null);
+        var result = await DispatchAsync(new InvalidOperationException("SELECT * FROM secrets"), "es");
 
         // Assert
-        spanish.Error!.Message.Should().Be("es:" + ConduitTextNames.UnexpectedError);
-        spanish.Error.Reference.Should().NotBeNullOrEmpty();
-        english.Error!.Message.Should().Be("An unexpected error occurred.");
+        result.Error!.Message.Should().Be("An unexpected error occurred.");
+        result.Error.Text!.Name.Should().Be(ConduitTextNames.UnexpectedError);
+        result.Error.Reference.Should().NotBeNullOrEmpty();
     }
 
     [TestMethod]
-    public async Task RenderAPreflightRefusal()
+    public async Task SetTheActivityStatusFromTheEnglishMessage()
+    {
+        // Arrange
+        string? statusDescription = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Conduit",
+            Sample = SampleAllData,
+            ActivityStopped = activity => statusDescription = activity.StatusDescription,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        // Act
+        await DispatchAsync(Shipped(), "es");
+
+        // Assert
+        statusDescription.Should().Be("Order was already shipped");
+    }
+
+    private static ActivitySamplingResult SampleAllData(ref ActivityCreationOptions<ActivityContext> _) =>
+        ActivitySamplingResult.AllDataAndRecorded;
+
+    [TestMethod]
+    public async Task AnswerAPreflightRefusalInEnglishWithItsText()
     {
         // Arrange
         await using var host = await TestHost.StartAsync(builder =>
@@ -180,7 +208,8 @@ public sealed class WireRefusalTextShould
 
             // Assert
             preflight.Admitted.Should().BeFalse();
-            preflight.Refusal!.Message.Should().Be("es:orders.shipped");
+            preflight.Refusal!.Message.Should().Be("Order was already shipped");
+            preflight.Refusal.Text!.Name.Should().Be("orders.shipped");
         }
         finally
         {
