@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Globalization;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -828,10 +829,38 @@ public static partial class ConduitRuntime
         => HandleWireRequest(messageType, interceptors, createEnvelope, dispatch, logger, translators: null, cancellationToken);
 
     /// <summary>
+    /// As the translator overload, but the runtime resolves what it needs from <paramref name="services"/>: the
+    /// <see cref="IWireExceptionTranslator"/>s, and the optional <see cref="IRefusalTextRenderer"/> and
+    /// <see cref="IDispatchCultureResolver"/> that write a refusal's message and details in the reader's language. With
+    /// no renderer or resolver registered, or when either declines or fails, the answer is today's English.
+    /// </summary>
+    public static Task<DispatchResult<object>> HandleWireRequest(
+        string messageType,
+        IEnumerable<IInboundInterceptor> interceptors,
+        Func<DispatchEnvelope> createEnvelope,
+        Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
+        ILogger logger,
+        IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(messageType);
+        ArgumentNullException.ThrowIfNull(interceptors);
+        ArgumentNullException.ThrowIfNull(createEnvelope);
+        ArgumentNullException.ThrowIfNull(dispatch);
+        ArgumentNullException.ThrowIfNull(services);
+        return HandleWireRequestCore(
+            messageType, interceptors, createEnvelope, dispatch, logger,
+            services.GetServices<IWireExceptionTranslator>(),
+            services.GetService<IRefusalTextRenderer>(),
+            services.GetService<IDispatchCultureResolver>(),
+            cancellationToken);
+    }
+
+    /// <summary>
     /// As the overload without translators, but an exception no <see cref="ConduitException"/> arm claims is offered to
     /// each <see cref="IWireExceptionTranslator"/> before it becomes <c>InternalError</c>.
     /// </summary>
-    public static async Task<DispatchResult<object>> HandleWireRequest(
+    public static Task<DispatchResult<object>> HandleWireRequest(
         string messageType,
         IEnumerable<IInboundInterceptor> interceptors,
         Func<DispatchEnvelope> createEnvelope,
@@ -844,6 +873,21 @@ public static partial class ConduitRuntime
         ArgumentNullException.ThrowIfNull(interceptors);
         ArgumentNullException.ThrowIfNull(createEnvelope);
         ArgumentNullException.ThrowIfNull(dispatch);
+        return HandleWireRequestCore(
+            messageType, interceptors, createEnvelope, dispatch, logger, translators, renderer: null, cultureResolver: null, cancellationToken);
+    }
+
+    private static async Task<DispatchResult<object>> HandleWireRequestCore(
+        string messageType,
+        IEnumerable<IInboundInterceptor> interceptors,
+        Func<DispatchEnvelope> createEnvelope,
+        Func<string, JsonElement, CancellationToken, Task<object?>> dispatch,
+        ILogger logger,
+        IEnumerable<IWireExceptionTranslator>? translators,
+        IRefusalTextRenderer? renderer,
+        IDispatchCultureResolver? cultureResolver,
+        CancellationToken cancellationToken)
+    {
         LogWireRequestReceived(logger, messageType, null);
 
         return await RunWireRequestAsync(
@@ -856,6 +900,9 @@ public static partial class ConduitRuntime
             },
             logger,
             translators,
+            renderer,
+            cultureResolver,
+            readerContext: null,
             nameof(HandleWireRequest),
             cancellationToken);
     }
@@ -908,6 +955,10 @@ public static partial class ConduitRuntime
                 },
                 logger,
                 services.GetServices<IWireExceptionTranslator>(),
+                services.GetService<IRefusalTextRenderer>(),
+                services.GetService<IDispatchCultureResolver>(),
+                // The checks run in a fresh context; the reader is the caller whose context was set aside.
+                callerContext,
                 nameof(PreflightWireRequestAsync),
                 cancellationToken);
             return new WirePreflightResult(answer.Error is null && checksRan, answer.Error);
@@ -969,7 +1020,10 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// The part of a wire request every caller shares: the inbound gates, the dispatch context, <paramref name="body"/>, and
-    /// the exception-to-wire mapping. <paramref name="operation"/> names the activity.
+    /// the exception-to-wire mapping. <paramref name="operation"/> names the activity. A failure's message and details are
+    /// written in the reader's language (<paramref name="renderer"/>, <paramref name="cultureResolver"/>) from
+    /// <paramref name="readerContext"/>, or from the current context when it is null -- resolved inside the catch, while
+    /// the dispatch's own context is still current. English whenever either is absent, declines or fails.
     /// </summary>
     private static async Task<DispatchResult<object>> RunWireRequestAsync(
         string messageType,
@@ -977,6 +1031,9 @@ public static partial class ConduitRuntime
         Func<Task<object?>> body,
         ILogger logger,
         IEnumerable<IWireExceptionTranslator>? translators,
+        IRefusalTextRenderer? renderer,
+        IDispatchCultureResolver? cultureResolver,
+        MessageContext? readerContext,
         string operation,
         CancellationToken cancellationToken)
     {
@@ -1015,7 +1072,8 @@ public static partial class ConduitRuntime
             // (DispatchResult.cs:34) -- the exception simply had nothing to hand it until now. This
             // overload also forwards the declared HTTP status and, when the exception is client-typed
             // (`ConduitException.IsClientTyped`), its type name and data (ConduitException.GetClientData).
-            return DispatchResult<object>.Fail(ex);
+            var culture = RefusalRendering.ResolveCulture(cultureResolver, readerContext ?? MessageContext.Current, logger);
+            return FailRendered(ex, renderer, culture, logger);
         }
 #pragma warning disable CA1031
         catch (Exception ex)
@@ -1041,7 +1099,8 @@ public static partial class ConduitRuntime
                     // A translator is a backstop (an exception that escaped the pipeline), so its use is logged, not silent.
                     LogWireExceptionTranslated(logger, translator.GetType().Name, refusal.Code.Value, messageType, ex);
                     activity?.SetStatus(ActivityStatusCode.Error, refusal.Message);
-                    return DispatchResult<object>.Fail(refusal);
+                    var refusalCulture = RefusalRendering.ResolveCulture(cultureResolver, readerContext ?? MessageContext.Current, logger);
+                    return FailRendered(refusal, renderer, refusalCulture, logger);
                 }
             }
 
@@ -1056,7 +1115,10 @@ public static partial class ConduitRuntime
                 ? conversationId
                 : Guid.NewGuid().ToString("N");
             LogDispatchError(logger, messageType, reference, ex);
-            var failed = DispatchResult<object>.Fail("InternalError", "An unexpected error occurred.");
+            const string unexpectedEnglish = "An unexpected error occurred.";
+            var unexpectedCulture = RefusalRendering.ResolveCulture(cultureResolver, readerContext ?? MessageContext.Current, logger);
+            var failed = DispatchResult<object>.Fail("InternalError", RefusalRendering.Render(
+                new RefusalText(ConduitTextNames.UnexpectedError), unexpectedEnglish, renderer, unexpectedCulture, logger));
             return failed with { Error = failed.Error! with { Reference = reference } };
         }
         finally
@@ -1064,6 +1126,14 @@ public static partial class ConduitRuntime
             MessageContext.RestoreContext(previousContext);
         }
     }
+
+    /// <summary>The answer for a refusal, its message and details written in <paramref name="culture"/>; the exception is not changed.</summary>
+    private static DispatchResult<object> FailRendered(
+        ConduitException exception, IRefusalTextRenderer? renderer, CultureInfo? culture, ILogger logger)
+        => DispatchResult<object>.Fail(
+            exception,
+            RefusalRendering.Render(exception.Text, exception.Message, renderer, culture, logger),
+            RefusalRendering.RenderDetails(exception.Details, renderer, culture, logger));
 
     /// <summary>
     /// Runs inbound interceptor gates, then deserializes and dispatches a wire event.

@@ -49,11 +49,21 @@ public sealed record DispatchResult<T>
     public static DispatchResult<T> Fail(Exceptions.ConduitException exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        return Fail(exception, exception.Message, exception.Details);
+    }
+
+    /// <summary>As <see cref="Fail(Exceptions.ConduitException)"/>, but with the given message and details in place of
+    /// the exception's own -- what the runtime passes once it has written them in the reader's language. The exception
+    /// is not changed.</summary>
+    public static DispatchResult<T> Fail(
+        Exceptions.ConduitException exception, string message, IReadOnlyList<DispatchErrorDetail>? details)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
         var type = exception.GetClientType();
         var data = exception.GetClientData();
         return new()
         {
-            Error = new DispatchError(exception.Code.Value, exception.Message, exception.Details)
+            Error = new DispatchError(exception.Code.Value, message, details)
             {
                 Status = exception.Code.HttpStatusCode,
                 Type = type,
