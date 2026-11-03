@@ -22,6 +22,8 @@ public sealed class ContractMismatchException : ConduitException
     public ContractMismatchException(IReadOnlyList<string> named, int total)
         : base(ErrorCode.ContractMismatch, MessageFor(named, total), DetailsFor(named))
     {
+        this.Text = TextFor(named, total);
+
         // No public data property: a declared property would make this a client-typed refusal (TypeGen emits it into
         // ErrorMap and the wire error gains Type/Data). The count lives in the message.
     }
@@ -31,6 +33,18 @@ public sealed class ContractMismatchException : ConduitException
         ArgumentNullException.ThrowIfNull(named);
         var more = total > named.Count ? $" and {total - named.Count} more" : string.Empty;
         return $"This page is out of date: the request is missing {string.Join(", ", named)}{more}. Reload to continue.";
+    }
+
+    private static RefusalText TextFor(IReadOnlyList<string> named, int total)
+    {
+        var members = string.Join(", ", named);
+        return total > named.Count
+            ? new RefusalText(
+                ConduitTextNames.ContractMismatchMore,
+                new Dictionary<string, object?> { ["members"] = members, ["more"] = total - named.Count })
+            : new RefusalText(
+                ConduitTextNames.ContractMismatch,
+                new Dictionary<string, object?> { ["members"] = members });
     }
 
     private static DispatchErrorDetail[] DetailsFor(IReadOnlyList<string> named)

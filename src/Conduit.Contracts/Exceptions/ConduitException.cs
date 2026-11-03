@@ -39,6 +39,15 @@ public abstract class ConduitException(
     public string? Reference { get; init; }
 
     /// <summary>
+    /// The name and values of this refusal's sentence, so a host can write it in the reader's language.
+    /// <see langword="null"/> -- the default -- means the refusal has only its English <see cref="Exception.Message"/>.
+    /// The English message stays the source of truth inside the server (logs, activity status, audit); this is read
+    /// only where the refusal becomes a response. Declared here, on the base class, so it is never part of
+    /// <see cref="GetClientData"/> or TypeGen's output.
+    /// </summary>
+    public RefusalText? Text { get; init; }
+
+    /// <summary>
     /// The typed data a client reads for this refusal: the public instance properties a SUBCLASS declares (on
     /// itself or on an ancestor below <see cref="ConduitException"/>), keyed by property name. An EMPTY dictionary
     /// when <see cref="IsClientTyped"/> is true for this type but it declares no properties — a typed refusal's

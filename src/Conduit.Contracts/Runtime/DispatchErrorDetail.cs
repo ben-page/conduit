@@ -1,4 +1,6 @@
-﻿namespace Conduit.Runtime;
+﻿using System.Text.Json.Serialization;
+
+namespace Conduit.Runtime;
 
 /// <summary>
 /// A single error detail within a failed dispatch. <paramref name="Field"/> names the field for a
@@ -17,4 +19,15 @@
 /// </remarks>
 /// <param name="Field">The field that caused the error, or <see langword="null"/> for object-level errors.</param>
 /// <param name="Message">A human-readable description of the error.</param>
-public sealed record DispatchErrorDetail(string? Field, string Message);
+public sealed record DispatchErrorDetail(string? Field, string Message)
+{
+    /// <summary>
+    /// The name and values of this detail's sentence, so a host can write it in the reader's language.
+    /// <see langword="null"/> means the detail has only its English <see cref="Message"/>, which stays the source of
+    /// truth inside the server; this is read only where a refusal becomes a response. <b>Never serialized</b>
+    /// (<see cref="JsonIgnoreAttribute"/>): the wire carries one <c>message</c> string, already written in the
+    /// reader's language, so the dispatch contract and generated clients do not change.
+    /// </summary>
+    [JsonIgnore]
+    public Conduit.Exceptions.RefusalText? Text { get; init; }
+}
