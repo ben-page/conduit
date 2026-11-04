@@ -206,6 +206,99 @@ public class JobsApiShould
         entry.Outcome.Should().Be(JobRunOutcome.Failed);
         entry.LastError.Should().Contain("on purpose");
         entry.ScheduleName.Should().Be("warm");
+        entry.IsManual.Should().BeFalse("an occurrence is not a manual run");
+    }
+
+    [TestMethod]
+    public async Task FollowAManualRunFromTheLedgerIntoItsHistory()
+    {
+        // Arrange
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartHostAsync(database, timeProvider, spy);
+        var jobs = host.GetRequiredService<IJobs>();
+        var key = await jobs.TriggerNowAsync("warm", CancellationToken.None);
+        (await jobs.GetRunAsync(key, CancellationToken.None)).Should().NotBeNull("the ledger holds it until it ends");
+
+        // Act — a success deletes the ledger row in the transaction that writes the history row
+        await FakeClock.AdvanceUntilAsync(
+            timeProvider,
+            TimeSpan.FromSeconds(30),
+            async () => await jobs.GetRunAsync(key, CancellationToken.None) is null);
+
+        // Assert
+        var history = await jobs.GetHistoryAsync(new JobHistoryFilter { JobKey = key }, CancellationToken.None);
+        var entry = history.Entries.Should().ContainSingle().Subject;
+        entry.Outcome.Should().Be(JobRunOutcome.Completed);
+        entry.ScheduleName.Should().Be("warm");
+        entry.IsManual.Should().BeTrue();
+        spy.Count.Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task ReadAFailedRunByItsKey()
+    {
+        // Arrange — a terminal run's row is kept for inspection, so its key still reads it
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartHostAsync(database, new FakeTimeProvider(Start), new JobSpy());
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.TryMaterializeAsync(
+            new JobRun
+            {
+                JobKey = "warm@failed",
+                ScheduleName = "warm",
+                MessageType = "Conduit.Jobs.Tests.Support.RecordedJob",
+                Payload = "{}",
+                RunAt = Start,
+                Status = JobRunStatus.Pending,
+            },
+            CancellationToken.None);
+        var stored = await store.GetRunAsync("warm@failed", CancellationToken.None);
+        await store.MarkTerminalAsync(
+            stored!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
+            CancellationToken.None);
+
+        // Act
+        var run = await host.GetRequiredService<IJobs>().GetRunAsync("warm@failed", CancellationToken.None);
+
+        // Assert
+        run.Should().NotBeNull();
+        run!.Status.Should().Be(JobRunStatus.Failed);
+        run.LastError.Should().Be("boom");
+        run.IsManual.Should().BeFalse();
+    }
+
+    [TestMethod]
+    public async Task ReadNoRunForAnUnknownKey()
+    {
+        // Arrange
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartHostAsync(database, new FakeTimeProvider(Start), new JobSpy());
+
+        // Act
+        var run = await host.GetRequiredService<IJobs>().GetRunAsync("nope@manual-x", CancellationToken.None);
+
+        // Assert
+        run.Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task ReturnAManualRunsKeyButReadNoRunWithoutAnEngine()
+    {
+        // Arrange — the in-memory trigger runs inline, so the run is over when the key comes back
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        await using var host = await JobsTestHost.StartAsync(WarmEveryFiveMinutes, spy, timeProvider);
+        var jobs = host.GetRequiredService<IJobs>();
+
+        // Act
+        var key = await jobs.TriggerNowAsync("warm", CancellationToken.None);
+
+        // Assert
+        key.Should().Be(ManualRunKey.Build("warm", Start));
+        spy.Count.Should().Be(1);
+        (await jobs.GetRunAsync(key, CancellationToken.None)).Should().BeNull("there is no ledger");
     }
 
     [TestMethod]

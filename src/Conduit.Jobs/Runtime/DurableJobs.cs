@@ -57,6 +57,14 @@ internal sealed class DurableJobs : IJobs
         => [.. (await this.store.GetInFlightAsync(cancellationToken)).Select(ToInfo)];
 
     /// <inheritdoc/>
+    public async Task<JobRunInfo?> GetRunAsync(string jobKey, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(jobKey);
+
+        return await this.store.GetRunAsync(jobKey, cancellationToken) is { } run ? ToInfo(run) : null;
+    }
+
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(
         JobFilter filter, CancellationToken cancellationToken)
     {
@@ -113,7 +121,7 @@ internal sealed class DurableJobs : IJobs
             scheduleName, paused: false, this.timeProvider.GetUtcNow(), cancellationToken);
 
     /// <inheritdoc/>
-    public async Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
+    public async Task<string> TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
     {
         var schedule = this.registry.Schedules
             .FirstOrDefault(candidate => string.Equals(candidate.Name, scheduleName, StringComparison.Ordinal))
@@ -127,7 +135,7 @@ internal sealed class DurableJobs : IJobs
         // job by hand would swallow the occurrence the schedule was already waiting for.
         var run = new JobRun
         {
-            JobKey = $"{schedule.Name}@manual-{now.UtcDateTime:O}",
+            JobKey = ManualRunKey.Build(schedule.Name, now),
             ScheduleName = schedule.Name,
             Occurrence = null,
             MessageType = command.GetType().FullName!,
@@ -136,10 +144,11 @@ internal sealed class DurableJobs : IJobs
             Status = JobRunStatus.Pending,
         };
 
+        // A false insert is a second trigger in the same instant on an overlapping schedule: same key, one run.
         if (schedule.AllowsOverlap)
         {
             await this.store.TryMaterializeAsync(run, cancellationToken);
-            return;
+            return run.JobKey;
         }
 
         // The same locked check-and-insert the scheduler materializes this schedule's occurrences
@@ -151,6 +160,8 @@ internal sealed class DurableJobs : IJobs
         {
             throw new JobOverlapException(schedule.Name);
         }
+
+        return run.JobKey;
     }
 
     /// <inheritdoc/>

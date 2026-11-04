@@ -47,6 +47,24 @@ public interface IJobs
     public Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(
         JobFilter filter, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Reads one run's ledger row by its key (the key <see cref="TriggerNowAsync"/> returns, or one a listing
+    /// carries), whatever its status: pending (awaiting a retry when <see cref="JobRunInfo.AttemptCount"/> is above
+    /// zero), running, or terminal and still kept (failed, cancelled, or a message-keyed trigger run kept as
+    /// completed).
+    /// </summary>
+    /// <remarks>
+    /// <see langword="null"/> when the ledger holds no row of that key. A successful schedule run's row is deleted in
+    /// the same transaction that writes its <see cref="GetHistoryAsync">history</see> row, so a caller following a
+    /// run reads this first and, on <see langword="null"/>, history with <see cref="JobHistoryFilter.JobKey"/>: the
+    /// run is in one or the other until retention purges it. Without a persistence engine there is no ledger, and
+    /// this is always <see langword="null"/>.
+    /// </remarks>
+    /// <param name="jobKey">The run's key.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The run, or <see langword="null"/>.</returns>
+    public Task<JobRunInfo?> GetRunAsync(string jobKey, CancellationToken cancellationToken);
+
     /// <summary>Lists runs whose attempts are exhausted.</summary>
     /// <param name="filter">Narrows the result.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
@@ -99,14 +117,19 @@ public interface IJobs
     /// </remarks>
     /// <param name="scheduleName">The schedule to run.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <returns>
+    /// The queued run's key, <c>{schedule}@manual-{instant}</c>: what <see cref="GetRunAsync"/>,
+    /// <see cref="JobHistoryFilter.JobKey"/> and <see cref="CancelAsync"/> take, and what marks the run
+    /// <see cref="JobRunInfo.IsManual"/>. Without a persistence engine the run has already finished when this
+    /// returns, and the key reads nothing back, since there is no ledger.
+    /// </returns>
     /// <exception cref="ArgumentException">No schedule of that name is declared on this host.</exception>
     /// <exception cref="JobOverlapException">
     /// The schedule does not allow overlap and already has a run outstanding; nothing was queued.
     /// Server-side by design — catch it and answer your own refusal (an HTTP 409, say) if a client
     /// asked for the run.
     /// </exception>
-    public Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken);
+    public Task<string> TriggerNowAsync(string scheduleName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Asks a run to stop. Returns an outcome rather than <see cref="Task"/> because the caller has

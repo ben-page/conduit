@@ -1,4 +1,5 @@
 using Conduit.Jobs.Persistence;
+using Conduit.Jobs.Runtime;
 
 namespace Conduit.Jobs;
 
@@ -25,4 +26,11 @@ public sealed record JobRunHistoryInfo(
     DateTimeOffset? StartedAt,
     DateTimeOffset CompletedAt,
     int AttemptCount,
-    string? LastError);
+    string? LastError)
+{
+    /// <summary>
+    /// Whether <see cref="IJobs.TriggerNowAsync"/> queued this run, read from its key
+    /// (<c>{schedule}@manual-{instant}</c>); an occurrence, a start-up run and a trigger's run are not manual.
+    /// </summary>
+    public bool IsManual => ManualRunKey.Is(this.JobKey, this.ScheduleName);
+}

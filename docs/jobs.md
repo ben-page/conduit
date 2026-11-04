@@ -128,7 +128,7 @@ jobs.Schedule("rederive-totals")
     .Run(() => new RederiveTotals());
 
 // Later, from an admin endpoint or a CLI command:
-await jobs.TriggerNowAsync("rederive-totals", cancellationToken);
+var key = await jobs.TriggerNowAsync("rederive-totals", cancellationToken);
 ```
 
 - **Neither scheduler starts it.** It has no occurrences, so no loop waits for one: nothing is
@@ -578,13 +578,14 @@ public interface IJobs
 {
     Task<IReadOnlyList<JobScheduleInfo>> GetSchedulesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<JobRunInfo>> GetInFlightAsync(CancellationToken cancellationToken);
+    Task<JobRunInfo?> GetRunAsync(string jobKey, CancellationToken cancellationToken);
     Task<IReadOnlyList<JobRunInfo>> GetPendingAsync(JobFilter filter, CancellationToken cancellationToken);
     Task<IReadOnlyList<JobScopeInfo>> GetPendingScopesAsync(JobFilter filter, CancellationToken cancellationToken);
     Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(JobFilter filter, CancellationToken cancellationToken);
     Task<JobHistoryPage> GetHistoryAsync(JobHistoryFilter filter, CancellationToken cancellationToken);
     Task PauseAsync(string scheduleName, CancellationToken cancellationToken);
     Task ResumeAsync(string scheduleName, CancellationToken cancellationToken);
-    Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken);
+    Task<string> TriggerNowAsync(string scheduleName, CancellationToken cancellationToken);
     Task<CancellationOutcome> CancelAsync(string jobKey, CancellationToken cancellationToken);
 }
 ```
@@ -595,6 +596,11 @@ Inject `IJobs` anywhere — an admin endpoint, a diagnostics page, a CLI.
   a run **between attempts** appears: it is `Pending` with `RunAt` set to when the next attempt falls
   due, so it shows in neither `GetInFlightAsync` nor `GetFailedAsync`, the latter listing only runs
   whose attempts are exhausted.
+- `GetRunAsync(jobKey)` — one run's ledger row by its key, whatever its status: pending (awaiting a
+  retry when `AttemptCount` is above zero), running (`Claiming`), or terminal and still kept. It is
+  `null` once the ledger holds no such row — a successful schedule run's row is deleted in the same
+  transaction that writes its [history](#run-history) row, so to follow a run, read this first and,
+  on `null`, history filtered by `JobKey`: the run is in one or the other until retention purges it.
 - `GetPendingScopesAsync(filter)` — coalesced work waiting to become a run. For a projection this is
   queue depth. `Version` climbing while `DueAt` holds still means a scope is absorbing a steady
   stream, which is coalescing working as intended.
@@ -608,7 +614,12 @@ the host that received the call would be useless. It deliberately leaves the cur
 resuming picks up from the next occurrence.
 
 **Trigger-now** queues an extra run immediately, with no occurrence attached, so running a job by
-hand cannot swallow the occurrence the schedule was already waiting for. For an
+hand cannot swallow the occurrence the schedule was already waiting for. It returns the run's key,
+`{schedule}@manual-{instant}` — what `GetRunAsync`, a `JobKey` history filter and `CancelAsync`
+take — and that key is what sets `IsManual` on the run's `JobRunInfo` and `JobRunHistoryInfo` (an
+occurrence, a start-up run and a trigger's run read `false`; so does a coalescing trigger's run unless
+its coalesce key itself begins `manual-`). Without a database the run executes inline, and the key it
+returns names a run that has already finished, with no ledger to read it back from. For an
 [on-demand schedule](#on-demand-schedules) it is the only way a run starts. It honours the schedule's
 [overlap](#overlap) rule: without `AllowOverlap()` it throws `JobOverlapException` (naming the
 schedule in `ScheduleName`) while a run is outstanding, and queues nothing. The exception is
@@ -618,7 +629,7 @@ business is the caller's call:
 ```csharp
 try
 {
-    await jobs.TriggerNowAsync(name, cancellationToken);
+    return await jobs.TriggerNowAsync(name, cancellationToken);
 }
 catch (JobOverlapException overlap)
 {
@@ -644,6 +655,7 @@ var page = await jobs.GetHistoryAsync(
 foreach (var entry in page.Entries)
 {
     Console.WriteLine($"{entry.JobKey}: {entry.Outcome} at {entry.CompletedAt} — {entry.LastError}");
+    // entry.IsManual: whether TriggerNowAsync queued it
 }
 ```
 

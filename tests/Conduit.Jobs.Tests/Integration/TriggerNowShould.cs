@@ -65,11 +65,31 @@ public class TriggerNowShould
             claimed[0], JobRunStatus.Failed, "gave up", "warm", null, Start, CancellationToken.None);
 
         // Act
-        await host.GetRequiredService<IJobs>().TriggerNowAsync("warm", CancellationToken.None);
+        var key = await host.GetRequiredService<IJobs>().TriggerNowAsync("warm", CancellationToken.None);
+
+        // Assert — the key it returns is the run it queued
+        key.Should().Be(ManualRunKey.Build("warm", Start));
+        var pending = await store.GetPendingAsync("warm", CancellationToken.None);
+        pending.Should().ContainSingle().Which.JobKey.Should().Be(key);
+    }
+
+    [TestMethod]
+    public async Task ReadTheQueuedRunBackByTheKeyItReturns()
+    {
+        // Arrange
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await StartManageOnlyHostAsync(database, WarmEveryFiveMinutes);
+        var jobs = host.GetRequiredService<IJobs>();
+
+        // Act
+        var key = await jobs.TriggerNowAsync("warm", CancellationToken.None);
 
         // Assert
-        var pending = await store.GetPendingAsync("warm", CancellationToken.None);
-        pending.Should().ContainSingle().Which.JobKey.Should().StartWith("warm@manual-");
+        var run = await jobs.GetRunAsync(key, CancellationToken.None);
+        run.Should().NotBeNull();
+        run!.Status.Should().Be(JobRunStatus.Pending);
+        run.ScheduleName.Should().Be("warm");
+        run.IsManual.Should().BeTrue();
     }
 
     [TestMethod]
@@ -86,10 +106,11 @@ public class TriggerNowShould
         await store.TryMaterializeAsync(SeedRun("warm@pending"), CancellationToken.None);
 
         // Act
-        await host.GetRequiredService<IJobs>().TriggerNowAsync("warm", CancellationToken.None);
+        var key = await host.GetRequiredService<IJobs>().TriggerNowAsync("warm", CancellationToken.None);
 
         // Assert
         (await JobsDatabaseProbe.CountRunsAsync(database)).Should().Be(3);
+        (await store.GetRunAsync(key, CancellationToken.None)).Should().NotBeNull("the key names the run it queued");
     }
 
     [TestMethod]

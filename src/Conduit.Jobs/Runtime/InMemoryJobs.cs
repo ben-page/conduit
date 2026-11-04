@@ -50,6 +50,11 @@ internal sealed class InMemoryJobs : IJobs
         => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
 
     /// <inheritdoc/>
+    /// <remarks>Always <see langword="null"/>. There is no ledger for a run to be read from.</remarks>
+    public Task<JobRunInfo?> GetRunAsync(string jobKey, CancellationToken cancellationToken)
+        => Task.FromResult<JobRunInfo?>(null);
+
+    /// <inheritdoc/>
     public Task<IReadOnlyList<JobRunInfo>> GetFailedAsync(
         JobFilter filter, CancellationToken cancellationToken)
         => Task.FromResult<IReadOnlyList<JobRunInfo>>([]);
@@ -98,15 +103,17 @@ internal sealed class InMemoryJobs : IJobs
     /// database every host fires every schedule anyway; there is nothing shared to coordinate through.
     /// While it runs, <see cref="CancelAsync"/> with the schedule's name reaches it, as it does a
     /// scheduled run. A run of an <c>AllowOverlap()</c> schedule that starts beside another is not
-    /// registered, so only the first of the two is reachable that way.
+    /// registered, so only the first of the two is reachable that way. The key it returns is shaped as the durable
+    /// runner's, and names a run that has already finished.
     /// </remarks>
-    public async Task TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
+    public async Task<string> TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
     {
         var schedule = this.registry.Schedules
             .FirstOrDefault(candidate => string.Equals(candidate.Name, scheduleName, StringComparison.Ordinal))
             ?? throw new ArgumentException(
                 $"No job schedule named '{scheduleName}' is declared.", nameof(scheduleName));
 
+        var key = ManualRunKey.Build(schedule.Name, this.timeProvider.GetUtcNow());
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var tracked = this.state.TryTrack(schedule.Name, cancellation);
         if (!tracked && !schedule.AllowsOverlap)
@@ -127,6 +134,8 @@ internal sealed class InMemoryJobs : IJobs
                 this.state.Forget(schedule.Name, cancellation);
             }
         }
+
+        return key;
     }
 
     /// <inheritdoc/>
