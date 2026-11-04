@@ -207,6 +207,7 @@ public class JobsApiShould
         entry.LastError.Should().Contain("on purpose");
         entry.ScheduleName.Should().Be("warm");
         entry.IsManual.Should().BeFalse("an occurrence is not a manual run");
+        entry.AttemptCount.Should().Be(0, "no attempt had failed when its one attempt began");
     }
 
     [TestMethod]
@@ -233,6 +234,7 @@ public class JobsApiShould
         entry.Outcome.Should().Be(JobRunOutcome.Completed);
         entry.ScheduleName.Should().Be("warm");
         entry.IsManual.Should().BeTrue();
+        entry.AttemptCount.Should().Be(0, "a first-try success");
         spy.Count.Should().Be(1);
     }
 

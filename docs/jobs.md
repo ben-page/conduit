@@ -814,7 +814,7 @@ successful completion, not anything else.
 | `RunAt` | When the run was due |
 | `StartedAt` | When the final attempt began |
 | `CompletedAt` | When the run reached this outcome — what history is ordered and purged by |
-| `AttemptCount` | How many attempts had run by this point |
+| `AttemptCount` | How many attempts had already failed when the final one began (0 for a first-try success) |
 | `LastError` | The failure message, for `Failed` |
 
 `JobKey` is deliberately not unique here: a coalescing key superseded and retried five times over a

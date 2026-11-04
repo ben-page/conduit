@@ -15,7 +15,10 @@ namespace Conduit.Jobs;
 /// <param name="RunAt">When the run was due.</param>
 /// <param name="StartedAt">When the final attempt began.</param>
 /// <param name="CompletedAt">When the run reached this terminal outcome.</param>
-/// <param name="AttemptCount">How many attempts had run by the time it reached this outcome.</param>
+/// <param name="AttemptCount">
+/// How many attempts had already failed when its final attempt began, as <see cref="JobRunInfo.AttemptCount"/> read
+/// then: 0 for a first-try success, and one less than the attempts it took whenever a final attempt ran.
+/// </param>
 /// <param name="LastError">The failure message, when the outcome is <see cref="JobRunOutcome.Failed"/>.</param>
 public sealed record JobRunHistoryInfo(
     string JobKey,
