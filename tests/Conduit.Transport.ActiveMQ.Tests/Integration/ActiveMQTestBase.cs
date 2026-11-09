@@ -159,11 +159,7 @@ public abstract class ActiveMQTestBase
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
                     endpoint.UseActiveMQ(ConnectionString, configureOptions));
-                conduit.Options.Routes.Add(new ConduitRoute
-                {
-                    Pattern = routeNamespace,
-                    EndpointName = targetEndpointName,
-                });
+                conduit.Options.Routes.Add(new ConduitRoute(routeNamespace, targetEndpointName, Exact: false));
             });
         });
     }

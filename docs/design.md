@@ -288,11 +288,9 @@ public sealed class ConduitEndpoint
     // Transport is resolved from DI as a keyed IConduitTransport (key = Name)
 }
 
-public sealed class ConduitRoute
-{
-    public required string Pattern { get; init; }   // namespace prefix
-    public required string EndpointName { get; init; }
-}
+// Exact: the full type name equals Pattern (RouteType<T>).
+// Not exact: Pattern is a namespace, matched on whole segments (RouteNamespace<T>).
+public sealed record ConduitRoute(string Pattern, string EndpointName, bool Exact);
 
 public sealed class ConduitOptions
 {

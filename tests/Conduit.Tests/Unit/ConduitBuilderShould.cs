@@ -36,6 +36,7 @@ public class ConduitBuilderShould
         builder.Options.Routes.Should().HaveCount(1);
         builder.Options.Routes[0].Pattern.Should().Be("Conduit.Configuration");
         builder.Options.Routes[0].EndpointName.Should().Be("orders-api");
+        builder.Options.Routes[0].Exact.Should().BeFalse();
     }
 
     [TestMethod]
@@ -53,5 +54,6 @@ public class ConduitBuilderShould
         builder.Options.Routes.Should().HaveCount(1);
         builder.Options.Routes[0].Pattern.Should().Be("Conduit.Configuration.ConduitBuilder");
         builder.Options.Routes[0].EndpointName.Should().Be("orders-api");
+        builder.Options.Routes[0].Exact.Should().BeTrue();
     }
 }

@@ -52,8 +52,10 @@ IMediator.ExecuteAsync(command)
 Key facts verified against the code:
 
 - **Routing decision** is `ConduitRuntime.ResolveRoute` (`ConduitRuntime.cs`). It scans
-  `options.Routes`, matching `messageFullTypeName.StartsWith(route.Pattern)`. A match with a
-  missing endpoint throws `InvalidOperationException`. No match returns `null` → local dispatch.
+  `options.Routes` in order and takes the first match: an exact route (`RouteType<T>()`) when the
+  name equals `route.Pattern`, a namespace route (`RouteNamespace<T>()`) when it equals the pattern
+  or starts with `route.Pattern + "."`. A match with a missing endpoint throws
+  `InvalidOperationException`. No match returns `null` → local dispatch.
 - **Routed dispatch** for commands with a result and queries uses `transport.SendRequestAsync`.
   Non-fire-and-forget void commands also use `SendRequestAsync` (to confirm handler execution);
   `[FireAndForget]` void commands use `SendEventAsync` (no reply). See

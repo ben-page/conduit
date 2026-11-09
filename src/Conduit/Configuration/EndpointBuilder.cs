@@ -74,26 +74,29 @@ public sealed class EndpointBuilder
     }
 
     /// <summary>
-    /// Routes all message types in the namespace of <typeparamref name="T"/> to this endpoint.
+    /// Routes all message types in the namespace of <typeparamref name="T"/>, and in the namespaces
+    /// beneath it, to this endpoint. The match is on whole namespace segments: the namespace
+    /// <c>Orders.Commands</c> does not cover <c>Orders.CommandsArchive</c>.
     /// </summary>
     /// <typeparam name="T">A type whose namespace defines the route pattern.</typeparam>
     /// <returns>This builder for chaining.</returns>
     public EndpointBuilder RouteNamespace<T>()
     {
         var pattern = typeof(T).Namespace ?? typeof(T).FullName ?? typeof(T).Name;
-        this.Options.Routes.Add(new ConduitRoute { Pattern = pattern, EndpointName = this.EndpointName });
+        this.Options.Routes.Add(new ConduitRoute(pattern, this.EndpointName, Exact: false));
         return this;
     }
 
     /// <summary>
-    /// Routes the specific message type <typeparamref name="T"/> to this endpoint.
+    /// Routes the specific message type <typeparamref name="T"/> to this endpoint. The match is
+    /// exact: a type whose name merely starts with <typeparamref name="T"/>'s is not routed.
     /// </summary>
     /// <typeparam name="T">The message type to route.</typeparam>
     /// <returns>This builder for chaining.</returns>
     public EndpointBuilder RouteType<T>()
     {
         var pattern = typeof(T).FullName ?? typeof(T).Name;
-        this.Options.Routes.Add(new ConduitRoute { Pattern = pattern, EndpointName = this.EndpointName });
+        this.Options.Routes.Add(new ConduitRoute(pattern, this.EndpointName, Exact: true));
         return this;
     }
 }

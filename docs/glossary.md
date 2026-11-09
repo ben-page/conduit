@@ -13,9 +13,11 @@ See [Transports](transports/index.md).
 ### Route
 
 A mapping that decides **where** a command or query type goes. Configured per-endpoint via
-`endpoint.RouteNamespace<T>()` (all types sharing `T`'s namespace) or `endpoint.RouteType<T>()`
-(one type). `ConduitRuntime.ResolveRoute` matches a message's full type name by namespace/type
-prefix; no match means **local dispatch**. Events do not route — they broadcast.
+`endpoint.RouteNamespace<T>()` (all types in `T`'s namespace and the namespaces beneath it) or
+`endpoint.RouteType<T>()` (exactly one type). `ConduitRuntime.ResolveRoute` matches a message's full
+type name exactly for a type route, and on whole namespace segments for a namespace route
+(`Orders.Commands` covers `Orders.Commands.Lines.AddLine`, never `Orders.CommandsArchive.*`); the first
+matching route wins, and no match means **local dispatch**. Events do not route — they broadcast.
 
 ### Topology
 

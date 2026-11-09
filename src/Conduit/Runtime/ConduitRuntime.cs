@@ -716,7 +716,8 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// Resolves the first route for the given message type. Returns the matched endpoint,
-    /// or null for local dispatch. Used for commands and queries only — events broadcast
+    /// or null for local dispatch. An exact route matches only its own type; a namespace route
+    /// matches its namespace and the namespaces beneath it, on whole segments (see <see cref="ConduitRoute"/>). Used for commands and queries only — events broadcast
     /// to all DI-registered transports instead of routing.
     /// Throws if the matched endpoint is missing or has no transport configured.
     /// </summary>
@@ -727,7 +728,7 @@ public static partial class ConduitRuntime
 
         foreach (var route in options.Routes)
         {
-            if (messageFullTypeName.StartsWith(route.Pattern, StringComparison.Ordinal))
+            if (route.Matches(messageFullTypeName))
             {
                 if (!options.Endpoints.TryGetValue(route.EndpointName, out var endpoint))
                 {

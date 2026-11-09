@@ -278,11 +278,7 @@ public abstract class AsbTestBase
                         options.AdminConnectionString = AdminConnectionString;
                         configureOptions?.Invoke(options);
                     }));
-                conduit.Options.Routes.Add(new ConduitRoute
-                {
-                    Pattern = routeNamespace,
-                    EndpointName = targetEndpointName,
-                });
+                conduit.Options.Routes.Add(new ConduitRoute(routeNamespace, targetEndpointName, Exact: false));
             });
         });
 

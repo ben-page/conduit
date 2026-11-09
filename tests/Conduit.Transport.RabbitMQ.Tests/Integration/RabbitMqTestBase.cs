@@ -152,11 +152,7 @@ public abstract class RabbitMqTestBase
                 conduit.TopologyPrefix = topologyPrefix;
                 conduit.AddEndpoint(targetEndpointName, endpoint =>
                     endpoint.UseRabbitMQ(ConnectionString, configureOptions));
-                conduit.Options.Routes.Add(new ConduitRoute
-                {
-                    Pattern = routeNamespace,
-                    EndpointName = targetEndpointName,
-                });
+                conduit.Options.Routes.Add(new ConduitRoute(routeNamespace, targetEndpointName, Exact: false));
             });
         });
     }

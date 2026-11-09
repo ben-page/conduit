@@ -6,6 +6,8 @@ using Conduit.Exceptions;
 using Conduit.Middleware;
 using Conduit.Runtime;
 using Conduit.Tests.Support;
+using Conduit.Tests.Support.RouteMatching.Orders;
+using Conduit.Tests.Support.RouteMatching.OrdersArchive;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +32,7 @@ public class ConduitRuntimeShould
         var options = new ConduitOptions();
         var endpoint = new ConduitEndpoint { Name = "orders-api" };
         options.Endpoints["orders-api"] = endpoint;
-        options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "orders-api" });
+        options.Routes.Add(new ConduitRoute("Orders.Commands", "orders-api", Exact: false));
 
         var result = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 
@@ -44,7 +46,7 @@ public class ConduitRuntimeShould
         var options = new ConduitOptions();
         var endpoint = new ConduitEndpoint { Name = "orders-api" };
         options.Endpoints["orders-api"] = endpoint;
-        options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "orders-api" });
+        options.Routes.Add(new ConduitRoute("Orders.Commands", "orders-api", Exact: false));
 
         var result = ConduitRuntime.ResolveRoute(options, "Billing.Commands.ChargeCard");
 
@@ -54,22 +56,62 @@ public class ConduitRuntimeShould
     [TestMethod]
     public void PickFirstMatchWhenMultipleRoutesMatch()
     {
+        // Arrange -- "Orders" covers "Orders.Commands", so both routes match a command in it
         var options = new ConduitOptions();
         options.Endpoints["specific"] = new ConduitEndpoint { Name = "specific" };
         options.Endpoints["general"] = new ConduitEndpoint { Name = "general" };
-        options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands.Create", EndpointName = "specific" });
-        options.Routes.Add(new ConduitRoute { Pattern = "Orders.Commands", EndpointName = "general" });
+        options.Routes.Add(new ConduitRoute("Orders.Commands", "specific", Exact: false));
+        options.Routes.Add(new ConduitRoute("Orders", "general", Exact: false));
 
-        var result = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
+        // Act
+        var bothMatch = ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
+        var onlySecondMatches = ConduitRuntime.ResolveRoute(options, "Orders.Queries.GetOrder");
 
-        result!.Name.Should().Be("specific");
+        // Assert
+        bothMatch!.Name.Should().Be("specific");
+        onlySecondMatches!.Name.Should().Be("general");
+    }
+
+    [TestMethod]
+    public void NotRouteASiblingTypeByPrefix()
+    {
+        // Arrange -- CreateOrderLine's full name starts with CreateOrder's
+        var builder = new ConduitBuilder(new ServiceCollection());
+        builder.AddEndpoint("orders-api", endpoint => endpoint.RouteType<CreateOrder>());
+
+        // Act
+        var routed = ConduitRuntime.ResolveRoute(builder.Options, typeof(CreateOrder).FullName!);
+        var sibling = ConduitRuntime.ResolveRoute(builder.Options, typeof(CreateOrderLine).FullName!);
+
+        // Assert
+        routed!.Name.Should().Be("orders-api");
+        sibling.Should().BeNull();
+    }
+
+    [TestMethod]
+    public void NotRouteASiblingNamespaceByPrefix()
+    {
+        // Arrange -- the OrdersArchive namespace's name starts with the Orders namespace's
+        var builder = new ConduitBuilder(new ServiceCollection());
+        builder.AddEndpoint("orders-api", endpoint => endpoint.RouteNamespace<CreateOrder>());
+        var ordersNamespace = typeof(CreateOrder).Namespace!;
+
+        // Act
+        var inNamespace = ConduitRuntime.ResolveRoute(builder.Options, typeof(CreateOrderLine).FullName!);
+        var inChildNamespace = ConduitRuntime.ResolveRoute(builder.Options, $"{ordersNamespace}.Lines.AddLine");
+        var inSiblingNamespace = ConduitRuntime.ResolveRoute(builder.Options, typeof(ArchiveOrder).FullName!);
+
+        // Assert
+        inNamespace!.Name.Should().Be("orders-api");
+        inChildNamespace!.Name.Should().Be("orders-api");
+        inSiblingNamespace.Should().BeNull();
     }
 
     [TestMethod]
     public void ThrowWhenEndpointNotRegistered()
     {
         var options = new ConduitOptions();
-        options.Routes.Add(new ConduitRoute { Pattern = "Orders", EndpointName = "missing" });
+        options.Routes.Add(new ConduitRoute("Orders", "missing", Exact: false));
 
         var action = () => ConduitRuntime.ResolveRoute(options, "Orders.Commands.CreateOrder");
 

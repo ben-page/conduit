@@ -75,8 +75,8 @@ Available inside the `AddEndpoint` callback:
 
 | Method | Purpose | Example |
 |---|---|---|
-| `RouteNamespace<T>()` | Route all types in `T`'s namespace to this endpoint | `ep.RouteNamespace<CreateOrder>()` |
-| `RouteType<T>()` | Route a single type to this endpoint | `ep.RouteType<CreateOrder>()` |
+| `RouteNamespace<T>()` | Route all types in `T`'s namespace and the namespaces beneath it to this endpoint, matched on whole segments (`Orders.Commands` never covers `Orders.CommandsArchive`) | `ep.RouteNamespace<CreateOrder>()` |
+| `RouteType<T>()` | Route exactly one type to this endpoint (`CreateOrderLine` is not `CreateOrder`) | `ep.RouteType<CreateOrder>()` |
 | `UseSignalR(uri)` | Connect via SignalR client mode | `ep.UseSignalR(new Uri("https://..."))` |
 | `UseHttp(httpClient)` | Connect via HTTP POST to `/api/conduit/dispatch` | `ep.UseHttp(httpClient)` |
 | `UseAzureServiceBus(conn)` | Connect via Azure Service Bus | `ep.UseAzureServiceBus(connectionString)` |

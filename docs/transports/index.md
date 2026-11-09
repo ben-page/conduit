@@ -95,7 +95,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`AddEndpoint` defines a named destination and configures its transport. `RouteNamespace<T>()` tells the generated mediator to send any command or query whose namespace matches `T`'s namespace to that endpoint.
+`AddEndpoint` defines a named destination and configures its transport. `RouteNamespace<T>()` tells the generated mediator to send any command or query in `T`'s namespace, or in a namespace beneath it, to that endpoint. `RouteType<T>()` routes exactly one type. Routes are checked in the order they were declared and the first match wins.
 
 The calling code uses `IMediator` identically to local dispatch:
 
@@ -133,7 +133,7 @@ public record ReserveInventoryCommand(string ProductId, int Quantity) : ICommand
 
 Both services reference the contracts library. The handling service implements handlers. The calling service configures routes.
 
-The namespace matters. Routes match by namespace prefix, so keep contract types in a predictable hierarchy.
+The namespace matters. A namespace route matches on whole namespace segments: `RouteNamespace<Inventory.Commands.ReserveStock>()` covers `Inventory.Commands` and `Inventory.Commands.Bulk`, but not `Inventory.CommandsArchive`. Keep contract types in a predictable hierarchy.
 
 ### [RemoteContracts]
 
