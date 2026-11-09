@@ -405,6 +405,12 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             LogMessageAbandoned(this.Logger, messageType, ex);
             await this.AbandonAsync(message);
         }
+        catch (ConduitException)
+        {
+            // A refusal (the type filter, an unknown type) is final, since a redelivery would be refused again, and
+            // HandleWireEvent has logged it: acknowledge, as when the runtime swallowed it.
+            await this.AcknowledgeAsync(message);
+        }
     }
 
     /// <summary>

@@ -116,15 +116,20 @@ public interface IWireMediator : IMediator
     /// </remarks>
     /// <param name="envelope">The wire envelope containing type name and JSON payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A dispatch result containing the handler output or error information.</returns>
+    /// <returns>A dispatch result containing the handler output or error information. Only a cancellation of
+    /// <paramref name="cancellationToken"/> throws (<see cref="OperationCanceledException"/>): the caller gave up, so
+    /// there is no one to answer.</returns>
     public Task<DispatchResult<object>> HandleWireRequestAsync(
         DispatchEnvelope envelope,
         CancellationToken cancellationToken);
 
     /// <summary>
     /// Handles an inbound wire event. Runs registered <see cref="IInboundInterceptor"/>
-    /// gates before deserialization, then publishes to local listeners.
-    /// Swallows exceptions (fire-and-forget).
+    /// gates before deserialization, then publishes to local listeners. Throws
+    /// <see cref="Exceptions.EventListenerException"/> when a listener fails, the <see cref="Exceptions.ConduitException"/>
+    /// when the event is refused (a gate such as the type filter, or a type this host does not know) for the transport to
+    /// answer its caller, and <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is
+    /// cancelled; logs and swallows any other failure.
     /// </summary>
     /// <remarks>
     /// <para>

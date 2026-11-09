@@ -222,8 +222,9 @@ foreach (IInboundInterceptor interceptor in interceptors):
 - `InboxInterceptor` (dedup) **returns false** to discard an already-seen message. `MessageContext.Current`
   is available so it can read the transport-supplied `MessageId`.
 - `TypeFilterInterceptor` (access control) **throws** a `ConduitException` to reject a
-  disallowed type; the catch block converts it to a `Fail` result. (It rejects by throwing, not
-  by returning false.)
+  disallowed type; for a request the catch block converts it to a `Fail` result, and for an event
+  `HandleWireEvent` logs it at Warning and rethrows it for the transport to answer the publisher.
+  (It rejects by throwing, not by returning false.)
 
 **Context handling at this layer (recently fixed):** the transport has already called
 `StartDispatchFromTransport`, so `MessageContext.Current` is non-null when `HandleWireRequest`

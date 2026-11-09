@@ -683,7 +683,9 @@ public static class MediatorEmitter
             sb.AppendLine($"                    cancellationToken),");
         }
 
-        sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown dispatch type: {type}\")");
+        // The caller names the type, so one nothing here handles or routes is the caller's mistake: a BadRequest refusal
+        // logged at Warning without a stack, never an InternalError with a support reference.
+        sb.AppendLine($"                _ => throw {EmitConstants.ConduitRuntime}.UnknownMessageType(logger, type)");
         sb.AppendLine("            };");
 
         EmitDispatchCompleted(sb, "            ");
@@ -734,7 +736,8 @@ public static class MediatorEmitter
             sb.AppendLine($"                \"{evt.FullTypeName}\" => {arm},");
         }
 
-        sb.AppendLine("                _ => throw new InvalidOperationException($\"Unknown event type: {type}\")");
+        // A refusal, as for a request; HandleWireEvent logs it (RefusedEvent, Warning) and the edge answers the publisher.
+        sb.AppendLine($"                _ => throw new {EmitConstants.NamespaceExceptions}.BadRequestException($\"Unknown message type '{{type}}'.\")");
         sb.AppendLine("            };");
         sb.AppendLine("            await PublishLocalAsync(serviceProvider, @event, cancellationToken);");
 

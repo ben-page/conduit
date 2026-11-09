@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Conduit.Exceptions;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
@@ -74,7 +75,8 @@ public class ConduitHub(
     }
 
     /// <summary>
-    /// Publishes an event received from a SignalR client.
+    /// Publishes an event received from a SignalR client. A refusal (the type filter, an unknown type) fails the
+    /// invocation with a <see cref="HubException"/> carrying the refusal's message, written in the reader's language.
     /// </summary>
     /// <param name="type">The fully-qualified event type name.</param>
     /// <param name="payload">The JSON payload to deserialize.</param>
@@ -90,9 +92,18 @@ public class ConduitHub(
     {
         this.StartMessageContext(context, headers);
 
-        await mediator.HandleWireEventAsync(
-            new DispatchEnvelope(type, payload),
-            this.Context.ConnectionAborted);
+        try
+        {
+            await mediator.HandleWireEventAsync(
+                new DispatchEnvelope(type, payload),
+                this.Context.ConnectionAborted);
+        }
+        catch (ConduitException refusal)
+        {
+            // Publish answers nothing, so the refusal fails the invocation: a HubException's message reaches the client.
+            var error = RefusalRendering.RenderResult(DispatchResult<object>.Fail(refusal), services, MessageContext.Current).Error!;
+            throw new HubException(error.Message);
+        }
     }
 
     private void StartMessageContext(

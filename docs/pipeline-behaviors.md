@@ -127,7 +127,7 @@ The marker is a promise that the behavior only judges whether the request may ru
 3. The read: the contract is found by name among the registry's commands and queries and read from the payload with `DeserializeWire`, exactly as the wire reads it.
 4. Every pipeline behavior that is an `IInboundCheckBehavior`, in the pipeline's order, closed over the contract's own result type as dispatch closes them, around a step that does nothing.
 
-**What it never runs:** the handler, any pipeline behavior that is not an inbound check, and the contract's own `Validate()` (dispatch runs it innermost, after every behavior). A name the registry does not list as a command or query is answered as the wire answers an unknown type, `InternalError`.
+**What it never runs:** the handler, any pipeline behavior that is not an inbound check, and the contract's own `Validate()` (dispatch runs it innermost, after every behavior). A name the registry does not list as a command or query is answered as the wire answers an unknown type: a `BadRequest` refusal ([Error Handling](error-handling.md#unhandled-exceptions)).
 
 **It records nothing.** The gates run under no `MessageContext`, as for a wire request no transport identified, so an inbox gate records nothing. The checks run in a fresh context with no observer attached, so nothing is audited. The caller's context is current again when it returns. It starts no transaction and no retry attempt.
 

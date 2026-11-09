@@ -8,19 +8,26 @@ using Conduit.Transport.Http.Tests.Support;
 using Conduit.Transport.SignalR;
 using Conduit.Runtime;
 using Conduit.Generated;
+using Conduit.TestUtils;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.Http.Tests.Integration;
 
 [TestClass]
 public class HttpEndpointShould
 {
-    private static (WebApplication App, HttpClient Client) CreateTestHost()
+    private static (WebApplication App, HttpClient Client) CreateTestHost(SpyLoggerProvider? spy = null)
     {
         var builder = WebApplication.CreateBuilder();
+        if (spy is not null)
+        {
+            builder.Logging.AddProvider(spy);
+        }
+
         builder.Services.AddSingleton<ItemStore>();
         builder.Services.AddConduit();
         builder.Services.AddConduitSignalR();
@@ -150,9 +157,11 @@ public class HttpEndpointShould
     }
 
     [TestMethod]
-    public async Task ReturnErrorForUnknownType()
+    public async Task AnswerUnknownTypeWith400AndNoStackTrace()
     {
-        var (app, client) = CreateTestHost();
+        // Arrange -- a name the caller chose, which nothing declares or routes
+        var spy = new SpyLoggerProvider();
+        var (app, client) = CreateTestHost(spy);
         await using (app)
         using (client)
         {
@@ -162,8 +171,40 @@ public class HttpEndpointShould
                 "NonExistent.NonExistentCommand",
                 new { });
 
+            // Assert -- a refusal (no support reference), logged once at Warning without an exception, never at Error
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
+            error.GetProperty("code").GetString().Should().Be("BadRequest");
+            error.GetProperty("message").GetString().Should().Be("Unknown message type 'NonExistent.NonExistentCommand'.");
+            var hasReference = error.TryGetProperty("reference", out var reference) && reference.ValueKind != JsonValueKind.Null;
+            hasReference.Should().BeFalse("a refusal carries no support reference");
+            spy.Entries.Should().ContainSingle(entry => entry.EventId.Name == "UnknownMessageType")
+                .Which.Should().Match<SpyLogEntry>(entry => entry.Level == LogLevel.Warning && entry.Exception == null);
+            spy.Entries.Should().NotContain(entry => entry.Level >= LogLevel.Error);
+        }
+    }
+
+    [TestMethod]
+    public async Task AnswerUnknownEventTypeWith400()
+    {
+        // Arrange
+        var spy = new SpyLoggerProvider();
+        var (app, client) = CreateTestHost(spy);
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/publish",
+                "NonExistent.NonExistentEvent",
+                new { });
+
             // Assert
-            ((int)response.StatusCode).Should().BeGreaterThanOrEqualTo(400);
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
+            error.GetProperty("code").GetString().Should().Be("BadRequest");
+            error.GetProperty("message").GetString().Should().Be("Unknown message type 'NonExistent.NonExistentEvent'.");
+            spy.Entries.Should().NotContain(entry => entry.Level >= LogLevel.Error);
         }
     }
 

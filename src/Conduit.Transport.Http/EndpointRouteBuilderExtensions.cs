@@ -15,6 +15,8 @@ public static class EndpointRouteBuilderExtensions
     /// <summary>
     /// Maps POST endpoints for Conduit wire dispatch. The message type is read from the
     /// <c>X-Conduit-Type</c> header and the request body contains the plain serialized message.
+    /// A refused event (the type filter, an unknown type) is answered on <c>/publish</c> as <c>/dispatch</c> answers a
+    /// refused request: the <see cref="DispatchResult{T}"/>, status-coded from its error.
     /// </summary>
     /// <remarks>
     /// The dispatch's correlation ids are the server's unless <paramref name="trustCallerContext"/> says otherwise:
@@ -49,19 +51,10 @@ public static class EndpointRouteBuilderExtensions
             HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext);
 
             // The edge where the answer leaves the server for a person: the refusal is written in the reader's language here.
-            var result = RefusalRendering.RenderResult(
+            return Answer(RefusalRendering.RenderResult(
                 await mediator.HandleWireRequestAsync(envelope, cancellationToken),
                 httpRequest.HttpContext.RequestServices,
-                MessageContext.Current);
-
-            if (result.Error is not null)
-            {
-                return Results.Json(result, statusCode: result.Error.Status > 0
-                    ? result.Error.Status
-                    : ErrorCode.ToHttpStatusCode(result.Error.Code));
-            }
-
-            return Results.Ok(result);
+                MessageContext.Current));
         });
 
         group.MapPost("/publish", async (
@@ -73,11 +66,39 @@ public static class EndpointRouteBuilderExtensions
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
             HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext);
 
-            await mediator.HandleWireEventAsync(envelope, cancellationToken);
+            try
+            {
+                await mediator.HandleWireEventAsync(envelope, cancellationToken);
+            }
+            catch (ConduitException refusal)
+            {
+                // A refused event (the type filter, an unknown type) is answered as /dispatch answers a refused request.
+                return Answer(RefusalRendering.RenderResult(
+                    DispatchResult<object>.Fail(refusal),
+                    httpRequest.HttpContext.RequestServices,
+                    MessageContext.Current));
+            }
+
             return Results.Ok();
         });
 
         return group;
+    }
+
+    /// <summary>
+    /// The HTTP answer for a dispatch result: 200 with the result, or the whole result status-coded from
+    /// <see cref="DispatchError.Status"/> (from the code when a server predating it sent none).
+    /// </summary>
+    private static IResult Answer(DispatchResult<object> result)
+    {
+        if (result.Error is not null)
+        {
+            return Results.Json(result, statusCode: result.Error.Status > 0
+                ? result.Error.Status
+                : ErrorCode.ToHttpStatusCode(result.Error.Code));
+        }
+
+        return Results.Ok(result);
     }
 
     private static async Task<DispatchEnvelope> ReadEnvelopeAsync(

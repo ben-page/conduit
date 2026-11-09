@@ -178,7 +178,9 @@ public class PreflightWireRequestShould
 
         // Assert
         preflight.Admitted.Should().BeFalse();
-        preflight.Refusal!.Code.Should().Be("InternalError").And.Be(wire.Error!.Code);
+        preflight.Refusal!.Code.Should().Be("BadRequest").And.Be(wire.Error!.Code);
+        preflight.Refusal.Message.Should().Be($"Unknown message type '{unknown}'.").And.Be(wire.Error.Message);
+        preflight.Refusal.Reference.Should().BeNull("an unknown type is a refusal, not a server error");
     }
 
     [TestMethod]

@@ -1,8 +1,13 @@
+using System.Diagnostics;
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Exceptions;
+using Conduit.Middleware;
 using Conduit.Runtime;
 using Conduit.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Tests.Unit;
 
@@ -100,6 +105,155 @@ public class ConduitRuntimeShould
         // Assert
         logger.Entries.Should().ContainSingle()
             .Which.Message.Should().Be("Executing pipeline behaviors for 'Orders.Commands.CreateOrder': 3");
+    }
+
+    [TestMethod]
+    public async Task PropagateClientCancellationWithoutLoggingAnError()
+    {
+        // Arrange -- the caller gives up while the handler runs
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        using var cancellation = new CancellationTokenSource();
+        var envelope = new DispatchEnvelope("Test.Slow", JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        var dispatch = () => ConduitRuntime.HandleWireRequest(
+            envelope.Type,
+            [],
+            () => envelope,
+            async (_, _, cancellationToken) =>
+            {
+                await cancellation.CancelAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+                return null;
+            },
+            logger,
+            cancellation.Token);
+
+        // Assert -- the cancellation reaches the caller: no answer, no support reference, no Error line
+        await dispatch.Should().ThrowAsync<OperationCanceledException>();
+        logger.Entries.Should().NotContain(entry => entry.Level >= LogLevel.Error);
+    }
+
+    [TestMethod]
+    public async Task PropagateAWireEventsClientCancellationWithoutLoggingAnError()
+    {
+        // Arrange
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        using var cancellation = new CancellationTokenSource();
+        var envelope = new DispatchEnvelope("Test.Slow", JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        var publish = () => ConduitRuntime.HandleWireEvent(
+            envelope.Type,
+            [],
+            () => envelope,
+            async (_, _, cancellationToken) =>
+            {
+                await cancellation.CancelAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+            },
+            logger,
+            cancellation.Token);
+
+        // Assert
+        await publish.Should().ThrowAsync<OperationCanceledException>();
+        logger.Entries.Should().NotContain(entry => entry.Level >= LogLevel.Error);
+    }
+
+    [TestMethod]
+    public async Task AnswerACancellationTheCallerDidNotAskForAsAnUnexpectedError()
+    {
+        // Arrange -- the handler's own operation timed out; the caller's token is live
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        var envelope = new DispatchEnvelope("Test.TimedOut", JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        var result = await ConduitRuntime.HandleWireRequest(
+            envelope.Type,
+            [],
+            () => envelope,
+            (_, _, _) => throw new TaskCanceledException("The request timed out."),
+            logger,
+            CancellationToken.None);
+
+        // Assert
+        result.Error!.Code.Should().Be("InternalError");
+        result.Error.Reference.Should().NotBeNullOrEmpty();
+        logger.Entries.Should().ContainSingle(entry => entry.Level == LogLevel.Error);
+    }
+
+    [TestMethod]
+    public async Task RethrowARefusedWireEventAndLogItAtWarning()
+    {
+        // Arrange -- a gate refuses the event, as the type filter refuses an unlisted one
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        var envelope = new DispatchEnvelope("Test.Unlisted", JsonSerializer.SerializeToElement(new { }));
+        var dispatched = false;
+
+        // Act
+        var publish = () => ConduitRuntime.HandleWireEvent(
+            envelope.Type,
+            [new RefusingGate()],
+            () => envelope,
+            (_, _, _) =>
+            {
+                dispatched = true;
+                return Task.CompletedTask;
+            },
+            logger,
+            CancellationToken.None);
+
+        // Assert -- the refusal reaches the caller, logged as a refusal without a stack, never as an error
+        await publish.Should().ThrowExactlyAsync<ForbiddenException>().WithMessage("Not this one.");
+        dispatched.Should().BeFalse();
+        logger.Entries.Should().ContainSingle(entry => entry.Level >= LogLevel.Warning)
+            .Which.Should().Match<(LogLevel Level, EventId EventId, string Message, Exception? Exception)>(entry =>
+                entry.Level == LogLevel.Warning
+                && entry.EventId.Id == 7
+                && entry.EventId.Name == "RefusedEvent"
+                && entry.Exception == null);
+    }
+
+    [TestMethod]
+    public async Task TagWireRequestsAsRequest()
+    {
+        // Arrange -- a root activity of this test's own, so the listener keeps only this trace: methods run in
+        // parallel, and other tests' Conduit activities reach a process-wide listener.
+        using var root = new Activity("ConduitRuntimeShould.TagWireRequestsAsRequest").Start();
+        var traceId = root.TraceId;
+        var kinds = new List<object?>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Conduit",
+            Sample = static (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.TraceId == traceId && activity.OperationName == "ConduitRuntime/HandleWireRequest")
+                {
+                    kinds.Add(activity.GetTagItem("conduit.message.kind"));
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var envelope = new DispatchEnvelope("Test.SomeQuery", JsonSerializer.SerializeToElement(new { }));
+
+        // Act -- the wire cannot tell a command from a query by its name alone
+        await ConduitRuntime.HandleWireRequest(
+            envelope.Type,
+            [],
+            () => envelope,
+            (_, _, _) => Task.FromResult<object?>("answer"),
+            new RecordingLogger<ConduitRuntimeShould>(),
+            CancellationToken.None);
+
+        // Assert
+        kinds.Should().Equal("request");
+    }
+
+    private sealed class RefusingGate : IInboundInterceptor
+    {
+        public Task<bool> ShouldProcessAsync(string messageType, CancellationToken cancellationToken)
+            => throw new ForbiddenException("Not this one.");
     }
 
     [TestMethod]

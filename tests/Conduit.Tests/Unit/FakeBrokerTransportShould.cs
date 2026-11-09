@@ -40,4 +40,29 @@ public class FakeBrokerTransportShould
         await spy.WaitForCountAsync(1);
         spy.Count.Should().Be(1);
     }
+
+    [TestMethod]
+    public async Task AcknowledgeAnEventTheHostRefuses()
+    {
+        // Arrange -- the type filter gates broker-delivered events too, and this one is not listed
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton<ItemStore>();
+            builder.Services.AddSingleton<EventSpy<ItemCreatedEvent>>();
+            builder.Services.AddConduit(conduit =>
+                conduit.AddTypeFilter(filter => filter.AllowType(typeof(CreateItemCommand).FullName!)));
+        });
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        transport.Start();
+        var envelope = TestEnvelope.For(new ItemCreatedEvent(Guid.NewGuid(), "Refused"));
+        var message = new FakeBrokerMessage { Type = envelope.Type, Body = new BinaryData(envelope.Payload.GetRawText()) };
+
+        // Act
+        await transport.DeliverAsync(message);
+
+        // Assert -- a refusal is final: redelivering the message would be refused again
+        message.Acknowledged.Should().BeTrue();
+        message.Abandoned.Should().BeFalse();
+        host.GetRequiredService<EventSpy<ItemCreatedEvent>>().Count.Should().Be(0);
+    }
 }

@@ -27,9 +27,16 @@ builder.Services.AddConduit(conduit =>
 
 Any inbound wire dispatch for a type not in the allowed set is rejected with `ForbiddenException` (403) before the message reaches a handler — the caller is authenticated, the type is simply not client-dispatchable, so this is a permission error, not an authentication failure (a client mapping 401 to a forced re-login must not be bounced by a type-filter block). The type name matched is the full type name from `DispatchEnvelope.Type`.
 
-`TypeFilterInterceptor` implements `IInboundInterceptor`. It checks commands and queries only. Events pass through unfiltered because inbound events are server-initiated broadcasts.
+`TypeFilterInterceptor` implements `IInboundInterceptor`, so it checks every inbound message: commands, queries, and events alike. An event a client may publish must be listed too.
 
-The filter is transport-agnostic. It works the same whether the request arrives over HTTP, SignalR, or a service bus.
+A refused event is answered to the publisher, as a refused request is:
+
+- **HTTP** — `POST {basePath}/publish` returns the `DispatchResult` envelope with the error's status (403 for the filter), exactly as `/dispatch` answers a refused request, its message written in the reader's language.
+- **SignalR** — the hub's `Publish` invocation fails with a `HubException` carrying the refusal's message, so the client's `invoke` rejects.
+
+The refusal is logged at Warning without a stack trace (EventId 7, `RefusedEvent`), never at Error.
+
+The filter is transport-agnostic. It works the same whether the message arrives over HTTP, SignalR, or a service bus, so a host that also receives over a broker lists the types it receives there as well. A broker transport acknowledges a refused event rather than redelivering it, since a redelivery would be refused again.
 
 `ConduitRuntime.PreflightWireRequestAsync` runs this filter, like every other registered `IInboundInterceptor`, without running the request's handler: a disallowed type comes back as the same `ForbiddenException` refusal the wire answers. See [Pipeline Behaviors → Inbound checks](pipeline-behaviors.md#inbound-checks-and-the-wire-preflight).
 

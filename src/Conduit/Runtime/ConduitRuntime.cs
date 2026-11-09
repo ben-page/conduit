@@ -602,6 +602,15 @@ public static partial class ConduitRuntime
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(4, "ListenerFailed"),
             "Event listener '{Listener}' threw an exception");
 
+    // Warning-level logs. A refusal is the caller's mistake, not the server's, so none carries an exception (or a stack).
+    private static readonly Action<ILogger, string, string, string, Exception?> LogRefusedEvent =
+        LoggerMessage.Define<string, string, string>(LogLevel.Warning, new EventId(7, "RefusedEvent"),
+            "Refused inbound event '{Type}' ({Code}): {Reason}");
+
+    private static readonly Action<ILogger, string, Exception?> LogUnknownMessageTypeMessage =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(8, "UnknownMessageType"),
+            "Refused a wire request for '{Type}', a message type this host neither handles nor routes");
+
     // Information-level logs
     private static readonly Action<ILogger, string, string, string, Exception?> LogWireExceptionTranslated =
         LoggerMessage.Define<string, string, string>(LogLevel.Information, new EventId(6, "WireExceptionTranslated"),
@@ -884,7 +893,8 @@ public static partial class ConduitRuntime
     /// <c>[ClientVisible]</c> type filter), the read (<see cref="DeserializeWire{T}"/>), and every behavior of the host's
     /// pipeline that is an <see cref="IInboundCheckBehavior"/>, in the pipeline's order, closed over the contract's own result
     /// type as dispatch closes them. A refusal or an unexpected failure comes back as the wire answers it, through the same
-    /// gate loop and error mapping (the host's <see cref="IWireExceptionTranslator"/>s included); nothing escapes.
+    /// gate loop and error mapping (the host's <see cref="IWireExceptionTranslator"/>s included); nothing escapes but a
+    /// cancellation of <paramref name="cancellationToken"/>, which propagates as it does from the wire.
     /// </summary>
     /// <remarks>
     /// It runs no other behavior (no transaction, no audit), not the contract's own <c>Validate</c>, and attaches no observer,
@@ -892,7 +902,7 @@ public static partial class ConduitRuntime
     /// transport identified (so an inbox gate records nothing), and the checks in a fresh one; the caller's context is current
     /// again when it returns. A contract this host routes elsewhere is admitted once the gates pass -- the wire forwards it
     /// unread, so its checks are the receiving host's. A name the host's registry does not list as a command or query is
-    /// answered as the wire answers an unknown type (<c>InternalError</c>).
+    /// answered as the wire answers an unknown type (<see cref="UnknownMessageType"/>: a <c>BadRequest</c> refusal).
     /// </remarks>
     /// <param name="contractName">The request's wire type name (<see cref="Type.FullName"/>).</param>
     /// <param name="payload">The request as the wire carries it.</param>
@@ -920,7 +930,7 @@ public static partial class ConduitRuntime
                 services.GetServices<IInboundInterceptor>(),
                 async () =>
                 {
-                    await RunInboundChecksAsync(contractName, payload, services, cancellationToken);
+                    await RunInboundChecksAsync(contractName, payload, services, logger, cancellationToken);
                     checksRan = true;
                     return null;
                 },
@@ -941,11 +951,11 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// The body of a preflight, inside the wire's gate loop and error mapping: as the generated wire dispatch, a routed
-    /// contract is not read here and an unknown one is an <see cref="InvalidOperationException"/>; otherwise the contract's
+    /// contract is not read here and an unknown one is refused (<see cref="UnknownMessageType"/>); otherwise the contract's
     /// checks run over its read payload.
     /// </summary>
     private static Task RunInboundChecksAsync(
-        string contractName, JsonElement payload, IServiceProvider services, CancellationToken cancellationToken)
+        string contractName, JsonElement payload, IServiceProvider services, ILogger logger, CancellationToken cancellationToken)
     {
         var options = services.GetService<ConduitOptions>();
         if (options is not null && ResolveRoute(options, contractName) is not null)
@@ -956,7 +966,7 @@ public static partial class ConduitRuntime
         var registry = services.GetService<ConduitTypeRegistry>();
         var contract = registry?.CommandTypes.Concat(registry.QueryTypes)
                 .FirstOrDefault(type => string.Equals(type.FullName, contractName, StringComparison.Ordinal))
-            ?? throw new InvalidOperationException($"Unknown dispatch type: {contractName}");
+            ?? throw UnknownMessageType(logger, contractName);
         IReadOnlyList<Type> checks = options?.PipelineTypes.Where(typeof(IInboundCheckBehavior).IsAssignableFrom).ToArray() ?? [];
 
         return RunInboundChecksOfMethod.MakeGenericMethod(contract, ResultTypeOf(contract))
@@ -998,7 +1008,9 @@ public static partial class ConduitRuntime
         string operation,
         CancellationToken cancellationToken)
     {
-        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "command", operation);
+        // "request", as the dispatch metric tags an undeclared one: the caller names the type, and a name alone does not
+        // say whether it is a command or a query.
+        using var activity = ConduitTelemetry.StartActivity(nameof(ConduitRuntime), messageType, "request", operation);
 
         var previousContext = MessageContext.Current;
 
@@ -1034,6 +1046,14 @@ public static partial class ConduitRuntime
             // overload also forwards the declared HTTP status and, when the exception is client-typed
             // (`ConduitException.IsClientTyped`), its type name and data (ConduitException.GetClientData).
             return DispatchResult<object>.Fail(ex);
+        }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller gave up (an HTTP client disconnected, a hub connection closed): there is no one to answer, and
+            // it is no server failure -- no Error line, no support reference. A cancellation the caller did not ask for
+            // (a handler's own timeout) falls through to the arm below.
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
 #pragma warning disable CA1031
         catch (Exception ex)
@@ -1090,8 +1110,10 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// Runs inbound interceptor gates, then deserializes and dispatches a wire event.
-    /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter.
-    /// Swallows all other exceptions.
+    /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter, and a refusal
+    /// (<see cref="ConduitException"/>: a gate such as the type filter, or an unknown type) to the transport to answer its
+    /// caller, logged at Warning without a stack (EventId 7, <c>RefusedEvent</c>). A cancellation of
+    /// <paramref name="cancellationToken"/> propagates unlogged. Logs and swallows every other exception.
     /// </summary>
     public static async Task HandleWireEvent(
         string messageType,
@@ -1135,6 +1157,19 @@ public static partial class ConduitRuntime
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
         catch (EventListenerException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
+        }
+        catch (ConduitException ex)
+        {
+            // A refusal is answered to the publisher (the HTTP /publish endpoint, the hub's Publish); a broker transport
+            // acknowledges it, since a redelivery would be refused again.
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            LogRefusedEvent(logger, messageType, ex.Code.Value, ex.Message, null);
+            throw;
+        }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
@@ -1238,6 +1273,21 @@ public static partial class ConduitRuntime
     /// <summary>Logs that an individual event listener threw an exception.</summary>
     public static void LogListenerFailure(ILogger logger, string listenerName, Exception exception)
         => LogListenerFailed(logger, listenerName, exception);
+
+    /// <summary>
+    /// The refusal for a wire request whose type this host neither handles nor routes, logged at Warning without a stack
+    /// (EventId 8, <c>UnknownMessageType</c>). The name is the caller's choice, so it is the caller's mistake: a
+    /// <c>BadRequest</c> refusal, never an <c>InternalError</c> with a support reference. The generated wire switch's
+    /// default arm throws it, and so does <see cref="PreflightWireRequestAsync"/>.
+    /// </summary>
+    /// <param name="logger">The logger the refusal is written to.</param>
+    /// <param name="type">The wire type name the caller sent.</param>
+    /// <returns>The exception for the caller to throw.</returns>
+    public static BadRequestException UnknownMessageType(ILogger logger, string type)
+    {
+        LogUnknownMessageTypeMessage(logger, type, null);
+        return new BadRequestException($"Unknown message type '{type}'.");
+    }
 
     internal static void LogDispatchRetrying(
         ILogger logger, string typeName, int attempt, int maxAttempts, string reason, double delayMs)

@@ -272,6 +272,10 @@ On the envelope endpoint, a non-`ConduitException` error is first offered to the
 
 The support reference is a structured field, `DispatchError.Reference` (`reference?: string` in the generated `ConduitError`), never message text. It is the dispatch's `ConversationId` when that is log-safe (`^[A-Za-z0-9-]{1,64}$`; the id is caller-supplied, so anything else could forge log lines), otherwise a minted 32-hex id, and the Error log line (EventId 1) carries the same value so support can grep for what the user quotes. Refusals carry none. An older server sends none, so a client treats the field as optional and the message still reads as a sentence on its own.
 
+**An unknown type is a refusal.** A wire request whose type the host neither handles nor routes is answered `BadRequest` (400) with the message `"Unknown message type '<name>'."`: the caller chose the name, so it is the caller's mistake, not a server error. It carries no support reference and is logged at Warning without a stack trace (EventId 8, `UnknownMessageType`), so a stream of made-up type names cannot fill the log with Error entries. `PreflightWireRequestAsync` answers an unknown name the same way, and an unknown event type on `/publish` or the hub is refused the same way too (see [Wire events](#wire-events)).
+
+**A caller's cancellation is not an error.** When the caller's own cancellation token fires mid-dispatch (an HTTP client disconnects, so `RequestAborted` is cancelled, or a hub connection closes), `HandleWireRequest` rethrows the `OperationCanceledException`. It writes no answer (nobody is waiting for one), no Error log entry and no support reference, and the dispatch's activity is marked as failed. An `OperationCanceledException` thrown while the caller's token is still live, such as a handler's own timeout, is an unexpected failure like any other.
+
 `ConduitException.Reference` (init-only, never part of the client data) lets code that wraps a failed inner dispatch (a batch item) keep the inner reference: `DispatchResult.Fail(ConduitException)` copies it onto the error. `ConduitRuntime.UnwrapReply` throws `RemoteDispatchException` (an `InvalidOperationException`) whose `Reference` is the remote error's.
 
 ### Translating an unexpected exception
@@ -295,8 +299,13 @@ Typical use: a data layer's concurrency exception that escaped the pipeline beco
 
 ### Wire events
 
-Wire events are fire-and-forget. Exceptions are caught and logged. No error is returned to the caller, so nothing is
-written in the reader's language.
+Wire events are fire-and-forget, but a refusal still reaches the publisher. When a gate refuses an event (the type
+filter's `ForbiddenException`) or its type is unknown (`BadRequest`), `HandleWireEvent` logs it at Warning without a
+stack trace (EventId 7, `RefusedEvent`) and rethrows it. HTTP `/publish` answers it with the `DispatchResult`
+envelope, status-coded as `/dispatch` is, and the hub's `Publish` fails with a `HubException`. Either way the message is
+written in the reader's language. A broker transport acknowledges the refused message. A listener's failure
+(`EventListenerException`) propagates to the transport for retry or dead-lettering, a cancellation of the caller's
+token propagates as it does for a request, and any other exception is logged at Error and not returned.
 
 ## ErrorCode equality
 
