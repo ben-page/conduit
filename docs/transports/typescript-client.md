@@ -267,9 +267,11 @@ Both transports send the plain serialized message as the payload — no envelope
 
 ## MessageContext
 
-Browser clients are always the origin of a new conversation. They do not send `MessageContext` headers — the server creates a fresh context (`MessageId`, `ConversationId`) when it receives the request. All downstream dispatches (to other services via broker transports) inherit this context through the causal chain.
+Browser clients are always the origin of a new conversation. They do not send `MessageContext` ids — the server creates a fresh context (`MessageId`, `ConversationId`, `CausationId`) when it receives the request. All downstream dispatches (to other services via broker transports) inherit this context through the causal chain.
 
-C# service-to-service transports (HTTP, SignalR, brokers) propagate `MessageContext` automatically. HTTP uses `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers. SignalR uses a context dictionary as the third hub method argument. Broker transports use transport-native message properties.
+Both halves of that hold in code. The client never sends the ids: `HttpTransport` drops `X-Conduit-Message-Id`, `X-Conduit-Conversation-Id` and `X-Conduit-Causation-Id` from the headers you pass it (in any letter case), and `SignalRTransport` passes `null` as the hub's context argument. And the server does not take them from a browser: the HTTP endpoint and the hub ignore caller-supplied ids unless they opt in for service-to-service callers, which an edge a browser can reach should not do ([HTTP → Correlation ids](http.md#correlation-ids), [SignalR → Correlation ids](signalr.md#correlation-ids)), so a hand-written request cannot set them either.
+
+C# service-to-service transports (HTTP, SignalR, brokers) send `MessageContext` automatically. HTTP uses `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers. SignalR uses a context dictionary as the third hub method argument. Broker transports use transport-native message properties, and always keep them. Over HTTP and SignalR the receiving edge keeps them only when it trusts its callers.
 
 ## Type mapping
 

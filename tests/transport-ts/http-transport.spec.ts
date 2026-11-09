@@ -52,6 +52,24 @@ describe('HttpTransport', () => {
     }));
   });
 
+  it("never sends a caller's correlation ids, which are the server's to mint, in any letter case", async () => {
+    const fetchSpy = stubFetch(respond(200, '{"data":null}'));
+    const headers = {
+      'X-Conduit-Message-Id': 'm-1',
+      'x-conduit-conversation-id': 'c-1',
+      'X-CONDUIT-CAUSATION-ID': 'p-1',
+      'X-Tenant': 't1',
+    };
+
+    await new HttpTransport('').sendRequest('App.Ping', {}, headers);
+    await new HttpTransport('').sendEvent('App.Happened', {}, headers);
+
+    for (const [, init] of fetchSpy.mock.calls) {
+      expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Conduit-Type': expect.any(String), 'X-Tenant': 't1' });
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('returns the error a refused request carries instead of throwing', async () => {
     stubFetch(respond(400, '{"error":{"code":"Validation","message":"Name is required.","status":400}}'));
 
