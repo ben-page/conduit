@@ -21,7 +21,7 @@ The inbox makes inbound message processing **idempotent at the framework level**
 
 Use the inbox when:
 - **Your handlers have side effects that must not repeat** — writes, payments, notifications, external API calls.
-- **You're consuming from a broker** (RabbitMQ, ASB, SQS, Kafka, ActiveMQ). At-least-once delivery means duplicates are a question of *when*, not *if*.
+- **You're consuming from a broker** (RabbitMQ, ASB, SQS, ActiveMQ). At-least-once delivery means duplicates are a question of *when*, not *if*.
 - **You want one consistent dedup mechanism** across all transports rather than configuring each broker's native feature.
 
 You may not need it when:

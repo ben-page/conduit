@@ -117,7 +117,7 @@ Because the broker enforces the distinction, unicast correctness does not depend
 
 Developer mode gives each developer isolated broker resources (e.g. address `bpage-conduit-commands` instead of `conduit-commands`). Test mode creates fully isolated, short-lived resources for integration tests.
 
-Artemis supports the delay natively through `auto-delete-delay`, so ephemeral resources clean themselves up — no reaper is needed here, unlike Kafka and Amazon SQS.
+Artemis supports the delay natively through `auto-delete-delay`, so ephemeral resources clean themselves up — no reaper is needed here, unlike Amazon SQS.
 
 ```csharp
 builder.Services.AddConduit(conduit =>

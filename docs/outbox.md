@@ -23,7 +23,7 @@ Without an outbox, publishing a message is a best-effort operation. Several thin
 
 **Your application crashes.** The handler saves an order to the database, then calls `PublishAsync`. The process crashes — or the container is killed, or a deployment rolls through — after the database commit but before the message reaches the broker. The order exists. No other service knows about it.
 
-**The broker is down.** RabbitMQ is restarting, the Kafka cluster is unreachable, or the Azure Service Bus namespace is throttling. The database commit succeeds but the publish call fails. The message is lost unless you catch the exception and retry — but retry logic is fragile and doesn't survive process restarts.
+**The broker is down.** RabbitMQ is restarting, the SQS endpoint is unreachable, or the Azure Service Bus namespace is throttling. The database commit succeeds but the publish call fails. The message is lost unless you catch the exception and retry — but retry logic is fragile and doesn't survive process restarts.
 
 **You publish before committing.** Publishing first avoids losing the message, but creates a worse problem. A downstream service receives `OrderCreated`, queries your API for the order, and gets a 404 — because the transaction hasn't committed yet, or it rolled back. Now downstream services are reacting to data that doesn't exist.
 
@@ -60,7 +60,6 @@ Two-phase commit (2PC) could make the database and broker atomic, but it's not v
 |---|---|
 | Azure Service Bus | Only with SQL Server on Windows via MSDTC |
 | RabbitMQ | None — publisher confirms are async, not transactional with a DB |
-| Kafka | Kafka-to-Kafka only — can't enlist a database |
 | Amazon SQS | None |
 | ActiveMQ | Requires MSDTC (AmqpNetLite doesn't support enlistment) |
 
@@ -559,7 +558,7 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 **At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again — and if the entry has captured local listeners, they run again too, since flush/relay redeliver local-then-transport as one unit (see [Flush and relay delivery](#flush-and-relay-delivery-local-then-transport)). Consumers and local listeners alike must handle duplicates. The [inbox](inbox.md) — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication for *wire-inbound* messages; there is no equivalent for local-listener redelivery, so those listeners must be naturally idempotent.
 
-**No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions, Kafka partitions) or handle ordering at the consumer.
+**No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions) or handle ordering at the consumer.
 
 **Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker, on every supported engine including SQLite. The relay and the immediate-send `FlushAsync` likewise never double-send the same entry.
 

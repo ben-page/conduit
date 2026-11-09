@@ -57,7 +57,7 @@ jobs:
 
       - run: dotnet build --no-restore --configuration Release
 
-      # Broker transport tests (ASB, RabbitMQ, Kafka, SQS, ActiveMQ) need a
+      # Broker transport tests (ASB, RabbitMQ, SQS, ActiveMQ) need a
       # container runtime and are excluded here; the in-process HTTP and
       # SignalR transport tests still run. Revisit on a self-hosted runner.
       #
@@ -71,7 +71,7 @@ jobs:
       - name: dotnet test
         run: >
           dotnet test --no-build --configuration Release
-          --filter "FullyQualifiedName!~Conduit.Transport.ActiveMQ.Tests&FullyQualifiedName!~Conduit.Transport.AmazonSqs.Tests&FullyQualifiedName!~Conduit.Transport.AzureServiceBus.Tests&FullyQualifiedName!~Conduit.Transport.Kafka.Tests&FullyQualifiedName!~Conduit.Transport.RabbitMQ.Tests"
+          --filter "FullyQualifiedName!~Conduit.Transport.ActiveMQ.Tests&FullyQualifiedName!~Conduit.Transport.AmazonSqs.Tests&FullyQualifiedName!~Conduit.Transport.AzureServiceBus.Tests&FullyQualifiedName!~Conduit.Transport.RabbitMQ.Tests"
           --report-spekt-junit "MethodFormat=Class;FailureBodyFormat=Verbose"
           --ignore-exit-code 8
 

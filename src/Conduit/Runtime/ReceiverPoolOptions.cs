@@ -12,8 +12,8 @@ namespace Conduit.Runtime;
 /// </para>
 /// <para>
 /// <see cref="Concurrency"/> is interpreted per broker: it maps to the consumer prefetch count
-/// for RabbitMQ and ActiveMQ, the maximum concurrent calls for Azure Service Bus, the polling
-/// parallelism bound for Amazon SQS, and the consume parallelism for Kafka.
+/// for RabbitMQ and ActiveMQ, the maximum concurrent calls for Azure Service Bus, and the polling
+/// parallelism bound for Amazon SQS.
 /// </para>
 /// </remarks>
 public sealed class ReceiverPoolOptions
@@ -28,7 +28,7 @@ public sealed class ReceiverPoolOptions
     /// <summary>
     /// Concurrency budget for this pool's consumer. Interpreted per broker (prefetch count for
     /// RabbitMQ/ActiveMQ, max concurrent calls for Azure Service Bus, polling parallelism for
-    /// Amazon SQS, consume parallelism for Kafka). Defaults to 1.
+    /// Amazon SQS). Defaults to 1.
     /// </summary>
     public int Concurrency { get; set; } = 1;
 

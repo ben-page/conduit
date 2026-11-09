@@ -35,7 +35,7 @@ When a message fails during handling — the handler throws, a downstream depend
 Use the dead letter queue when:
 - **You need visibility into failures.** Messages that fail handling should be inspectable — what failed, why, and when.
 - **You need recovery.** Failed messages should be replayable after the root cause is fixed, without requiring the original sender to re-send.
-- **You're running broker transports.** HTTP and SignalR propagate errors to the caller. Broker transports (RabbitMQ, ASB, SQS, Kafka, ActiveMQ) process messages asynchronously — the sender isn't waiting.
+- **You're running broker transports.** HTTP and SignalR propagate errors to the caller. Broker transports (RabbitMQ, ASB, SQS, ActiveMQ) process messages asynchronously — the sender isn't waiting.
 
 You may not need it when:
 - You're only using local dispatch (no transports). Exceptions propagate to the caller directly.
@@ -215,7 +215,6 @@ Every `RedeliverAsync` builds its message by hand and deliberately skips the bas
 | **RabbitMQ** | Publishes to the app queue via the default exchange (routing key = queue name). |
 | **Amazon SQS** | `SendMessage` directly to the app queue URL. |
 | **ActiveMQ Artemis** | Sends directly to the app's anycast/multicast address. |
-| **Kafka** | Produces to the main topic with message type as key. All consumer groups see it; the inbox prevents duplicate processing by non-target services. |
 | **HTTP** | POST to the dispatch/publish endpoint. |
 | **SignalR** | Invokes the hub's `Dispatch`/`Publish` method. |
 
@@ -227,7 +226,6 @@ The DLQ has a single backing store: the Conduit database. We evaluated also wrap
 - **Best-effort filtering.** Only a SQL store can apply arbitrary filters server-side. Broker-native browsing filters client-side over peeked pages.
 - **No reliable counts.** Most brokers can't return a total count without consuming the queue.
 - **Racy removal/replay.** Pulling one specific message out of a broker DLQ (receive-by-handle/sequence + ack) isn't transactional and races with concurrent browsers.
-- **Kafka can't participate** — append-only, offset-addressed logs are incompatible with random-access browse/remove/replay.
 - **It duplicates the database store unevenly.** The database store already works with every transport (including HTTP and SignalR) and gives full query, filter, count, and replay. Broker-native would add per-transport topology and three operations (write/query/remove) × four brokers for a strictly worse, inconsistent browse experience.
 
 This isn't a permanent exclusion — broker-native capture could be added later as an additive per-transport option if a strong use case appears (e.g. avoiding a database dependency entirely). Today the cost/inconsistency isn't worth it.

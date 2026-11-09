@@ -117,8 +117,8 @@ you already have the `Conduit` section) and an optional callback, same as the co
 **The configuration shape mirrors the fluent builder API, not the runtime object graph.** A key's
 name and position is exactly the name of the property that fluent call sets, nested the same way
 the property is nested. `Conduit:Endpoints:orders` corresponds to `AddEndpoint("orders", …)`;
-`Conduit:Endpoints:telemetry:ProducerConfig:LingerMs` corresponds to `KafkaOptions.ProducerConfig`'s
-`LingerMs`. If you know the C# property name, you know the key — there is no separate config
+`Conduit:Endpoints:events:VisibilityTimeoutSeconds` corresponds to
+`AmazonSqsOptions.VisibilityTimeoutSeconds`. If you know the C# property name, you know the key — there is no separate config
 vocabulary to learn. (`AmazonSqsOptions.Credentials` is the one exception to this — see
 [Per-transport keys](#per-transport-keys) below, where it is mapped by hand rather than bound
 generically.)
@@ -173,10 +173,6 @@ transport:
         "Credentials": { "AccessKey": "AKIA…", "SecretKey": "…" },
         "VisibilityTimeoutSeconds": 120
       },
-      "telemetry": {
-        "BootstrapServers": "kafka:9092",
-        "ProducerConfig": { "LingerMs": 5, "Acks": "All" }
-      },
       "inventory": { "HubUri": "https://inventory/conduit" },
       "billing":   { "BaseAddress": "https://billing", "BasePath": "/api/conduit" }
     }
@@ -184,8 +180,8 @@ transport:
 }
 ```
 
-Here `orders` is a RabbitMQ (or any other broker) endpoint, `events` is Amazon SQS, `telemetry` is
-Kafka, `inventory` is SignalR, and `billing` is HTTP — see [Per-transport keys](#per-transport-keys)
+Here `orders` is a RabbitMQ (or any other broker) endpoint, `events` is Amazon SQS, `inventory` is
+SignalR, and `billing` is HTTP — see [Per-transport keys](#per-transport-keys)
 below for the full key set each transport reads.
 
 ### Precedence
@@ -198,7 +194,7 @@ can never be silently redirected by a stray `appsettings.json` entry.
 
 ### Pool merging
 
-Named receiver pools (`options.AddPool(name, configure)`, shared by all five broker transports)
+Named receiver pools (`options.AddPool(name, configure)`, shared by all four broker transports)
 declare in both places without conflicting:
 
 - **`AddPool` is get-or-create.** If configuration already produced a pool with that name, the
@@ -240,7 +236,7 @@ the cost of not catching a typo'd endpoint name — the tradeoff this design mak
 Every key below is a settable property on that transport's options type, bound from
 `Conduit:Endpoints:{endpointName}`. `EndpointName` itself is set internally by the `Use*` extension
 and is not configurable. `DefaultConcurrency` and `Pools` are common to every broker transport
-(RabbitMQ, ActiveMQ, Azure Service Bus, Kafka, Amazon SQS) — both are inherited from
+(RabbitMQ, ActiveMQ, Azure Service Bus, Amazon SQS) — both are inherited from
 `BrokerTransportOptions` and listed once per table below for completeness.
 
 **RabbitMQ** (`endpoint.UseRabbitMQ()`)
@@ -272,25 +268,6 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 | `DefaultConcurrency` | `int` | Default `10` |
 | `ResponseTimeout` | `TimeSpan` | Default `00:01:00` |
 | `Pools` | array | See [Pool merging](#pool-merging) |
-
-**Kafka** (`endpoint.UseKafka()`)
-
-| Key | Type | Notes |
-|---|---|---|
-| `BootstrapServers` | `string` | Required (or pass it to `UseKafka(bootstrapServers)`) |
-| `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00` |
-| `ProducerConfig:{Property}` | varies | librdkafka producer settings by C# property name, e.g. `ProducerConfig:LingerMs`, `ProducerConfig:Acks` |
-| `ConsumerConfig:{Property}` | varies | librdkafka consumer settings by C# property name, e.g. `ConsumerConfig:SessionTimeoutMs` |
-| `Pools` | array | See [Pool merging](#pool-merging) |
-
-Both `ProducerConfig:LingerMs` (the C# property name) and `ProducerConfig:linger.ms` (the native
-librdkafka key) work — the binder matches property names, so a dotted key would otherwise bind
-nothing at all; `UseKafka` applies a second pass over dotted keys through `ClientConfig.Set` so
-either spelling is accepted. That second pass only materializes `KafkaOptions.ProducerConfig`/
-`ConsumerConfig` when the corresponding section actually has a dotted key to apply, so an endpoint
-with no Kafka configuration at all leaves both properties `null`, as a `configure` callback would
-expect.
 
 **Amazon SQS** (`endpoint.UseAmazonSqs()`)
 
@@ -340,7 +317,7 @@ reach the rest of the library:
 
 - **Endpoints and routes stay in code.** `AddEndpoint`, `RouteNamespace<T>()`, and `RouteType<T>()`
   are compile-time declarations. Declaring them in configuration would need a transport-name
-  registry across all seven transport packages, so a string like `"RabbitMQ"` could resolve to a
+  registry across all six transport packages, so a string like `"RabbitMQ"` could resolve to a
   `Use*` call, plus a string-based route API to replace the generic ones — neither exists, and
   routing by string would give up the compile-time type checking the generic overloads buy.
 - **Pipelines and type filters stay in code.** `AddPipeline(typeof(...))` and `AddTypeFilter(...)`
@@ -360,8 +337,7 @@ arguments became optional rather than moving. Two consequences are worth knowing
 the packages:
 
 - **Recompile downstream assemblies.** `RabbitMQOptions.ConnectionString`,
-  `ActiveMQOptions.ConnectionString`, `AzureServiceBusOptions.ConnectionString`, and
-  `KafkaOptions.BootstrapServers` relaxed from `required init` to `{ get; set; }` so configuration
+  `ActiveMQOptions.ConnectionString`, and `AzureServiceBusOptions.ConnectionString` relaxed from `required init` to `{ get; set; }` so configuration
   can supply them. That is source-compatible — object initializers still work — but *binary*
   breaking: dropping `init` removes the setter's `IsExternalInit` modreq, so an assembly compiled
   against the previous package version must be rebuilt rather than swapped in. `UseSignalR` also

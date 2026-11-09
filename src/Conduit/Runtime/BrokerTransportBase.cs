@@ -81,7 +81,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     protected ILogger Logger { get; }
 
     /// <summary>
-    /// Short identifier for the transport type (e.g. "rabbitmq", "kafka").
+    /// Short identifier for the transport type (e.g. "rabbitmq", "sqs").
     /// Used in observation records to identify which transport was involved.
     /// </summary>
     protected abstract string TransportName { get; }

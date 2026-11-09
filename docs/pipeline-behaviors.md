@@ -156,7 +156,7 @@ Conduit creates spans for:
 
 Tags: `conduit.message.type`, `conduit.message.kind`, `conduit.message.id`, `conduit.conversation.id`, `conduit.dispatch` (local/remote), `conduit.endpoint`, `conduit.transport`.
 
-Trace context propagates through broker message headers (W3C `traceparent`/`tracestate`), so commands dispatched to a remote service via RabbitMQ, Kafka, etc. appear as a single distributed trace in Jaeger/Zipkin.
+Trace context propagates through broker message headers (W3C `traceparent`/`tracestate`), so commands dispatched to a remote service via RabbitMQ, etc. appear as a single distributed trace in Jaeger/Zipkin.
 
 ### Metrics
 

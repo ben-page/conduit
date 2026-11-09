@@ -4,7 +4,7 @@ Source-generated mediator library for .NET 10 with HTTP/SignalR transport, TypeS
 
 ## Architecture
 
-Twenty-one source projects, fifteen test projects, one shared test utility, one TypeScript test project (`tests/transport-ts`), four sample apps:
+Twenty source projects, fourteen test projects, one shared test utility, one TypeScript test project (`tests/transport-ts`), four sample apps:
 
 ```
 src/Conduit/                        Core interfaces, routing, dispatch pipeline, configuration — net10.0
@@ -17,7 +17,6 @@ src/Conduit.Transport.Http/              HTTP transport (outbound HttpTransport 
 src/Conduit.Transport.SignalR/           SignalR transport (outbound SignalRTransport + inbound ConduitHub) — net10.0
 src/Conduit.Transport.AzureServiceBus/   Azure Service Bus transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.RabbitMQ/          RabbitMQ transport (IConduitTransport + IHostedService) — net10.0
-src/Conduit.Transport.Kafka/             Kafka transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.AmazonSqs/         Amazon SQS (+SNS) transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Transport.ActiveMQ/          ActiveMQ Artemis transport (IConduitTransport + IHostedService) — net10.0
 src/Conduit.Durability/                 Durable messaging — transactional outbox + inbox (idempotent dedup) + dead-letter queue — net10.0
@@ -37,7 +36,6 @@ src/Conduit.Persistence.MySql/          MySQL engine: MySqlConduitConnectionFact
 - `Transport.SignalR` → `Conduit` (core) + ASP.NET Core + SignalR
 - `Transport.AzureServiceBus` → `Conduit` (core) + Azure.Messaging.ServiceBus
 - `Transport.RabbitMQ` → `Conduit` (core) + RabbitMQ.Client
-- `Transport.Kafka` → `Conduit` (core) + Confluent.Kafka
 - `Transport.AmazonSqs` → `Conduit` (core) + AWSSDK.SimpleNotificationService + AWSSDK.SQS
 - `Transport.ActiveMQ` → `Conduit` (core) + AMQPNetLite.Core
 - `Durability` → `Conduit` (core) + `Conduit.Persistence` (no direct DB-driver dependency; engine resolved from DI)
@@ -92,14 +90,14 @@ keep their original `Conduit.*` names):
 - **Event broadcast model**: `PublishAsync` dispatches to local listeners AND broadcasts to all DI-registered `IConduitTransport` instances (server-mode transports). Events marked `[LocalOnly]` skip transport broadcast at compile time. Wire-inbound events use `PublishLocalAsync` (private) to prevent re-broadcast loops.
 - **Event error propagation**: Listener failures use continue-on-failure semantics — all listeners run even if some throw. `PublishLocalAsync` collects exceptions and throws `EventListenerException` if any failed. `PublishAsync` (inline local path) and `DispatchEventAsync` (wire path) let it propagate — to the publisher, and so transports can retry/dead-letter; `InnerException` is the first listener failure. Only a `[FireAndForget]` event's background listeners catch and log it. Generated code emits inline try/catch per listener (no runtime helper wrapper).
 - **Transport limitations**: HTTP has no server→client push — events only flow client→server over HTTP. SignalR supports bidirectional event flow. Cross-pod unsolicited events require a SignalR backplane.
-- **Unified wire format**: All transports send the plain serialized message as the body with the type discriminator (`FullTypeName`, e.g. `"Orders.Commands.CreateOrder"`) in transport-native properties. HTTP uses the `X-Conduit-Type` header, SignalR uses a hub method parameter, broker transports use native message properties (AMQP `Type`/`Subject`, Kafka header, etc.). `DispatchEnvelope` is the internal handoff type — it is not exposed on the wire.
+- **Unified wire format**: All transports send the plain serialized message as the body with the type discriminator (`FullTypeName`, e.g. `"Orders.Commands.CreateOrder"`) in transport-native properties. HTTP uses the `X-Conduit-Type` header, SignalR uses a hub method parameter, broker transports use native message properties (AMQP `Type`/`Subject`, etc.). `DispatchEnvelope` is the internal handoff type — it is not exposed on the wire.
 - **Browser MessageContext**: Browser clients (TypeScript) are always conversation origins. They do not send `MessageContext` — the server mints a fresh context on receipt. C# service-to-service transports propagate `MessageContext` automatically via transport-native properties/headers.
 - **ErrorCode enumeration class**: `ConduitException.Code` is an `ErrorCode` record that co-locates the machine-readable code string with its HTTP status code. Equality is based on `Value` only. RESTful endpoints use `Code.HttpStatusCode` directly for Problem Details responses. The envelope endpoint uses `ErrorCode.ToHttpStatusCode()` to map the string-based `DispatchError.Code` from the wire format.
 - **DispatchResult invariants**: `DispatchResult<T>` uses factory methods `Ok(data)` and `Fail(code, message, details?)` with a `[JsonConstructor]` private constructor for deserialization. An unexpected failure answers `InternalError` with the fixed message `"An unexpected error occurred."` and its support reference in `DispatchError.Reference` (never in the message); `ConduitException.Reference` forwards through `Fail(ConduitException)`.
 - **TypeScript generation**: Types marked `[ClientVisible]` get TypeScript interfaces emitted by `Conduit.TypeGen`. This includes both dispatchable types and non-dispatchable DTOs/models. TypeGen emits a self-contained runtime (`conduit.ts`, assembled from the real TypeScript in `src/Conduit.TypeGen/Transport/` — see that project's CLAUDE.md) with transports and a per-project file (`conduit.generated.ts`) with `ConduitClient` — no npm package needed. `ConduitClient` is a thin dispatch client (not a mediator) with `execute`/`fetch`/`publish`/`on` methods. Enums emit as unions of their member names; a closed set (`IClosedSet<TSelf>` + `[ClosedSet]`) as a union of its values — the wire carries each in that spelling (`ConduitRuntime.JsonOptions`).
 - **MessageContext**: AsyncLocal-backed context tracking `MessageId`, `CausationId`, `ConversationId` through dispatch chains. Set automatically by the generated mediator. A head/origin dispatch self-causates: `CausationId == MessageId == ConversationId`. `CausationId` is a non-nullable `string` and is never null. Nested dispatches inherit `ConversationId` and set `CausationId` to the parent's `MessageId`. Access via `MessageContext.Current`. `StartDispatch()` for local dispatch, `StartDispatchFromTransport(messageId, causationId, conversationId)` for inbound wire messages — a wire message that omits `causationId` defaults it to `messageId` (self-causation). `StartLocalDelivery()` for the outbox's local delivery: a child whose `DeliveredMessageId` is the outbox entry's `MessageId` (`DeliveredMessageId` otherwise equals `MessageId`); a non-coalescing trigger keys its run on it.
-- **BrokerTransportBase<TMessage>**: Template method base class for all 5 broker transports. Owns `IHostedService` lifecycle, inbound dispatch orchestration (`ProcessInboundMessageAsync`), outbound serialization. Transports implement ~15 abstract members for broker-specific primitives.
-- **Unified broker options** (`Conduit.Runtime`): all 5 broker options classes inherit `BrokerTransportOptions`, which owns the default concurrency knob (`DefaultConcurrency`), the `Pools` collection, and `AddPool(...)`. Named pools use a single shared `ReceiverPoolOptions` (`Name`, `Concurrency`, `MessageTypes` via `Handle(fullTypeName)`). `Concurrency` is one `int` interpreted per broker: prefetch count for RabbitMQ/ActiveMQ (cast to `ushort` for RabbitMQ at the consumption site), max-concurrent-calls for Azure Service Bus, polling parallelism for Amazon SQS, consume parallelism for Kafka. Each transport's options class adds only broker-specific extras (connection settings, region/credentials, `ProducerConfig`/`ConsumerConfig`, `AdminConnectionString`, `ResponseTimeout`, `EndpointName`, etc.).
+- **BrokerTransportBase<TMessage>**: Template method base class for all 4 broker transports. Owns `IHostedService` lifecycle, inbound dispatch orchestration (`ProcessInboundMessageAsync`), outbound serialization. Transports implement ~15 abstract members for broker-specific primitives.
+- **Unified broker options** (`Conduit.Runtime`): all 4 broker options classes inherit `BrokerTransportOptions`, which owns the default concurrency knob (`DefaultConcurrency`), the `Pools` collection, and `AddPool(...)`. Named pools use a single shared `ReceiverPoolOptions` (`Name`, `Concurrency`, `MessageTypes` via `Handle(fullTypeName)`). `Concurrency` is one `int` interpreted per broker: prefetch count for RabbitMQ/ActiveMQ (cast to `ushort` for RabbitMQ at the consumption site), max-concurrent-calls for Azure Service Bus, polling parallelism for Amazon SQS. Each transport's options class adds only broker-specific extras (connection settings, region/credentials, `AdminConnectionString`, `ResponseTimeout`, `EndpointName`, etc.).
 - **TopologyPrefix**: `ConduitOptions.TopologyPrefix` is a single settable property that auto-resolves on first access: Developer mode defaults to `Environment.UserName`, Test mode generates a random 13-char prefix, Production mode resolves to null. Can be explicitly set for multi-host integration tests (all hosts share the same prefix).
 - **Configurable ResponseTimeout**: Each broker transport options class has a `ResponseTimeout` property (default 60s). Configurable per-transport.
 - **ProducerOnly mode**: `ConduitOptions.ProducerOnly` makes a broker transport host only publish messages. Skips inbound topology (subscriptions, bindings) and consumers. Reply queues for request/response still created via `EnsureOutboundTopologyAsync`. Use for API hosts that route commands to workers, or test sender hosts.
@@ -143,7 +141,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Shared test infrastructure in `tests/Conduit.TestUtils/` (`TestHost`, `EventSpy<T>`, `SpyLog`, `ContainerHelper`, `MessageContextSnapshot`, `TestTopologyPrefix`)
 - `TestTopologyPrefix` builds a per-project Test topology prefix `test-{hash8(assembly)}-{random}` (`ProjectHash`/`ProjectPrefix`/`NewForTest`). All hosts in a test project share the stable `test-{hash8}-` segment so the project can clean up exactly the resources it created.
 - Broker transport tests use per-transport abstract base classes (`RabbitMqTestBase`, `AsbTestBase`, etc.) that own container lifecycle (static), factory methods, and `[TestInitialize]` availability guard. `AssemblySetup` delegates to base class static init/cleanup methods.
-- Ephemeral resource cleanup for the TTL-less brokers: Kafka/SQS test projects reap their own `test-{hash8}-` prefix once at `[AssemblyInitialize]` (`*TestBase.ReapProjectResourcesAsync()` → `KafkaTopologyReaper`/`AmazonSqsTopologyReaper.ReapByPrefixAsync`). RabbitMQ/ASB/ActiveMQ self-clean via native auto-delete/TTL, so they don't reap. Cleanup is once-per-project (NOT per-host-startup — that cross-deletes concurrent hosts).
+- Ephemeral resource cleanup for the TTL-less broker: the SQS test project reaps its own `test-{hash8}-` prefix once at `[AssemblyInitialize]` (`*TestBase.ReapProjectResourcesAsync()` → `AmazonSqsTopologyReaper.ReapByPrefixAsync`). RabbitMQ/ASB/ActiveMQ self-clean via native auto-delete/TTL, so they don't reap. Cleanup is once-per-project (NOT per-host-startup — that cross-deletes concurrent hosts).
 - All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent and disposes the underlying host via `IAsyncDisposable.DisposeAsync` (not sync `Dispose()`) — broker transports implement `IAsyncDisposable` only, and sync disposal deadlocks AmqpNetLite's link close in ActiveMQ.
 - Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (behavior tests + universal topology tests + transport-specific tests + container-free per-endpoint registration and configuration-binding tests). New transports MUST implement the full matrix.
 
@@ -164,7 +162,6 @@ Each project has its own `CLAUDE.md` with implementation-level detail. These are
 - [`src/Conduit.Transport.SignalR/CLAUDE.md`](src/Conduit.Transport.SignalR/CLAUDE.md) — dual-mode server/client transport
 - [`src/Conduit.Transport.AzureServiceBus/CLAUDE.md`](src/Conduit.Transport.AzureServiceBus/CLAUDE.md) — includes emulator test caveats
 - [`src/Conduit.Transport.RabbitMQ/CLAUDE.md`](src/Conduit.Transport.RabbitMQ/CLAUDE.md)
-- [`src/Conduit.Transport.Kafka/CLAUDE.md`](src/Conduit.Transport.Kafka/CLAUDE.md)
 - [`src/Conduit.Transport.AmazonSqs/CLAUDE.md`](src/Conduit.Transport.AmazonSqs/CLAUDE.md)
 - [`src/Conduit.Transport.ActiveMQ/CLAUDE.md`](src/Conduit.Transport.ActiveMQ/CLAUDE.md)
 
@@ -193,7 +190,7 @@ onboarding or answering "how does X work" questions:
 - [`docs/faq.md`](docs/faq.md) — frequently asked questions
 - [`docs/transports/index.md`](docs/transports/index.md) — transport overview and routing. Every
   transport has a user guide alongside it: `signalr.md`, `http.md`, `typescript-client.md`,
-  `azure-service-bus.md`, `rabbitmq.md`, `kafka.md`, `amazon-sqs.md`, `activemq.md`. User-facing
+  `azure-service-bus.md`, `rabbitmq.md`, `amazon-sqs.md`, `activemq.md`. User-facing
   facts (setup, options, configuration keys, topology, wire format) belong in those guides; the
   per-project `CLAUDE.md` files keep only what a maintainer of the code needs.
 

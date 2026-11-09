@@ -259,4 +259,4 @@ Remember the [80-character queue-name cap](#name-length) when naming pools — a
 
 ---
 
-Previous: [Kafka](kafka.md) | [Home](../../README.md) | Next: [ActiveMQ](activemq.md)
+Previous: [RabbitMQ](rabbitmq.md) | [Home](../../README.md) | Next: [ActiveMQ](activemq.md)

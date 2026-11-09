@@ -193,4 +193,4 @@ options.AddPool("imports", pool => pool.Handle<ReindexCatalogCommand>());
 
 ---
 
-Previous: [Azure Service Bus](azure-service-bus.md) | [Home](../../README.md) | Next: [Kafka](kafka.md)
+Previous: [Azure Service Bus](azure-service-bus.md) | [Home](../../README.md) | Next: [Amazon SQS](amazon-sqs.md)

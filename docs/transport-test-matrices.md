@@ -98,7 +98,6 @@ Test class: `{Transport}ReceiverPoolShould`
 | 6.2 | `RouteUnassignedTypesToDefaultPool` | A sends `TestCommand` (not in pool), B has pool configured | Default consumer handles it |
 | 6.3 | `IsolatePoolConcurrency` | A sends slow + fast concurrently, B has 2 pools | Fast pool completes while slow is processing |
 
-**Kafka note (pools fully implemented):** Kafka realizes pools as **dedicated consumer groups** (the prefetch/concurrent-call model of the queue-based transports maps to *N consumer instances per `group.id`* on Kafka — see [`docs/transports/kafka.md`](transports/kafka.md#concurrency-and-partitions)). Its `KafkaReceiverPoolShould` strengthens the shared matrix so the assertions fail against a single-sequential-consumer implementation: `IsolatePoolConcurrency` blocks the pool handler for 8s and asserts the default-group command completes well before it (timing margin, not just "both eventually handled"), and an extra Kafka-specific test `HonorPoolConcurrencyWithParallelExecution` fires 8 same-type commands at a pool with `Concurrency=4` and asserts a `ConcurrencyProbe` observes overlapping handler execution (peak > 1), which a single sequential consumer can never produce.
 
 ### Category 7: Topology Modes
 
@@ -109,7 +108,7 @@ Test class: `{Transport}TopologyModeShould`
 | 7.1 | `CreateDurableResourcesInProductionMode` | A + B with `TopologyMode.Production` | Host starts successfully, resources created |
 | 7.2 | `CreateEphemeralResourcesInDeveloperMode` | A + B with `TopologyMode.Developer` | Host starts, resources have auto-delete/TTL flags |
 | 7.3 | `IsolateTestModeRuns` | Two independent test runs with `TopologyMode.Test` | Different prefixes, no cross-contamination |
-| 7.4 | *(Kafka, SQS only — separate test class, not a method in `{Transport}TopologyModeShould`)* | Single host, test mode | On startup of each test project, the project reaps every broker resource under its own stable `test-{hash8(assembly)}-` prefix. **Kafka:** `KafkaTopologyReaperShould.ReapTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup` (`[AssemblyInitialize]`). **SQS:** `AmazonSqsTopologyReaperShould.ReapQueuesAndTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup`. **RabbitMQ/ASB/ActiveMQ:** N/A — native auto-delete/TTL covers cleanup. |
+| 7.4 | *(SQS only — separate test class, not a method in `{Transport}TopologyModeShould`)* | Single host, test mode | On startup of each test project, the project reaps every broker resource under its own stable `test-{hash8(assembly)}-` prefix. **SQS:** `AmazonSqsTopologyReaperShould.ReapQueuesAndTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup`. **RabbitMQ/ASB/ActiveMQ:** N/A — native auto-delete/TTL covers cleanup. |
 
 **7.4 scope.** Cleanup is per test project, once at assembly initialize, scoped to resources the project created (a stable `test-{hash8(assembly)}-` prefix via `Conduit.TestUtils.TestTopologyPrefix`). A project only deletes its own resources, so concurrent projects/hosts never interfere. The transport libraries expose `ReapByPrefixAsync` so applications can run their own prefix-scoped cleanup too.
 
@@ -137,9 +136,9 @@ Universal — required of every transport, real broker only (the in-memory `Fake
 
 ### Totals (verified 2026-08-24)
 
-Each transport's `Integration/` directory contains a baseline of **34 `[TestMethod]` behavior tests** (the same shared matrix across all five broker transports: RabbitMQ, Kafka, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8 plus the 2 self-published/wire-correlation methods in category 9. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. Kafka adds **1 transport-specific behavior test** (`HonorPoolConcurrencyWithParallelExecution`, see the Kafka note in Category 6) for **35** in its `Integration/` directory. Kafka and SQS each add **1 reaper test** (`KafkaTopologyReaperShould` / `AmazonSqsTopologyReaperShould`) in a separate test class, bringing their totals to **36** and **35** respectively.
+Each transport's `Integration/` directory contains a baseline of **34 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8 plus the 2 self-published/wire-correlation methods in category 9. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **35**.
 
-Behavior-test methods across the five transports: 34 (RabbitMQ) + 36 (Kafka) + 34 (ASB) + 35 (SQS) + 34 (ActiveMQ) = **173 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 34 (RabbitMQ) + 34 (ASB) + 35 (SQS) + 34 (ActiveMQ) = **137 `[TestMethod]` integration tests**.
 
 ---
 
@@ -153,7 +152,7 @@ These tests verify naming logic and configuration without requiring a live broke
 
 | # | Test Method | Validates |
 |---|---|---|
-| TM-1.1 | `UseCorrectMaxLengthForBroker` | Passes correct maxLength to `TopologyNaming` (RMQ=255, ASB=260/50, Kafka=249, SQS=80/256, ActiveMQ=256) |
+| TM-1.1 | `UseCorrectMaxLengthForBroker` | Passes correct maxLength to `TopologyNaming` (RMQ=255, ASB=260/50, SQS=80/256, ActiveMQ=256) |
 | TM-1.2 | `UseSharedResourceNameForMainTopic` | Main topic/exchange/address uses `TopologyNaming.CreateSharedResourceName(options, maxLen)` |
 | TM-1.3 | `UseAppResourceNameForAppQueue` | Per-app queue uses `TopologyNaming.CreateAppResourceName(options, maxLen)` |
 | TM-1.4 | `UseAppResourceNameForReplyQueue` | Reply resource uses `TopologyNaming.CreateAppResourceName(options, "replies", maxLen)` |
@@ -202,14 +201,6 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.2 | `CreateSqlFilterOnSubscriptions` | Subscriptions have SQL filter: `Subject = '{FullTypeName}'` |
 | TM-S.3 | `CreateSessionEnabledReplyQueue` | Reply queue has `RequiresSession = true` |
 
-#### Kafka
-
-| # | Test Method | Validates |
-|---|---|---|
-| TM-S.4 | `SetRetentionForEphemeralTopics` | `retention.ms` config matches topology mode (Developer=4h, Test=5min) |
-| TM-S.5 | `CreateDeadLetterTopic` | Dead-letter topic created with correct name |
-| TM-S.6 | `CreateMainTopicWithCorrectPartitions` | Shared topic has configured partition count |
-
 #### Amazon SQS (+SNS)
 
 | # | Test Method | Validates |
@@ -233,7 +224,6 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 | Transport | Unit topology `[TestMethod]` count |
 |---|---|
 | RabbitMQ | 23 |
-| Kafka | 17 |
 | Azure Service Bus | 25 |
 | Amazon SQS | 17 |
 | ActiveMQ | 23 |
@@ -290,9 +280,6 @@ Only where a transport hand-maps something the binder cannot handle:
 | C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials` |
 | C-S.2 | `BuildSessionCredentialsWhenATokenIsSupplied` | Amazon SQS | A `SessionToken` selects `SessionAWSCredentials` |
 | C-S.3 | `LeaveCredentialsNullForTheDefaultAwsChain` | Amazon SQS | No key pair leaves `Credentials` null so the AWS default chain applies |
-| C-S.4 | `BindProducerAndConsumerConfigByPropertyName` | Kafka | `ProducerConfig:LingerMs` writes through to the librdkafka dictionary |
-| C-S.5 | `AcceptDottedLibrdkafkaKeys` | Kafka | `ProducerConfig:linger.ms` is applied by the post-bind `ClientConfig.Set` pass |
-| C-S.6 | `LeaveProducerAndConsumerConfigNullWhenTheEndpointHasNoKafkaSpecificConfiguration` | Kafka | No dotted keys leaves both properties null for a `configure` callback that branches on null |
 
 Core-side coverage for the shared machinery lives in `tests/Conduit.Tests/Unit/`:
 `ConduitConfigurationShould` (core scalar binding, enum/`TimeSpan` parsing, absent keys, code wins,
@@ -310,7 +297,7 @@ When adding a new broker transport, create a test project and implement:
 1. **All transport behavior tests** (Matrix 1 — 34 `[TestMethod]` tests per existing transport, categories 1–9) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
-4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable, a transport that skips it can ship the silent shared-singleton bug all five broker packages once had
+4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable, a transport that skips it can ship the silent shared-singleton bug all broker packages once had
 
 ### Test Project Structure
 

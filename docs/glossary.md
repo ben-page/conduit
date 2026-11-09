@@ -134,7 +134,7 @@ values again for TypeGen, which emits a string-literal union of them. See
 The wire body is the **plain serialized message** (camelCase JSON). The message type is carried as a
 **type discriminator** — the full type name (e.g. `"Orders.Commands.CreateOrder"`) — in
 transport-native properties: HTTP `X-Conduit-Type` header, a SignalR hub method parameter, AMQP
-`Type`/`Subject`, a Kafka header, etc. The `DispatchEnvelope` wrapper is never serialized onto the wire.
+`Type`/`Subject`, etc. The `DispatchEnvelope` wrapper is never serialized onto the wire.
 
 ### MessageContext (`MessageId` / `CausationId` / `ConversationId`)
 

@@ -14,7 +14,7 @@
 
 Transports move messages between processes. A handler in one service can handle commands sent from another service, and events published on a server can reach browser clients or downstream services automatically.
 
-Conduit ships seven transports in two categories.
+Conduit ships six transports in two categories.
 
 **Point-to-point transports** connect two services directly:
 
@@ -31,7 +31,6 @@ an `IHostedService` consumer:
 |---|---|---|
 | **Azure Service Bus** | Azure.Messaging.ServiceBus (queues, topics, subscriptions) | [azure-service-bus.md](azure-service-bus.md) |
 | **RabbitMQ** | RabbitMQ.Client (AMQP exchanges, queues, bindings) | [rabbitmq.md](rabbitmq.md) |
-| **Kafka** | Confluent.Kafka (topics, partitions) | [kafka.md](kafka.md) |
 | **Amazon SQS** | AWSSDK SQS (+ SNS for fan-out) | [amazon-sqs.md](amazon-sqs.md) |
 | **ActiveMQ** | AMQPNetLite.Core (ActiveMQ Artemis) | [activemq.md](activemq.md) |
 
@@ -42,10 +41,10 @@ Your handlers never reference a transport. The same `ICommandHandler<T>` works w
 Every endpoint gets its own transport instance, options, and `IHostedService` lifecycle, keyed in DI
 by the endpoint name. Two endpoints on the same transport package — say `orders` pointed at one
 RabbitMQ cluster and `audit` pointed at another — are two fully independent connections, each built
-from its own options. This is true for all seven transports; the five broker packages register their
+from its own options. This is true for all six transports; the four broker packages register their
 options and transport as keyed singletons per endpoint, matching what SignalR and HTTP already did.
 
-Before that, the five broker packages registered their options and transport as **non-keyed**
+Before that, the four broker packages registered their options and transport as **non-keyed**
 singletons and added a keyed entry that merely forwarded to the non-keyed one. MS.DI resolves the
 last-registered descriptor, so a host with two endpoints on one transport package ended up with a
 single instance built from the *last* endpoint's options — and every symptom of that was silent:
@@ -208,7 +207,7 @@ This prevents echo loops. If an inbound event were re-broadcast, it would bounce
 
 ### Self-published events
 
-The five broker transports (Azure Service Bus, RabbitMQ, Kafka, Amazon SQS, ActiveMQ) route every
+The four broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) route every
 message through a shared topic/exchange, and each application's per-app event queue is bound to
 *every* discovered event type — including the ones the application publishes itself. Left alone,
 that means a broker-backed application receives its own broadcast back:
@@ -258,7 +257,7 @@ A few things worth knowing about the check:
 - **SignalR and HTTP are unaffected.** SignalR's server mode never consumes its own hub, and its
   client mode dispatches to the server's local listeners without re-broadcasting to other clients.
   HTTP carries no events at all — `SendEventAsync` is unsupported. The filter lives entirely in
-  `BrokerTransportBase`, shared by the five broker transports only.
+  `BrokerTransportBase`, shared by the four broker transports only.
 - **There is no configuration knob to turn it off.** The filter is unconditional wherever it
   applies; add an opt-out only if a concrete use case for double-processing your own events
   actually shows up.
@@ -271,12 +270,12 @@ the broker-delivered copy is the one that gets dropped. See
 ## Ephemeral resource cleanup
 
 RabbitMQ, Azure Service Bus, and ActiveMQ auto-delete ephemeral resources via native broker TTLs.
-Kafka and SQS have no equivalent, so the transport libraries expose `KafkaTopologyReaper.ReapByPrefixAsync`
-and `AmazonSqsTopologyReaper.ReapByPrefixAsync` — best-effort cleanup that deletes resources whose names
+SQS has no equivalent, so the transport library exposes
+`AmazonSqsTopologyReaper.ReapByPrefixAsync` — best-effort cleanup that deletes resources whose names
 start with a given prefix. Conduit's own test suites use this (once per test project, scoped to a stable
 per-project prefix) so a shared or live broker doesn't accumulate test resources. Applications that name
 resources under a known prefix can run the same cleanup. Developer-mode resources are not auto-reaped for
-Kafka/SQS — run those brokers in a container locally, or call the reaper yourself.
+SQS — run that broker in a container locally, or call the reaper yourself.
 
 ---
 

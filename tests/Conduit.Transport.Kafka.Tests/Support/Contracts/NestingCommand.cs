@@ -1,5 +1,0 @@
-using Conduit.Messages;
-
-namespace Conduit.Transport.Kafka.Tests.Support.Contracts;
-
-public record NestingCommand(string Input) : ICommand<TestCommandResult>;
