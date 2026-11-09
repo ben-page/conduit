@@ -111,6 +111,17 @@ public class ConduitExceptionShould
     }
 
     [TestMethod]
+    public void RequireACode()
+    {
+        // Arrange -- without the guard, the missing code surfaced as a NullReferenceException thrown from inside the
+        // runtime's catch (ConduitException) arm, where the wire reads Code
+        var create = () => new DetailedTestException(null!, "refused", []);
+
+        // Act / Assert
+        create.Should().ThrowExactly<ArgumentNullException>().WithParameterName("code");
+    }
+
+    [TestMethod]
     public void LeaveTheBuiltInStatusExceptionsUntyped()
     {
         new ConflictException("x").GetClientType().Should().BeNull();

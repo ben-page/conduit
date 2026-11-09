@@ -40,6 +40,16 @@ public class EventErrorReportingShould
     }
 
     [TestMethod]
+    public void RequireTheListenerExceptions()
+    {
+        // Arrange
+        var create = () => new EventListenerException("One or more listeners failed", null!);
+
+        // Act / Assert
+        create.Should().ThrowExactly<ArgumentNullException>().WithParameterName("listenerExceptions");
+    }
+
+    [TestMethod]
     public void HaveNoInnerExceptionWhenNoListenerFailed()
     {
         // Arrange / Act

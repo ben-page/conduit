@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.ComponentModel;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Conduit.Runtime;
@@ -30,8 +31,12 @@ public sealed record DispatchResult<T>
     public static DispatchResult<T> Ok(T? data) => new() { Data = data };
 
     /// <summary>
-    /// Creates a failed result with the given error.
+    /// Creates a failed result with the given error code string. Hidden: a code that is not one of
+    /// <see cref="Exceptions.ErrorCode"/>'s built-in values answers 400, whatever status its own
+    /// <see cref="Exceptions.ErrorCode"/> declares. Use <see cref="Fail(Exceptions.ErrorCode, string, IReadOnlyList{DispatchErrorDetail})"/>
+    /// or <see cref="Fail(Exceptions.ConduitException)"/>, which carry the code's own status.
     /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public static DispatchResult<T> Fail(string code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
         => new() { Error = new DispatchError(code, message, details) { Status = Exceptions.ErrorCode.ToHttpStatusCode(code) } };
 

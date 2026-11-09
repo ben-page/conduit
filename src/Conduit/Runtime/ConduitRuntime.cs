@@ -1,7 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -757,7 +756,7 @@ public static partial class ConduitRuntime
         return serviceProvider.GetKeyedService<IConduitTransport>(endpoint.Name)
             ?? throw new InvalidOperationException(
                 $"Endpoint '{endpoint.Name}' has no transport configured. " +
-                $"Call UseHttp(), UseSignalR(), UseAzureServiceBus(), or UseRabbitMQ() in the endpoint configuration.");
+                $"Call the transport's Use* extension (e.g. UseRabbitMQ) on the endpoint in AddEndpoint(\"{endpoint.Name}\", ...).");
     }
 
     /// <summary>
@@ -1201,12 +1200,15 @@ public static partial class ConduitRuntime
     }
 
     /// <summary>
-    /// Casts Task&lt;TSource&gt; to Task&lt;TTarget&gt; without allocating.
-    /// Used by generic interface fallback methods.
+    /// Casts Task&lt;TSource&gt; to Task&lt;TTarget&gt; without allocating. Used by the generated generic interface
+    /// fallbacks, where <typeparamref name="TTarget"/> is <typeparamref name="TSource"/> at run time.
     /// </summary>
+    /// <exception cref="InvalidCastException">
+    /// <typeparamref name="TTarget"/> is another type: the task is never reinterpreted as a task of a type it is not.
+    /// </exception>
     public static Task<TTarget> CastTask<TSource, TTarget>(Task<TSource> task)
     {
-        return Unsafe.As<Task<TSource>, Task<TTarget>>(ref task);
+        return (Task<TTarget>)(object)task;
     }
 
     /// <summary>

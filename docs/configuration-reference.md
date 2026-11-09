@@ -29,8 +29,8 @@ builder.Services.AddConduit(conduit =>
 
 | Method | Purpose | Example |
 |---|---|---|
-| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport and routes | `conduit.AddEndpoint("orders", e => { e.UseHttp(httpClient); e.RouteNamespace<CreateOrder>(); })` |
-| `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>`. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
+| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport and routes. The name is required and unique: a blank or repeated name throws `ArgumentException`. | `conduit.AddEndpoint("orders", e => { e.UseHttp(httpClient); e.RouteNamespace<CreateOrder>(); })` |
+| `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>` with two type parameters (request, result); a closed or other-arity type throws `ArgumentException` at registration. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
 | `AddDispatchRetry<TPolicy>(configure?)` | Retry a failed top-level command or query that `TPolicy` (a singleton `IDispatchRetryPolicy`) covers and gives a reason for, each attempt in a fresh DI scope. `DispatchRetryOptions`: `MaxAttempts` (default 3), `Delays` (jittered ranges, default 10-100 ms then 50-300 ms; the last repeats), `TimeProvider` (the retry clock, default `TimeProvider.System`). Once per host; options validated in the call. See [Dispatch Retry](dispatch-retry.md). | `conduit.AddDispatchRetry<MyRetryPolicy>(o => o.MaxAttempts = 4)` |
 | `AddDurability(configure)` | Configure durable messaging by nesting `AddOutbox()` / `AddInbox()` / `AddDeadLetterQueue()`. The persistence engine is set once on the `ConduitBuilder` (via `conduit.UseSqlite(...)` etc.) and shared with audit. See [Outbox](outbox.md), [Inbox](inbox.md), and [Dead Letter Queue](dead-letter-queue.md). | `conduit.UseSqlite("Data Source=app.db"); conduit.AddDurability(d => d.AddOutbox());` |

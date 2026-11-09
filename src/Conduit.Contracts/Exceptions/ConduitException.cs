@@ -8,14 +8,29 @@ namespace Conduit.Exceptions;
 /// Base class for domain exceptions that carry a machine-readable error code
 /// for automatic wire-level error translation.
 /// </summary>
-public abstract class ConduitException(
-    ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
-    : Exception(message)
+public abstract class ConduitException : Exception
 {
+    /// <summary>
+    /// Initializes a refusal with its code, its English message and, optionally, its structured operands.
+    /// </summary>
+    /// <param name="code">The machine-readable error code with HTTP status mapping. Required.</param>
+    /// <param name="message">The refusal's English message.</param>
+    /// <param name="details">Structured operands for this refusal, or <see langword="null"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="code"/> is null.</exception>
+    protected ConduitException(ErrorCode code, string message, IReadOnlyList<DispatchErrorDetail>? details = null)
+        : base(message)
+    {
+        // Every consumer of a refusal reads Code (the wire, Problem Details, logs): a null one would throw a
+        // NullReferenceException from inside the runtime's catch (ConduitException) arm, escaping it
+        ArgumentNullException.ThrowIfNull(code);
+        this.Code = code;
+        this.Details = details;
+    }
+
     /// <summary>
     /// The machine-readable error code with HTTP status mapping.
     /// </summary>
-    public ErrorCode Code => code;
+    public ErrorCode Code { get; }
 
     /// <summary>
     /// Structured operands for this refusal, forwarded onto the wire by
@@ -29,7 +44,7 @@ public abstract class ConduitException(
     /// status alone. Details reach a client only through the dispatch envelope
     /// (<c>/api/conduit/dispatch</c> and the SignalR hub), which is the path a SPA mediator uses.
     /// </remarks>
-    public IReadOnlyList<DispatchErrorDetail>? Details => details;
+    public IReadOnlyList<DispatchErrorDetail>? Details { get; }
 
     /// <summary>
     /// A support reference to carry onto the wire (<c>DispatchError.Reference</c>) when this exception wraps an

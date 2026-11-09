@@ -130,9 +130,35 @@ public class ConduitRuntimeShould
         // Act
         var action = () => ConduitRuntime.ResolveTransport(serviceProvider, endpoint);
 
-        // Assert
+        // Assert -- the hint names no particular transport: every transport package has its own Use* extension
         action.Should().ThrowExactly<InvalidOperationException>()
-            .WithMessage("*no transport configured*");
+            .WithMessage("Endpoint 'orders-api' has no transport configured. Call the transport's Use* extension (e.g. UseRabbitMQ) on the endpoint in AddEndpoint(\"orders-api\", ...).");
+    }
+
+    [TestMethod]
+    public void RefuseToCastATaskToAnotherResultType()
+    {
+        // Arrange -- reinterpreting a Task<string> as a Task<int> would read the string's reference as an int
+        var task = Task.FromResult("not a number");
+
+        // Act
+        Action cast = () => ConduitRuntime.CastTask<string, int>(task);
+
+        // Assert
+        cast.Should().ThrowExactly<InvalidCastException>();
+    }
+
+    [TestMethod]
+    public async Task CastATaskToItsOwnResultType()
+    {
+        // Arrange
+        var task = Task.FromResult(42);
+
+        // Act
+        var result = await ConduitRuntime.CastTask<int, int>(task);
+
+        // Assert
+        result.Should().Be(42);
     }
 
     [TestMethod]

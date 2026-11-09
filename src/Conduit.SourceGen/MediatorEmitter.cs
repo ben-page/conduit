@@ -868,12 +868,19 @@ public static class MediatorEmitter
         sb.AppendLine("            configure(__dispatchOptions);");
         sb.AppendLine("        }");
 
+        // The context is started, observed and its body captured inside a try that restores the caller's context and
+        // rethrows: the capture serializes the caller's object, and the observer (or resolving it) can throw. Not inside
+        // the dispatch's own try below: its catch observes DispatchFailed, and before DispatchInvoked that would be a
+        // failure no observer saw start -- observers key on DispatchInvoked coming first, and may read the captured
+        // Payload when it arrives.
         sb.AppendLine($"        var previousContext = {EmitConstants.MessageContext}.Current;");
-        sb.AppendLine($"        {EmitConstants.MessageContext}.StartDispatch(__dispatchOptions);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            {EmitConstants.MessageContext}.StartDispatch(__dispatchOptions);");
         // Attach this host's observer (DI singleton -> per-host) to the per-flow context, so audit
         // observation is isolated per host rather than routed through a process-global static.
-        sb.AppendLine($"        {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
-        EmitBindDispatchAttempt(sb);
+        sb.AppendLine($"            {EmitConstants.MessageContext}.Current?.AttachObserver(serviceProvider.GetService<Conduit.Runtime.IConduitObserver>());");
+        EmitBindDispatchAttempt(sb, "            ");
 
         // Payload capture for non-DoNotAudit types -- only when an observer is attached, so a host without AddAudit
         // never serializes (MessageContext.HasObserver), and only for a type whose body is kept (CapturesAuditPayload:
@@ -883,13 +890,20 @@ public static class MediatorEmitter
             var typeExpr = requestTypeName != null
                 ? $"typeof({requestTypeName})"   // Strongly typed: use typeof(T) for efficient serialization
                 : $"{requestVarName}.GetType()"; // Dynamic type (events via PublishAsync)
-            sb.AppendLine($"        if ({EmitConstants.MessageContext}.Current is {{ HasObserver: true }} __auditContext && ConduitRuntime.CapturesAuditPayload({typeExpr}))");
-            sb.AppendLine("        {");
-            sb.AppendLine($"            __auditContext.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {typeExpr}, ConduitRuntime.AuditJsonOptions));");
-            sb.AppendLine("        }");
+            sb.AppendLine($"            if ({EmitConstants.MessageContext}.Current is {{ HasObserver: true }} __auditContext && ConduitRuntime.CapturesAuditPayload({typeExpr}))");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                __auditContext.SetPayload(JsonSerializer.SerializeToElement({requestVarName}, {typeExpr}, ConduitRuntime.AuditJsonOptions));");
+            sb.AppendLine("            }");
         }
 
-        sb.AppendLine($"        {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
+        sb.AppendLine($"            {EmitConstants.MessageContext_Observe}(new {EmitConstants.DispatchInvoked}({messageTypeExpr}, \"{messageKind}\"));");
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            {EmitConstants.MessageContext}.RestoreContext(previousContext);");
+        sb.AppendLine("            throw;");
+        sb.AppendLine("        }");
+
         EmitDispatchMetricStart(sb, $"({messageTypeExpr}, \"{messageKind}\")");
 
         sb.AppendLine($"        using var __activity = {EmitConstants.ConduitTelemetry}.StartActivity(\"ConduitMediator\", {messageTypeExpr}, \"{messageKind}\", \"DispatchAsync\");");
@@ -1001,9 +1015,9 @@ public static class MediatorEmitter
     /// before <c>ConduitDispatch</c> runs, so a top-level dispatch's context binds to none, and it stays one context
     /// (one <c>MessageId</c>) across every attempt.
     /// </summary>
-    private static void EmitBindDispatchAttempt(StringBuilder sb)
+    private static void EmitBindDispatchAttempt(StringBuilder sb, string indent = "        ")
     {
-        sb.AppendLine($"        {EmitConstants.ConduitRuntime}.BindDispatchAttempt({EmitConstants.MessageContext}.Current, serviceProvider);");
+        sb.AppendLine($"{indent}{EmitConstants.ConduitRuntime}.BindDispatchAttempt({EmitConstants.MessageContext}.Current, serviceProvider);");
     }
 
     /// <summary>

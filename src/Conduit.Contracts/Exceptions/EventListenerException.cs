@@ -11,10 +11,18 @@ namespace Conduit.Exceptions;
 /// </summary>
 public sealed class EventListenerException(
     string message,
-    IReadOnlyList<Exception> listenerExceptions) : Exception(message, listenerExceptions.Count > 0 ? listenerExceptions[0] : null)
+    IReadOnlyList<Exception> listenerExceptions) : Exception(message, FirstOf(listenerExceptions))
 {
     /// <summary>
     /// The exceptions thrown by individual listeners.
     /// </summary>
     public IReadOnlyList<Exception> ListenerExceptions => listenerExceptions;
+
+    // Runs in the base constructor call, before any other use of the list: the guard must be here, or a null list is
+    // a NullReferenceException from the constructor
+    private static Exception? FirstOf(IReadOnlyList<Exception> listenerExceptions)
+    {
+        ArgumentNullException.ThrowIfNull(listenerExceptions);
+        return listenerExceptions.Count > 0 ? listenerExceptions[0] : null;
+    }
 }

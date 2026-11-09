@@ -58,7 +58,7 @@ Any interceptor or pipeline behavior can use this same pattern when its logic is
 
 Switching to `ValueTask<T>` on public interfaces would mean:
 
-- **Lost optimizations.** `ConduitRuntime.CastTask` uses `Unsafe.As` to reinterpret `Task<TSource>` as `Task<TTarget>` with zero allocation. No equivalent exists for `ValueTask<T>` because it is a struct with a different layout.
+- **Lost optimizations.** `ConduitRuntime.CastTask` hands a `Task<TSource>` back as the `Task<TTarget>` the generic fallback returns with a reference cast, no allocation and no wrapping task (a type pair that does not match throws `InvalidCastException`). No equivalent exists for `ValueTask<T>`, a struct with a different layout.
 - **Harder composition.** `Task.WhenAll` does not accept `ValueTask`. Event broadcasting fans out to multiple transports and would need conversion back to `Task`.
 - **Consumer foot-guns.** `ValueTask<T>` can only be awaited once, cannot be stored, and cannot safely block with `.Result`.
 - **Delegate chain complexity.** Pipeline behaviors and interceptors use `Func<Task<T>>` delegates throughout. `Func<ValueTask<T>>` is less natural and more error-prone.
@@ -68,7 +68,7 @@ Switching to `ValueTask<T>` on public interfaces would mean:
 Rather than changing the return type, Conduit avoids unnecessary allocations where it matters:
 
 - Interceptors and behaviors with synchronous logic skip the `async` keyword and return the inner `Task` directly.
-- `CastTask<TSource, TTarget>` uses `Unsafe.As` for zero-cost generic interface fallbacks in generated code.
+- `CastTask<TSource, TTarget>` is a checked reference cast, with no allocation, for the generic interface fallbacks in generated code.
 - Route resolution, pipeline resolution, and validation are synchronous methods with no `Task` involved.
 
 ### Ecosystem precedent

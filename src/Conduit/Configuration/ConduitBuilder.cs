@@ -155,9 +155,19 @@ public class ConduitBuilder
     /// <param name="name">A unique name for this endpoint (e.g. "orders-api", "frontend").</param>
     /// <param name="configure">Callback to configure the endpoint's transport.</param>
     /// <returns>This builder for chaining.</returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="name"/> is null, empty or white space, or names an endpoint already added: the endpoint's name
+    /// keys its transport and options in DI, so a second one would replace the first.
+    /// </exception>
     public ConduitBuilder AddEndpoint(string name, Action<EndpointBuilder> configure)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(configure);
+        if (this.Options.Endpoints.ContainsKey(name))
+        {
+            throw new ArgumentException($"An endpoint named '{name}' is already registered.", nameof(name));
+        }
+
         var endpoint = new ConduitEndpoint { Name = name };
         var endpointBuilder = new EndpointBuilder(endpoint, this.Options, this.Services, this.Configuration);
         configure(endpointBuilder);
@@ -173,9 +183,21 @@ public class ConduitBuilder
     /// </summary>
     /// <param name="behaviorType">An open generic type implementing IPipelineBehavior&lt;,&gt;.</param>
     /// <returns>This builder for chaining.</returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="behaviorType"/> is not an open generic type with two type parameters (the runtime closes it
+    /// over each dispatch's request and result types), or does not implement IPipelineBehavior&lt;,&gt;.
+    /// </exception>
     public ConduitBuilder AddPipeline(Type behaviorType)
     {
         ArgumentNullException.ThrowIfNull(behaviorType);
+
+        if (!behaviorType.IsGenericTypeDefinition || behaviorType.GetGenericArguments().Length != 2)
+        {
+            throw new ArgumentException(
+                $"Type '{behaviorType.Name}' must be an open generic type with two type parameters " +
+                "(e.g. typeof(MyBehavior<,>)): it is closed over each dispatch's request and result types.",
+                nameof(behaviorType));
+        }
 
         if (!behaviorType.GetInterfaces().Any(i =>
                 i.IsGenericType &&

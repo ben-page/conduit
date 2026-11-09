@@ -168,6 +168,55 @@ namespace App.Events
     }
 
     [TestMethod]
+    public void StartEveryInProcessContextInsideATryThatRestoresTheCaller()
+    {
+        // Arrange -- the audit capture serializes the caller's object, and the observer can throw
+        const string source = """
+            using Conduit.Handlers;
+            using Conduit.Messages;
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace App;
+
+            public record CreateOrder(string CustomerId) : ICommand<Guid>;
+
+            public record OrderCreated(Guid Id) : IEvent;
+
+            public class CreateOrderHandler : ICommandHandler<CreateOrder, Guid>
+            {
+                public Task<Guid> HandleAsync(CreateOrder command, CancellationToken cancellationToken)
+                    => Task.FromResult(Guid.NewGuid());
+            }
+            """;
+
+        // Act
+        var (output, _) = RunGenerator(source);
+        var lines = FindGeneratedSource(output, "ConduitMediator")!.Split('\n').Select(line => line.Trim()).ToList();
+
+        // Assert -- in ExecuteAsync and PublishAsync alike, everything from StartDispatch to DispatchInvoked (the
+        // capture included) runs in a try whose catch restores the caller's context and rethrows, before the
+        // dispatch's own try begins
+        var starts = lines.Select((line, index) => (line, index))
+            .Where(entry => entry.line.Contains(".StartDispatch(__dispatchOptions)", StringComparison.Ordinal))
+            .Select(entry => lines.FindLastIndex(entry.index, line => line.StartsWith("var previousContext = ", StringComparison.Ordinal)))
+            .ToList();
+        starts.Should().HaveCount(2, "the CreateOrder overload and PublishAsync each start a dispatch's context");
+        foreach (var start in starts)
+        {
+            var block = lines.Skip(start).TakeWhile(line => !line.StartsWith("using var __activity", StringComparison.Ordinal)).ToList();
+            var catchAt = block.IndexOf("catch");
+            block[1].Should().Be("try");
+            block.FindIndex(line => line.Contains(".StartDispatch(", StringComparison.Ordinal)).Should().BeInRange(2, catchAt);
+            block.FindIndex(line => line.Contains("ConduitRuntime.AuditJsonOptions", StringComparison.Ordinal)).Should().BeInRange(2, catchAt);
+            block.FindIndex(line => line.Contains("DispatchInvoked(", StringComparison.Ordinal)).Should().BeInRange(2, catchAt);
+            block.Skip(catchAt).Should().ContainInOrder(
+                "catch", "{", "Conduit.Runtime.MessageContext.RestoreContext(previousContext);", "throw;", "}");
+        }
+    }
+
+    [TestMethod]
     public void PassTheServiceProviderToTheWire()
     {
         // Arrange
