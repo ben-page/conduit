@@ -33,7 +33,7 @@ app.Run();
 
 `Dispatch` and `Publish` take an optional `context` argument carrying `MessageContext` ids (`MessageId`, `ConversationId`, `CausationId`). By default the hub ignores it and the server mints fresh ids for every invocation, so each one is the head of a new conversation. The browser client passes `null` anyway. These ids are not cosmetic: the [inbox](../inbox.md) deduplicates on the `MessageId` and the audit trail links records by the other two, so a caller that could set them could suppress another dispatch or graft its own onto someone else's conversation.
 
-A hub that only other services reach (`SignalRTransport` in client mode, which always sends its context) can opt in, so a conversation carries on across the hop:
+A hub that only other services reach (`SignalRTransport` in client mode, which sends its context whenever all three ids are plain tokens, and none otherwise) can opt in, so a conversation carries on across the hop:
 
 ```csharp
 builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true);

@@ -1,8 +1,11 @@
+using System.Text.Json;
 using AwesomeAssertions;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Generated;
 using Conduit.Transport.SignalR.Tests.Support;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR.Tests.Integration;
@@ -124,5 +127,70 @@ public class SignalRTransportShould
         // Assert
         await action.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*InternalError*");
+    }
+
+    private static TestWebHost CreateRecordingHost()
+    {
+        return TestWebHost.Start(
+            builder =>
+            {
+                builder.Services.AddSingleton<RecordedHubContexts>();
+                builder.Services.AddSignalR();
+            },
+            app => app.MapHub<ContextRecordingHub>("/recording"));
+    }
+
+    [TestMethod]
+    public async Task ForwardAContextWhoseIdsArePlainTokens()
+    {
+        // Arrange
+        await using var host = CreateRecordingHost();
+        var recorded = host.GetRequiredService<RecordedHubContexts>();
+        await using var transport = new SignalRTransport(
+            new HubConnectionBuilder().WithUrl($"{host.Address}/recording").Build());
+        var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
+        MessageContext.StartDispatchFromTransport("m-1", "p-1", "c-1");
+
+        // Act
+        await transport.SendRequestAsync(envelope, CancellationToken.None);
+
+        // Assert
+        recorded.Received.Should().ContainSingle().Which.Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            ["MessageId"] = "m-1",
+            ["ConversationId"] = "c-1",
+            ["CausationId"] = "p-1",
+        });
+    }
+
+    // A broker can hand this host any id, and the handler may route a command onward over SignalR. The context is
+    // forwarded only when all three ids are plain tokens, as a trusting hub would honor it; otherwise none is sent and
+    // the receiving hub mints, whether it trusts its callers or not.
+    [TestMethod]
+    public async Task NotForwardAContextThatIsNotPlainTokens()
+    {
+        // Arrange
+        await using var host = CreateRecordingHost();
+        var recorded = host.GetRequiredService<RecordedHubContexts>();
+        await using var transport = new SignalRTransport(
+            new HubConnectionBuilder().WithUrl($"{host.Address}/recording").Build());
+        var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
+        (string MessageId, string CausationId, string ConversationId)[] contexts =
+        [
+            ("m-1\r\nforged log line", "p-1", "c-1"),
+            ("m-1", "p-1", new string('c', 65)),
+            ("m-1", "p-é", "c-1"),
+            ("ID:broker-host-1:1:1:1", "p-1", "c-1"),
+        ];
+
+        // Act
+        foreach (var (messageId, causationId, conversationId) in contexts)
+        {
+            MessageContext.StartDispatchFromTransport(messageId, causationId, conversationId);
+            await transport.SendRequestAsync(envelope, CancellationToken.None);
+        }
+
+        // Assert
+        recorded.Received.Should().HaveCount(contexts.Length).And.AllSatisfy(context => context.Should().BeNull());
     }
 }

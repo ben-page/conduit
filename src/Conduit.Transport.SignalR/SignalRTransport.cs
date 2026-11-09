@@ -106,8 +106,13 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
 
     private static Dictionary<string, string>? BuildContext()
     {
+        // Forwarded only when all three ids are plain tokens, as a trusting hub would honor them: a broker can hand this
+        // host any id (a foreign producer's, CR/LF, kilobytes of it). Otherwise none is sent and the receiving hub mints.
         var context = MessageContext.Current;
-        if (context is null)
+        if (context is null
+            || !MessageContextIds.IsValid(context.MessageId)
+            || !MessageContextIds.IsValid(context.ConversationId)
+            || !MessageContextIds.IsValid(context.CausationId))
         {
             return null;
         }

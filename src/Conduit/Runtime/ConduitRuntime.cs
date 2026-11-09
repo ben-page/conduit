@@ -1067,9 +1067,10 @@ public static partial class ConduitRuntime
             // A reference the user can quote and support can grep: the dispatch's ConversationId. ConduitHub mints a
             // fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line,
             // so finding it needs no log scopes. Refusals (the ConduitException arm above) carry none -- they are not bugs.
-            // An edge that trusts its callers takes the ConversationId from them, and the edges check it is a plain token
-            // (MessageContextIds), but a host can start a context itself: CR/LF would forge log lines. Use it only when
-            // it is log-safe; otherwise mint one.
+            // The ConversationId can come from outside: a trusting HTTP or SignalR edge takes it from its caller (checked
+            // there), a broker transport from the message (unchecked: a foreign producer can send anything), and a host
+            // can start a context itself. CR/LF would forge log lines, so use it only when it is a plain token
+            // (MessageContextIds); otherwise mint one.
             var conversationId = MessageContext.Current?.ConversationId;
             var reference = MessageContextIds.IsValid(conversationId)
                 ? conversationId

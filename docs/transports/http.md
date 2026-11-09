@@ -156,7 +156,7 @@ An endpoint that only other services reach can opt in, so a conversation carries
 app.MapConduitEndpoint("/internal/conduit", trustCallerContext: true);
 ```
 
-A trusting endpoint honors the headers only when `X-Conduit-Message-Id` and `X-Conduit-Conversation-Id` are both present and every supplied id is a plain token: 1 to 64 ASCII letters, digits and hyphens (`MessageContextIds.IsValid`). An absent `X-Conduit-Causation-Id` defaults to the message id. Any other set of headers is ignored as a whole and the server mints fresh ids. Either way the request is answered as usual; a bad id is never an error. The outbound `HttpTransport` always sends the three headers, so the choice is made only on the receiving side.
+A trusting endpoint honors the headers only when `X-Conduit-Message-Id` and `X-Conduit-Conversation-Id` are both present and every supplied id is a plain token: 1 to 64 ASCII letters, digits and hyphens (`MessageContextIds.IsValid`). An absent `X-Conduit-Causation-Id` defaults to the message id. Any other set of headers is ignored as a whole and the server mints fresh ids. Either way the request is answered as usual; a bad id is never an error. The outbound `HttpTransport` sends the three headers whenever all three ids are plain tokens, so the choice is made on the receiving side. When any is not (a broker can deliver a foreign producer's ids), it sends none and the receiver mints.
 
 [RESTful endpoints](#restful-endpoints) and routes opted in with `WithConduitDispatchContext()` never honor caller ids. Server-trusted properties from your `IDispatchContextEnricher`s apply on every edge, trusted or not.
 
@@ -185,7 +185,7 @@ builder.Services.AddConduit(conduit =>
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
 
-`HttpTransport` sends the current `MessageContext` ids as `X-Conduit-*` headers. The remote service keeps them only if it maps its endpoint with `trustCallerContext: true` ([Correlation ids](#correlation-ids)); otherwise the conversation starts afresh there.
+`HttpTransport` sends the current `MessageContext` ids as `X-Conduit-*` headers, when all three are plain tokens. The remote service keeps them only if it maps its endpoint with `trustCallerContext: true` ([Correlation ids](#correlation-ids)); otherwise the conversation starts afresh there.
 
 ### Loading from configuration
 
