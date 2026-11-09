@@ -363,7 +363,7 @@ the packages:
 | `[DoNotAudit]` | Type, property, record parameter | Type: no payload captured. Member: left out of the captured body. A raw-JSON member (`JsonElement`, `JsonNode`, `object`, extension data) is otherwise captured verbatim, so mark it, type it with `[AuditAs]`, or suppress the type's payload |
 | `[AuditRedacted]` | Property, record parameter | Audit payload holds `"•••"` for a present value (null/`""` as themselves), never the value; not combinable with `[DoNotAudit]` (CONDUIT005) |
 | `[AuditAs(nameof(Type))]` | Property, record parameter | On a `JsonElement`/`JsonElement?` member holding a serialized message named by the sibling `string` property: the audit payload holds that message redacted by its own marks; `"•••"` when the name is not a registered message type or the JSON does not read as it; left out when that type is `[DoNotAudit]` or suppressed by `AddAudit` (`Suppress<T>()`/`SuppressPayload<T>()`) (CONDUIT006 when misapplied) |
-| `[assembly: RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace |
+| `[assembly: RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace and its sub-namespaces |
 
 ## MSBuild properties (TypeGen)
 

@@ -1,3 +1,5 @@
+using Conduit.Analysis;
+
 namespace Conduit.SourceGen;
 
 /// <summary>
@@ -10,4 +12,10 @@ public sealed record HandlerInfo
 
     /// <summary>The fully-qualified type name of the handler implementation class.</summary>
     public required string HandlerFullTypeName { get; init; }
+
+    /// <summary>
+    /// Where the handler is declared, when that is in the source being compiled; <see langword="null"/> for a handler from
+    /// a referenced assembly.
+    /// </summary>
+    public SourceLocation? Location { get; init; }
 }

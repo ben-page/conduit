@@ -17,7 +17,7 @@ The HTTP transport maps commands and queries to HTTP endpoints. It supports two 
 
 ## RESTful endpoints
 
-Map each message type to a conventional HTTP route. The source generator emits typed extension methods when your project references `Conduit.Transport.Http`.
+Map each message type to a conventional HTTP route. The source generator emits typed extension methods when your project references `Conduit.Transport.Http`. They are `internal` to the project that generates them, so a module library that references the transport too does not collide with its host's: map the routes in the host, whose generated switch covers the messages of every assembly it references.
 
 ```csharp
 var app = builder.Build();

@@ -60,7 +60,7 @@ public static class DispatchEmitter
                 case DispatchableKind.VoidCommand:
                     if (type.IsFireAndForget)
                     {
-                        EmitFireAndForgetVoidCommand(sb, type, handler);
+                        EmitFireAndForgetVoidCommand(sb, type);
                     }
                     else
                     {
@@ -164,8 +164,7 @@ public static class DispatchEmitter
 
     private static void EmitFireAndForgetVoidCommand(
         StringBuilder sb,
-        DispatchableTypeInfo type,
-        HandlerInfo _)
+        DispatchableTypeInfo type)
     {
         var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
         var handlerInterface =
@@ -201,19 +200,8 @@ public static class DispatchEmitter
         sb.AppendLine("    }");
         sb.AppendLine();
 
-        // ExecuteVoid wrapper (for wire dispatch compatibility — local callers use background dispatch)
-        sb.AppendLine($"    public static async Task<object?> ExecuteVoid(");
-        sb.AppendLine($"        {typeRef} command,");
-        sb.AppendLine($"        IServiceProvider serviceProvider,");
-        sb.AppendLine($"        ConduitOptions conduitOptions,");
-        sb.AppendLine($"        CancellationToken cancellationToken)");
-        sb.AppendLine("    {");
-        sb.AppendLine($"        await Execute(command, serviceProvider, conduitOptions, cancellationToken);");
-        sb.AppendLine($"        return {EmitConstants.Unit}.Value;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-
-        // ExecuteVoidWire — inline handler execution for wire-inbound dispatch.
+        // ExecuteVoidWire — inline handler execution for wire-inbound dispatch. The generated mediator's wire path calls
+        // it, so a [FireAndForget] command has no ExecuteVoid wrapper (a plain void command's wire path calls its own).
         // Wire dispatch already provides fire-and-forget semantics (no reply), so the handler
         // must run inline within the DI scope. Using the background dispatcher here would cause
         // the handler to execute after the scope is disposed. It runs handlers, so it goes through

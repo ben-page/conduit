@@ -40,7 +40,6 @@ internal static class EmitConstants
 
     // Message interface casts (for Validate() calls)
     internal const string ICommand = "Conduit.Messages.ICommand";
-    internal const string ICommandWithResult = "Conduit.Messages.ICommand";  // same base, generic param appended
     internal const string IQuery = "Conduit.Messages.IQuery";
 
     // Context types

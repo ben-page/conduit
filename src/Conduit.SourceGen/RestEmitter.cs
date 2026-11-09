@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,8 +11,15 @@ namespace Conduit.SourceGen;
 /// that delegate to <c>ConduitRestHandlers</c> in Conduit.Transport.Http.
 /// Only emitted when the compilation references Conduit.Transport.Http.
 /// </summary>
+/// <remarks>
+/// The class is <c>internal</c>: every assembly that sees Conduit.Transport.Http runs the generator, a module library
+/// as much as its host, and two public classes of one name in <c>Microsoft.AspNetCore.Builder</c> would make every
+/// <c>MapConduit*</c> call in the host ambiguous (CS0121). Each assembly maps its own endpoints.
+/// </remarks>
 public static class RestEmitter
 {
+    private const string Handlers = EmitConstants.ConduitRestHandlersShort;
+
     /// <summary>
     /// Generates the REST endpoint mapping source code.
     /// </summary>
@@ -20,7 +28,7 @@ public static class RestEmitter
     {
         if (types is null)
         {
-            throw new System.ArgumentNullException(nameof(types));
+            throw new ArgumentNullException(nameof(types));
         }
 
         var commands = types.Where(t => t.Kind == DispatchableKind.Command).ToList();
@@ -38,7 +46,7 @@ public static class RestEmitter
         sb.AppendLine("namespace Microsoft.AspNetCore.Builder;");
         sb.AppendLine();
         sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"Conduit.SourceGen\", \"1.0.0\")]");
-        sb.AppendLine("public static class ConduitRestEndpoints");
+        sb.AppendLine("internal static class ConduitRestEndpoints");
         sb.AppendLine("{");
 
         // MapConduitGet — queries only, always route-bound
@@ -70,19 +78,9 @@ public static class RestEmitter
         string httpMethod,
         List<DispatchableTypeInfo> queries)
     {
-        sb.AppendLine($"    public static RouteHandlerBuilder {methodName}<T>(");
-        sb.AppendLine($"        this IEndpointRouteBuilder endpoints, string pattern)");
-        sb.AppendLine("    {");
-
-        foreach (var query in queries)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
-        sb.AppendLine("    }");
+        EmitMethodStart(sb, methodName, "string pattern");
+        EmitArms(sb, queries, (typeRef, query) => $"{Handlers}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitMethodEnd(sb);
         sb.AppendLine();
     }
 
@@ -95,33 +93,11 @@ public static class RestEmitter
         List<DispatchableTypeInfo> commands,
         List<DispatchableTypeInfo> voidCommands)
     {
-        sb.AppendLine($"    public static RouteHandlerBuilder {methodName}<T>(");
-        sb.AppendLine($"        this IEndpointRouteBuilder endpoints, string pattern)");
-        sb.AppendLine("    {");
-
-        foreach (var query in queries)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        foreach (var cmd in commands)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapCommandRoute<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        foreach (var cmd in voidCommands)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandRoute<{typeRef}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
-        sb.AppendLine("    }");
+        EmitMethodStart(sb, methodName, "string pattern");
+        EmitArms(sb, queries, (typeRef, query) => $"{Handlers}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitArms(sb, commands, (typeRef, command) => $"{Handlers}.MapCommandRoute<{typeRef}, {command.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitArms(sb, voidCommands, (typeRef, _) => $"{Handlers}.MapVoidCommandRoute<{typeRef}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitMethodEnd(sb);
         sb.AppendLine();
     }
 
@@ -134,33 +110,11 @@ public static class RestEmitter
         List<DispatchableTypeInfo> commands,
         List<DispatchableTypeInfo> voidCommands)
     {
-        sb.AppendLine($"    public static RouteHandlerBuilder {methodName}<T>(");
-        sb.AppendLine($"        this IEndpointRouteBuilder endpoints, string pattern)");
-        sb.AppendLine("    {");
-
-        foreach (var query in queries)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        foreach (var cmd in commands)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapCommandBody<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        foreach (var cmd in voidCommands)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandBody<{typeRef}>(endpoints, pattern, \"{httpMethod}\");");
-        }
-
-        sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
-        sb.AppendLine("    }");
+        EmitMethodStart(sb, methodName, "string pattern");
+        EmitArms(sb, queries, (typeRef, query) => $"{Handlers}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitArms(sb, commands, (typeRef, command) => $"{Handlers}.MapCommandBody<{typeRef}, {command.ResultFullTypeName}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitArms(sb, voidCommands, (typeRef, _) => $"{Handlers}.MapVoidCommandBody<{typeRef}>(endpoints, pattern, \"{httpMethod}\")");
+        EmitMethodEnd(sb);
         sb.AppendLine();
     }
 
@@ -171,37 +125,48 @@ public static class RestEmitter
         List<DispatchableTypeInfo> commands,
         List<DispatchableTypeInfo> voidCommands)
     {
-        sb.AppendLine($"    public static RouteHandlerBuilder MapConduit<T>(");
-        sb.AppendLine($"        this IEndpointRouteBuilder endpoints, string method, string pattern)");
-        sb.AppendLine("    {");
+        EmitMethodStart(sb, "MapConduit", "string method, string pattern");
         sb.AppendLine("        var useBody = method is \"POST\" or \"PUT\" or \"PATCH\";");
+        EmitArms(sb, queries, (typeRef, query) => $"{Handlers}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, method)");
+        EmitArms(sb, commands, (typeRef, command) => BodyOrRoute(
+            $"{Handlers}.MapCommandBody<{typeRef}, {command.ResultFullTypeName}>(endpoints, pattern, method)",
+            $"{Handlers}.MapCommandRoute<{typeRef}, {command.ResultFullTypeName}>(endpoints, pattern, method)"));
+        EmitArms(sb, voidCommands, (typeRef, _) => BodyOrRoute(
+            $"{Handlers}.MapVoidCommandBody<{typeRef}>(endpoints, pattern, method)",
+            $"{Handlers}.MapVoidCommandRoute<{typeRef}>(endpoints, pattern, method)"));
+        EmitMethodEnd(sb);
+    }
 
-        foreach (var query in queries)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(query.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return {EmitConstants.ConduitRestHandlersShort}.MapQuery<{typeRef}, {query.ResultFullTypeName}>(endpoints, pattern, method);");
-        }
+    // The escape hatch's command arm: body binding for POST/PUT/PATCH, route binding otherwise.
+    private static string BodyOrRoute(string bodyCall, string routeCall) => $"useBody ? {bodyCall} : {routeCall}";
 
-        foreach (var cmd in commands)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return useBody");
-            sb.AppendLine($"                ? {EmitConstants.ConduitRestHandlersShort}.MapCommandBody<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, method)");
-            sb.AppendLine($"                : {EmitConstants.ConduitRestHandlersShort}.MapCommandRoute<{typeRef}, {cmd.ResultFullTypeName}>(endpoints, pattern, method);");
-        }
+    private static void EmitMethodStart(StringBuilder sb, string methodName, string parameters)
+    {
+        sb.AppendLine($"    public static RouteHandlerBuilder {methodName}<T>(");
+        sb.AppendLine($"        this IEndpointRouteBuilder endpoints, {parameters})");
+        sb.AppendLine("    {");
+    }
 
-        foreach (var cmd in voidCommands)
-        {
-            var typeRef = EmitConstants.ToCSharpTypeRef(cmd.FullTypeName);
-            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
-            sb.AppendLine($"            return useBody");
-            sb.AppendLine($"                ? {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandBody<{typeRef}>(endpoints, pattern, method)");
-            sb.AppendLine($"                : {EmitConstants.ConduitRestHandlersShort}.MapVoidCommandRoute<{typeRef}>(endpoints, pattern, method);");
-        }
-
+    private static void EmitMethodEnd(StringBuilder sb)
+    {
         sb.AppendLine($"        throw new System.InvalidOperationException($\"No dispatchable type mapping for {{typeof(T).Name}}.\");");
         sb.AppendLine("    }");
+    }
+
+    /// <summary>
+    /// Emits one arm per type, <c>if (typeof(T) == typeof(X)) return ...;</c>, the returned expression written by
+    /// <paramref name="returnExpression"/> from the type's C# reference and the type.
+    /// </summary>
+    private static void EmitArms(
+        StringBuilder sb,
+        List<DispatchableTypeInfo> types,
+        Func<string, DispatchableTypeInfo, string> returnExpression)
+    {
+        foreach (var type in types)
+        {
+            var typeRef = EmitConstants.ToCSharpTypeRef(type.FullTypeName);
+            sb.AppendLine($"        if (typeof(T) == typeof({typeRef}))");
+            sb.AppendLine($"            return {returnExpression(typeRef, type)};");
+        }
     }
 }

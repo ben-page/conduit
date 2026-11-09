@@ -25,7 +25,7 @@ public sealed record ConduitModel
     /// <summary>All discovered accessible command/query handlers.</summary>
     public required EquatableArray<HandlerInfo> Handlers { get; init; }
 
-    /// <summary>Event listener groups (with [LocalOnly] resolved).</summary>
+    /// <summary>Event listener groups, ordered by event full type name.</summary>
     public required EquatableArray<ListenerGroup> ListenerGroups { get; init; }
 
     /// <summary>Message types whose only handler is inaccessible to the generating assembly.</summary>

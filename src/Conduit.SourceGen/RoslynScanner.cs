@@ -59,7 +59,10 @@ public static class RoslynScanner
 
         foreach (var typeSymbol in GetAllNamedTypes(compilation))
         {
-            if (typeSymbol.IsAbstract || (typeSymbol.TypeKind != TypeKind.Class && typeSymbol.TypeKind != TypeKind.Struct))
+            // A message is a class: Conduit's attributes ([LocalOnly], [FireAndForget], [ClientVisible], ...) are
+            // class-only, and the generated REST mapping and HandleEvent overrides constrain to reference types, so a
+            // struct implementing a message interface is not discovered.
+            if (typeSymbol.IsAbstract || typeSymbol.TypeKind != TypeKind.Class)
             {
                 continue;
             }
@@ -102,6 +105,7 @@ public static class RoslynScanner
                 IsDoNotAudit = HasAttribute(typeSymbol, DoNotAuditAttributeName),
                 AuditMarkConflicts = AuditMarkConflicts(typeSymbol),
                 AuditAsMisuses = AuditAsMisuses(typeSymbol),
+                Location = SourceLocationOf(compilation, typeSymbol),
             });
             symbols.Add(typeSymbol);
         }
@@ -216,6 +220,7 @@ public static class RoslynScanner
                     {
                         MessageFullTypeName = messageType,
                         HandlerFullTypeName = typeSymbol.ToDisplayString(),
+                        Location = SourceLocationOf(compilation, typeSymbol),
                     });
                 }
                 else if (ifaceOriginal == "Conduit.Handlers.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
@@ -227,9 +232,12 @@ public static class RoslynScanner
 
                     // A listener is registered under its event's type (IEventListener<TEvent>, and the registry's
                     // typeof), so its event must be nameable too: not internal to a referenced assembly, not private,
-                    // not a type parameter of an open generic listener. Such a listener is simply not wired. (A
-                    // handler needs no such check: it is emitted only joined to a discovered message.)
-                    if (iface.TypeArguments[0] is not INamedTypeSymbol eventType || !IsNameableByGeneratedCode(compilation, eventType))
+                    // not a type parameter of an open generic listener. Nor a struct, which is not a message (Scan).
+                    // Such a listener is simply not wired. (A handler needs no such check: it is emitted only joined
+                    // to a discovered message.)
+                    if (iface.TypeArguments[0] is not INamedTypeSymbol eventType
+                        || eventType.IsValueType
+                        || !IsNameableByGeneratedCode(compilation, eventType))
                     {
                         continue;
                     }
@@ -308,6 +316,22 @@ public static class RoslynScanner
         }
 
         return true;
+    }
+
+    // Where a type of this compilation is declared (its name's span), for its diagnostics. A type from a referenced
+    // assembly has none: in the IDE a project reference is a compilation whose symbols are "in source" too, but in a tree
+    // this compilation does not have, which a generator may not report a diagnostic in.
+    private static SourceLocation? SourceLocationOf(Compilation compilation, INamedTypeSymbol typeSymbol)
+    {
+        if (!SymbolEqualityComparer.Default.Equals(typeSymbol.ContainingAssembly, compilation.Assembly))
+        {
+            return null;
+        }
+
+        var location = typeSymbol.Locations.FirstOrDefault(candidate => candidate.IsInSource);
+        return location?.SourceTree is { } tree
+            ? new SourceLocation(tree.FilePath, location.SourceSpan.Start, location.SourceSpan.Length)
+            : null;
     }
 
     private static string? GetResultTypeName(INamedTypeSymbol typeSymbol, DispatchableKind kind)

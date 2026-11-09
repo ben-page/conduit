@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using Conduit.Analysis;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Conduit.SourceGen;
 
@@ -25,6 +26,14 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             .WithTrackingName("BuildModel");
 
         context.RegisterSourceOutput(model, static (context, model) => Emit(model, context));
+
+        // A diagnostic is located in the compilation's own syntax tree, which only the compilation holds: a location in
+        // a tree is what a #pragma and the IDE apply to (a file path and span alone print as line 1 and suppress
+        // nothing). So the diagnostics are a second output, combined with the compilation; it re-runs on every change,
+        // as the walk does, while the emission above stays cached.
+        context.RegisterSourceOutput(
+            model.Combine(context.CompilationProvider),
+            static (context, input) => ReportDiagnostics(input.Left, input.Right, context));
     }
 
     private static ConduitModel BuildModel(Compilation compilation, CancellationToken cancellationToken)
@@ -47,7 +56,6 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             {
                 EventFullTypeName = kvp.Key,
                 ListenerFullTypeNames = kvp.Value.ToEquatableArray(),
-                IsLocalOnly = dispatchableTypes.Any(t => t.FullTypeName == kvp.Key && t.IsLocalOnly),
             }).ToEquatableArray();
 
         return new ConduitModel
@@ -67,6 +75,32 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
     private static void Emit(ConduitModel model, SourceProductionContext context)
     {
+        if (model.DispatchableTypes.Count == 0)
+        {
+            return;
+        }
+
+        var dispatchableTypes = model.DispatchableTypes;
+        var handlers = model.Handlers;
+        var groups = model.ListenerGroups;
+
+        context.AddSource("ConduitDispatch.g.cs", DispatchEmitter.Emit(dispatchableTypes, handlers));
+        context.AddSource("ConduitRegistration.g.cs", RegistrationEmitter.Emit(handlers, groups, dispatchableTypes));
+        context.AddSource("ConduitMediator.g.cs", MediatorEmitter.Emit(dispatchableTypes, handlers));
+
+        if (model.HasHttpTransport)
+        {
+            context.AddSource("ConduitRestEndpoints.g.cs", RestEmitter.Emit(dispatchableTypes));
+        }
+
+        if (model.HasResilience)
+        {
+            context.AddSource("ConduitResilienceDispatch.g.cs", ResilienceEmitter.Emit(dispatchableTypes));
+        }
+    }
+
+    private static void ReportDiagnostics(ConduitModel model, Compilation compilation, SourceProductionContext context)
+    {
         // Reported even when nothing is emitted: a project whose only messages are excluded still learns why.
         foreach (var generic in model.GenericMessageTypes)
         {
@@ -84,30 +118,12 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             return;
         }
 
-        var dispatchableTypes = model.DispatchableTypes;
-        var handlers = model.Handlers;
-        var groups = model.ListenerGroups;
-
-        EmitDiagnostics(context, dispatchableTypes, handlers, model.InaccessibleHandlerMessageTypes, model.RemoteContractPatterns);
+        EmitDiagnostics(context, compilation, model.DispatchableTypes, model.Handlers, model.InaccessibleHandlerMessageTypes, model.RemoteContractPatterns);
 
         foreach (var carried in model.CarriedAuditAsMisuses)
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticDescriptors.MisappliedAuditAs, Location.None, carried.FullTypeName, carried.Misuses));
-        }
-
-        context.AddSource("ConduitDispatch.g.cs", DispatchEmitter.Emit(dispatchableTypes, handlers));
-        context.AddSource("ConduitRegistration.g.cs", RegistrationEmitter.Emit(handlers, groups, dispatchableTypes));
-        context.AddSource("ConduitMediator.g.cs", MediatorEmitter.Emit(dispatchableTypes, handlers));
-
-        if (model.HasHttpTransport)
-        {
-            context.AddSource("ConduitRestEndpoints.g.cs", RestEmitter.Emit(dispatchableTypes));
-        }
-
-        if (model.HasResilience)
-        {
-            context.AddSource("ConduitResilienceDispatch.g.cs", ResilienceEmitter.Emit(dispatchableTypes));
         }
     }
 
@@ -129,11 +145,17 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         return patterns;
     }
 
+    // A pattern names a namespace, matched on whole segments: the namespace itself and those beneath it
+    // ("Inventory" covers Inventory.Reserve and Inventory.Counts.Recount, never InventoryAudit.Record), or one type by
+    // its full name.
     private static bool IsRemoteContract(string fullTypeName, EquatableArray<string> remotePatterns)
     {
         foreach (var pattern in remotePatterns)
         {
-            if (fullTypeName.StartsWith(pattern, System.StringComparison.Ordinal))
+            if (fullTypeName == pattern
+                || (fullTypeName.Length > pattern.Length
+                    && fullTypeName[pattern.Length] == '.'
+                    && fullTypeName.StartsWith(pattern, System.StringComparison.Ordinal)))
             {
                 return true;
             }
@@ -144,6 +166,7 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
     private static void EmitDiagnostics(
         SourceProductionContext context,
+        Compilation compilation,
         EquatableArray<DispatchableTypeInfo> types,
         EquatableArray<HandlerInfo> handlers,
         EquatableArray<string> inaccessibleHandlerMessageTypes,
@@ -151,16 +174,18 @@ public sealed class ConduitGenerator : IIncrementalGenerator
     {
         foreach (var type in types)
         {
+            var location = ToLocation(type.Location, compilation);
+
             if (type.AuditMarkConflicts is not null)
             {
                 context.ReportDiagnostic(Diagnostic.Create(
-                    DiagnosticDescriptors.ConflictingAuditMarks, Location.None, type.FullTypeName, type.AuditMarkConflicts));
+                    DiagnosticDescriptors.ConflictingAuditMarks, location, type.FullTypeName, type.AuditMarkConflicts));
             }
 
             if (type.AuditAsMisuses is not null)
             {
                 context.ReportDiagnostic(Diagnostic.Create(
-                    DiagnosticDescriptors.MisappliedAuditAs, Location.None, type.FullTypeName, type.AuditAsMisuses));
+                    DiagnosticDescriptors.MisappliedAuditAs, location, type.FullTypeName, type.AuditAsMisuses));
             }
 
             if (type.Kind == DispatchableKind.Event)
@@ -174,15 +199,25 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             {
                 context.ReportDiagnostic(Diagnostic.Create(
                     DiagnosticDescriptors.NoHandler,
-                    Location.None,
+                    location,
                     type.FullTypeName,
                     GetExpectedHandlerInterface(type)));
             }
             else if (matchingHandlers.Count > 1)
             {
+                // At the message, with each handler as an additional location; at the first handler when the message is
+                // declared in a referenced assembly.
+                var handlerLocations = matchingHandlers
+                    .Select(handler => handler.Location)
+                    .Where(handlerLocation => handlerLocation is not null)
+                    .OrderBy(handlerLocation => handlerLocation!.FilePath, System.StringComparer.Ordinal)
+                    .ThenBy(handlerLocation => handlerLocation!.Start)
+                    .Select(handlerLocation => ToLocation(handlerLocation, compilation))
+                    .ToList();
                 context.ReportDiagnostic(Diagnostic.Create(
                     DiagnosticDescriptors.MultipleHandlers,
-                    Location.None,
+                    type.Location is null ? handlerLocations.FirstOrDefault() ?? Location.None : location,
+                    handlerLocations,
                     type.FullTypeName));
             }
 
@@ -191,14 +226,10 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             {
                 context.ReportDiagnostic(Diagnostic.Create(
                     DiagnosticDescriptors.InvalidFireAndForget,
-                    Location.None,
+                    location,
                     type.FullTypeName));
             }
         }
-
-        // Also check events for invalid [FireAndForget] (events are skipped above)
-        // Events ARE valid for [FireAndForget], so no diagnostic needed — this loop only
-        // catches commands/queries. Events with [FireAndForget] are fine.
 
         // Report message types whose only handler lives in a referenced assembly but is not
         // accessible to the generating assembly (e.g. internal). A type that also has an
@@ -217,15 +248,40 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         }
     }
 
+    /// <summary>
+    /// The location a <see cref="Conduit.Analysis.SourceLocation"/> names, in the compilation's own syntax tree, so a
+    /// <c>#pragma</c> and the IDE apply to it; <see cref="Location.None"/> for a type from a referenced assembly.
+    /// </summary>
+    private static Location ToLocation(SourceLocation? location, Compilation compilation)
+    {
+        if (location is null)
+        {
+            return Location.None;
+        }
+
+        var span = new TextSpan(location.Start, location.Length);
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            if (tree.FilePath == location.FilePath && span.End <= tree.Length)
+            {
+                return Location.Create(tree, span);
+            }
+        }
+
+        // The model and the compilation come from one run, so the tree is there; failing that, the file and the span.
+        return Location.Create(location.FilePath, span, default);
+    }
+
+    // Only a command or a query reaches CONDUIT001: an event has listeners, not a handler.
     private static string GetExpectedHandlerInterface(DispatchableTypeInfo type)
     {
-        return type.Kind switch
+        if (type.Kind == DispatchableKind.Query)
         {
-            DispatchableKind.Command => $"ICommandHandler<{type.TypeName}, {type.ResultTypeName}>",
-            DispatchableKind.VoidCommand => $"ICommandHandler<{type.TypeName}>",
-            DispatchableKind.Query => $"IQueryHandler<{type.TypeName}, {type.ResultTypeName}>",
-            DispatchableKind.Event => $"IEventListener<{type.TypeName}>",
-            DispatchableKind.Model or _ => "IHandler",
-        };
+            return $"IQueryHandler<{type.TypeName}, {type.ResultTypeName}>";
+        }
+
+        return type.Kind == DispatchableKind.VoidCommand
+            ? $"ICommandHandler<{type.TypeName}>"
+            : $"ICommandHandler<{type.TypeName}, {type.ResultTypeName}>";
     }
 }

@@ -116,7 +116,7 @@ keep their original `Conduit.*` names):
 | `[AuditRedacted]` | Property, record parameter | Capture that the member has a value (`"•••"`), never the value; null/"" as themselves. Not combinable with [DoNotAudit] (CONDUIT005). |
 | `[AuditAs(nameof(Type))]` | Property, record parameter | On a `JsonElement`/`JsonElement?` member holding a serialized message whose wire type name is in the named sibling `string` property: capture it as that message, redacted by its own marks. Resolves only registered message types (`ConduitTypeRegistry`); inner type that records no body (type-level `[DoNotAudit]`, or the host's `Suppress<T>()`/`SuppressPayload<T>()`, process-wide) -> member left out; null -> null; unknown/null name or unreadable JSON -> `"•••"`, never the raw JSON. Misapplied on a member of a message, or of a type a message carries (in the compilation or a referenced assembly that references `Conduit.Contracts`): CONDUIT006. |
 | `[NotAutoRegistered]` | Type | Exclude a handler/listener from source-gen auto-registration (for components wired explicitly via a feature's `Add*` extension, e.g. `LocalAuditListener` via `AddAuditListener`). The type stays dispatchable when registered manually. |
-| `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace (remote contract types without local handlers) |
+| `[RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace and its sub-namespaces, on whole segments (remote contract types without local handlers) |
 
 ## Build & Test
 

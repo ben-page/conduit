@@ -1,5 +1,6 @@
 ﻿using AwesomeAssertions;
 using Conduit.SourceGen.Tests.Support;
+using Microsoft.CodeAnalysis;
 
 namespace Conduit.SourceGen.Tests.Unit;
 
@@ -148,6 +149,48 @@ public record GetItemQuery(System.Guid Id) : IQuery<string>;
         // Assert
         var restSource = FindGeneratedSource(output, "ConduitRestEndpoints");
         restSource.Should().BeNull();
+    }
+
+    [TestMethod]
+    public void EmitTheEndpointsClassInternal()
+    {
+        // Arrange -- a module assembly that sees Conduit.Transport.Http runs the generator too, so it carries its own
+        // generated endpoints class in Microsoft.AspNetCore.Builder
+        const string moduleSource = """
+            using Conduit.Messages;
+
+            namespace Module.Queries;
+
+            public sealed record GetModuleItem(int Id) : IQuery<string>;
+            """;
+        var (module, _) = RunGenerator(moduleSource, HttpTransportReference);
+        using var moduleImage = new MemoryStream();
+        module.WithAssemblyName("Module").Emit(moduleImage).Success.Should().BeTrue();
+        const string hostSource = """
+            using Conduit.Messages;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Routing;
+
+            namespace Host
+            {
+                public sealed record GetHostItem(int Id) : IQuery<string>;
+
+                public static class Endpoints
+                {
+                    public static void Map(IEndpointRouteBuilder endpoints)
+                    {
+                        endpoints.MapConduitGet<GetHostItem>("/host-items/{id}");
+                        endpoints.MapConduitGet<Module.Queries.GetModuleItem>("/module-items/{id}");
+                    }
+                }
+            }
+            """;
+
+        // Act -- RunGenerator asserts the host compiles: with two public classes the extension call is ambiguous (CS0121)
+        var (host, _) = RunGenerator(hostSource, HttpTransportReference, MetadataReference.CreateFromImage(moduleImage.ToArray()));
+
+        // Assert
+        FindGeneratedSource(host, "ConduitRestEndpoints").Should().Contain("internal static class ConduitRestEndpoints");
     }
 
     // Runs the generator with Conduit.Transport.Http referenced, so the REST endpoints are emitted and compiled.

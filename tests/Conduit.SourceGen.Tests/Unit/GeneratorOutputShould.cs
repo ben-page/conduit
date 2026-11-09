@@ -673,6 +673,54 @@ public class GeneratorOutputShould : GeneratorTestBase
         broadcast.Events.Should().Equal("App.Events.OrderShipped");
     }
 
+    [TestMethod]
+    public async Task ExcludeStructMessages()
+    {
+        // Arrange -- Conduit's attributes are class-only, so a struct implementing a message interface is not a message:
+        // neither it nor its handler or listener is emitted, beside a class command that is
+        const string source = """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Conduit.Handlers;
+            using Conduit.Messages;
+
+            namespace App
+            {
+                public readonly record struct Ping(int Sequence) : ICommand;
+
+                public sealed class PingHandler : ICommandHandler<Ping>
+                {
+                    public Task HandleAsync(Ping command, CancellationToken cancellationToken) => Task.CompletedTask;
+                }
+
+                public readonly record struct Pinged(int Sequence) : IEvent;
+
+                public sealed class PingedListener : IEventListener<Pinged>
+                {
+                    public Task HandleAsync(Pinged @event, CancellationToken cancellationToken) => Task.CompletedTask;
+                }
+
+                public sealed record Pong(int Sequence) : ICommand<int>;
+
+                public sealed class PongHandler : ICommandHandler<Pong, int>
+                {
+                    public Task<int> HandleAsync(Pong command, CancellationToken cancellationToken) => Task.FromResult(command.Sequence);
+                }
+            }
+            """;
+
+        // Act
+        var (output, diagnostics) = RunEveryEmitter(source);
+        var generated = LoadOutput(output);
+        await using var services = BuildGeneratedServices(generated, new RecordingTransport());
+        var answer = await services.GetRequiredService<IMediator>().ExecuteAsync((ICommand<int>)NewMessage(generated, "App.Pong", 7));
+
+        // Assert
+        GeneratedText(output).Should().NotContain("Ping");
+        diagnostics.Should().NotContain(diagnostic => diagnostic.GetMessage(CultureInfo.InvariantCulture).Contains("Ping"));
+        answer.Should().Be(7);
+    }
+
     // Runs the generated AddConduit (with configure) on a container with logging and one broadcast transport.
     private static ServiceProvider BuildGeneratedServices(
         Assembly generated,

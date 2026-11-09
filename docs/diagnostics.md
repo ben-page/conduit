@@ -4,6 +4,10 @@ The Conduit source generator (`Conduit.SourceGen`) emits compile-time diagnostic
 the compilation for `ICommand` / `IQuery` / `IEvent` types and their handlers. The descriptors live
 in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
 
+A message is a class (a `record` or a `class`). A `struct` implementing one of the interfaces is not
+discovered — Conduit's attributes are class-only — so nothing is generated for it, its handler or its
+listener.
+
 | Code | Severity | Title | Meaning |
 |---|---|---|---|
 | `CONDUIT001` | Warning | No handler found | A command or query has no local handler and is not declared a remote contract. |
@@ -14,6 +18,24 @@ in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
 | `CONDUIT006` | Error | Misapplied `[AuditAs]` | `[AuditAs]` is on a member of a message, or of a type a message carries, that is not `JsonElement`/`JsonElement?`, or names no sibling `string` property. |
 | `CONDUIT007` | Error | Generic message types are not supported | A command, query or event is generic, or nested in a generic type. |
 | `CONDUIT008` | Error | Message type declared in more than one assembly | Two assemblies the build sees each declare a message with the same full type name. |
+
+### Where a diagnostic points
+
+A diagnostic about a message or handler declared in the project being built points at its
+declaration — the file, line and type name — so the IDE underlines it and a warning can be suppressed
+right there:
+
+```csharp
+#pragma warning disable CONDUIT001 // routed to the inventory service
+public sealed record ReserveStock(string Sku) : ICommand;
+#pragma warning restore CONDUIT001
+```
+
+CONDUIT002 points at the message and lists each of its handlers as an additional location. A
+diagnostic about a type from a referenced assembly has no source location to point at; neither do
+CONDUIT004, CONDUIT007, CONDUIT008 and a carried type's CONDUIT006. Suppress those with
+`[assembly: RemoteContracts]` (CONDUIT001), `<NoWarn>`, or a severity in `.editorconfig`
+(`dotnet_diagnostic.CONDUIT001.severity = none`).
 
 ---
 
@@ -32,8 +54,13 @@ referenced assemblies) and warns when none of them has a matching local handler.
 [assembly: RemoteContracts("Inventory.Commands")]
 ```
 
-This suppresses CONDUIT001 for all types in that namespace without changing routing behavior. Add
-one per remote namespace. See [Transports → \[RemoteContracts\]](transports/index.md#remotecontracts).
+This suppresses CONDUIT001 for all types in that namespace and the namespaces beneath it, without
+changing routing behavior. The match is on whole namespace segments, not a string prefix:
+`RemoteContracts("Inventory")` covers `Inventory.Commands.ReserveStock` but not
+`InventoryAudit.RecordAdjustment`. (A type's full name also works, for that one type.) Add one per
+remote namespace. See [Transports → \[RemoteContracts\]](transports/index.md#remotecontracts). For one
+type declared in this project, a `#pragma` around it works too (see
+[Where a diagnostic points](#where-a-diagnostic-points)).
 
 ## CONDUIT002 — Multiple handlers found
 
@@ -41,11 +68,17 @@ one per remote namespace. See [Transports → \[RemoteContracts\]](transports/in
 
 Commands and queries must have exactly one handler. This is an **error** (build fails).
 
-**Resolve** by removing the duplicate handler. If one handler should remain discoverable but not be
-auto-wired by the generator (e.g. it is registered manually, or it is an internal helper like the
-audit subsystem's `LocalAuditListener`), mark it with `[NotAutoRegistered]`
-(`Conduit.Attributes.NotAutoRegisteredAttribute`). The type is still discovered as a message handler
-for analysis purposes but is excluded from auto-registration, leaving a single registered handler.
+The error points at the message, with each handler as an additional location (at the first handler
+when the message comes from a referenced assembly).
+
+**Resolve** by removing the duplicate handler. If one handler is registered by hand rather than by
+the generator (e.g. a feature's `Add*` extension wires it, as the audit subsystem does
+`LocalAuditListener`), mark it with `[NotAutoRegistered]`
+(`Conduit.Attributes.NotAutoRegisteredAttribute`). The generator then skips the type entirely: it is
+not registered, and it is not counted, so it no longer conflicts. It does not count as a handler for
+CONDUIT001 either — a command whose **only** handler is `[NotAutoRegistered]` gets CONDUIT001, since
+the generator cannot see the registration that makes it handled. Suppress that one with a `#pragma`
+around the command or `[assembly: RemoteContracts]`.
 
 ## CONDUIT003 — Invalid `[FireAndForget]` usage
 

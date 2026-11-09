@@ -10,7 +10,4 @@ public sealed record ListenerGroup
 
     /// <summary>The fully-qualified type names of all listener implementations for this event.</summary>
     public required EquatableArray<string> ListenerFullTypeNames { get; init; }
-
-    /// <summary>Whether the event is marked <c>[LocalOnly]</c>, suppressing transport broadcast.</summary>
-    public bool IsLocalOnly { get; init; }
 }

@@ -71,4 +71,11 @@ public sealed record DispatchableTypeInfo
     /// <summary>Members whose <c>[AuditAs]</c> is misapplied, each with its reason (<c>"; "</c>-joined, ordinal-sorted), or
     /// <see langword="null"/>. A string, not an array, so the record's value equality holds (CONDUIT006).</summary>
     public string? AuditAsMisuses { get; init; }
+
+    /// <summary>
+    /// Where the type is declared, when that is in the source being compiled; <see langword="null"/> for a type from a
+    /// referenced assembly, whose diagnostics carry no location. SourceGen's scanner sets it; TypeGen's leaves it
+    /// <see langword="null"/>.
+    /// </summary>
+    public SourceLocation? Location { get; init; }
 }

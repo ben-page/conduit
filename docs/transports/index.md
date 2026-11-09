@@ -143,7 +143,9 @@ The source generator produces a `CONDUIT001` warning for any command or query wi
 [assembly: RemoteContracts("Inventory.Commands")]
 ```
 
-This suppresses the warning for all types in that namespace. Add one per remote namespace:
+This suppresses the warning for all types in that namespace and the namespaces beneath it, matched on
+whole segments (`"Inventory"` covers `Inventory.Commands`, not `InventoryAudit`). Add one per remote
+namespace:
 
 ```csharp
 [assembly: RemoteContracts("Inventory.Commands")]

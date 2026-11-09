@@ -32,7 +32,9 @@ public static class ReflectionScanner
 
         foreach (var type in assembly.GetExportedTypes())
         {
-            if (type.IsAbstract || type.IsInterface)
+            // A message is a class, as the source generator discovers it (RoslynScanner.Scan): a struct implementing a
+            // message interface is not one.
+            if (type.IsAbstract || type.IsInterface || type.IsValueType)
             {
                 continue;
             }

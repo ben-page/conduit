@@ -343,6 +343,9 @@ namespace App.Commands
         local.Should().Contain("ResolvePipelines<App.Commands.ImportOrders, object>(conduitOptions, serviceProvider)");
         local.Should().NotContain("DispatchAttemptsAsync");
         local.Should().NotContain("Attempt(");
+
+        // Assert -- no ExecuteVoid wrapper: the generated mediator's wire path calls ExecuteVoidWire
+        dispatchSource.Should().NotContain("ExecuteVoid(");
     }
 
     [TestMethod]

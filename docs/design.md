@@ -536,7 +536,7 @@ When a service references a shared contracts library containing commands/queries
 [assembly: RemoteContracts("Conduit.Sample.Inventory")]
 ```
 
-The generator skips CONDUIT001 for types whose fully-qualified name starts with a declared `[RemoteContracts]` pattern. Types outside declared patterns still produce the warning if they lack a handler.
+The generator skips CONDUIT001 for types in a declared `[RemoteContracts]` namespace or a namespace beneath it, matched on whole segments (`"Inventory"` covers `Inventory.Commands`, not `InventoryAudit`); a type's full name matches that type. Types outside declared namespaces still produce the warning if they lack a handler.
 
 ## Source Generator (`Conduit.SourceGen`)
 
@@ -622,7 +622,7 @@ The generated `ConduitMediator` implements `IWireMediator` (which extends `IMedi
 
 ### 5. REST Endpoint Mappings (conditional)
 
-When the compilation references `Conduit.Transport.Http`, the generator emits `ConduitRestEndpoints` with `MapConduitGet<T>`, `MapConduitPost<T>`, etc. — compile-time type switches that delegate to `ConduitRestHandlers`.
+When the compilation references `Conduit.Transport.Http`, the generator emits an `internal` `ConduitRestEndpoints` with `MapConduitGet<T>`, `MapConduitPost<T>`, etc. — compile-time type switches that delegate to `ConduitRestHandlers`. It is internal because every assembly that sees the transport emits one into `Microsoft.AspNetCore.Builder`: a public class in a module library would make its host's calls ambiguous.
 
 ### Compile-Time Diagnostics
 
