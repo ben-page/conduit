@@ -17,6 +17,7 @@ public static class RoslynScanner
     private const string QueryInterfaceName = "Conduit.Messages.IQuery<TResult>";
     private const string EventInterfaceName = "Conduit.Messages.IEvent";
     private const string LocalOnlyAttributeName = "Conduit.Attributes.LocalOnlyAttribute";
+    private const string ClientVisibleAttributeName = "Conduit.Attributes.ClientVisibleAttribute";
     private const string FireAndForgetAttributeName = "Conduit.Attributes.FireAndForgetAttribute";
     private const string DoNotAuditAttributeName = "Conduit.Attributes.DoNotAuditAttribute";
     private const string AuditRedactedAttributeName = "Conduit.Attributes.AuditRedactedAttribute";
@@ -95,6 +96,7 @@ public static class RoslynScanner
                 ResultTypeName = resultTypeName,
                 ResultFullTypeName = resultFullTypeName,
                 IsLocalOnly = GetInheritedAttribute(typeSymbol, LocalOnlyAttributeName) is not null,
+                IsClientVisible = GetInheritedAttribute(typeSymbol, ClientVisibleAttributeName) is not null,
                 IsFireAndForget = fireAndForgetAttribute is not null,
                 IsFireAndForgetImmediate = GetNamedBoolArgument(fireAndForgetAttribute, "Immediate"),
                 IsDoNotAudit = HasAttribute(typeSymbol, DoNotAuditAttributeName),
@@ -650,9 +652,9 @@ public static class RoslynScanner
         return false;
     }
 
-    // An inherited attribute ([LocalOnly], [FireAndForget]: AttributeUsage's default Inherited = true) as reflection's
-    // GetCustomAttribute(inherit: true) finds it: the type's own, else the nearest base's. GetAttributes() alone reads only
-    // the type's own declaration, so a message deriving from a [LocalOnly] event would otherwise be broadcast.
+    // An inherited attribute ([LocalOnly], [FireAndForget], [ClientVisible]: AttributeUsage's default Inherited = true) as
+    // reflection's GetCustomAttribute(inherit: true) finds it: the type's own, else the nearest base's. GetAttributes() alone
+    // reads only the type's own declaration, so a message deriving from a [LocalOnly] event would otherwise be broadcast.
     private static AttributeData? GetInheritedAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)
     {
         for (var type = typeSymbol; type is not null; type = type.BaseType)

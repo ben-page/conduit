@@ -52,7 +52,7 @@ on `ManageOnly` (default off):
 | `ScopeCoalescer` (scoped) | — | — | — |
 | `JobRunner`, `ClaimedJobExecutor` (singletons) | — | `InMemoryJobState` (singleton) | `InMemoryJobState` (singleton) |
 | `DurableJobScheduler`, `JobCleanup` (hosted) | — | `InMemoryJobScheduler` (hosted) | — |
-| One closed `EventTriggerListener<T>` per declared trigger's event type | — (a trigger is rejected) | — | — (a trigger is rejected) |
+| One closed `EventTriggerListener<T>` per declared trigger's event type, activated in `ConduitTypeRegistry` | — (a trigger is rejected) | — | — (a trigger is rejected) |
 
 **`ManageOnly` is "the runner off", not "jobs off".** It exists for a host that must resolve `IJobs`
 but shares the tables with a host that owns execution — registering the durable runner there would
@@ -438,6 +438,12 @@ for types with a listener found at compile time (`MediatorEmitter.EmitPublishAsy
 already resolved its listeners from the container; the old gate meant an event type could never gain
 a listener registered at runtime. `MediatorEmitterShould.ResolveListenersForAnEventTypeThatHasNoneAtCompileTime`
 pins it — if that changes, event triggers stop firing silently.
+
+For the same reason no broker would subscribe the event: the generated registry's active events are
+the ones with a compile-time listener. `AddJobs` calls `ConduitTypeRegistry.ActivateEvent` for each
+trigger's event, on the registry instance the generated `AddConduit` registers before running the
+`configure` callback (found by descriptor in `builder.Services`; a hand-made `ConduitBuilder`, as the
+unit tests use, has none). `EventTriggerRegistrationShould` pins it.
 
 `EventTriggerListener<TEvent>` carries `[NotAutoRegistered]`: it is an open generic, so the
 scanner would otherwise record a listener for the literal type parameter and emit a case for a type

@@ -56,6 +56,8 @@ public static class RegistrationEmitter
         sb.AppendLine($"        this IServiceCollection services,");
         sb.AppendLine($"        System.Action<{EmitConstants.ConduitBuilder}>? configure = null)");
         sb.AppendLine("    {");
+        EmitTypeRegistry(sb, handlers, listenerGroups, types, typesByName);
+        sb.AppendLine();
         sb.AppendLine("        // Register core infrastructure (options, routing)");
         sb.AppendLine($"        {EmitConstants.ConduitRuntime}.AddConduitCore(services, configure);");
         sb.AppendLine();
@@ -100,69 +102,6 @@ public static class RegistrationEmitter
         sb.AppendLine($"        services.AddTransient<{EmitConstants.IWireMediator}>(sp => sp.GetRequiredService<ConduitMediator>());");
         sb.AppendLine($"        services.AddTransient<{EmitConstants.ILocalEnvelopeDispatcher}>(sp => sp.GetRequiredService<ConduitMediator>());");
 
-        // Collect type lists for the registry
-        var eventTypeNames = listenerGroups.Select(g => g.EventFullTypeName).Distinct().ToList();
-        var commandTypeNames = handlers
-            .Where(h => typesByName.TryGetValue(h.MessageFullTypeName, out var t)
-                && (t.Kind == DispatchableKind.Command || t.Kind == DispatchableKind.VoidCommand))
-            .Select(h => h.MessageFullTypeName)
-            .Distinct()
-            .ToList();
-        var queryTypeNames = handlers
-            .Where(h => typesByName.TryGetValue(h.MessageFullTypeName, out var t)
-                && t.Kind == DispatchableKind.Query)
-            .Select(h => h.MessageFullTypeName)
-            .Distinct()
-            .ToList();
-
-        // Emit ConduitTypeRegistry registration
-        sb.AppendLine();
-        sb.AppendLine($"        // Compile-time type registry for transport topology discovery");
-        sb.Append($"        services.AddSingleton(new {EmitConstants.ConduitTypeRegistry}(");
-        sb.AppendLine();
-
-        // Event types
-        sb.Append("            eventTypes: [");
-        for (var i = 0; i < eventTypeNames.Count; i++)
-        {
-            if (i > 0)
-            {
-                sb.Append(", ");
-            }
-
-            sb.Append($"typeof({EmitConstants.ToCSharpTypeRef(eventTypeNames[i])})");
-        }
-
-        sb.AppendLine("],");
-
-        // Command types
-        sb.Append("            commandTypes: [");
-        for (var i = 0; i < commandTypeNames.Count; i++)
-        {
-            if (i > 0)
-            {
-                sb.Append(", ");
-            }
-
-            sb.Append($"typeof({EmitConstants.ToCSharpTypeRef(commandTypeNames[i])})");
-        }
-
-        sb.AppendLine("],");
-
-        // Query types
-        sb.Append("            queryTypes: [");
-        for (var i = 0; i < queryTypeNames.Count; i++)
-        {
-            if (i > 0)
-            {
-                sb.Append(", ");
-            }
-
-            sb.Append($"typeof({EmitConstants.ToCSharpTypeRef(queryTypeNames[i])})");
-        }
-
-        sb.AppendLine("]));");
-
         sb.AppendLine();
         sb.AppendLine("        return services;");
         sb.AppendLine("    }");
@@ -186,5 +125,51 @@ public static class RegistrationEmitter
         sb.AppendLine("}");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Emits the <c>ConduitTypeRegistry</c> registration: every discovered event, the commands and queries with a
+    /// handler, the events with a listener (the registry's initial active events) and the <c>[ClientVisible]</c> events.
+    /// </summary>
+    /// <remarks>
+    /// Emitted before the <c>configure</c> callback runs, so a feature that registers a listener at runtime -- a
+    /// <c>Conduit.Jobs</c> event trigger -- finds the registry in the service collection and activates its event.
+    /// </remarks>
+    private static void EmitTypeRegistry(
+        StringBuilder sb,
+        IReadOnlyList<HandlerInfo> handlers,
+        IReadOnlyList<ListenerGroup> listenerGroups,
+        IReadOnlyList<DispatchableTypeInfo> types,
+        Dictionary<string, DispatchableTypeInfo> typesByName)
+    {
+        var events = types.Where(t => t.Kind == DispatchableKind.Event).ToList();
+        var commandTypeNames = handlers
+            .Where(h => typesByName.TryGetValue(h.MessageFullTypeName, out var t)
+                && (t.Kind == DispatchableKind.Command || t.Kind == DispatchableKind.VoidCommand))
+            .Select(h => h.MessageFullTypeName)
+            .Distinct()
+            .ToList();
+        var queryTypeNames = handlers
+            .Where(h => typesByName.TryGetValue(h.MessageFullTypeName, out var t)
+                && t.Kind == DispatchableKind.Query)
+            .Select(h => h.MessageFullTypeName)
+            .Distinct()
+            .ToList();
+
+        sb.AppendLine("        // Compile-time type registry for transport topology discovery. Registered before configure runs, so a");
+        sb.AppendLine("        // listener registered there (a Conduit.Jobs event trigger) can activate its event.");
+        sb.AppendLine($"        services.AddSingleton(new {EmitConstants.ConduitTypeRegistry}(");
+        EmitTypeList(sb, "eventTypes", events.Select(t => t.FullTypeName), last: false);
+        EmitTypeList(sb, "commandTypes", commandTypeNames, last: false);
+        EmitTypeList(sb, "queryTypes", queryTypeNames, last: false);
+        EmitTypeList(sb, "listenedEventTypes", listenerGroups.Select(g => g.EventFullTypeName).Distinct(), last: false);
+        EmitTypeList(sb, "clientVisibleEventTypes", events.Where(t => t.IsClientVisible).Select(t => t.FullTypeName), last: true);
+    }
+
+    // One named argument of the registry's constructor: typeof() expressions, so every name is compile-time verified.
+    private static void EmitTypeList(StringBuilder sb, string parameterName, IEnumerable<string> fullTypeNames, bool last)
+    {
+        var typeofs = string.Join(", ", fullTypeNames.Select(name => $"typeof({EmitConstants.ToCSharpTypeRef(name)})"));
+        sb.AppendLine($"            {parameterName}: [{typeofs}]{(last ? "));" : ",")}");
     }
 }

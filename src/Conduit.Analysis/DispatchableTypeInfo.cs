@@ -47,6 +47,13 @@ public sealed record DispatchableTypeInfo
     /// <summary>Whether the type has a <c>[LocalOnly]</c> attribute (events only).</summary>
     public bool IsLocalOnly { get; init; }
 
+    /// <summary>
+    /// Whether the type is marked <c>[ClientVisible]</c>, on itself or a base (the attribute is inherited). SourceGen's
+    /// scanner sets it, for the registry's <c>ClientVisibleEventTypeNames</c>; TypeGen reads the attribute itself
+    /// (<c>ReflectionScanner.ScanClientVisible</c>), so its scanner leaves it <see langword="false"/>.
+    /// </summary>
+    public bool IsClientVisible { get; init; }
+
     /// <summary>Whether the type has a <c>[FireAndForget]</c> attribute.</summary>
     public bool IsFireAndForget { get; init; }
 

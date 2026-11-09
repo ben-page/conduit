@@ -122,7 +122,9 @@ public sealed class ConduitRegistrationOverrides
     }
 
     /// <summary>
-    /// Registers an event listener and retains its type in the registry.
+    /// Registers an event listener and activates its type in the registry
+    /// (<see cref="ConduitTypeRegistry.ActivateEvent"/>), so broker transports subscribe it even when the generator
+    /// found no listener for it.
     /// </summary>
     public ConduitRegistrationOverrides HandleEvent<TEvent, TListener>()
         where TEvent : class, IEvent
@@ -182,18 +184,14 @@ public sealed class ConduitRegistrationOverrides
 
         if (this.eventsCleared)
         {
-            if (this.retainedEventTypes.Count > 0)
-            {
-                var retainedNames = new HashSet<string>(
-                    this.retainedEventTypes.Select(t => t.FullName!), StringComparer.Ordinal);
-                var toExclude = registry.EventTypes
-                    .Where(t => !retainedNames.Contains(t.FullName!)).ToList();
-                registry.ExcludeEventTypes(toExclude);
-            }
-            else
-            {
-                registry.ExcludeAllEventTypes();
-            }
+            registry.ExcludeAllEventTypes();
+        }
+
+        // A listener registered here runs at publish time, as a generated one does; its event may be one the
+        // generator found no listener for, so it is activated whether or not the listeners were cleared.
+        foreach (var eventType in this.retainedEventTypes)
+        {
+            registry.ActivateEvent(eventType.FullName!);
         }
     }
 

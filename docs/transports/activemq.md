@@ -148,6 +148,11 @@ The transport reads `ConduitTypeRegistry` — populated at compile time by the s
 - `IEventListener<T>` — binds the per-app queue on the multicast address for each event type
 - `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — creates or joins the shared queue on the anycast address for each command/query type
 
+A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
+(`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the
+registry (`ConduitTypeRegistry.ActivateEvent`), so it is subscribed like an event whose listener the
+generator found.
+
 There is no runtime DI scanning and no manual binding configuration.
 
 ## Wire format

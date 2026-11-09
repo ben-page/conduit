@@ -150,10 +150,15 @@ Replies time out after `ResponseTimeout` (default 60 seconds). Reply messages by
 
 ## Auto-discovery
 
-The transport scans DI at startup for all handler registrations:
+The transport reads `ConduitTypeRegistry` — populated at compile time by the source generator — to learn which types this application handles:
 
 - `IEventListener<T>` — creates multicast (per-app) subscriptions
 - `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — creates unicast (shared) subscriptions
+
+A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
+(`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the
+registry (`ConduitTypeRegistry.ActivateEvent`), so it is subscribed like an event whose listener the
+generator found.
 
 No manual subscription configuration is needed. When an event is published, the transport sends it to the shared topic with the event's full type name as the `Subject` property. Subscriptions filter by subject and forward matching messages to the appropriate queue.
 

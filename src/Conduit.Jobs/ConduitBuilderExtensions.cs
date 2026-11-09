@@ -4,6 +4,7 @@ using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Runtime;
 using Conduit.Persistence;
+using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -150,7 +151,13 @@ public static class ConduitBuilderExtensions
             builder.Services.AddHostedService<JobCleanup>();
 
             // One closed listener per declared trigger's event type. The generated mediator resolves
-            // listeners from the container at publish time, so a runtime registration is enough.
+            // listeners from the container at publish time, so a runtime registration is enough to run
+            // it -- but the generator never saw it, so a broker transport would not subscribe the event:
+            // it is activated in the type registry, which the generated AddConduit registers before this
+            // callback runs. (A builder made by hand, as a unit test does, has no registry.)
+            var typeRegistry = builder.Services
+                .LastOrDefault(descriptor => descriptor.ServiceType == typeof(ConduitTypeRegistry) && !descriptor.IsKeyedService)
+                ?.ImplementationInstance as ConduitTypeRegistry;
             foreach (var eventType in jobsBuilder.Triggers
                 .Select(trigger => trigger.EventType)
                 .Distinct())
@@ -158,6 +165,7 @@ public static class ConduitBuilderExtensions
                 builder.Services.AddTransient(
                     typeof(IEventListener<>).MakeGenericType(eventType),
                     typeof(EventTriggerListener<>).MakeGenericType(eventType));
+                typeRegistry?.ActivateEvent(eventType.FullName!);
             }
         }
         else

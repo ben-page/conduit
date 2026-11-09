@@ -129,10 +129,15 @@ Replies time out after `ResponseTimeout` (default 60 seconds). Reply messages by
 
 ## Auto-discovery
 
-The transport scans DI at startup for all handler registrations:
+The transport reads `ConduitTypeRegistry` — populated at compile time by the source generator — to learn which types this application handles:
 
 - `IEventListener<T>` — binds the app queue to the topic exchange for each event type
 - `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — binds the app queue for each command/query type
+
+A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
+(`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the
+registry (`ConduitTypeRegistry.ActivateEvent`), so it is subscribed like an event whose listener the
+generator found.
 
 No manual binding configuration is needed. When a message is published, the transport sends it to the topic exchange with the full type name as the routing key. RabbitMQ routes the message to all queues with matching bindings.
 

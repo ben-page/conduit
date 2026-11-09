@@ -139,7 +139,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     protected override async Task StartConsumersAsync(CancellationToken cancellationToken)
     {
         var registry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
-        LogStartingConsumers(this.Logger, registry.EventTypeNames.Count, null);
+        LogStartingConsumers(this.Logger, registry.ActiveEventTypeNames.Count, null);
 
         // Start default app queue consumer (events — multicast)
         var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 255);

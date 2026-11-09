@@ -197,6 +197,11 @@ The transport reads `ConduitTypeRegistry` — populated at compile time by the s
 - `IEventListener<T>` — adds the event type to the per-app subscription's filter policy
 - `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — adds the type to the shared subscription's filter policy
 
+A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
+(`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the
+registry (`ConduitTypeRegistry.ActivateEvent`), so it is subscribed like an event whose listener the
+generator found.
+
 There is no runtime DI scanning and no manual subscription configuration.
 
 ## Wire format

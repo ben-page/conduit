@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using Conduit.Messages;
 
@@ -15,6 +16,12 @@ namespace Conduit.Runtime;
 /// properties (<see cref="ActiveCommandTypeNames"/>, etc.) reflect the exclusions.
 /// The original unfiltered properties remain available for diagnostics.
 /// <para>
+/// Events are listed twice over: <see cref="EventTypeNames"/> is every event the generator discovered, and
+/// <see cref="ActiveEventTypeNames"/> is the events this host listens for -- those with a listener the generator found,
+/// plus those <see cref="ActivateEvent"/> adds for a listener registered at runtime (a <c>Conduit.Jobs</c> event
+/// trigger, a <c>HandleEvent</c> override). Broker transports subscribe the active list.
+/// </para>
+/// <para>
 /// Every registry also adds its message types to a process-wide lookup by <see cref="Type.FullName"/>
 /// (<see cref="TryGetRegisteredMessageType"/>), which <see cref="ConduitRuntime.AuditJsonOptions"/> reads to type an
 /// <c>[AuditAs]</c> member: it is static, so it cannot resolve a registry from DI. Exclusions do not apply to it
@@ -26,16 +33,27 @@ public sealed class ConduitTypeRegistry
 {
     private static readonly ConcurrentDictionary<string, Type> RegisteredMessageTypes = new(StringComparer.Ordinal);
 
+    // Guards every write of ActiveEventTypeNames. Each write publishes a new list, so a reader holds a consistent
+    // snapshot without taking it.
+    private readonly Lock activeEventsGate = new();
+
     /// <summary>
     /// Initializes the registry with the source-generated message type lists.
     /// </summary>
     /// <param name="eventTypes">All discovered event types.</param>
     /// <param name="commandTypes">All discovered command types.</param>
     /// <param name="queryTypes">All discovered query types.</param>
+    /// <param name="listenedEventTypes">
+    /// The event types a listener is registered for at compile time: the initial <see cref="ActiveEventTypeNames"/>.
+    /// Null means every one of <paramref name="eventTypes"/>.
+    /// </param>
+    /// <param name="clientVisibleEventTypes">The discovered event types marked <c>[ClientVisible]</c>, on themselves or a base.</param>
     public ConduitTypeRegistry(
         IReadOnlyList<Type> eventTypes,
         IReadOnlyList<Type> commandTypes,
-        IReadOnlyList<Type> queryTypes)
+        IReadOnlyList<Type> queryTypes,
+        IReadOnlyList<Type>? listenedEventTypes = null,
+        IReadOnlyList<Type>? clientVisibleEventTypes = null)
     {
         ArgumentNullException.ThrowIfNull(eventTypes);
         ArgumentNullException.ThrowIfNull(commandTypes);
@@ -45,12 +63,13 @@ public sealed class ConduitTypeRegistry
         this.CommandTypes = commandTypes;
         this.QueryTypes = queryTypes;
 
-        this.EventTypeNames = eventTypes.Select(t => t.FullName!).ToList();
+        this.EventTypeNames = eventTypes.Select(t => t.FullName!).ToFrozenSet(StringComparer.Ordinal);
+        this.ClientVisibleEventTypeNames = (clientVisibleEventTypes ?? []).Select(t => t.FullName!).ToFrozenSet(StringComparer.Ordinal);
         this.CommandTypeNames = commandTypes.Select(t => t.FullName!).ToList();
         this.QueryTypeNames = queryTypes.Select(t => t.FullName!).ToList();
 
-        // Active lists default to the full lists
-        this.ActiveEventTypeNames = this.EventTypeNames;
+        // Active lists default to the full lists; for events, to the ones a listener is registered for
+        this.ActiveEventTypeNames = (listenedEventTypes ?? eventTypes).Select(t => t.FullName!).Distinct(StringComparer.Ordinal).ToList();
         this.ActiveCommandTypeNames = this.CommandTypeNames;
         this.ActiveQueryTypeNames = this.QueryTypeNames;
 
@@ -66,7 +85,7 @@ public sealed class ConduitTypeRegistry
         }
     }
 
-    /// <summary>All discovered event types (unfiltered).</summary>
+    /// <summary>All discovered event types (unfiltered), whether or not this host listens for them.</summary>
     public IReadOnlyList<Type> EventTypes { get; }
 
     /// <summary>All discovered command types (unfiltered).</summary>
@@ -75,8 +94,14 @@ public sealed class ConduitTypeRegistry
     /// <summary>All discovered query types (unfiltered).</summary>
     public IReadOnlyList<Type> QueryTypes { get; }
 
-    /// <summary>Pre-computed FullName of each event type (unfiltered).</summary>
-    public IReadOnlyList<string> EventTypeNames { get; }
+    /// <summary>
+    /// FullName of every discovered event type (unfiltered), whether or not this host listens for it. Answers "is this
+    /// wire type an event"; <see cref="ActiveEventTypeNames"/> answers "does this host subscribe it".
+    /// </summary>
+    public IReadOnlySet<string> EventTypeNames { get; }
+
+    /// <summary>FullName of every discovered event type marked <c>[ClientVisible]</c>, on itself or a base.</summary>
+    public IReadOnlySet<string> ClientVisibleEventTypeNames { get; }
 
     /// <summary>Pre-computed FullName of each command type (unfiltered).</summary>
     public IReadOnlyList<string> CommandTypeNames { get; }
@@ -97,10 +122,29 @@ public sealed class ConduitTypeRegistry
     public IReadOnlyList<string> ActiveQueryTypeNames { get; private set; }
 
     /// <summary>
-    /// Event type names after applying exclusion filters.
-    /// Used by transports for topology creation.
+    /// The event types this host listens for: those with a listener the generator found, plus those
+    /// <see cref="ActivateEvent"/> added, less any exclusions. Used by transports for topology creation.
     /// </summary>
     public IReadOnlyList<string> ActiveEventTypeNames { get; private set; }
+
+    /// <summary>
+    /// Adds an event type to <see cref="ActiveEventTypeNames"/>, for a listener registered at runtime, which the
+    /// generator never saw (a <c>Conduit.Jobs</c> event trigger, a <c>HandleEvent</c> override). Idempotent and
+    /// thread-safe. Call it before the transports start: they read the active list once, at startup.
+    /// </summary>
+    /// <param name="fullTypeName">The event's <see cref="Type.FullName"/>.</param>
+    public void ActivateEvent(string fullTypeName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(fullTypeName);
+
+        lock (this.activeEventsGate)
+        {
+            if (!this.ActiveEventTypeNames.Contains(fullTypeName, StringComparer.Ordinal))
+            {
+                this.ActiveEventTypeNames = [.. this.ActiveEventTypeNames, fullTypeName];
+            }
+        }
+    }
 
     /// <summary>
     /// Excludes specific command types from topology creation.
@@ -125,14 +169,17 @@ public sealed class ConduitTypeRegistry
     }
 
     /// <summary>
-    /// Excludes specific event types from topology creation.
+    /// Excludes specific event types from topology creation: removes them from <see cref="ActiveEventTypeNames"/>.
     /// </summary>
     public void ExcludeEventTypes(IEnumerable<Type> types)
     {
         var excluded = new HashSet<string>(
             types.Select(t => t.FullName!), StringComparer.Ordinal);
-        this.ActiveEventTypeNames = this.EventTypeNames
-            .Where(n => !excluded.Contains(n)).ToList();
+        lock (this.activeEventsGate)
+        {
+            this.ActiveEventTypeNames = this.ActiveEventTypeNames
+                .Where(n => !excluded.Contains(n)).ToList();
+        }
     }
 
     /// <summary>
@@ -165,5 +212,11 @@ public sealed class ConduitTypeRegistry
     public void ExcludeAllQueryTypes() => this.ActiveQueryTypeNames = [];
 
     /// <summary>Excludes all event types from topology creation.</summary>
-    public void ExcludeAllEventTypes() => this.ActiveEventTypeNames = [];
+    public void ExcludeAllEventTypes()
+    {
+        lock (this.activeEventsGate)
+        {
+            this.ActiveEventTypeNames = [];
+        }
+    }
 }

@@ -1,6 +1,7 @@
 using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
 using Conduit.Handlers;
+using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Audit.Configuration;
@@ -28,6 +29,14 @@ public sealed class AuditListenerBuilder
         // resolve it inside a DI scope.
         this.Services.AddScoped<IAuditStore, DbAuditStore>();
         this.Services.AddTransient<IEventListener<AuditBatch>, LocalAuditListener>();
+
+        // The generator never saw that listener ([NotAutoRegistered]), so a broker transport would not subscribe
+        // AuditBatch for a central collector: it is activated in the type registry, which the generated AddConduit
+        // registers before this runs. (A builder made by hand has no registry.)
+        var typeRegistry = this.Services
+            .LastOrDefault(descriptor => descriptor.ServiceType == typeof(ConduitTypeRegistry) && !descriptor.IsKeyedService)
+            ?.ImplementationInstance as ConduitTypeRegistry;
+        typeRegistry?.ActivateEvent(typeof(AuditBatch).FullName!);
         this.Services.AddHostedService<AuditTableInitializer>();
         this.Services.AddHostedService<AuditPurgeService>();
     }

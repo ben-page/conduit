@@ -168,7 +168,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     protected override Task StartConsumersAsync(CancellationToken cancellationToken)
     {
         var registry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
-        LogStartingConsumers(this.Logger, registry.EventTypeNames.Count + registry.CommandTypeNames.Count + registry.QueryTypeNames.Count, null);
+        LogStartingConsumers(this.Logger, registry.ActiveEventTypeNames.Count + registry.CommandTypeNames.Count + registry.QueryTypeNames.Count, null);
 
         // Start default app event queue consumer (events — multicast)
         if (this.topologyResult!.HasAppEventQueue)

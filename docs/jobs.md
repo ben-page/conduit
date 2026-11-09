@@ -173,6 +173,10 @@ engine fails at startup. There is no non-durable variant because an ordinary `IE
 already is one, at zero cost; a second non-durable path through the jobs engine would duplicate it
 and earn nothing.
 
+A trigger's event needs no listener of its own for a broker transport to deliver it: `AddJobs`
+activates the event in the type registry (`ConduitTypeRegistry.ActivateEvent`), so the host
+subscribes it as it does an event one of its listeners handles.
+
 ### Coalescing a burst into the work it represents
 
 Ten punch corrections at one workstation mean **one** rebuild, not ten. A trigger can say so:
