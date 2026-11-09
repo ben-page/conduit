@@ -93,12 +93,12 @@ public static class EndpointRouteBuilderExtensions
     {
         if (result.Error is not null)
         {
-            return Results.Json(result, statusCode: result.Error.Status > 0
+            return Results.Json(result, ConduitRuntime.JsonOptions, statusCode: result.Error.Status > 0
                 ? result.Error.Status
                 : ErrorCode.ToHttpStatusCode(result.Error.Code));
         }
 
-        return Results.Ok(result);
+        return Results.Json(result, ConduitRuntime.JsonOptions);
     }
 
     private static async Task<DispatchEnvelope> ReadEnvelopeAsync(

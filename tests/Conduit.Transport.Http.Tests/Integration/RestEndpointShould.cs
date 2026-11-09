@@ -25,6 +25,7 @@ public class RestEndpointShould
 
         app.MapConduitGet<GetItemQuery>("/api/items/{id}");
         app.MapConduitPost<CreateItemCommand>("/api/items");
+        app.MapConduitPost<SetItemStatusCommand>("/api/items/status");
         app.MapConduitDelete<DeleteItemCommand>("/api/items/{id}");
 
         app.Urls.Add("http://127.0.0.1:0");
@@ -33,6 +34,25 @@ public class RestEndpointShould
         var address = app.Urls.First();
         var client = new HttpClient { BaseAddress = new Uri(address) };
         return (app, client);
+    }
+
+    [TestMethod]
+    public async Task ReadAnEnumByName()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            using var content = new StringContent("{\"status\":\"Open\"}", System.Text.Encoding.UTF8, "application/json");
+
+            // Act
+            var response = await client.PostAsync("/api/items/status", content);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await response.Content.ReadFromJsonAsync<string>()).Should().Be("Open");
+        }
     }
 
     [TestMethod]

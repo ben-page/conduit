@@ -96,6 +96,8 @@ public record DeleteTodoCommand(Guid Id) : ICommand;
 | `ICommand<T>` | 200 OK with `T` as JSON |
 | `ICommand` (void) | 204 No Content |
 
+Both the envelope endpoint and the REST endpoints read and write JSON with Conduit's wire options (`ConduitRuntime.JsonOptions`), independent of the host's own `Microsoft.AspNetCore.Http.Json.JsonOptions`: an enum is its member name, a closed set its bare value, exactly as the generated TypeScript declares them. Conduit registers nothing into the host's options, so the host's other endpoints keep their own settings.
+
 When a handler throws a `ConduitException`, the endpoint returns an RFC 9457 Problem Details response. The status code comes from the exception's `ErrorCode.HttpStatusCode`:
 
 ```csharp

@@ -313,9 +313,8 @@ public sealed record Reach : IClosedSet<Reach>
 A `Reach` property emits as `'self' | 'reports' | 'any'`. On the wire a member is its bare `Value`; any other string, a
 number or an object is refused at the wire read as a `BadRequest` naming its JSON path, and a JSON `null` binds as
 `null` — refuse it in `Validate()` where the member is required. Conduit throws the first time it serializes the type if
-`[ClosedSet]` and `All` differ, so a test that round-trips each member pins the generated client to the wire. A REST
-endpoint (`MapConduitGet`/`MapConduitPost`) reads with the host's ASP.NET JSON options: add
-`ClosedSetJsonConverterFactory` there, as you would `JsonStringEnumConverter`.
+`[ClosedSet]` and `All` differ, so a test that round-trips each member pins the generated client to the wire. The envelope and REST endpoints (`MapConduitGet`/`MapConduitPost`) read and write with Conduit's wire JSON options, so
+a closed set or enum needs no converter registered on the host.
 
 ---
 

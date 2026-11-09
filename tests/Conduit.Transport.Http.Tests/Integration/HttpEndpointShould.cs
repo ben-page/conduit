@@ -69,6 +69,30 @@ public class HttpEndpointShould
     }
 
     [TestMethod]
+    public async Task WriteEnumsAndClosedSetsAsTheGeneratedTypeScriptExpects()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            // Act
+            var response = await PostConduitAsync(
+                client, "/api/conduit/dispatch",
+                "Conduit.Transport.Http.Tests.Support.GetItemFacetsQuery",
+                new { });
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var data = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data");
+            data.GetProperty("status").ValueKind.Should().Be(JsonValueKind.String);
+            data.GetProperty("status").GetString().Should().Be("Active");
+            data.GetProperty("reach").ValueKind.Should().Be(JsonValueKind.String);
+            data.GetProperty("reach").GetString().Should().Be("self");
+        }
+    }
+
+    [TestMethod]
     public async Task ReturnDataForCommandWithResult()
     {
         var (app, client) = CreateTestHost();

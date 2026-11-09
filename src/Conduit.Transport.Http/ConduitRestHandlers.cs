@@ -65,7 +65,7 @@ public static class ConduitRestHandlers
                 {
                     var command = IsMultipart(request)
                         ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
-                        : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
+                        : (await request.ReadFromJsonAsync<TCommand>(ConduitRuntime.JsonOptions, cancellationToken))!;
 
                     HttpDispatchContext.Start(request.HttpContext, enrichers, trustCallerContext: false);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
@@ -120,7 +120,7 @@ public static class ConduitRestHandlers
                 {
                     var command = IsMultipart(request)
                         ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
-                        : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
+                        : (await request.ReadFromJsonAsync<TCommand>(ConduitRuntime.JsonOptions, cancellationToken))!;
 
                     HttpDispatchContext.Start(request.HttpContext, enrichers, trustCallerContext: false);
                     await mediator.ExecuteAsync(command, cancellationToken);
@@ -186,6 +186,6 @@ public static class ConduitRestHandlers
             cf.Content.ToArray(),
             cf.Content.MediaType ?? "application/octet-stream",
             cf.FileName),
-        _ => Results.Ok(result),
+        _ => Results.Json(result, ConduitRuntime.JsonOptions),
     };
 }
