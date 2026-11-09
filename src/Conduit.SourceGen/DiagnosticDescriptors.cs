@@ -42,4 +42,16 @@ public static class DiagnosticDescriptors
         "CONDUIT006", "Misapplied [AuditAs]",
         "'{0}' misapplies [AuditAs]: {1}; [AuditAs] goes on a JsonElement or JsonElement? member and names a sibling string property holding the message type name",
         "Conduit", DiagnosticSeverity.Error, true);
+
+    /// <summary>CONDUIT007: A message type is generic (or nested in a generic type), so it has no full type name to dispatch by.</summary>
+    public static readonly DiagnosticDescriptor GenericMessageType = new(
+        "CONDUIT007", "Generic message types are not supported",
+        "'{0}' is a generic message type; a message is dispatched by its full type name, so it cannot have type parameters or be nested in a generic type. Declare one non-generic type per message.",
+        "Conduit", DiagnosticSeverity.Error, true);
+
+    /// <summary>CONDUIT008: Two or more assemblies declare a message type with the same full type name.</summary>
+    public static readonly DiagnosticDescriptor DuplicateMessageType = new(
+        "CONDUIT008", "Message type declared in more than one assembly",
+        "'{0}' is declared as a message type in more than one assembly ({1}); a message's full type name is its wire name and must name one type. Rename or move one of them.",
+        "Conduit", DiagnosticSeverity.Error, true);
 }

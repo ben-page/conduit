@@ -10,8 +10,14 @@ namespace Conduit.SourceGen;
 /// </summary>
 public sealed record ConduitModel
 {
-    /// <summary>All discovered dispatchable command/query/event types.</summary>
+    /// <summary>All discovered dispatchable command/query/event types, unique by full type name.</summary>
     public required EquatableArray<DispatchableTypeInfo> DispatchableTypes { get; init; }
+
+    /// <summary>Generic message types, as declared (e.g. <c>Ns.Wrap&lt;T&gt;</c>), none of them emitted (CONDUIT007).</summary>
+    public required EquatableArray<string> GenericMessageTypes { get; init; }
+
+    /// <summary>Message full type names declared by more than one assembly, none of them emitted (CONDUIT008).</summary>
+    public required EquatableArray<DuplicateMessageType> DuplicateMessageTypes { get; init; }
 
     /// <summary>Types a message carries whose [AuditAs] is misapplied (CONDUIT006), one per type.</summary>
     public required EquatableArray<CarriedAuditAsMisuse> CarriedAuditAsMisuses { get; init; }

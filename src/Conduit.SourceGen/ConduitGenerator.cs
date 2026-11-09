@@ -30,13 +30,18 @@ public sealed class ConduitGenerator : IIncrementalGenerator
     private static ConduitModel BuildModel(Compilation compilation, CancellationToken cancellationToken)
     {
         var messageSymbols = new List<INamedTypeSymbol>();
-        var dispatchableTypes = RoslynScanner.Scan(compilation, messageSymbols);
+        var genericMessageTypes = new List<string>();
+        var duplicateMessageTypes = new List<DuplicateMessageType>();
+        var dispatchableTypes = RoslynScanner.Scan(compilation, messageSymbols, genericMessageTypes, duplicateMessageTypes);
         var carriedAuditAsMisuses = RoslynScanner.ScanCarriedAuditAsMisuses(compilation, messageSymbols);
         var scan = RoslynScanner.ScanHandlers(compilation);
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        // A listener group is registered by its event's name, which a duplicated name cannot be written as.
+        var duplicatedNames = new HashSet<string>(duplicateMessageTypes.Select(duplicate => duplicate.FullTypeName), System.StringComparer.Ordinal);
         var listenerGroups = scan.ListenerGroups
+            .Where(kvp => !duplicatedNames.Contains(kvp.Key))
             .OrderBy(kvp => kvp.Key, System.StringComparer.Ordinal)
             .Select(kvp => new ListenerGroup
             {
@@ -48,6 +53,8 @@ public sealed class ConduitGenerator : IIncrementalGenerator
         return new ConduitModel
         {
             DispatchableTypes = dispatchableTypes.ToEquatableArray(),
+            GenericMessageTypes = genericMessageTypes.ToEquatableArray(),
+            DuplicateMessageTypes = duplicateMessageTypes.ToEquatableArray(),
             CarriedAuditAsMisuses = carriedAuditAsMisuses.ToEquatableArray(),
             Handlers = scan.Handlers.ToEquatableArray(),
             ListenerGroups = listenerGroups,
@@ -60,6 +67,18 @@ public sealed class ConduitGenerator : IIncrementalGenerator
 
     private static void Emit(ConduitModel model, SourceProductionContext context)
     {
+        // Reported even when nothing is emitted: a project whose only messages are excluded still learns why.
+        foreach (var generic in model.GenericMessageTypes)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.GenericMessageType, Location.None, generic));
+        }
+
+        foreach (var duplicate in model.DuplicateMessageTypes)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.DuplicateMessageType, Location.None, duplicate.FullTypeName, duplicate.Assemblies));
+        }
+
         if (model.DispatchableTypes.Count == 0)
         {
             return;

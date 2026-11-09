@@ -67,7 +67,7 @@ keep their original `Conduit.*` names):
 - `Conduit` (root) — `IMediator`, `IWireMediator` (`src/Conduit/`)
 
 **Key design decisions:**
-- **Auto-discovery**: The source generator discovers ALL types implementing `ICommand`, `IQuery`, or `IEvent` across the entire compilation — including referenced assemblies. This is intentional: contract types defined in a shared library (e.g., `MyApp.Contracts`) are discovered when referenced by the handler project. Types from NuGet packages may also be discovered; use `[RemoteContracts("Ns")]` to suppress CONDUIT001 for types without local handlers. Abstract and inaccessible types are excluded automatically.
+- **Auto-discovery**: The source generator discovers ALL types implementing `ICommand`, `IQuery`, or `IEvent` across the entire compilation — including referenced assemblies. This is intentional: contract types defined in a shared library (e.g., `MyApp.Contracts`) are discovered when referenced by the handler project. Types from NuGet packages may also be discovered; use `[RemoteContracts("Ns")]` to suppress CONDUIT001 for types without local handlers. Abstract and inaccessible types are excluded automatically; a generic message type (CONDUIT007) and a full type name two assemblies declare (CONDUIT008) are build errors. Dispatch is by exact type: the in-process switches match the runtime type's full name, as the wire does.
 - **Runtime routing (commands/queries only)**: Routing is configured per-endpoint via `endpoint.RouteNamespace<T>()` (all types in a namespace) or `endpoint.RouteType<T>()` (single type). Events don't route — they broadcast. Unrouted messages dispatch locally.
 - **Endpoint-based routing**: Messages route to named endpoints via `ConduitBuilder.AddEndpoint()`. Endpoints are just names — the transport is registered as a keyed `IConduitTransport` singleton in DI (key = endpoint name) and resolved at dispatch time via `ConduitRuntime.ResolveTransport()`. Routes define WHERE command/query types go. Transport extensions call `builder.UseTransport<T>()` which registers the keyed DI forwarding.
 - **Per-endpoint transport registration**: every endpoint's options and transport are keyed singletons under the endpoint name, built via `ActivatorUtilities.CreateInstance` so only the options are passed explicitly. No transport package registers a non-keyed options or concrete-transport instance — two endpoints on one transport package are two independent instances, never a shared last-write-wins singleton. The non-keyed `IConduitTransport`/`IHostedService` entries are one-per-endpoint forwarders to the keyed instance.
@@ -172,7 +172,7 @@ onboarding or answering "how does X work" questions:
 
 - [`docs/dispatch-flows.md`](docs/dispatch-flows.md) — end-to-end traces (local dispatch, event broadcast, wire-inbound) with real type/method names
 - [`docs/glossary.md`](docs/glossary.md) — domain vocabulary (endpoint, route, topology, gate, interceptor, envelope, MessageContext, reply queue, ...)
-- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT006 source-generator diagnostics and how to resolve/suppress them
+- [`docs/diagnostics.md`](docs/diagnostics.md) — CONDUIT001–CONDUIT008 source-generator diagnostics and how to resolve/suppress them
 - [`docs/getting-started.md`](docs/getting-started.md) — first-run walkthrough
 - [`docs/core-concepts.md`](docs/core-concepts.md) — messages, handlers, mediator, the mental model
 - [`docs/configuration-reference.md`](docs/configuration-reference.md) — `ConduitOptions` / builder reference

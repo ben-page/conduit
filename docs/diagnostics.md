@@ -12,6 +12,8 @@ in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
 | `CONDUIT004` | Warning | Handler not accessible | A handler exists in a referenced assembly but is not accessible (e.g. internal) to the generating assembly. |
 | `CONDUIT005` | Error | Conflicting audit marks | A message member is marked both `[DoNotAudit]` and `[AuditRedacted]`. |
 | `CONDUIT006` | Error | Misapplied `[AuditAs]` | `[AuditAs]` is on a member of a message, or of a type a message carries, that is not `JsonElement`/`JsonElement?`, or names no sibling `string` property. |
+| `CONDUIT007` | Error | Generic message types are not supported | A command, query or event is generic, or nested in a generic type. |
+| `CONDUIT008` | Error | Message type declared in more than one assembly | Two assemblies the build sees each declare a message with the same full type name. |
 
 ---
 
@@ -123,6 +125,37 @@ and without failing the dispatch). CONDUIT005 keeps the message-only scope.
 
 **Resolve** by moving `[AuditAs]` to the `JsonElement` member that holds the serialized message, and pointing it at
 the `string` property holding that message's type name, with `nameof`.
+
+## CONDUIT007 — Generic message types are not supported
+
+> '{type}' is a generic message type; a message is dispatched by its full type name, so it cannot have type parameters
+> or be nested in a generic type. Declare one non-generic type per message.
+
+A message's full type name is its wire name: the type discriminator every transport carries, the key of every
+generated dispatch switch, and the `ConduitTypeRegistry` key. A generic definition such as `Wrap<T>` has no such
+name — each construction would need its own — and the generated code could not name it. A type nested in a generic
+type (`Outer<T>.Inner`) is generic in the same way. This is an **error** (build fails); the generator emits nothing
+for the type, and does not wire a handler or listener of it (`IEventListener<Changed<string>>` included).
+
+An `abstract` generic base is not a message and is not reported: `abstract record Envelope<T>(T Body) : ICommand<T>`
+is fine, and each concrete, non-generic `record CreateOrder(Order Body) : Envelope<Order>(Body)` is a message.
+
+**Resolve** by declaring one non-generic type per message; share their shape through an abstract generic base if
+they have one in common.
+
+## CONDUIT008 — Message type declared in more than one assembly
+
+> '{type}' is declared as a message type in more than one assembly ({assemblies}); a message's full type name is its
+> wire name and must name one type. Rename or move one of them.
+
+Discovery spans the compilation and every assembly it references, so two of them (two contracts libraries, or a
+library and the project itself) that each declare a message with the same namespace and name make that full type name
+mean two types. The generated code could not refer to either one (C# reports the name ambiguous), and a message
+arriving under that name could not say which one it is. This is an **error** (build fails); the generator names the
+assemblies and emits neither copy.
+
+**Resolve** by renaming one of the types or moving it to another namespace, or by removing the reference that brings
+in the second copy — often the same contracts library referenced twice under two assembly names.
 
 ---
 

@@ -300,17 +300,17 @@ public static class MediatorEmitter
         sb.AppendLine($"        => ((IMediator)this).ExecuteAsync(command, null, cancellationToken);");
         sb.AppendLine();
 
-        // Configure overload with type switch
+        // Configure overload with a switch on the runtime type's full name (see RuntimeTypeName)
         sb.AppendLine($"    Task<TResult> IMediator.ExecuteAsync<TResult>(");
         sb.AppendLine($"        ICommand<TResult> command,");
         sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
-        sb.AppendLine("        => command switch");
+        sb.AppendLine($"        => {RuntimeTypeName("command")} switch");
         sb.AppendLine("        {");
 
         foreach (var cmd in commands)
         {
-            sb.AppendLine($"            {EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)} cmd => ConduitRuntime.CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync(cmd, configure, cancellationToken)),");
+            sb.AppendLine($"            \"{cmd.FullTypeName}\" => ConduitRuntime.CastTask<{cmd.ResultFullTypeName}, TResult>(ExecuteAsync({ExactCast(cmd, "command")}, configure, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -327,17 +327,17 @@ public static class MediatorEmitter
         sb.AppendLine($"        => ((IMediator)this).ExecuteAsync(command, null, cancellationToken);");
         sb.AppendLine();
 
-        // Configure overload with type switch
+        // Configure overload with a switch on the runtime type's full name (see RuntimeTypeName)
         sb.AppendLine($"    Task IMediator.ExecuteAsync(");
         sb.AppendLine($"        ICommand command,");
         sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
-        sb.AppendLine("        => command switch");
+        sb.AppendLine($"        => {RuntimeTypeName("command")} switch");
         sb.AppendLine("        {");
 
         foreach (var cmd in voidCommands)
         {
-            sb.AppendLine($"            {EmitConstants.ToCSharpTypeRef(cmd.FullTypeName)} cmd => ExecuteAsync(cmd, configure, cancellationToken),");
+            sb.AppendLine($"            \"{cmd.FullTypeName}\" => ExecuteAsync({ExactCast(cmd, "command")}, configure, cancellationToken),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {command.GetType().Name}\")");
@@ -354,17 +354,17 @@ public static class MediatorEmitter
         sb.AppendLine($"        => ((IMediator)this).FetchAsync(query, null, cancellationToken);");
         sb.AppendLine();
 
-        // Configure overload with type switch
+        // Configure overload with a switch on the runtime type's full name (see RuntimeTypeName)
         sb.AppendLine($"    Task<TResult> IMediator.FetchAsync<TResult>(");
         sb.AppendLine($"        IQuery<TResult> query,");
         sb.AppendLine($"        Action<{EmitConstants.DispatchOptions}>? configure,");
         sb.AppendLine($"        CancellationToken cancellationToken)");
-        sb.AppendLine("        => query switch");
+        sb.AppendLine($"        => {RuntimeTypeName("query")} switch");
         sb.AppendLine("        {");
 
         foreach (var q in queries)
         {
-            sb.AppendLine($"            {EmitConstants.ToCSharpTypeRef(q.FullTypeName)} qry => ConduitRuntime.CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync(qry, configure, cancellationToken)),");
+            sb.AppendLine($"            \"{q.FullTypeName}\" => ConduitRuntime.CastTask<{q.ResultFullTypeName}, TResult>(FetchAsync({ExactCast(q, "query")}, configure, cancellationToken)),");
         }
 
         sb.AppendLine("            _ => throw new InvalidOperationException($\"No handler for {query.GetType().Name}\")");
@@ -376,11 +376,12 @@ public static class MediatorEmitter
         StringBuilder sb,
         List<DispatchableTypeInfo> events)
     {
-        // These are used in C# type-pattern positions, so use the C# ('.') form for nested types.
+        // These are matched against the runtime type's full name (RuntimeTypeName), so they are the metadata ('+')
+        // form, as string literals: an event's attributes are its own, never a base event's.
         var localOnlyTypes = new HashSet<string>(
-            events.Where(e => e.IsLocalOnly).Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
+            events.Where(e => e.IsLocalOnly).Select(e => $"\"{e.FullTypeName}\""));
         var fireAndForgetTypes = new HashSet<string>(
-            events.Where(e => e.IsFireAndForget).Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
+            events.Where(e => e.IsFireAndForget).Select(e => $"\"{e.FullTypeName}\""));
 
         // Capturable = non-Immediate F&F events. These are offered to the outbox interceptor BEFORE
         // any local enqueue: on capture the whole publish body is skipped (post-commit delivery).
@@ -388,7 +389,7 @@ public static class MediatorEmitter
         // fireAndForgetTypes for the background local-enqueue and the broadcast-bypass flag.
         var capturableTypes = new HashSet<string>(events
             .Where(e => e.IsFireAndForget && !e.IsFireAndForgetImmediate)
-            .Select(e => EmitConstants.ToCSharpTypeRef(e.FullTypeName)));
+            .Select(e => $"\"{e.FullTypeName}\""));
 
         // Thin delegating overload (no configure parameter)
         sb.AppendLine("    public async Task PublishAsync(IEvent @event, CancellationToken cancellationToken = default)");
@@ -410,7 +411,7 @@ public static class MediatorEmitter
         if (capturableTypes.Count > 0)
         {
             sb.AppendLine("        var __captured = false;");
-            sb.AppendLine("        if (@event is " + string.Join(" or ", capturableTypes) + ")");
+            sb.AppendLine($"        if ({RuntimeTypeName("@event")} is " + string.Join(" or ", capturableTypes) + ")");
             sb.AppendLine("        {");
             sb.AppendLine($"            var __outboundInterceptor = serviceProvider.GetService<{EmitConstants.IOutboundInterceptor}>();");
             sb.AppendLine("            if (__outboundInterceptor != null)");
@@ -429,7 +430,7 @@ public static class MediatorEmitter
         // Transport broadcast still happens inline -- events are already fire-and-forget on the wire.
         if (fireAndForgetTypes.Count > 0)
         {
-            sb.AppendLine("        if (@event is " + string.Join(" or ", fireAndForgetTypes) + ")");
+            sb.AppendLine($"        if ({RuntimeTypeName("@event")} is " + string.Join(" or ", fireAndForgetTypes) + ")");
             sb.AppendLine("        {");
             sb.AppendLine("            var dispatcher = serviceProvider.GetRequiredService<ConduitBackgroundDispatcher>();");
             sb.AppendLine("            var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();");
@@ -477,7 +478,7 @@ public static class MediatorEmitter
         else
         {
             // Mix of local-only and broadcastable -- check type at runtime
-            sb.AppendLine("        var shouldBroadcast = @event switch");
+            sb.AppendLine($"        var shouldBroadcast = {RuntimeTypeName("@event")} switch");
             sb.AppendLine("        {");
             foreach (var localOnly in localOnlyTypes)
             {
@@ -527,14 +528,15 @@ public static class MediatorEmitter
         sb.AppendLine("    private async Task PublishLocalAsync(IServiceProvider serviceProvider, IEvent @event, CancellationToken cancellationToken)");
         sb.AppendLine("    {");
         sb.AppendLine("        var exceptions = new List<Exception>();");
-        sb.AppendLine("        switch (@event)");
+        sb.AppendLine($"        switch ({RuntimeTypeName("@event")})");
         sb.AppendLine("        {");
 
         foreach (var discoveredEvent in events)
         {
             var eventTypeRef = EmitConstants.ToCSharpTypeRef(discoveredEvent.FullTypeName);
-            sb.AppendLine($"            case {eventTypeRef} e:");
+            sb.AppendLine($"            case \"{discoveredEvent.FullTypeName}\":");
             sb.AppendLine($"            {{");
+            sb.AppendLine($"                var e = {ExactCast(discoveredEvent, "@event")};");
 
             // Build the innermost delegate: resolve all listeners by interface, iterate with try/catch
             sb.AppendLine($"                Func<Task<object>> listenerChain = async () =>");
@@ -596,7 +598,7 @@ public static class MediatorEmitter
         {
             // Any F&F event reaching broadcast was either declined at the pre-enqueue capture attempt
             // (don't re-ask the interceptor) or is Immediate (never captured) -- bypass capture here.
-            sb.AppendLine($"        {indent}var __bypassCapture = @event is " + string.Join(" or ", fireAndForgetTypes) + ";");
+            sb.AppendLine($"        {indent}var __bypassCapture = {RuntimeTypeName("@event")} is " + string.Join(" or ", fireAndForgetTypes) + ";");
             sb.AppendLine($"        {indent}if (outboundInterceptor != null && !__bypassCapture && outboundInterceptor.Intercept(eventEnvelope))");
         }
         else
@@ -929,6 +931,21 @@ public static class MediatorEmitter
         sb.AppendLine("            throw;");
         sb.AppendLine("        }");
     }
+
+    /// <summary>
+    /// The expression an in-process switch dispatches on: the message's runtime type's full name, matched against
+    /// <see cref="DispatchableTypeInfo.FullTypeName"/> string literals -- the contract the wire switch already keeps.
+    /// A type pattern would also match a type derived from the one named, so with one message deriving from another the
+    /// arms would overlap (CS8510/CS8120 in discovery order) and a derived message could reach its base's handler.
+    /// </summary>
+    private static string RuntimeTypeName(string variableName) => $"{variableName}.GetType().FullName";
+
+    /// <summary>
+    /// The cast of a message the <see cref="RuntimeTypeName"/> switch has matched to its type. Through <c>object</c>:
+    /// an <c>ICommand&lt;TResult&gt;</c> or <c>IQuery&lt;TResult&gt;</c> does not convert to a sealed message type.
+    /// </summary>
+    private static string ExactCast(DispatchableTypeInfo type, string variableName)
+        => $"({EmitConstants.ToCSharpTypeRef(type.FullTypeName)})(object){variableName}";
 
     /// <summary>
     /// The expression a wire-dispatch arm reads its message with: <c>DeserializeWire</c>, wrapped in

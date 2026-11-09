@@ -28,17 +28,25 @@ public static class RoslynScanner
     /// <summary>
     /// Scans the compilation for all dispatchable types implementing
     /// <c>ICommand</c>, <c>IQuery</c>, or <c>IEvent</c>.
-    /// Types inaccessible to the generated code (private/protected, or nested in such) are excluded.
+    /// Types the generated code cannot name are excluded: one inaccessible to the generating assembly (private,
+    /// protected, nested in such, or internal to a referenced assembly), a file-local one, a generic one (CONDUIT007),
+    /// and a full type name more than one assembly declares (CONDUIT008).
     /// </summary>
     /// <param name="compilation">The Roslyn compilation to scan.</param>
-    /// <returns>The discovered dispatchable types.</returns>
+    /// <returns>The discovered dispatchable types, unique by full type name.</returns>
     public static IReadOnlyList<DispatchableTypeInfo> Scan(Compilation compilation) => Scan(compilation, messageSymbols: null);
 
     /// <summary>
     /// <see cref="Scan(Compilation)"/>, also collecting each discovered message's symbol into
-    /// <paramref name="messageSymbols"/> for <see cref="ScanCarriedAuditAsMisuses"/>.
+    /// <paramref name="messageSymbols"/> for <see cref="ScanCarriedAuditAsMisuses"/>, and the excluded generic message
+    /// types and duplicated full type names into <paramref name="genericMessageTypes"/> and
+    /// <paramref name="duplicateMessageTypes"/>.
     /// </summary>
-    internal static IReadOnlyList<DispatchableTypeInfo> Scan(Compilation compilation, List<INamedTypeSymbol>? messageSymbols)
+    internal static IReadOnlyList<DispatchableTypeInfo> Scan(
+        Compilation compilation,
+        List<INamedTypeSymbol>? messageSymbols,
+        List<string>? genericMessageTypes = null,
+        List<DuplicateMessageType>? duplicateMessageTypes = null)
     {
         if (compilation is null)
         {
@@ -46,6 +54,7 @@ public static class RoslynScanner
         }
 
         var results = new List<DispatchableTypeInfo>();
+        var symbols = new List<INamedTypeSymbol>();
 
         foreach (var typeSymbol in GetAllNamedTypes(compilation))
         {
@@ -60,8 +69,16 @@ public static class RoslynScanner
                 continue;
             }
 
-            if (!ShouldInclude(typeSymbol))
+            if (!IsNameableByGeneratedCode(compilation, typeSymbol))
             {
+                continue;
+            }
+
+            // A message's full type name is its wire name and its key in every generated switch; a generic type (or one
+            // nested in a generic type) has no name the generated code could write, so it is reported, not emitted.
+            if (typeSymbol.IsGenericType)
+            {
+                genericMessageTypes?.Add(typeSymbol.ToDisplayString());
                 continue;
             }
 
@@ -84,10 +101,51 @@ public static class RoslynScanner
                 AuditMarkConflicts = AuditMarkConflicts(typeSymbol),
                 AuditAsMisuses = AuditAsMisuses(typeSymbol),
             });
-            messageSymbols?.Add(typeSymbol);
+            symbols.Add(typeSymbol);
         }
 
+        RemoveDuplicateFullTypeNames(results, symbols, duplicateMessageTypes);
+        messageSymbols?.AddRange(symbols);
         return results.AsReadOnly();
+    }
+
+    // Two assemblies declaring one full type name make it name two types: the generated code cannot refer to either
+    // (CS0433), and the wire name would not say which one a message is. Every copy is removed and the name reported.
+    private static void RemoveDuplicateFullTypeNames(
+        List<DispatchableTypeInfo> results,
+        List<INamedTypeSymbol> symbols,
+        List<DuplicateMessageType>? duplicateMessageTypes)
+    {
+        var duplicated = new HashSet<string>(
+            results.GroupBy(type => type.FullTypeName, StringComparer.Ordinal).Where(group => group.Count() > 1).Select(group => group.Key),
+            StringComparer.Ordinal);
+        if (duplicated.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var fullTypeName in duplicated.OrderBy(name => name, StringComparer.Ordinal))
+        {
+            var assemblies = Enumerable.Range(0, results.Count)
+                .Where(index => results[index].FullTypeName == fullTypeName)
+                .Select(index => symbols[index].ContainingAssembly.Identity.Name)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name, StringComparer.Ordinal);
+            duplicateMessageTypes?.Add(new DuplicateMessageType
+            {
+                FullTypeName = fullTypeName,
+                Assemblies = string.Join(", ", assemblies),
+            });
+        }
+
+        for (var index = results.Count - 1; index >= 0; index--)
+        {
+            if (duplicated.Contains(results[index].FullTypeName))
+            {
+                results.RemoveAt(index);
+                symbols.RemoveAt(index);
+            }
+        }
     }
 
     /// <summary>
@@ -126,6 +184,12 @@ public static class RoslynScanner
 
             foreach (var iface in typeSymbol.AllInterfaces)
             {
+                // A generic message is not dispatchable (CONDUIT007), so its handlers and listeners are not wired.
+                if (iface.TypeArguments.Length > 0 && iface.TypeArguments[0] is INamedTypeSymbol { IsGenericType: true })
+                {
+                    continue;
+                }
+
                 var ifaceOriginal = iface.OriginalDefinition.ToDisplayString();
 
                 // Message-type names are join keys against DispatchableTypeInfo.FullTypeName, so they
@@ -140,7 +204,7 @@ public static class RoslynScanner
 
                 if (messageType != null)
                 {
-                    if (!compilation.IsSymbolAccessibleWithin(typeSymbol, compilation.Assembly))
+                    if (!IsNameableByGeneratedCode(compilation, typeSymbol))
                     {
                         inaccessible.Add(messageType);
                         continue;
@@ -154,7 +218,7 @@ public static class RoslynScanner
                 }
                 else if (ifaceOriginal == "Conduit.Handlers.IEventListener<TEvent>" && iface.TypeArguments.Length == 1)
                 {
-                    if (!compilation.IsSymbolAccessibleWithin(typeSymbol, compilation.Assembly))
+                    if (!IsNameableByGeneratedCode(compilation, typeSymbol))
                     {
                         continue; // listeners are optional; an inaccessible one is simply not wired
                     }
@@ -214,24 +278,22 @@ public static class RoslynScanner
         return null;
     }
 
-    private static bool ShouldInclude(INamedTypeSymbol typeSymbol)
+    // The generated code lives in the generating assembly, in files of its own, so it can name a type only when that
+    // assembly can see it (not private, protected, nested in such, or internal to a referenced assembly) and the type is
+    // not file-local, nor nested in a file-local type (visible only in its own file).
+    private static bool IsNameableByGeneratedCode(Compilation compilation, INamedTypeSymbol typeSymbol)
     {
-        // Skip types that aren't accessible to generated code (private nested types, etc.)
-        if (typeSymbol.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected)
+        if (!compilation.IsSymbolAccessibleWithin(typeSymbol, compilation.Assembly))
         {
             return false;
         }
 
-        // Skip nested types in inaccessible containers
-        var container = typeSymbol.ContainingType;
-        while (container is not null)
+        for (var type = typeSymbol; type is not null; type = type.ContainingType)
         {
-            if (container.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected)
+            if (type.IsFileLocal)
             {
                 return false;
             }
-
-            container = container.ContainingType;
         }
 
         return true;
@@ -284,13 +346,6 @@ public static class RoslynScanner
     }
 
     /// <summary>
-    /// Builds the metadata-style full name of a type, matching <see cref="System.Type.FullName"/>:
-    /// nested types are joined to their containing type with a '+' (e.g. <c>Ns.Outer+Inner</c>),
-    /// not the '.' that <c>ISymbol.ToDisplayString()</c> emits. This is the canonical wire
-    /// discriminator and <c>ConduitTypeRegistry</c> key — it must agree with the runtime
-    /// <c>Type.FullName</c> and <c>Conduit.TypeGen.ReflectionScanner</c> for the same type.
-    /// </summary>
-    /// <summary>
     /// Returns the metadata-style full name for any type symbol, delegating to
     /// <see cref="GetMetadataFullName(INamedTypeSymbol)"/> for named types (so nested types use the
     /// '+' separator) and falling back to <c>ISymbol.ToDisplayString()</c> otherwise.
@@ -302,6 +357,14 @@ public static class RoslynScanner
             : typeSymbol.ToDisplayString();
     }
 
+    /// <summary>
+    /// Builds the metadata-style full name of a type, matching <see cref="System.Type.FullName"/>:
+    /// nested types are joined to their containing type with a '+' (e.g. <c>Ns.Outer+Inner</c>),
+    /// not the '.' that <c>ISymbol.ToDisplayString()</c> emits, and a generic type carries its arity
+    /// (<c>Ns.Wrap`1</c>), so it never shares a name with a non-generic one. This is the canonical wire
+    /// discriminator and <c>ConduitTypeRegistry</c> key — it must agree with the runtime
+    /// <c>Type.FullName</c> and <c>Conduit.TypeGen.ReflectionScanner</c> for the same type.
+    /// </summary>
     private static string GetMetadataFullName(INamedTypeSymbol typeSymbol)
     {
         // Walk the containing-type chain from the innermost type outward, then reverse so the
@@ -310,20 +373,28 @@ public static class RoslynScanner
         var current = typeSymbol;
         while (current is not null)
         {
-            typeChain.Add(current.Name);
+            typeChain.Add(current.MetadataName);
             current = current.ContainingType;
         }
 
         typeChain.Reverse();
         var nestedName = string.Join("+", typeChain);
 
-        var ns = typeSymbol.ContainingNamespace;
-        if (ns is null || ns.IsGlobalNamespace)
+        // The namespace's own names, not ToDisplayString(): that escapes a keyword segment (App.@namespace), which
+        // Type.FullName does not.
+        var namespaceChain = new List<string>();
+        for (var ns = typeSymbol.ContainingNamespace; ns is not null && !ns.IsGlobalNamespace; ns = ns.ContainingNamespace)
+        {
+            namespaceChain.Add(ns.Name);
+        }
+
+        if (namespaceChain.Count == 0)
         {
             return nestedName;
         }
 
-        return ns.ToDisplayString() + "." + nestedName;
+        namespaceChain.Reverse();
+        return string.Join(".", namespaceChain) + "." + nestedName;
     }
 
     // The same rule ConduitRuntime.ApplyAuditMemberMarks enforces at runtime: walk the base chain, and bind constructor

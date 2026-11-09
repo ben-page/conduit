@@ -280,7 +280,7 @@ namespace App.Events
         // runtime (as Conduit.Jobs does for an event trigger) still runs. Gating the case on
         // compile-time discovery would make such an event undeliverable however it was registered.
         var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
-        mediatorSource.Should().Contain("case TestApp.CartAbandoned e:");
+        mediatorSource.Should().Contain("case \"TestApp.CartAbandoned\":");
         mediatorSource.Should().Contain(
             "GetServices<Conduit.Handlers.IEventListener<TestApp.CartAbandoned>>");
     }
@@ -422,15 +422,15 @@ namespace App.Events
         mediatorSource.Should().Contain("__captured = __outboundInterceptor.Intercept(");
         mediatorSource.Should().Contain("if (!__captured)");
 
-        // The capture type-pattern is the non-Immediate F&F set only: a bare close-paren right after
+        // The capture check is the non-Immediate F&F set only: a bare close-paren right after
         // CapturedEvent proves ImmediateEvent is NOT offered for capture (it must deliver immediately).
-        mediatorSource.Should().Contain("if (@event is TestApp.CapturedEvent)");
+        mediatorSource.Should().Contain("if (@event.GetType().FullName is \"TestApp.CapturedEvent\")");
 
         // The broadcast bypass flag covers ALL F&F types (declined-capturable OR Immediate) so neither
         // is re-offered at the broadcast interceptor. Order is HashSet-nondeterministic -> match per type.
-        mediatorSource.Should().Contain("var __bypassCapture = @event is ");
-        mediatorSource.Should().MatchRegex(@"__bypassCapture = @event is [^;]*TestApp\.CapturedEvent");
-        mediatorSource.Should().MatchRegex(@"__bypassCapture = @event is [^;]*TestApp\.ImmediateEvent");
+        mediatorSource.Should().Contain("var __bypassCapture = @event.GetType().FullName is ");
+        mediatorSource.Should().MatchRegex(@"__bypassCapture = @event\.GetType\(\)\.FullName is [^;]*""TestApp\.CapturedEvent""");
+        mediatorSource.Should().MatchRegex(@"__bypassCapture = @event\.GetType\(\)\.FullName is [^;]*""TestApp\.ImmediateEvent""");
     }
 
     [TestMethod]

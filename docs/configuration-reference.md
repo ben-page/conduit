@@ -382,6 +382,8 @@ the packages:
 | CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
 | CONDUIT005 | Error | A message member is marked both [DoNotAudit] and [AuditRedacted] | Keep one |
 | CONDUIT006 | Error | [AuditAs] on a member of a message, or of a type a message carries (in the compilation or a referenced assembly that references Conduit.Contracts), that is not JsonElement, or naming no sibling string property | Put it on a `JsonElement` member and name a `string` property |
+| CONDUIT007 | Error | A message type is generic, or nested in a generic type | Declare one non-generic type per message |
+| CONDUIT008 | Error | Two assemblies declare a message with the same full type name | Rename or move one of them |
 
 ---
 

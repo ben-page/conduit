@@ -1,3 +1,6 @@
+using System.Linq;
+using Microsoft.CodeAnalysis.CSharp;
+
 namespace Conduit.SourceGen;
 
 /// <summary>
@@ -58,14 +61,21 @@ internal static class EmitConstants
 
     /// <summary>
     /// Converts a metadata-style full type name (nested types joined with '+', matching
-    /// <see cref="System.Type.FullName"/>) into a C# type reference (nested types joined with '.').
+    /// <see cref="System.Type.FullName"/>) into a C# type reference (nested types joined with '.', and a
+    /// keyword-named segment escaped: <c>App.namespace.event</c> is <c>App.@namespace.@event</c>).
     /// <see cref="Conduit.Analysis.DispatchableTypeInfo.FullTypeName"/> and the handler/event
     /// message-type keys hold the metadata form — the canonical wire discriminator and
     /// <c>ConduitTypeRegistry</c> key — so emitters must call this whenever they write the name into
     /// a C# syntax position (a type declaration, generic argument, or <c>typeof(...)</c>).
     /// </summary>
     internal static string ToCSharpTypeRef(string metadataFullName)
-        => metadataFullName.Replace('+', '.');
+        => string.Join(".", metadataFullName.Split('.', '+').Select(EscapeKeyword));
+
+    // '@' makes any identifier verbatim, so escaping a contextual keyword too is harmless and never ambiguous.
+    private static string EscapeKeyword(string identifier)
+        => SyntaxFacts.GetKeywordKind(identifier) != SyntaxKind.None || SyntaxFacts.GetContextualKeywordKind(identifier) != SyntaxKind.None
+            ? "@" + identifier
+            : identifier;
 
     // Observation types
     internal const string MessageContext_Observe = "Conduit.Runtime.MessageContext.Observe";
