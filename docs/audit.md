@@ -75,7 +75,8 @@ Compose them according to where you want audit captured and where you want it st
 //    to a central collector over a transport. Stores nothing locally.
 conduit.AddAudit();
 
-// 2. Single service — captures and stores its own audit in one process.
+// 2. Single service — captures and stores its own audit in one process. On a broker
+//    shared with other audited services it also stores theirs (see below).
 conduit.UseSqlite("Data Source=audit.db");   // engine on the ConduitBuilder
 conduit.AddAudit();
 conduit.AddAuditListener();
@@ -85,6 +86,25 @@ conduit.AddAuditListener();
 conduit.UsePostgres("Host=localhost;Database=Audit;...");
 conduit.AddAuditListener();
 ```
+
+**A listener receives every service's batches.** `AddAuditListener` subscribes `AuditBatch` on the
+host's broker transports, as any registered listener subscribes its event. So a role 2 service on a
+broker it shares with other audited services is a collector too: its store receives and keeps every
+peer's `AuditBatch`, not only its own. (Its own batches reach the listener in process; the copy the
+broker returns is dropped as self-published.)
+
+A service that wants only its own audit on a shared broker keeps the store local by not subscribing
+`AuditBatch` on the broker. Exclude it from the type registry before the host starts; the batches it
+publishes still reach its listener in process:
+
+```csharp
+var app = builder.Build();
+app.Services.GetRequiredService<ConduitTypeRegistry>().ExcludeEventTypes([typeof(AuditBatch)]);
+```
+
+Or replace `LocalAuditListener` with an `IEventListener<AuditBatch>` of your own that saves, through
+`IAuditStore.SaveBatchAsync`, only the batches whose `SourceService` is this service's: remove
+`LocalAuditListener`'s `IEventListener<AuditBatch>` registration after `AddConduit` and register yours.
 
 ## Setup
 
@@ -271,7 +291,7 @@ A record is sealed (its payload read and capped) at the moment the nested dispat
 
 ## Distributed mode
 
-When a service calls `AddAudit()` and has a transport registered, the `AuditBatch` events it publishes are broadcast to that transport like any other event (`AuditBatch` is a normal `IEvent`). A dedicated collector service that calls `AddAuditListener()` subscribes to `AuditBatch` and persists everything it receives.
+When a service calls `AddAudit()` and has a transport registered, the `AuditBatch` events it publishes are broadcast to that transport like any other event (`AuditBatch` is a normal `IEvent`). A dedicated collector service that calls `AddAuditListener()` subscribes to `AuditBatch` on its broker transports and persists everything it receives — from every service on the broker. Any service that calls `AddAuditListener()` on that broker does the same, a role 2 service included; see [Deployment roles](#deployment-roles) for keeping one to its own batches.
 
 Because each service stamps its own records with the shared `MessageId`, the central store can reconstruct a cross-service timeline for a single logical message — e.g. the sender's transport-send and the receiver's handler-start appear as separate records sharing one `MessageId`. Query by `MessageId` via `IAuditStore.GetByMessageIdAsync`.
 
