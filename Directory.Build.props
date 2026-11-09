@@ -7,6 +7,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
     <IsPackable>true</IsPackable>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <IsPublishable>true</IsPublishable>
     <DebugType>embedded</DebugType>
     <EmbedAllSources>true</EmbedAllSources>
