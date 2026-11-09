@@ -36,7 +36,7 @@ public static class ConduitRestHandlers
             {
                 try
                 {
-                    HttpDispatchContext.Start(httpContext, enrichers);
+                    HttpDispatchContext.Start(httpContext, enrichers, trustCallerContext: false);
                     var result = await mediator.FetchAsync(query, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -67,7 +67,7 @@ public static class ConduitRestHandlers
                         ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
                         : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
 
-                    HttpDispatchContext.Start(request.HttpContext, enrichers);
+                    HttpDispatchContext.Start(request.HttpContext, enrichers, trustCallerContext: false);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -92,7 +92,7 @@ public static class ConduitRestHandlers
             {
                 try
                 {
-                    HttpDispatchContext.Start(httpContext, enrichers);
+                    HttpDispatchContext.Start(httpContext, enrichers, trustCallerContext: false);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
                     return ToHttpResult(result);
                 }
@@ -122,7 +122,7 @@ public static class ConduitRestHandlers
                         ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
                         : (await request.ReadFromJsonAsync<TCommand>(cancellationToken))!;
 
-                    HttpDispatchContext.Start(request.HttpContext, enrichers);
+                    HttpDispatchContext.Start(request.HttpContext, enrichers, trustCallerContext: false);
                     await mediator.ExecuteAsync(command, cancellationToken);
                     return Results.NoContent();
                 }
@@ -147,7 +147,7 @@ public static class ConduitRestHandlers
             {
                 try
                 {
-                    HttpDispatchContext.Start(httpContext, enrichers);
+                    HttpDispatchContext.Start(httpContext, enrichers, trustCallerContext: false);
                     await mediator.ExecuteAsync(command, cancellationToken);
                     return Results.NoContent();
                 }

@@ -5,6 +5,7 @@
 - [\[LocalOnly\]](#localonly)
 - [IInboundInterceptor](#iwireinterceptor)
 - [ASP.NET Core auth](#aspnet-core-auth)
+- [Correlation ids](#correlation-ids)
 
 ## Overview
 
@@ -115,6 +116,10 @@ app.MapHub<SecureConduitHub>("/conduit");
 ```
 
 Use ASP.NET Core auth to verify identity. Use `TypeFilterInterceptor` to restrict which message types authenticated clients can dispatch.
+
+## Correlation ids
+
+A dispatch's `MessageContext` ids decide more than log correlation: the inbox deduplicates on the `MessageId`, and the audit trail links records by `ConversationId` and `CausationId`. So the HTTP wire endpoint and the SignalR hub ignore the ids a caller sends and mint fresh ones, unless the edge opts in: `MapConduitEndpoint(trustCallerContext: true)` or `AddConduitSignalR(options => options.TrustCallerContext = true)`. Opt in only on an edge that other services reach and browsers do not. Even a trusting edge honors a caller's ids only when each one is a plain token (1 to 64 ASCII letters, digits and hyphens, `MessageContextIds.IsValid`), so an id can never carry CR/LF into a log line or a forwarded header; otherwise it mints. RESTful endpoints and `WithConduitDispatchContext()` routes never honor them. See [HTTP](transports/http.md#correlation-ids) and [SignalR](transports/signalr.md#correlation-ids).
 
 ---
 

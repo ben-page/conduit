@@ -3,6 +3,7 @@ using Conduit.Configuration;
 using Conduit.Runtime;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Transport.SignalR.Tests.Unit;
 
@@ -47,5 +48,26 @@ public class SignalRConfigurationShould
         // Assert
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("*Conduit:Endpoints:inventory:HubUri*");
+    }
+
+    [TestMethod]
+    public async Task LeaveTheHubDistrustingCallerContextUnlessARegistrationConfiguresIt()
+    {
+        // Arrange
+        var defaulted = new ServiceCollection().AddConduitSignalR();
+        var configured = new ServiceCollection().AddConduitSignalR(options => options.TrustCallerContext = true);
+        var withServerInfo = new ServiceCollection()
+            .AddConduitSignalR(new ConduitServerInfo("build-1"), options => options.TrustCallerContext = true);
+
+        // Act
+        await using var defaultedProvider = defaulted.BuildServiceProvider();
+        await using var configuredProvider = configured.BuildServiceProvider();
+        await using var withServerInfoProvider = withServerInfo.BuildServiceProvider();
+
+        // Assert
+        defaultedProvider.GetRequiredService<IOptions<ConduitSignalROptions>>().Value.TrustCallerContext.Should().BeFalse();
+        configuredProvider.GetRequiredService<IOptions<ConduitSignalROptions>>().Value.TrustCallerContext.Should().BeTrue();
+        withServerInfoProvider.GetRequiredService<IOptions<ConduitSignalROptions>>().Value.TrustCallerContext.Should().BeTrue();
+        withServerInfoProvider.GetRequiredService<ConduitServerInfo>().Should().Be(new ConduitServerInfo("build-1"));
     }
 }

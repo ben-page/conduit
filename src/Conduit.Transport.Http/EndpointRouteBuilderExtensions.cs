@@ -16,22 +16,37 @@ public static class EndpointRouteBuilderExtensions
     /// Maps POST endpoints for Conduit wire dispatch. The message type is read from the
     /// <c>X-Conduit-Type</c> header and the request body contains the plain serialized message.
     /// </summary>
+    /// <remarks>
+    /// The dispatch's correlation ids are the server's unless <paramref name="trustCallerContext"/> says otherwise:
+    /// by default the <c>X-Conduit-Message-Id</c>, <c>X-Conduit-Conversation-Id</c> and <c>X-Conduit-Causation-Id</c>
+    /// headers are ignored and the server mints fresh ids, because the inbox deduplicates on the MessageId and audit
+    /// lineage follows the other two. A trusting edge honors them only when the message and conversation ids are both
+    /// present and every supplied id is a plain token (<see cref="MessageContextIds.IsValid"/>); otherwise it mints
+    /// too. Either way the request is answered as usual. Server-trusted properties from the registered
+    /// <see cref="IDispatchContextEnricher"/>s apply in every case.
+    /// </remarks>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="basePath">The base URL path for Conduit endpoints. Defaults to "/api/conduit".
     /// Dispatch maps to "{basePath}/dispatch", publish maps to "{basePath}/publish".</param>
-    /// <returns>The endpoint route builder for chaining.</returns>
-    public static IEndpointRouteBuilder MapConduitEndpoint(
+    /// <param name="trustCallerContext">Whether this edge honors the correlation ids its callers send: true only for
+    /// an endpoint that service-to-service callers (<see cref="HttpTransport"/>) reach and browsers do not.</param>
+    /// <returns>The route group both endpoints are mapped in, so a convention chained on it (e.g.
+    /// <c>RequireAuthorization()</c>) applies to both.</returns>
+    public static RouteGroupBuilder MapConduitEndpoint(
         this IEndpointRouteBuilder endpoints,
-        string basePath = "/api/conduit")
+        string basePath = "/api/conduit",
+        bool trustCallerContext = false)
     {
-        endpoints.MapPost(basePath + "/dispatch", async (
+        var group = endpoints.MapGroup(basePath);
+
+        group.MapPost("/dispatch", async (
             HttpRequest httpRequest,
             IWireMediator mediator,
             IEnumerable<IDispatchContextEnricher> enrichers,
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers);
+            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext);
 
             // The edge where the answer leaves the server for a person: the refusal is written in the reader's language here.
             var result = RefusalRendering.RenderResult(
@@ -49,20 +64,20 @@ public static class EndpointRouteBuilderExtensions
             return Results.Ok(result);
         });
 
-        endpoints.MapPost(basePath + "/publish", async (
+        group.MapPost("/publish", async (
             HttpRequest httpRequest,
             IWireMediator mediator,
             IEnumerable<IDispatchContextEnricher> enrichers,
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers);
+            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext);
 
             await mediator.HandleWireEventAsync(envelope, cancellationToken);
             return Results.Ok();
         });
 
-        return endpoints;
+        return group;
     }
 
     private static async Task<DispatchEnvelope> ReadEnvelopeAsync(

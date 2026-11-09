@@ -15,7 +15,9 @@ public partial class Program
 
         builder.Services.AddSingleton<InventoryStore>();
         builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
+        // Only other services (OrderService) reach this hub, never a browser, so it keeps their correlation ids and the
+        // conversation spans both services. A browser-facing hub leaves TrustCallerContext off (the default).
+        builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true);
 
         var app = builder.Build();
         app.MapHub<ConduitHub>("/conduit");

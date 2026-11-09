@@ -2,6 +2,7 @@
 
 - [Overview](#overview)
 - [Server setup](#server-setup)
+- [Correlation ids](#correlation-ids)
 - [Bidirectional communication](#bidirectional-communication)
 - [Solicited events](#solicited-events)
 - [Client mode (service-to-service)](#client-mode-service-to-service)
@@ -27,6 +28,20 @@ app.Run();
 `AddConduitSignalR()` registers SignalR services, creates a `SignalRTransport` in server mode, and registers it as `IConduitTransport`. The transport holds an `IHubContext<ConduitHub>` and pushes events to connected clients.
 
 `MapHub<ConduitHub>` maps the inbound hub. It exposes two methods: `Dispatch` for commands/queries and `Publish` for events.
+
+## Correlation ids
+
+`Dispatch` and `Publish` take an optional `context` argument carrying `MessageContext` ids (`MessageId`, `ConversationId`, `CausationId`). By default the hub ignores it and the server mints fresh ids for every invocation, so each one is the head of a new conversation. The browser client passes `null` anyway. These ids are not cosmetic: the [inbox](../inbox.md) deduplicates on the `MessageId` and the audit trail links records by the other two, so a caller that could set them could suppress another dispatch or graft its own onto someone else's conversation.
+
+A hub that only other services reach (`SignalRTransport` in client mode, which always sends its context) can opt in, so a conversation carries on across the hop:
+
+```csharp
+builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true);
+```
+
+A trusting hub honors the context only when `MessageId` and `ConversationId` are both present and every supplied id is a plain token: 1 to 64 ASCII letters, digits and hyphens (`MessageContextIds.IsValid`). An absent `CausationId` defaults to the message id. Any other context is ignored as a whole and the server mints fresh ids; the invocation is answered as usual. The `headers` argument and your `IDispatchContextEnricher`s are unaffected: enrichers run on every invocation and win over a caller's header of the same key.
+
+`ConduitSignalROptions` configures the hub (the inbound side). `SignalROptions` configures the outbound client-mode transport. `AddConduitSignalR(serverInfo, configure)` takes both a `ConduitServerInfo` and the options callback.
 
 ## Server identity on connect
 
@@ -159,12 +174,12 @@ Configuration binds first; an explicit `UseSignalR(hubUri)` argument or a `confi
 overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
 for the full precedence rule.
 
-The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept requests:
+The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept requests. It keeps the caller's correlation ids, so the conversation spans both services, only with `TrustCallerContext` ([Correlation ids](#correlation-ids)); leave it off on a hub browsers can reach:
 
 ```csharp
-// Inventory service (remote)
+// Inventory service (remote, reached only by other services)
 builder.Services.AddConduit();
-builder.Services.AddConduitSignalR();
+builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true);
 
 var app = builder.Build();
 app.MapHub<ConduitHub>("/conduit");

@@ -568,9 +568,6 @@ public static partial class ConduitRuntime
         return candidates.Length == 1 && candidates[0].GetParameters().Length > 0 ? candidates[0] : null;
     }
 
-    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,64}$")]
-    private static partial System.Text.RegularExpressions.Regex SafeReference();
-
     /// <summary>
     /// Checks a reply <see cref="DispatchResult{T}"/> for errors and returns the data.
     /// Throws <see cref="RemoteDispatchException"/> (an <see cref="InvalidOperationException"/>, carrying the reference) if the result contains an error.
@@ -1070,10 +1067,11 @@ public static partial class ConduitRuntime
             // A reference the user can quote and support can grep: the dispatch's ConversationId. ConduitHub mints a
             // fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line,
             // so finding it needs no log scopes. Refusals (the ConduitException arm above) carry none -- they are not bugs.
-            // But the hub accepts a caller-supplied context, so the ConversationId is attacker-controlled: CR/LF would
-            // forge log lines. Use it only when it is log-safe ([A-Za-z0-9-]{1,64}); otherwise mint one.
+            // An edge that trusts its callers takes the ConversationId from them, and the edges check it is a plain token
+            // (MessageContextIds), but a host can start a context itself: CR/LF would forge log lines. Use it only when
+            // it is log-safe; otherwise mint one.
             var conversationId = MessageContext.Current?.ConversationId;
-            var reference = conversationId is not null && SafeReference().IsMatch(conversationId)
+            var reference = MessageContextIds.IsValid(conversationId)
                 ? conversationId
                 : Guid.NewGuid().ToString("N");
             LogDispatchError(logger, messageType, reference, ex);

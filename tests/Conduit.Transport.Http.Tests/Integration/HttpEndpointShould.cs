@@ -9,6 +9,7 @@ using Conduit.Transport.SignalR;
 using Conduit.Runtime;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -267,5 +268,28 @@ public class HttpEndpointShould
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             json.GetProperty("error").GetProperty("code").GetString().Should().Be("InternalError");
         }
+    }
+
+    // MapConduitEndpoint returns the route group both routes are mapped in, so a convention chained on it -- e.g.
+    // app.MapConduitEndpoint().RequireAuthorization() -- reaches /dispatch and /publish alike.
+    [TestMethod]
+    public async Task ApplyAConventionChainedOnTheReturnedGroupToBothRoutes()
+    {
+        // Arrange
+        var builder = WebApplication.CreateBuilder();
+        builder.Services.AddConduit();
+        await using var app = builder.Build();
+        var marker = new object();
+
+        // Act
+        app.MapConduitEndpoint("/internal/conduit").WithMetadata(marker);
+
+        // Assert
+        var endpoints = ((IEndpointRouteBuilder)app).DataSources
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .ToDictionary(endpoint => endpoint.RoutePattern.RawText!, endpoint => endpoint.Metadata);
+        endpoints.Keys.Should().BeEquivalentTo("/internal/conduit/dispatch", "/internal/conduit/publish");
+        endpoints.Values.Should().AllSatisfy(metadata => metadata.Should().Contain(marker));
     }
 }

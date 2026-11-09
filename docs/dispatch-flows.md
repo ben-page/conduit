@@ -167,7 +167,9 @@ Key facts:
 
 A message arriving from another process passes through the **three-layer middleware model**.
 This trace uses a broker transport (`BrokerTransportBase<TMessage>.ProcessInboundMessageAsync`);
-HTTP (`MapConduitEndpoint`) and SignalR (`ConduitHub`) follow the same `IWireMediator` calls.
+HTTP (`MapConduitEndpoint`) and SignalR (`ConduitHub`) follow the same `IWireMediator` calls, except
+that step 2 takes the caller's ids only on an edge that trusts its callers, and only when each is a plain token;
+otherwise the server mints them ([HTTP → Correlation ids](transports/http.md#correlation-ids)).
 
 ```
 transport receives raw message

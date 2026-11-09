@@ -181,4 +181,101 @@ public class ConduitHubShould
         first.Should().NotBeSameAs(received.Task);
         received.Task.IsCompleted.Should().BeFalse();
     }
+
+    private const string CaptureContextType = "Conduit.Transport.SignalR.Tests.Support.CaptureContextCommand";
+
+    private static readonly Dictionary<string, string> CallerContext = new()
+    {
+        ["MessageId"] = "m-1",
+        ["ConversationId"] = "c-1",
+        ["CausationId"] = "p-1",
+    };
+
+    private static TestWebHost CreateContextHost(Action<ConduitSignalROptions>? configure)
+    {
+        return TestWebHost.Start(
+            builder =>
+            {
+                builder.Services.AddSingleton<CapturedContexts>();
+                builder.Services.AddConduit();
+                builder.Services.AddConduitSignalR(configure);
+            },
+            app => app.MapHub<ConduitHub>("/conduit"));
+    }
+
+    private static async Task DispatchCaptureContextAsync(HubConnection connection, Dictionary<string, string> context)
+    {
+        var payload = JsonSerializer.SerializeToElement(new { });
+        Dictionary<string, string>? noHeaders = null;
+        var result = await connection.InvokeAsync<DispatchResult<JsonElement?>>(
+            "Dispatch", CaptureContextType, payload, context, noHeaders);
+        result.Error.Should().BeNull();
+        result.Data.Should().NotBeNull();
+    }
+
+    // The hub faces browsers by default: the inbox dedups on MessageId and audit lineage follows ConversationId, so a
+    // context a caller passes is honored only by a hub registered with TrustCallerContext (a service-to-service edge).
+    [TestMethod]
+    public async Task IgnoreCallerContextUnlessConfigured()
+    {
+        // Arrange
+        await using var host = CreateContextHost(configure: null);
+        var captured = host.GetRequiredService<CapturedContexts>();
+        await using var connection = await ConnectToHub(host.Address);
+
+        // Act
+        await DispatchCaptureContextAsync(connection, CallerContext);
+
+        // Assert
+        var ids = captured.Ids.Should().ContainSingle().Subject;
+        ids.MessageId.Should().NotBe("m-1");
+        ids.ConversationId.Should().Be(ids.MessageId, "a minted dispatch is the head of its own conversation");
+        ids.CausationId.Should().Be(ids.MessageId);
+    }
+
+    [TestMethod]
+    public async Task HonorCallerContextWhenConfigured()
+    {
+        // Arrange
+        await using var host = CreateContextHost(options => options.TrustCallerContext = true);
+        var captured = host.GetRequiredService<CapturedContexts>();
+        await using var connection = await ConnectToHub(host.Address);
+
+        // Act
+        await DispatchCaptureContextAsync(connection, CallerContext);
+
+        // Assert
+        captured.Ids.Should().ContainSingle().Which.Should().Be(new MessageContextSnapshot("m-1", "p-1", "c-1"));
+    }
+
+    [TestMethod]
+    public async Task MintFreshIdsForACallerContextThatIsNotPlainTokensEvenWhenConfigured()
+    {
+        // Arrange: JSON carries what an HTTP header cannot, so CR/LF reaches the hub intact.
+        await using var host = CreateContextHost(options => options.TrustCallerContext = true);
+        var captured = host.GetRequiredService<CapturedContexts>();
+        await using var connection = await ConnectToHub(host.Address);
+        Dictionary<string, string>[] contexts =
+        [
+            new(CallerContext) { ["MessageId"] = "m-1\r\nforged log line" },
+            new(CallerContext) { ["ConversationId"] = new string('c', 65) },
+            new(CallerContext) { ["CausationId"] = "p-\u00e9" },
+        ];
+        var supplied = contexts.SelectMany(context => context.Values).ToHashSet();
+
+        // Act
+        foreach (var context in contexts)
+        {
+            await DispatchCaptureContextAsync(connection, context);
+        }
+
+        // Assert
+        captured.Ids.Should().HaveCount(contexts.Length);
+        foreach (var ids in captured.Ids)
+        {
+            supplied.Should().NotContain(ids.MessageId!);
+            ids.ConversationId.Should().Be(ids.MessageId, "one bad id discards the caller's context whole");
+            ids.CausationId.Should().Be(ids.MessageId);
+        }
+    }
 }

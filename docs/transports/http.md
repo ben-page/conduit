@@ -7,6 +7,7 @@
 - [Binding strategies](#binding-strategies)
 - [Responses](#responses)
 - [Envelope dispatch](#envelope-dispatch)
+  - [Correlation ids](#correlation-ids)
 - [When to use which](#when-to-use-which)
 - [Outbound HttpTransport](#outbound-httptransport)
   - [Loading from configuration](#loading-from-configuration)
@@ -130,8 +131,6 @@ This registers two POST endpoints:
 
 The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the wire format used by broker transports (type in transport-native properties, body is the raw message).
 
-`MessageContext` is propagated via `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, and `X-Conduit-Conversation-Id` headers. When these headers are absent (e.g. browser clients), the server mints a fresh context.
-
 You can customize the base path:
 
 ```csharp
@@ -139,7 +138,27 @@ app.MapConduitEndpoint("/internal/conduit");
 // Creates /internal/conduit/dispatch and /internal/conduit/publish
 ```
 
+`MapConduitEndpoint` returns the route group both endpoints are mapped in, so a convention you chain on it applies to both:
+
+```csharp
+app.MapConduitEndpoint().RequireAuthorization();
+```
+
 The dispatch endpoint maps error code strings to HTTP status codes using a hardcoded switch (`NotFound` to 404, `Unauthorized` to 401, `Conflict` to 409, `InternalError` to 500, everything else to 400). Custom `ErrorCode` values with non-standard status codes fall through to 400. For accurate HTTP status codes on custom errors, use RESTful endpoints.
+
+### Correlation ids
+
+By default the server mints every dispatch's `MessageContext` ids (`MessageId`, `ConversationId`, `CausationId`): each request is the head of a new conversation, and `X-Conduit-Message-Id`, `X-Conduit-Conversation-Id` and `X-Conduit-Causation-Id` request headers are ignored. These ids are not cosmetic. The [inbox](../inbox.md) deduplicates on the `MessageId`, and the audit trail links records by the other two, so a browser that could set them could suppress another dispatch or graft its own onto someone else's conversation.
+
+An endpoint that only other services reach can opt in, so a conversation carries on across the hop:
+
+```csharp
+app.MapConduitEndpoint("/internal/conduit", trustCallerContext: true);
+```
+
+A trusting endpoint honors the headers only when `X-Conduit-Message-Id` and `X-Conduit-Conversation-Id` are both present and every supplied id is a plain token: 1 to 64 ASCII letters, digits and hyphens (`MessageContextIds.IsValid`). An absent `X-Conduit-Causation-Id` defaults to the message id. Any other set of headers is ignored as a whole and the server mints fresh ids. Either way the request is answered as usual; a bad id is never an error. The outbound `HttpTransport` always sends the three headers, so the choice is made only on the receiving side.
+
+[RESTful endpoints](#restful-endpoints) and routes opted in with `WithConduitDispatchContext()` never honor caller ids. Server-trusted properties from your `IDispatchContextEnricher`s apply on every edge, trusted or not.
 
 ## When to use which
 
@@ -165,6 +184,8 @@ builder.Services.AddConduit(conduit =>
 `UseHttp` accepts an `HttpClient` with its `BaseAddress` set to the remote service. Manage the `HttpClient` lifetime via `IHttpClientFactory`. The transport POSTs the plain serialized message to `/api/conduit/dispatch` with the type in the `X-Conduit-Type` header. The path prefix is configurable via the `basePath` parameter; when omitted, it falls back to the endpoint's configured `BasePath` and then to `/api/conduit` (see [Loading from configuration](#loading-from-configuration) below — `BaseAddress` still comes from the `HttpClient` you pass in, since the caller owns that).
 
 `HttpTransport` handles commands and queries only. It does not support event delivery. Use SignalR or a message bus transport for events.
+
+`HttpTransport` sends the current `MessageContext` ids as `X-Conduit-*` headers. The remote service keeps them only if it maps its endpoint with `trustCallerContext: true` ([Correlation ids](#correlation-ids)); otherwise the conversation starts afresh there.
 
 ### Loading from configuration
 

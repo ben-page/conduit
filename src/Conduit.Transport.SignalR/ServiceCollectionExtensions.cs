@@ -15,8 +15,12 @@ public static class ServiceCollectionExtensions
     /// (camelCase, string enums, case-insensitive).
     /// </summary>
     /// <param name="services">The service collection.</param>
+    /// <param name="configure">Configures how the hub treats its callers (<see cref="ConduitSignalROptions"/>); by
+    /// default it mints every dispatch's correlation ids and ignores the caller's. Callbacks from several calls all
+    /// apply, in order.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddConduitSignalR(this IServiceCollection services)
+    public static IServiceCollection AddConduitSignalR(
+        this IServiceCollection services, Action<ConduitSignalROptions>? configure = null)
     {
         services.AddSignalR()
             .AddJsonProtocol(options =>
@@ -30,6 +34,12 @@ public static class ServiceCollectionExtensions
                     options.PayloadSerializerOptions.Converters.Add(converter);
                 }
             });
+        services.AddOptions<ConduitSignalROptions>();
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+
         services.AddSingleton<SignalRTransport>();
         services.AddSingleton<IConduitTransport>(sp => sp.GetRequiredService<SignalRTransport>());
         return services;
@@ -41,11 +51,14 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="serverInfo">What the hub tells each client about this server.</param>
+    /// <param name="configure">Configures how the hub treats its callers, as
+    /// <see cref="AddConduitSignalR(IServiceCollection, Action{ConduitSignalROptions}?)"/> does.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddConduitSignalR(this IServiceCollection services, ConduitServerInfo serverInfo)
+    public static IServiceCollection AddConduitSignalR(
+        this IServiceCollection services, ConduitServerInfo serverInfo, Action<ConduitSignalROptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(serverInfo);
-        services.AddConduitSignalR();
+        services.AddConduitSignalR(configure);
         services.AddSingleton(serverInfo);
         return services;
     }

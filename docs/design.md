@@ -639,7 +639,7 @@ The generator emits diagnostics for:
 - `POST /api/conduit/dispatch` — commands and queries (returns `DispatchResult<object>`)
 - `POST /api/conduit/publish` — events (fire-and-forget, returns 200 OK)
 
-The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the broker wire format (type in transport-native properties, body is the raw message). `MessageContext` is propagated via `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers when present (C# clients). Browser clients omit these headers — the server creates a fresh context.
+The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the broker wire format (type in transport-native properties, body is the raw message). `MessageContext` is propagated via `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers (C# clients), which the server honors only on an endpoint mapped with `trustCallerContext: true` and only when each id is a plain token (`MessageContextIds.IsValid`). Browser clients never send them, and everywhere else the server creates a fresh context.
 
 Delegates to `IWireMediator.HandleWireRequestAsync` / `HandleWireEventAsync`. Error codes map to HTTP status codes via `ErrorCode.ToHttpStatusCode()`. Returns `DispatchResult` response format.
 

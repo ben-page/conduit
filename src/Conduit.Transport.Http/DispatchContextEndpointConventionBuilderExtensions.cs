@@ -40,7 +40,8 @@ public static class DispatchContextEndpointConventionBuilderExtensions
             // async on purpose: the AsyncLocal context set inside must not flow back out to the middleware after the endpoint.
             endpointBuilder.RequestDelegate = async context =>
             {
-                HttpDispatchContext.Start(context, context.RequestServices.GetServices<IDispatchContextEnricher>());
+                HttpDispatchContext.Start(
+                    context, context.RequestServices.GetServices<IDispatchContextEnricher>(), trustCallerContext: false);
                 await inner(context);
             };
         });
