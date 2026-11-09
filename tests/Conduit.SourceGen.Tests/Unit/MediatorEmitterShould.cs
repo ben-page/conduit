@@ -57,9 +57,9 @@ namespace App.Events
     }
 }
 ";
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
         mediatorSource.Should().NotBeNull();
 
         // Strongly-typed overloads
@@ -147,8 +147,8 @@ namespace App.Events
         const string bind = "Conduit.Runtime.ConduitRuntime.BindDispatchAttempt(Conduit.Runtime.MessageContext.Current, serviceProvider);";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator")!;
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator")!;
         var lines = mediatorSource.Split('\n').Select(line => line.Trim()).ToList();
 
         // Assert -- every context start (the in-process one per ExecuteAsync/FetchAsync/PublishAsync, the wire one
@@ -189,8 +189,8 @@ namespace App.Events
             """;
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert -- the runtime resolves translators, the renderer and the culture resolver itself
         mediatorSource.Should().Contain("=> ConduitRuntime.HandleWireRequest(envelope.Type, interceptors, () => envelope, DispatchRequestAsync, logger, serviceProvider, cancellationToken);");
@@ -251,8 +251,8 @@ namespace App.Events
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert -- a raw Deserialize here would turn an unreadable payload into InternalError (a 500)
         mediatorSource.Should().MatchRegex(@"DeserializeWire<(global::)?App\.Commands\.CreateOrder>\(payload\)");
@@ -274,12 +274,12 @@ namespace App.Events
             """;
 
         // Act
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
         // Assert — the case resolves listeners from the container, so a listener registered at
         // runtime (as Conduit.Jobs does for an event trigger) still runs. Gating the case on
         // compile-time discovery would make such an event undeliverable however it was registered.
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
         mediatorSource.Should().Contain("case TestApp.CartAbandoned e:");
         mediatorSource.Should().Contain(
             "GetServices<Conduit.Handlers.IEventListener<TestApp.CartAbandoned>>");
@@ -320,8 +320,8 @@ namespace App.Events
             """;
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert — interface on the class, classification switches keyed by METADATA names, publish entry
         mediatorSource.Should().NotBeNull();
@@ -342,7 +342,7 @@ namespace App.Events
         mediatorSource.Should().Contain("\"TestApp.ImmediateEvent\" => JsonSerializer.Deserialize<TestApp.ImmediateEvent>");
 
         // Assert — registration delegates the new interface to the same mediator instance
-        var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
+        var registrationSource = FindGeneratedSource(output, "ConduitRegistration");
         registrationSource.Should().NotBeNull();
         registrationSource.Should().Contain(
             "services.AddTransient<Conduit.ILocalEnvelopeDispatcher>(sp => sp.GetRequiredService<ConduitMediator>());");
@@ -373,8 +373,8 @@ namespace App.Events
             """;
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert — the background lambda logs the failure; the inline path has no catch, so it propagates
         mediatorSource.Should().NotBeNull();
@@ -412,8 +412,8 @@ namespace App.Events
             """;
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert — PublishAsync attempts capture BEFORE the local-enqueue/broadcast body, then guards
         // the entire body on the result so a captured event skips local enqueue AND transport send.
@@ -455,8 +455,8 @@ namespace App.Events
             """;
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert — no capture guard and no bypass flag; the broadcast interceptor still uses the bool.
         mediatorSource.Should().NotBeNull();
@@ -521,8 +521,8 @@ namespace App.Events
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
 
         // Assert -- request and query arms capture the typed object
         mediatorSource.Should().MatchRegex(@"ConduitRuntime\.CaptureAuditPayload\(ConduitRuntime\.DeserializeWire<(global::)?App\.Commands\.CreateOrder>\(payload\)\)");

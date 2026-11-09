@@ -27,10 +27,10 @@ namespace ModuleA
 
         // The compilation under test has NO handler syntax of its own — only the reference.
         const string hostSource = "namespace Host { internal sealed class Marker { } }";
-        var (trees, diagnostics) = RunGenerator(hostSource, moduleRef);
+        var (output, diagnostics) = RunGenerator(hostSource, moduleRef);
 
-        var registration = FindGeneratedSource(trees, "ConduitRegistration");
-        var mediator = FindGeneratedSource(trees, "ConduitMediator");
+        var registration = FindGeneratedSource(output, "ConduitRegistration");
+        var mediator = FindGeneratedSource(output, "ConduitMediator");
 
         registration.Should().NotBeNull();
         registration!.Should().Contain("ModuleA.DoThingHandler");          // DI registration emitted
@@ -67,9 +67,9 @@ namespace ModuleC
     }
 }";
         var moduleRef = CompileReference("ModuleC", src);
-        var (trees, _) = RunGenerator("namespace Host { internal sealed class M {} }", moduleRef);
+        var (output, _) = RunGenerator("namespace Host { internal sealed class M {} }", moduleRef);
 
-        var registration = FindGeneratedSource(trees, "ConduitRegistration");
+        var registration = FindGeneratedSource(output, "ConduitRegistration");
         registration.Should().NotBeNull();
         registration!.Should().Contain("ModuleC.IncludedListener");      // ordinary listener auto-registered
         registration!.Should().NotContain("ModuleC.ExcludedListener");   // excluded listener NOT auto-registered

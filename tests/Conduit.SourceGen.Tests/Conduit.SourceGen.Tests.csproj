@@ -21,6 +21,9 @@
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Analysis\Conduit.Analysis.csproj" />
     <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj" />
+    <!-- Compiled against, not run: a test opts into each so the REST and resilience output is compiled too. -->
+    <ProjectReference Include="..\..\src\Conduit.Transport.Http\Conduit.Transport.Http.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Resilience\Conduit.Resilience.csproj" />
   </ItemGroup>
 
 </Project>

@@ -38,9 +38,9 @@ namespace App.Events
     }
 }
 ";
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
-        var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
+        var registrationSource = FindGeneratedSource(output, "ConduitRegistration");
         registrationSource.Should().NotBeNull();
         registrationSource.Should().Contain("AddConduit(");
         registrationSource.Should().Contain("AddConduitCore");
@@ -74,18 +74,18 @@ namespace App
     }
 }
 ";
-        var (trees, diagnostics) = RunGenerator(source);
+        var (output, diagnostics) = RunGenerator(source);
 
         diagnostics.Should().NotContain(d => d.Id == "CONDUIT001");
 
-        var registrationSource = FindGeneratedSource(trees, "ConduitRegistration");
+        var registrationSource = FindGeneratedSource(output, "ConduitRegistration");
         registrationSource.Should().NotBeNull();
         // C# syntax positions use the dotted form (the '+' form would not compile).
         registrationSource.Should().Contain("typeof(App.Outer.CreateThing)");
         registrationSource.Should().Contain("Conduit.Handlers.ICommandHandler<App.Outer.CreateThing>");
         registrationSource.Should().NotContain("App.Outer+CreateThing");
 
-        var mediatorSource = FindGeneratedSource(trees, "ConduitMediator");
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
         mediatorSource.Should().NotBeNull();
         // The wire discriminator string literal uses the metadata ('+') form.
         mediatorSource.Should().Contain("\"App.Outer+CreateThing\"");

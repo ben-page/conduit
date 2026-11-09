@@ -27,9 +27,9 @@ namespace App.Commands
     }
 }
 ";
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch");
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch");
         dispatchSource.Should().NotBeNull();
         dispatchSource.Should().Contain("Execute(");
         dispatchSource.Should().Contain("App.Commands.CreateOrder command");
@@ -63,9 +63,9 @@ namespace App.Commands
     }
 }
 ";
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch");
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch");
         dispatchSource.Should().NotBeNull();
         dispatchSource.Should().Contain("async Task Execute(");
         dispatchSource.Should().Contain("ExecuteVoid(");
@@ -97,9 +97,9 @@ namespace App.Queries
     }
 }
 ";
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch");
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch");
         dispatchSource.Should().NotBeNull();
         dispatchSource.Should().Contain("Fetch(");
         dispatchSource.Should().Contain("App.Queries.GetOrder query");
@@ -133,9 +133,9 @@ namespace App.Commands
     }
 }
 ";
-        var (trees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch");
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch");
         dispatchSource.Should().NotBeNull();
 
         // Execute: behaviors run in the caller's context; Validate() runs inside handlerCall, before the enqueue.
@@ -179,8 +179,8 @@ namespace App.Commands
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch")!;
+        var (output, _) = RunGenerator(source);
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch")!;
 
         // Assert -- Execute hands the old body, as ExecuteAttempt over the attempt's provider, to the boundary
         var execute = MethodText(dispatchSource, "public static async Task<System.Guid> Execute(");
@@ -225,8 +225,8 @@ namespace App.Commands
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch")!;
+        var (output, _) = RunGenerator(source);
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch")!;
 
         // Assert -- the void body runs as an attempt whose result is Unit
         var execute = MethodText(dispatchSource, "public static async Task Execute(");
@@ -274,8 +274,8 @@ namespace App.Queries
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch")!;
+        var (output, _) = RunGenerator(source);
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch")!;
 
         // Assert
         var fetch = MethodText(dispatchSource, "public static async Task<string> Fetch(");
@@ -320,8 +320,8 @@ namespace App.Commands
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch")!;
+        var (output, _) = RunGenerator(source);
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch")!;
 
         // Assert -- the wire-inbound entry runs its inline handler as an attempt
         var wire = MethodText(dispatchSource, "public static async Task<object?> ExecuteVoidWire(");
@@ -398,8 +398,8 @@ namespace App
 ";
 
         // Act
-        var (trees, _) = RunGenerator(source);
-        var dispatchSource = FindGeneratedSource(trees, "ConduitDispatch")!;
+        var (output, _) = RunGenerator(source);
+        var dispatchSource = FindGeneratedSource(output, "ConduitDispatch")!;
 
         // Assert -- every generic argument and parameter type is the C# ('.') form; ConduitDispatch has no
         // string discriminators, so the metadata ('+') form appears nowhere in it

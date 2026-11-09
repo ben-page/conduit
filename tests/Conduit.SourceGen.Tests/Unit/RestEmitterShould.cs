@@ -1,5 +1,4 @@
 ﻿using AwesomeAssertions;
-using Conduit.Analysis;
 using Conduit.SourceGen.Tests.Support;
 
 namespace Conduit.SourceGen.Tests.Unit;
@@ -7,17 +6,41 @@ namespace Conduit.SourceGen.Tests.Unit;
 [TestClass]
 public class RestEmitterShould : GeneratorTestBase
 {
+    private const string QuerySource = """
+        using Conduit.Messages;
+
+        namespace App.Models
+        {
+            public sealed record ItemDto(System.Guid Id);
+        }
+
+        namespace App.Queries
+        {
+            public sealed record GetItemQuery(System.Guid Id) : IQuery<App.Models.ItemDto>;
+        }
+        """;
+
+    private const string CommandSource = """
+        using Conduit.Messages;
+
+        namespace App.Commands;
+
+        public sealed record CreateItemCommand(string Name) : ICommand<System.Guid>;
+        """;
+
+    private const string VoidCommandSource = """
+        using Conduit.Messages;
+
+        namespace App.Commands;
+
+        public sealed record DeleteItemCommand(System.Guid Id) : ICommand;
+        """;
+
     [TestMethod]
     public void EmitMapConduitGetForQueryTypes()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeQuery("App.Queries.GetItemQuery", "App.Models.ItemDto"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(QuerySource);
 
         // Assert
         source.Should().Contain("MapConduitGet<T>");
@@ -28,14 +51,8 @@ public class RestEmitterShould : GeneratorTestBase
     [TestMethod]
     public void EmitMapConduitPostForCommandTypes()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeCommand("App.Commands.CreateItemCommand", "System.Guid"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(CommandSource);
 
         // Assert
         source.Should().Contain("MapConduitPost<T>");
@@ -45,14 +62,8 @@ public class RestEmitterShould : GeneratorTestBase
     [TestMethod]
     public void EmitMapConduitDeleteForVoidCommandTypes()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeVoidCommand("App.Commands.DeleteItemCommand"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(VoidCommandSource);
 
         // Assert
         source.Should().Contain("MapConduitDelete<T>");
@@ -62,14 +73,8 @@ public class RestEmitterShould : GeneratorTestBase
     [TestMethod]
     public void EmitGenericMapConduitEscapeHatch()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeQuery("App.Queries.GetItemQuery", "App.Models.ItemDto"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(QuerySource);
 
         // Assert
         source.Should().Contain("MapConduit<T>(");
@@ -79,14 +84,8 @@ public class RestEmitterShould : GeneratorTestBase
     [TestMethod]
     public void NotIncludeCommandsInMapConduitGet()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeCommand("App.Commands.CreateItemCommand", "System.Guid"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(CommandSource);
 
         // Assert — MapConduitGet should NOT contain command mappings
         var getMethod = ExtractMethod(source, "MapConduitGet");
@@ -97,20 +96,16 @@ public class RestEmitterShould : GeneratorTestBase
     public void NotIncludeEventsInAnyMethod()
     {
         // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            new()
-            {
-                TypeName = "ItemCreatedEvent",
-                FullTypeName = "App.Events.ItemCreatedEvent",
-                Namespace = "App.Events",
-                Kind = DispatchableKind.Event,
-                IsLocalOnly = false,
-            },
-        };
+        const string eventSource = """
+            using Conduit.Messages;
+
+            namespace App.Events;
+
+            public sealed record ItemCreatedEvent(System.Guid Id) : IEvent;
+            """;
 
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(eventSource);
 
         // Assert
         source.Should().NotContain("ItemCreatedEvent");
@@ -119,14 +114,8 @@ public class RestEmitterShould : GeneratorTestBase
     [TestMethod]
     public void EmitInMicrosoftAspNetCoreBuilderNamespace()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeQuery("App.Queries.GetItemQuery", "App.Models.ItemDto"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(QuerySource);
 
         // Assert
         source.Should().Contain("namespace Microsoft.AspNetCore.Builder;");
@@ -135,14 +124,8 @@ public class RestEmitterShould : GeneratorTestBase
     [TestMethod]
     public void UseBodyBindingForPostAndRouteBindingForDelete()
     {
-        // Arrange
-        var types = new List<DispatchableTypeInfo>
-        {
-            MakeVoidCommand("App.Commands.DeleteItemCommand"),
-        };
-
         // Act
-        var source = RestEmitter.Emit(types);
+        var source = EmitRestEndpoints(VoidCommandSource);
 
         // Assert — POST uses Body, DELETE uses Route
         source.Should().Contain("MapVoidCommandBody<App.Commands.DeleteItemCommand>(endpoints, pattern, \"POST\")");
@@ -160,48 +143,20 @@ public record GetItemQuery(System.Guid Id) : IQuery<string>;
 ";
 
         // Act
-        var (generatedTrees, _) = RunGenerator(source);
+        var (output, _) = RunGenerator(source);
 
         // Assert
-        var restSource = FindGeneratedSource(generatedTrees, "ConduitRestEndpoints");
+        var restSource = FindGeneratedSource(output, "ConduitRestEndpoints");
         restSource.Should().BeNull();
     }
 
-    private static DispatchableTypeInfo MakeQuery(string fullTypeName, string resultFullTypeName)
+    // Runs the generator with Conduit.Transport.Http referenced, so the REST endpoints are emitted and compiled.
+    private static string EmitRestEndpoints(string source)
     {
-        return new()
-        {
-            TypeName = fullTypeName.Split('.').Last(),
-            FullTypeName = fullTypeName,
-            Namespace = string.Join(".", fullTypeName.Split('.').Reverse().Skip(1).Reverse()),
-            Kind = DispatchableKind.Query,
-            ResultTypeName = resultFullTypeName.Split('.').Last(),
-            ResultFullTypeName = resultFullTypeName,
-        };
-    }
-
-    private static DispatchableTypeInfo MakeCommand(string fullTypeName, string resultFullTypeName)
-    {
-        return new()
-        {
-            TypeName = fullTypeName.Split('.').Last(),
-            FullTypeName = fullTypeName,
-            Namespace = string.Join(".", fullTypeName.Split('.').Reverse().Skip(1).Reverse()),
-            Kind = DispatchableKind.Command,
-            ResultTypeName = resultFullTypeName.Split('.').Last(),
-            ResultFullTypeName = resultFullTypeName,
-        };
-    }
-
-    private static DispatchableTypeInfo MakeVoidCommand(string fullTypeName)
-    {
-        return new()
-        {
-            TypeName = fullTypeName.Split('.').Last(),
-            FullTypeName = fullTypeName,
-            Namespace = string.Join(".", fullTypeName.Split('.').Reverse().Skip(1).Reverse()),
-            Kind = DispatchableKind.VoidCommand,
-        };
+        var (output, _) = RunGenerator(source, HttpTransportReference);
+        var restSource = FindGeneratedSource(output, "ConduitRestEndpoints");
+        restSource.Should().NotBeNull();
+        return restSource;
     }
 
     private static string ExtractMethod(string source, string methodName)
