@@ -1,0 +1,218 @@
+name: CI
+
+# Build, test, and (on a release tag) pack, publish and release.
+#
+# Stages, mirroring the original GitLab pipeline:
+#   test ──┐
+#          ├─▶ pack ─▶ publish ─▶ release      (tags vMAJOR.MINOR.PATCH[-suffix] only)
+#   transport-ts ┘
+#
+# `publish` runs in the `release` environment. Give that environment a required
+# reviewer (Settings → Environments → release) and publishing waits for a human
+# click, as the GitLab `when: manual` job did. Without a protection rule it runs
+# as soon as `pack` is green. Publishing is irreversible: a NuGet package version
+# can never be overwritten.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  test:
+    name: Build and test (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          # global.json pins 10.0.0 with rollForward latestFeature; 10.0.x
+          # installs the newest 10.0 SDK, which satisfies it.
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+
+      # The browser-client sample (samples/browser-client/Conduit.Sample.Notes)
+      # runs `npm install` + `vite build` as part of its MSBuild graph, and
+      # Vite 8 requires Node 20+.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: dotnet restore
+
+      - run: dotnet build --no-restore --configuration Release
+
+      # Broker transport tests (ASB, RabbitMQ, Kafka, SQS, ActiveMQ) need a
+      # container runtime and are excluded here; the in-process HTTP and
+      # SignalR transport tests still run. Revisit on a self-hosted runner.
+      #
+      # global.json selects Microsoft.Testing.Platform, so this is MTP syntax,
+      # not VSTest: the JUnit report is `--report-spekt-junit` (JunitXml.TestLogger
+      # 8+), written per project to bin/Release/net10.0/TestResults/TestResults.xml.
+      # `--ignore-exit-code 8` ("zero tests ran"): the filtered-out broker
+      # projects run nothing, and Conduit.Persistence.IntegrationTests skips
+      # every test as inconclusive without a container runtime. A real failure
+      # still exits 2.
+      - name: dotnet test
+        run: >
+          dotnet test --no-build --configuration Release
+          --filter "FullyQualifiedName!~Conduit.Transport.ActiveMQ.Tests&FullyQualifiedName!~Conduit.Transport.AmazonSqs.Tests&FullyQualifiedName!~Conduit.Transport.AzureServiceBus.Tests&FullyQualifiedName!~Conduit.Transport.Kafka.Tests&FullyQualifiedName!~Conduit.Transport.RabbitMQ.Tests"
+          --report-spekt-junit "MethodFormat=Class;FailureBodyFormat=Verbose"
+          --ignore-exit-code 8
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-dotnet
+          path: tests/**/TestResults/
+          retention-days: 7
+
+  transport-ts:
+    name: Test (TypeScript transport)
+    runs-on: ubuntu-latest
+    # The TypeScript transport TypeGen embeds into every consumer's conduit.ts
+    # (src/Conduit.TypeGen/Transport/*.ts): strict tsc, then vitest. Needs no
+    # .NET, so it runs alongside the .NET job.
+    defaults:
+      run:
+        working-directory: tests/transport-ts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/transport-ts/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm run typecheck
+
+      - run: npx vitest run --reporter=default --reporter=junit --outputFile.junit=TestResults/TestResults.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-transport-ts
+          path: tests/transport-ts/TestResults/
+          retention-days: 7
+
+  pack:
+    name: Pack
+    # test and transport-ts gate the release: never publish red.
+    needs: [test, transport-ts]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+
+      # Only `vMAJOR.MINOR.PATCH` tags pack; a pre-release suffix (`-rc1`,
+      # `-alpha.2`) is accepted on the tail so v1.0.0-rc1 packs too. The
+      # leading `v` is stripped so package versions are plain SemVer.
+      - name: Resolve version from tag
+        id: version
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "::error::Tag '$tag' is not vMAJOR.MINOR.PATCH[-suffix]; not packing."
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      # Pack every project under src/ (all inherit IsPackable=true). Per-project
+      # rather than solution-level so samples/, which also inherit IsPackable,
+      # are left out. Each pack builds its own dependency closure, so no Node
+      # is needed here. RepositoryUrl ties the package to this repository,
+      # which GitHub Packages requires to accept a push with GITHUB_TOKEN.
+      - name: dotnet pack
+        run: |
+          echo "Packing Conduit ${{ steps.version.outputs.version }}"
+          for proj in src/*/*.csproj; do
+            dotnet pack "$proj" \
+              --configuration Release \
+              --output ./artifacts \
+              -p:Version="${{ steps.version.outputs.version }}" \
+              -p:RepositoryUrl="https://github.com/${{ github.repository }}"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/*.nupkg
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    name: Publish to GitHub Packages
+    needs: pack
+    runs-on: ubuntu-latest
+    # The manual gate: protect this environment with a required reviewer.
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+
+      # GITHUB_TOKEN can push packages to this repository's registry, so no
+      # long-lived secret is needed. To publish to nuget.org instead, point
+      # --source at https://api.nuget.org/v3/index.json and --api-key at a
+      # NUGET_API_KEY repository secret.
+      - name: dotnet nuget push
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          --api-key "${{ secrets.GITHUB_TOKEN }}"
+
+  release:
+    name: GitHub Release
+    needs: [pack, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          prerelease=()
+          if [[ "$tag" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$tag" artifacts/*.nupkg \
+            --verify-tag \
+            --title "Conduit $tag" \
+            --notes "NuGet packages are attached below and published to this repository's GitHub Packages feed. See [README.md](README.md) for details." \
+            "${prerelease[@]}"
