@@ -271,6 +271,71 @@ public class GeneratorOutputShould : GeneratorTestBase
     }
 
     [TestMethod]
+    public void SkipListenersOfEventsTheGeneratedCodeCannotName()
+    {
+        // Arrange -- a listener is registered under its event's type, so a listener the generated code can name is still
+        // not wired when its event cannot be named: internal to a referenced assembly, private, or a type parameter
+        var remoteReference = CompileReference("Remote", """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Conduit.Handlers;
+            using Conduit.Messages;
+
+            namespace Remote
+            {
+                internal sealed record InternalNotice : IEvent;
+
+                public sealed class InternalNoticeListener : IEventListener<InternalNotice>
+                {
+                    Task IEventListener<InternalNotice>.HandleAsync(InternalNotice @event, CancellationToken cancellationToken) => Task.CompletedTask;
+                }
+            }
+            """);
+        const string source = """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Conduit.Handlers;
+            using Conduit.Messages;
+
+            namespace Host
+            {
+                public sealed record Ponged : IEvent;
+
+                public sealed class PongedListener : IEventListener<Ponged>
+                {
+                    public Task HandleAsync(Ponged @event, CancellationToken cancellationToken) => Task.CompletedTask;
+                }
+
+                public static class Outer
+                {
+                    private sealed record Hidden : IEvent;
+
+                    public sealed class HiddenListener : IEventListener<Hidden>
+                    {
+                        Task IEventListener<Hidden>.HandleAsync(Hidden @event, CancellationToken cancellationToken) => Task.CompletedTask;
+                    }
+                }
+
+                public sealed class EveryEventListener<TEvent> : IEventListener<TEvent>
+                    where TEvent : IEvent
+                {
+                    public Task HandleAsync(TEvent @event, CancellationToken cancellationToken) => Task.CompletedTask;
+                }
+            }
+            """;
+
+        // Act
+        var (output, _) = RunEveryEmitter(source, remoteReference);
+
+        // Assert -- RunGenerator asserted no CS0122/CS0246; only the listener of a nameable event is registered
+        var registration = FindGeneratedSource(output, "ConduitRegistration");
+        registration.Should().Contain("IEventListener<Host.Ponged>, Host.PongedListener>");
+        var generated = GeneratedText(output);
+        generated.Should().NotContain("InternalNotice").And.NotContain("Hidden").And.NotContain("EveryEventListener")
+            .And.NotContain("TEvent");
+    }
+
+    [TestMethod]
     public void SkipFileLocalTypes()
     {
         // Arrange -- a file-local type is visible only in its own file, never in a generated one

@@ -223,7 +223,16 @@ public static class RoslynScanner
                         continue; // listeners are optional; an inaccessible one is simply not wired
                     }
 
-                    var eventFullName = MetadataNameOf(iface.TypeArguments[0]);
+                    // A listener is registered under its event's type (IEventListener<TEvent>, and the registry's
+                    // typeof), so its event must be nameable too: not internal to a referenced assembly, not private,
+                    // not a type parameter of an open generic listener. Such a listener is simply not wired. (A
+                    // handler needs no such check: it is emitted only joined to a discovered message.)
+                    if (iface.TypeArguments[0] is not INamedTypeSymbol eventType || !IsNameableByGeneratedCode(compilation, eventType))
+                    {
+                        continue;
+                    }
+
+                    var eventFullName = MetadataNameOf(eventType);
                     if (!listenerGroups.TryGetValue(eventFullName, out var listeners))
                     {
                         listeners = new List<string>();
