@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Exceptions;
 using Conduit.TestUtils;
 using Conduit.Transport.AmazonSqs.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,9 +85,11 @@ public class SqsEventRoutingShould : SqsTestBase
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act -- ThrowingEventListener records then throws
-        await mediator.PublishAsync(new ThrowingTestEvent("boom"));
+        Func<Task> act = () => mediator.PublishAsync(new ThrowingTestEvent("boom"));
 
-        // Assert -- the listener recorded the event before throwing
+        // Assert -- every listener ran, then PublishAsync surfaced the failure
+        await act.Should().ThrowAsync<EventListenerException>();
+        // and the listener recorded the event before throwing
         await spy.WaitForCountAsync(1);
         spy.Invocations.OfType<ThrowingTestEvent>().Should().Contain(e => e.Value == "boom");
     }
