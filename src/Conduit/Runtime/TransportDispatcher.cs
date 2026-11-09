@@ -31,9 +31,20 @@ public sealed class TransportDispatcher
     }
 
     /// <summary>
-    /// Sends a dispatch envelope to the appropriate transport(s).
+    /// Sends a dispatch envelope to the appropriate transport(s): a routed type to its endpoint's transport, as a
+    /// request unless <paramref name="localDispatcher"/> classifies it as <c>[FireAndForget]</c>
+    /// (<see cref="ILocalEnvelopeDispatcher.IsFireAndForget"/>), which is sent with
+    /// <see cref="IConduitTransport.SendEventAsync"/> and awaits no reply; an unrouted type to every transport.
     /// </summary>
-    public async Task SendAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    /// <param name="envelope">The envelope to send.</param>
+    /// <param name="localDispatcher">
+    /// The generated message classifier, resolved by the caller from its own scope, or null when the host has none.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the send.</param>
+    public async Task SendAsync(
+        DispatchEnvelope envelope,
+        ILocalEnvelopeDispatcher? localDispatcher,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
@@ -41,7 +52,17 @@ public sealed class TransportDispatcher
         if (endpoint != null)
         {
             var transport = ConduitRuntime.ResolveTransport(this.serviceProvider, endpoint);
-            await transport.SendRequestAsync(envelope, cancellationToken);
+
+            // A [FireAndForget] message expects no reply: awaiting one would hold the relay until the response
+            // timeout and then count a delivered message as failed
+            if (localDispatcher is not null && localDispatcher.IsFireAndForget(envelope.Type))
+            {
+                await transport.SendEventAsync(envelope, cancellationToken);
+            }
+            else
+            {
+                await transport.SendRequestAsync(envelope, cancellationToken);
+            }
         }
         else
         {

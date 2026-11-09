@@ -632,9 +632,12 @@ public class GeneratorOutputShould : GeneratorTestBase
         await mediator.ExecuteAsync((ICommand)NewMessage(generated, "App.Commands.RecordSecurityAudit", "opened", "admin"));
         await mediator.ExecuteAsync((ICommand)NewMessage(generated, "App.Commands.ChargeCard", "tok"));
 
-        // Assert
+        // Assert -- the outbox's classification agrees, so a relayed derived command is sent with no reply expected too
         remote.Events.Should().Equal("App.Commands.RecordAudit", "App.Commands.RecordSecurityAudit");
         remote.Requests.Should().Equal("App.Commands.ChargeCard");
+        var dispatcher = services.GetRequiredService<ILocalEnvelopeDispatcher>();
+        dispatcher.IsFireAndForget("App.Commands.RecordSecurityAudit").Should().BeTrue();
+        dispatcher.IsFireAndForget("App.Commands.ChargeCard").Should().BeFalse();
     }
 
     [TestMethod]

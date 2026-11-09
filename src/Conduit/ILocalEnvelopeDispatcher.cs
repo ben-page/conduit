@@ -28,6 +28,16 @@ public interface ILocalEnvelopeDispatcher
     public bool IsLocalOnly(string messageType);
 
     /// <summary>
+    /// True when <paramref name="fullTypeName"/> is a <c>[FireAndForget]</c> void command or event: a routed
+    /// send of it expects no reply, so <see cref="TransportDispatcher"/> delivers it with
+    /// <see cref="IConduitTransport.SendEventAsync"/>, as the generated mediator sends a routed
+    /// <c>[FireAndForget]</c> void command at publish time. False for every other type, including one the
+    /// generator never discovered.
+    /// </summary>
+    /// <param name="fullTypeName">The envelope's <see cref="DispatchEnvelope.Type"/> (metadata name).</param>
+    public bool IsFireAndForget(string fullTypeName);
+
+    /// <summary>
     /// Deserializes the envelope via the generated type registry and runs the local listener chain
     /// (with pipeline behaviors) against <paramref name="scopedServices"/> — callers supply a fresh
     /// scope per delivery, mirroring fire-and-forget's fresh-scope semantics.

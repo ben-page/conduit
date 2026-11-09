@@ -256,7 +256,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 
                     if (localDispatcher is null || !localDispatcher.IsLocalOnly(written.Envelope.Type))
                     {
-                        await transportDispatcher.SendAsync(written.Envelope, cancellationToken);
+                        await transportDispatcher.SendAsync(written.Envelope, localDispatcher, cancellationToken);
                     }
 
                     await store.MarkSentAsync(entry.Id, cancellationToken);

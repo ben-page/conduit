@@ -332,6 +332,11 @@ namespace App.Events
         deliversLocally.Should().NotContain("\"TestApp.ImmediateEvent\"");             // Immediate is not outbox-delivered
         var isLocalOnly = SwitchOf(mediatorSource, "public bool IsLocalOnly(string messageType)");
         isLocalOnly.Should().Contain("\"TestApp.LocalOnlyEvent\" => true");
+        var isFireAndForget = SwitchOf(mediatorSource, "public bool IsFireAndForget(string fullTypeName)");
+        isFireAndForget.Should().Contain("\"TestApp.CapturedEvent\" => true");
+        isFireAndForget.Should().Contain("\"TestApp.ImmediateEvent\" => true");          // Immediate is still fire-and-forget
+        isFireAndForget.Should().Contain("\"TestApp.Outer+NestedCapturedEvent\" => true");
+        isFireAndForget.Should().NotContain("\"TestApp.LocalOnlyEvent\"");
         mediatorSource.Should().Contain("public async Task PublishLocalEnvelopeAsync(");
 
         // Nested types are the one case where metadata ('+') and C# ('.') forms differ: switch STRING

@@ -127,7 +127,7 @@ public sealed partial class OutboxRelay(
 
                 if (localDispatcher is null || !localDispatcher.IsLocalOnly(entry.Type))
                 {
-                    await transportDispatcher.SendAsync(envelope, cancellationToken);
+                    await transportDispatcher.SendAsync(envelope, localDispatcher, cancellationToken);
                 }
 
                 await store.MarkSentAsync(entry.Id, cancellationToken);

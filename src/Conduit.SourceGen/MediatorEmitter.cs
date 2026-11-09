@@ -272,7 +272,7 @@ public static class MediatorEmitter
         EmitWirePublish(sb, events);
 
         // Local envelope dispatcher (ILocalEnvelopeDispatcher: classification + envelope redelivery)
-        EmitLocalEnvelopeDispatcher(sb, events);
+        EmitLocalEnvelopeDispatcher(sb, events, voidCommands);
 
         // HandleWireRequestAsync -- delegates to ConduitRuntime
         sb.AppendLine("    public Task<DispatchResult<object>> HandleWireRequestAsync(");
@@ -769,7 +769,10 @@ public static class MediatorEmitter
     /// <c>ToCSharpTypeRef</c> is used only for the generic type argument in the deserialize call,
     /// never for the string case labels.
     /// </summary>
-    private static void EmitLocalEnvelopeDispatcher(StringBuilder sb, List<DispatchableTypeInfo> events)
+    private static void EmitLocalEnvelopeDispatcher(
+        StringBuilder sb,
+        List<DispatchableTypeInfo> events,
+        List<DispatchableTypeInfo> voidCommands)
     {
         sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public bool DeliversLocally(string messageType) => messageType switch");
@@ -791,6 +794,23 @@ public static class MediatorEmitter
         foreach (var evt in events.Where(e => e.IsLocalOnly))
         {
             sb.AppendLine($"        \"{evt.FullTypeName}\" => true,");
+        }
+
+        sb.AppendLine("        _ => false,");
+        sb.AppendLine("    };");
+        sb.AppendLine();
+
+        // TransportDispatcher's routed send asks this for the relay and the flush, so a captured [FireAndForget] void
+        // command goes out with SendEventAsync and no reply is awaited -- the choice the void command's routed path
+        // makes inline. Void commands and events only: a [FireAndForget] result command or query (CONDUIT003) is
+        // still sent as a request inline, so it must not be classified as fire-and-forget here.
+        sb.AppendLine("    /// <inheritdoc />");
+        sb.AppendLine("    public bool IsFireAndForget(string fullTypeName) => fullTypeName switch");
+        sb.AppendLine("    {");
+
+        foreach (var message in voidCommands.Concat(events).Where(m => m.IsFireAndForget))
+        {
+            sb.AppendLine($"        \"{message.FullTypeName}\" => true,");
         }
 
         sb.AppendLine("        _ => false,");

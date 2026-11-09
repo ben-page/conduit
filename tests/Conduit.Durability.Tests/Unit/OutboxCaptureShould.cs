@@ -248,6 +248,39 @@ public class OutboxCaptureShould
     }
 
     [TestMethod]
+    public async Task ClaimAndDeliverAsyncSendARoutedFireAndForgetCommandWithoutAwaitingAReply()
+    {
+        // Arrange -- a captured [FireAndForget] command routed to another service, classified by the flush's own scope
+        const string type = "Billing.Commands.RecordCharge";
+        var store = new StubOutboxStore();
+        var billing = new SpyTransport();
+        var options = new ConduitOptions();
+        options.Endpoints["billing"] = new ConduitEndpoint { Name = "billing" };
+        options.Routes.Add(new ConduitRoute("Billing.Commands", "billing", Exact: false));
+        var transports = new ServiceCollection();
+        transports.AddKeyedSingleton<IConduitTransport>("billing", billing);
+        var dispatcher = new TransportDispatcher(options, transports.BuildServiceProvider(), []);
+        var envelope = new DispatchEnvelope(type, JsonSerializer.SerializeToElement(new { amount = 5 }));
+        var messages = new List<WrittenOutboxMessage>
+        {
+            new("msg-1", "conv-1", null, envelope),
+        };
+        store.ClaimedEntries =
+        [
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+        ];
+
+        // Act
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store, new FireAndForgetClassifier(type)), dispatcher, NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
+
+        // Assert -- sent with no reply awaited, as the publish-time path sends it
+        billing.SentEvents.Should().ContainSingle().Which.Type.Should().Be(type);
+        billing.SentRequests.Should().BeEmpty();
+        store.MarkedSent.Should().BeEquivalentTo([10L]);
+    }
+
+    [TestMethod]
     public async Task ClaimAndDeliverAsyncSkipEntriesAlreadyClaimedByRelay()
     {
         // Arrange
@@ -312,6 +345,8 @@ file sealed class ThrowingLocalDispatcher : ILocalEnvelopeDispatcher
     public bool DeliversLocally(string messageType) => true;
 
     public bool IsLocalOnly(string messageType) => false;
+
+    public bool IsFireAndForget(string fullTypeName) => false;
 
     public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
         => throw new InvalidOperationException("Simulated local dispatch failure");

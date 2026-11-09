@@ -290,7 +290,7 @@ call would decline, and the outbox would silently protect nothing.
 | `[FireAndForget]` non-Immediate (incl. `[LocalOnly]`) | captured (with ambient txn) → skip local enqueue + broadcast; declined → delivered right away, exactly as without an outbox | local listeners (fresh scope) → transports (skipped if `[LocalOnly]`) → mark sent |
 | `[FireAndForget(Immediate = true)]` | never captured — immediate local enqueue + direct broadcast (events only; routed commands skip straight to transport, no local listener chain), at-most-once by declaration (for messages that must survive their command's rollback — the write-then-throw analog) | never stored |
 | plain event | local listeners inline (inside the handler's transaction); transport envelope captured with txn, else direct send | transports only (local listeners already ran inline — no re-run) |
-| routed `[FireAndForget]` void command | captured with txn unless Immediate | transports (routed) |
+| routed `[FireAndForget]` void command | captured with txn unless Immediate | its endpoint's transport, sent as at publish time (`SendEventAsync`, no reply awaited) |
 
 The declined case ("delivered right away, exactly as without an outbox") and the `Immediate`
 row's publish-time behavior are the *same* path (background-enqueued local listeners, direct
@@ -322,7 +322,10 @@ and `OutboxRelay` apply the identical per-entry delivery contract:
    `true` only for captured, non-Immediate `[FireAndForget]` events), run its local listener chain
    (with pipeline behaviors) against that fresh scope.
 3. Unless the type is `[LocalOnly]` (`IsLocalOnly(type)`), send the envelope via the appropriate
-   transport, routed exactly as it would have been at publish time.
+   transport, routed exactly as it would have been at publish time. A routed `[FireAndForget]` void
+   command (`IsFireAndForget(type)`) goes to its endpoint with `SendEventAsync`, as the publish-time
+   path sends it: no reply is awaited, so it neither holds the relay until the transport's response
+   timeout nor counts a delivered message as failed.
 4. Mark the entry `Sent`.
 
 Plain events never reach step 2 for their *local* listeners — `DeliversLocally` is `false` for
