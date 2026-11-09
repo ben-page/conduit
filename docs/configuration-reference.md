@@ -2,7 +2,7 @@
 
 - [ConduitBuilder methods](#conduitbuilder-methods)
 - [ConduitBuilder properties](#conduitbuilder-properties)
-- [EndpointBuilder methods](#endpointbuilder-methods)
+- [ConduitEndpointBuilder methods](#conduitendpointbuilder-methods)
 - [Loading from IConfiguration](#loading-from-iconfiguration)
   - [Core scalars](#core-scalars)
   - [Endpoint sections](#endpoint-sections)
@@ -69,7 +69,7 @@ Example `appsettings.Development.json` for developer mode:
 }
 ```
 
-## EndpointBuilder methods
+## ConduitEndpointBuilder methods
 
 Available inside the `AddEndpoint` callback:
 
@@ -187,7 +187,7 @@ below for the full key set each transport reads.
 ### Precedence
 
 **Configuration binds first, code runs second — the `configure` callback is always the final
-word.** Every `Use*` extension follows the same order: bind from `EndpointBuilder.Configuration`,
+word.** Every `Use*` extension follows the same order: bind from `ConduitEndpointBuilder.Configuration`,
 apply the extension's explicit argument if one was passed and is non-null (e.g. `UseRabbitMQ("amqp://…")`),
 then invoke the `configure` callback if one was given. An explicit `UseRabbitMQ("amqp://prod")`
 can never be silently redirected by a stray `appsettings.json` entry.
@@ -225,7 +225,7 @@ naming the offending configuration path.
 ### Unmatched endpoint sections
 
 A `Conduit:Endpoints:{name}` section whose name matches no `AddEndpoint` call in this process is
-**ignored silently** — nothing ever reads it, because `EndpointBuilder.Configuration` is only
+**ignored silently** — nothing ever reads it, because `ConduitEndpointBuilder.Configuration` is only
 materialized for endpoints you actually declare. This is deliberate: one shared `appsettings.json`
 can describe every endpoint across a fleet of hosts, and each host's `AddEndpoint` calls pick out
 just the subset it declares. Failing fast on an unrecognized section would break that pattern, at

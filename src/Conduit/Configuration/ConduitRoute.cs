@@ -3,8 +3,8 @@ namespace Conduit.Configuration;
 /// <summary>
 /// Maps a message type, or a namespace of message types, to a named endpoint.
 /// Messages matching the route are sent to the endpoint's transport instead of being
-/// dispatched locally. Created by <see cref="EndpointBuilder.RouteType{T}"/> (exact) and
-/// <see cref="EndpointBuilder.RouteNamespace{T}"/> (namespace).
+/// dispatched locally. Created by <see cref="ConduitEndpointBuilder.RouteType{T}"/> (exact) and
+/// <see cref="ConduitEndpointBuilder.RouteNamespace{T}"/> (namespace).
 /// </summary>
 /// <param name="Pattern">
 /// The full type name (exact) or namespace (not exact) to match against a message's full type name.

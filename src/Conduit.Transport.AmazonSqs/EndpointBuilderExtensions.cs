@@ -22,8 +22,8 @@ public static class EndpointBuilderExtensions
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="configure">Optional callback to configure transport options (Region, ServiceUri, etc.).</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseAmazonSqs(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseAmazonSqs(
+        this ConduitEndpointBuilder builder,
         Action<AmazonSqsOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);

@@ -22,8 +22,8 @@ public static class EndpointBuilderExtensions
     /// </param>
     /// <param name="configure">Optional callback to configure transport options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseAzureServiceBus(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseAzureServiceBus(
+        this ConduitEndpointBuilder builder,
         string? connectionString = null,
         Action<AzureServiceBusOptions>? configure = null)
     {

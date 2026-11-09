@@ -22,8 +22,8 @@ public static class EndpointBuilderExtensions
     /// </param>
     /// <param name="configure">Optional callback to configure ActiveMQ-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseActiveMQ(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseActiveMQ(
+        this ConduitEndpointBuilder builder,
         string? connectionString = null,
         Action<ActiveMQOptions>? configure = null)
     {

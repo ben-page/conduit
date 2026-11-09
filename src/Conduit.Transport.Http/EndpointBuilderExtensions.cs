@@ -21,8 +21,8 @@ public static class EndpointBuilderExtensions
     /// <c>BasePath</c> (<c>Conduit:Endpoints:{endpointName}:BasePath</c>), then to "/api/conduit".
     /// </param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseHttp(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseHttp(
+        this ConduitEndpointBuilder builder,
         HttpClient httpClient,
         string? basePath = null)
     {
@@ -46,8 +46,8 @@ public static class EndpointBuilderExtensions
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="configure">Optional callback to adjust the options after binding.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseHttp(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseHttp(
+        this ConduitEndpointBuilder builder,
         Action<HttpOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);

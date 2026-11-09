@@ -23,8 +23,8 @@ public static class EndpointBuilderExtensions
     /// </param>
     /// <param name="configure">Optional callback to configure RabbitMQ-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    public static EndpointBuilder UseRabbitMQ(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseRabbitMQ(
+        this ConduitEndpointBuilder builder,
         string? connectionString = null,
         Action<RabbitMQOptions>? configure = null)
     {

@@ -88,7 +88,7 @@ public class ConduitBuilder
 
     /// <summary>
     /// The resolved Conduit configuration section, or null when no configuration was supplied.
-    /// Transport extensions read their own section from here via <see cref="EndpointBuilder"/>.
+    /// Transport extensions read their own section from here via <see cref="ConduitEndpointBuilder"/>.
     /// </summary>
     public IConfiguration? Configuration { get; private set; }
 
@@ -98,7 +98,7 @@ public class ConduitBuilder
     /// </summary>
     /// <remarks>
     /// Must be called BEFORE <see cref="AddEndpoint"/>. <see cref="AddEndpoint"/> snapshots the
-    /// current <see cref="Configuration"/> into the <see cref="EndpointBuilder"/> it creates, so
+    /// current <see cref="Configuration"/> into the <see cref="ConduitEndpointBuilder"/> it creates, so
     /// calling <see cref="UseConfiguration"/> afterwards silently binds nothing for that endpoint.
     /// The source-generated <c>AddConduit(IConfiguration, ...)</c> overload calls this first and
     /// always gets the order right; this method is public and directly callable, so calling it
@@ -150,7 +150,7 @@ public class ConduitBuilder
 
     /// <summary>
     /// Adds a named remote endpoint that messages can be routed to.
-    /// Configure the endpoint's transport using extension methods on <see cref="EndpointBuilder"/>.
+    /// Configure the endpoint's transport using extension methods on <see cref="ConduitEndpointBuilder"/>.
     /// </summary>
     /// <param name="name">A unique name for this endpoint (e.g. "orders-api", "frontend").</param>
     /// <param name="configure">Callback to configure the endpoint's transport.</param>
@@ -159,7 +159,7 @@ public class ConduitBuilder
     /// <paramref name="name"/> is null, empty or white space, or names an endpoint already added: the endpoint's name
     /// keys its transport and options in DI, so a second one would replace the first.
     /// </exception>
-    public ConduitBuilder AddEndpoint(string name, Action<EndpointBuilder> configure)
+    public ConduitBuilder AddEndpoint(string name, Action<ConduitEndpointBuilder> configure)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(configure);
@@ -169,7 +169,7 @@ public class ConduitBuilder
         }
 
         var endpoint = new ConduitEndpoint { Name = name };
-        var endpointBuilder = new EndpointBuilder(endpoint, this.Options, this.Services, this.Configuration);
+        var endpointBuilder = new ConduitEndpointBuilder(endpoint, this.Options, this.Services, this.Configuration);
         configure(endpointBuilder);
         this.Options.Endpoints[name] = endpoint;
         return this;

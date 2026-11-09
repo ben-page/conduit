@@ -56,7 +56,7 @@ public sealed class AmazonSqsOptions : BrokerTransportOptions
 
     /// <summary>
     /// The endpoint name this transport is registered under in keyed DI.
-    /// Set automatically by <c>UseAmazonSqs()</c> from the <c>EndpointBuilder</c> context.
+    /// Set automatically by <c>UseAmazonSqs()</c> from the <c>ConduitEndpointBuilder</c> context.
     /// Used by dead letter queue capture to record the source endpoint and by replay to
     /// resolve the correct transport.
     /// </summary>

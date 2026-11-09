@@ -9,7 +9,7 @@ namespace Conduit.Configuration;
 /// Transport-specific extension methods (e.g. UseSignalR, UseHttp) are provided
 /// by transport packages like Conduit.Transport.Http and Conduit.Transport.SignalR.
 /// </summary>
-public sealed class EndpointBuilder
+public sealed class ConduitEndpointBuilder
 {
     /// <summary>
     /// The endpoint being configured.
@@ -38,7 +38,7 @@ public sealed class EndpointBuilder
     /// <summary>
     /// Creates a new builder for the given endpoint.
     /// </summary>
-    internal EndpointBuilder(
+    internal ConduitEndpointBuilder(
         ConduitEndpoint endpoint,
         ConduitOptions options,
         IServiceCollection services,
@@ -55,7 +55,7 @@ public sealed class EndpointBuilder
     /// pre-registered as a keyed singleton with this endpoint's name as the key.
     /// Typically called by transport extension methods after their own keyed registration.
     /// </summary>
-    public EndpointBuilder UseTransport<TTransport>() where TTransport : class, IConduitTransport
+    public ConduitEndpointBuilder UseTransport<TTransport>() where TTransport : class, IConduitTransport
     {
         this.Services.AddKeyedSingleton<IConduitTransport>(
             this.Endpoint.Name,
@@ -67,7 +67,7 @@ public sealed class EndpointBuilder
     /// Registers a transport instance for this endpoint. The instance is registered
     /// as a keyed singleton in DI. Useful for simple transports and test spies.
     /// </summary>
-    public EndpointBuilder UseTransport(IConduitTransport transport)
+    public ConduitEndpointBuilder UseTransport(IConduitTransport transport)
     {
         this.Services.AddKeyedSingleton<IConduitTransport>(this.Endpoint.Name, transport);
         return this;
@@ -80,7 +80,7 @@ public sealed class EndpointBuilder
     /// </summary>
     /// <typeparam name="T">A type whose namespace defines the route pattern.</typeparam>
     /// <returns>This builder for chaining.</returns>
-    public EndpointBuilder RouteNamespace<T>()
+    public ConduitEndpointBuilder RouteNamespace<T>()
     {
         var pattern = typeof(T).Namespace ?? typeof(T).FullName ?? typeof(T).Name;
         this.Options.Routes.Add(new ConduitRoute(pattern, this.EndpointName, Exact: false));
@@ -93,7 +93,7 @@ public sealed class EndpointBuilder
     /// </summary>
     /// <typeparam name="T">The message type to route.</typeparam>
     /// <returns>This builder for chaining.</returns>
-    public EndpointBuilder RouteType<T>()
+    public ConduitEndpointBuilder RouteType<T>()
     {
         var pattern = typeof(T).FullName ?? typeof(T).Name;
         this.Options.Routes.Add(new ConduitRoute(pattern, this.EndpointName, Exact: true));

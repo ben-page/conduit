@@ -745,9 +745,9 @@ public class GeneratorOutputShould : GeneratorTestBase
     private static object NewMessage(Assembly generated, string fullTypeName, params object[] arguments)
         => Activator.CreateInstance(generated.GetType(fullTypeName, throwOnError: true)!, arguments)!;
 
-    // EndpointBuilder.RouteType<T>() for a type only the generated assembly declares.
-    private static void RouteType(EndpointBuilder endpoint, Assembly generated, string fullTypeName)
-        => typeof(EndpointBuilder).GetMethod(nameof(EndpointBuilder.RouteType))!
+    // ConduitEndpointBuilder.RouteType<T>() for a type only the generated assembly declares.
+    private static void RouteType(ConduitEndpointBuilder endpoint, Assembly generated, string fullTypeName)
+        => typeof(ConduitEndpointBuilder).GetMethod(nameof(ConduitEndpointBuilder.RouteType))!
             .MakeGenericMethod(generated.GetType(fullTypeName, throwOnError: true)!)
             .Invoke(endpoint, null);
 

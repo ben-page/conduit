@@ -23,8 +23,8 @@ public static class EndpointBuilderExtensions
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Reliability", "CA2000:Dispose objects before losing scope",
         Justification = "Transport lifetime is managed by DI via keyed singleton registration.")]
-    public static EndpointBuilder UseSignalR(
-        this EndpointBuilder builder,
+    public static ConduitEndpointBuilder UseSignalR(
+        this ConduitEndpointBuilder builder,
         Uri? hubUri = null,
         Action<SignalROptions>? configure = null)
     {
