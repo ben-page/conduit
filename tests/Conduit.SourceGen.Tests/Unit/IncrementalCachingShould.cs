@@ -59,6 +59,30 @@ public class IncrementalCachingShould : GeneratorTestBase
             reason == IncrementalStepRunReason.Modified || reason == IncrementalStepRunReason.New);
     }
 
+    [TestMethod]
+    public void KeepTheEmissionCachedWhenAnEditMovesADeclaration()
+    {
+        // Arrange -- a command with no handler, so a diagnostic points at it; the edit inserts a line at the top of the
+        // file, which moves every declaration's span and nothing else
+        const string source = Source + "\npublic record ShipThing(string Name) : ICommand;\n";
+        const string editedSource = "// a line inserted at the top\n" + source;
+        var compilation = CreateCompilation(source);
+        var edited = compilation.ReplaceSyntaxTree(compilation.SyntaxTrees.First(), CSharpSyntaxTree.ParseText(editedSource));
+
+        // Act
+        var result = RunTwice(compilation, edited);
+
+        // Assert -- the walk saw the move, the emission's input did not
+        Reasons(result, "BuildModel").Should().Contain(IncrementalStepRunReason.Modified);
+        Reasons(result, "EmissionModel").Should().NotBeEmpty()
+            .And.AllSatisfy(reason => reason.Should().Be(IncrementalStepRunReason.Unchanged));
+
+        // Assert -- the diagnostic still follows the declaration to its new line
+        var expectedLine = editedSource[..editedSource.IndexOf("ShipThing", StringComparison.Ordinal)].Count(character => character == '\n');
+        result.Diagnostics.Single(diagnostic => diagnostic.Id == "CONDUIT001")
+            .Location.GetLineSpan().StartLinePosition.Line.Should().Be(expectedLine);
+    }
+
     private static CSharpCompilation CreateCompilation(string source)
         => CSharpCompilation.Create(
             "TestAssembly",
@@ -68,6 +92,10 @@ public class IncrementalCachingShould : GeneratorTestBase
 
     private static List<IncrementalStepRunReason> RunTwiceAndGetBuildModelReasons(
         Compilation first, Compilation second)
+        => Reasons(RunTwice(first, second), "BuildModel");
+
+    // The generator's result for the second of two runs, with its steps tracked.
+    private static GeneratorRunResult RunTwice(Compilation first, Compilation second)
     {
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             generators: [new ConduitGenerator().AsSourceGenerator()],
@@ -78,10 +106,12 @@ public class IncrementalCachingShould : GeneratorTestBase
         driver = driver.RunGenerators(first);
         driver = driver.RunGenerators(second);
 
-        var result = driver.GetRunResult().Results[0];
-        return result.TrackedSteps["BuildModel"]
+        return driver.GetRunResult().Results[0];
+    }
+
+    private static List<IncrementalStepRunReason> Reasons(GeneratorRunResult result, string trackingName)
+        => result.TrackedSteps[trackingName]
             .SelectMany(step => step.Outputs)
             .Select(output => output.Reason)
             .ToList();
-    }
 }

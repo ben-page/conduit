@@ -25,12 +25,18 @@ public sealed class ConduitGenerator : IIncrementalGenerator
             .Select(static (compilation, cancellationToken) => BuildModel(compilation, cancellationToken))
             .WithTrackingName("BuildModel");
 
-        context.RegisterSourceOutput(model, static (context, model) => Emit(model, context));
+        // The emission reads the model without source locations: they move with any edit above a declaration (a comment
+        // at the top of a file, a property added to an earlier record), and only the diagnostics need them.
+        var emission = model
+            .Select(static (model, _) => model.WithoutLocations())
+            .WithTrackingName("EmissionModel");
+
+        context.RegisterSourceOutput(emission, static (context, model) => Emit(model, context));
 
         // A diagnostic is located in the compilation's own syntax tree, which only the compilation holds: a location in
         // a tree is what a #pragma and the IDE apply to (a file path and span alone print as line 1 and suppress
-        // nothing). So the diagnostics are a second output, combined with the compilation; it re-runs on every change,
-        // as the walk does, while the emission above stays cached.
+        // nothing). So the diagnostics are a second output, over the full model and the compilation; it re-runs on
+        // every change, as the walk does, while the emission above stays cached.
         context.RegisterSourceOutput(
             model.Combine(context.CompilationProvider),
             static (context, input) => ReportDiagnostics(input.Left, input.Right, context));

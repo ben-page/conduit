@@ -1,3 +1,4 @@
+using System.Linq;
 using Conduit.Analysis;
 
 namespace Conduit.SourceGen;
@@ -39,4 +40,15 @@ public sealed record ConduitModel
 
     /// <summary>True when Conduit.Resilience is referenced (emit resilience dispatch).</summary>
     public required bool HasResilience { get; init; }
+
+    /// <summary>
+    /// This model without the types' and handlers' source locations: what the emission reads. A location moves with any
+    /// edit above a declaration, and only the diagnostics need it, so the emission's input must not carry it or every
+    /// such edit would re-emit every generated file.
+    /// </summary>
+    public ConduitModel WithoutLocations() => this with
+    {
+        DispatchableTypes = this.DispatchableTypes.Select(type => type with { Location = null }).ToEquatableArray(),
+        Handlers = this.Handlers.Select(handler => handler with { Location = null }).ToEquatableArray(),
+    };
 }
