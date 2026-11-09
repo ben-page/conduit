@@ -84,7 +84,7 @@ public static class RoslynScanner
 
             var resultTypeName = GetResultTypeName(typeSymbol, kind.Value);
             var resultFullTypeName = GetResultFullTypeName(typeSymbol, kind.Value);
-            var fireAndForgetAttribute = GetAttribute(typeSymbol, FireAndForgetAttributeName);
+            var fireAndForgetAttribute = GetInheritedAttribute(typeSymbol, FireAndForgetAttributeName);
 
             results.Add(new DispatchableTypeInfo
             {
@@ -94,7 +94,7 @@ public static class RoslynScanner
                 Kind = kind.Value,
                 ResultTypeName = resultTypeName,
                 ResultFullTypeName = resultFullTypeName,
-                IsLocalOnly = HasAttribute(typeSymbol, LocalOnlyAttributeName),
+                IsLocalOnly = GetInheritedAttribute(typeSymbol, LocalOnlyAttributeName) is not null,
                 IsFireAndForget = fireAndForgetAttribute is not null,
                 IsFireAndForgetImmediate = GetNamedBoolArgument(fireAndForgetAttribute, "Immediate"),
                 IsDoNotAudit = HasAttribute(typeSymbol, DoNotAuditAttributeName),
@@ -639,6 +639,22 @@ public static class RoslynScanner
         }
 
         return false;
+    }
+
+    // An inherited attribute ([LocalOnly], [FireAndForget]: AttributeUsage's default Inherited = true) as reflection's
+    // GetCustomAttribute(inherit: true) finds it: the type's own, else the nearest base's. GetAttributes() alone reads only
+    // the type's own declaration, so a message deriving from a [LocalOnly] event would otherwise be broadcast.
+    private static AttributeData? GetInheritedAttribute(INamedTypeSymbol typeSymbol, string attributeFullName)
+    {
+        for (var type = typeSymbol; type is not null; type = type.BaseType)
+        {
+            if (GetAttribute(type, attributeFullName) is { } attribute)
+            {
+                return attribute;
+            }
+        }
+
+        return null;
     }
 
     private static AttributeData? GetAttribute(ISymbol typeSymbol, string attributeFullName)

@@ -18,3 +18,16 @@ public sealed record InternalAuditEvent : AuditEventBase
 {
     public string SecretToken { get; init; } = string.Empty;
 }
+
+// [LocalOnly] is inherited: neither this type nor the one deriving from it, which carries no attribute of its own, is
+// emitted.
+[LocalOnly]
+public record RestrictedAuditEvent : AuditEventBase
+{
+    public string RestrictedScope { get; init; } = string.Empty;
+}
+
+public sealed record InheritedRestrictedAuditEvent : RestrictedAuditEvent
+{
+    public string InheritedSecret { get; init; } = string.Empty;
+}

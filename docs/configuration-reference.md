@@ -358,7 +358,7 @@ the packages:
 
 | Attribute | Target | Purpose |
 |---|---|---|
-| `[LocalOnly]` | Event types | Prevent event from broadcasting to transports |
+| `[LocalOnly]` | Event types | Prevent event from broadcasting to transports; inherited by a derived event |
 | `[ClientVisible]` | Any type | Include in TypeScript generation output |
 | `[DoNotAudit]` | Type, property, record parameter | Type: no payload captured. Member: left out of the captured body. A raw-JSON member (`JsonElement`, `JsonNode`, `object`, extension data) is otherwise captured verbatim, so mark it, type it with `[AuditAs]`, or suppress the type's payload |
 | `[AuditRedacted]` | Property, record parameter | Audit payload holds `"•••"` for a present value (null/`""` as themselves), never the value; not combinable with `[DoNotAudit]` (CONDUIT005) |

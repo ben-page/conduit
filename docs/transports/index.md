@@ -187,7 +187,7 @@ using Conduit.Messages;
 public record UserPasswordChanged(Guid UserId) : IEvent;
 ```
 
-The source generator omits the transport broadcast call at compile time. There is no runtime check. Use this for PII events, security events, and internal coordination.
+The source generator decides at compile time which events may be broadcast: every event type it discovered that is not `[LocalOnly]`. The attribute is inherited, so an event deriving from a `[LocalOnly]` event is local-only too, and the gate fails closed: an event type the generator did not discover (a private or file-local type, say) is never broadcast. Use this for PII events, security events, and internal coordination.
 
 ### Inbound events
 

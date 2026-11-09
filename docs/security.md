@@ -39,7 +39,7 @@ The filter is transport-agnostic. It works the same whether the request arrives 
 public record UserPasswordChanged(Guid UserId) : IEvent;
 ```
 
-Events marked `[LocalOnly]` never leave the process. The source generator omits the transport broadcast call at compile time. Use this for PII, security events, and internal coordination.
+Events marked `[LocalOnly]` never leave the process, and neither does an event deriving from one: the attribute is inherited. The generated mediator broadcasts only the event types the source generator discovered and did not mark local-only, so the gate fails closed: an event type it never saw (a private or file-local type, say) stays in the process too. Use this for PII, security events, and internal coordination.
 
 See [Transports](transports/index.md) for the full broadcast model.
 

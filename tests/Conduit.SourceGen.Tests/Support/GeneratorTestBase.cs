@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Reflection;
+using System.Runtime.Loader;
 using AwesomeAssertions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -96,6 +98,19 @@ public abstract class GeneratorTestBase
         }
 
         return MetadataReference.CreateFromImage(ms.ToArray());
+    }
+
+    /// <summary>
+    /// Emits <paramref name="output"/> and loads it into a load context of its own, so a test can run the generated
+    /// code. Conduit and its dependencies resolve to the test's own copies, so their types are the test's types.
+    /// </summary>
+    protected static Assembly LoadOutput(Compilation output)
+    {
+        using var stream = new MemoryStream();
+        var result = output.Emit(stream);
+        result.Success.Should().BeTrue("a compilation without errors emits");
+        stream.Position = 0;
+        return new AssemblyLoadContext(output.AssemblyName).LoadFromStream(stream);
     }
 
     /// <summary>The text of the generated file whose hint name contains <paramref name="hintNameContains"/>, or null.</summary>

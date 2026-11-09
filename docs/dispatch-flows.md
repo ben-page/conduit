@@ -134,8 +134,9 @@ Key facts:
 
 - **All listeners run even if some throw.** Failures are collected; `EventListenerException`
   is thrown only after every listener has been attempted.
-- **`[LocalOnly]` events skip transport broadcast** — the generator omits the broadcast loop at
-  compile time. There is no runtime check.
+- **`[LocalOnly]` events skip transport broadcast** — the generator emits a gate that lists, by full
+  type name, every event it discovered that is not `[LocalOnly]` (on itself or a base: the attribute
+  is inherited). Any other runtime type, one the generator never saw included, is not broadcast.
 - **`[FireAndForget]` events (non-Immediate)** are offered to a registered `IOutboundInterceptor`
   (the outbox) *before* any local dispatch. When it captures the envelope — `Intercept` returns
   `true`, which requires an ambient DB transaction — the entire publish body is skipped: local

@@ -16,8 +16,6 @@ public sealed record CollectedType(Type Type, string? BaseTypeName);
 /// </summary>
 public static class TypeCollector
 {
-    private const string LocalOnlyAttributeFullName = "Conduit.Attributes.LocalOnlyAttribute";
-
     private static readonly HashSet<string> FrameworkNamespacePrefixes =
     [
         "System",
@@ -124,7 +122,7 @@ public static class TypeCollector
     /// Enumerates all types derived from <paramref name="baseType"/> across the scanned
     /// assemblies and enqueues each with its immediate parent's short name so that
     /// multi-level chains emit <c>C extends B</c>, <c>B extends A</c> correctly.
-    /// Types marked <c>[LocalOnly]</c> and C# interfaces are excluded.
+    /// Types marked <c>[LocalOnly]</c> (on themselves or a base) and C# interfaces are excluded.
     /// </summary>
     private static void EnqueueDerivedTypes(
         Type baseType,
@@ -146,7 +144,7 @@ public static class TypeCollector
                     continue;
                 }
 
-                if (HasAttributeByFullName(candidate, LocalOnlyAttributeFullName))
+                if (ReflectionScanner.IsLocalOnly(candidate))
                 {
                     continue;
                 }
@@ -244,23 +242,6 @@ public static class TypeCollector
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Checks for an attribute by full type name using <see cref="CustomAttributeData"/>.
-    /// Works with both runtime-loaded and <see cref="System.Reflection.MetadataLoadContext"/> assemblies.
-    /// </summary>
-    private static bool HasAttributeByFullName(Type type, string attributeFullName)
-    {
-        foreach (var attributeData in type.GetCustomAttributesData())
-        {
-            if (attributeData.AttributeType.FullName == attributeFullName)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>

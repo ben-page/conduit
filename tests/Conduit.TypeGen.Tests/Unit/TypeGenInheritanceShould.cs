@@ -80,6 +80,24 @@ public class TypeGenInheritanceShould
     }
 
     [TestMethod]
+    public void ExcludeTypesDerivingFromALocalOnlyType()
+    {
+        // Arrange -- [LocalOnly] is inherited, as the source generator reads it: below a [ClientVisible] base
+        // (ReflectionScanner) and below a base reached through a property (TypeCollector)
+        var assembly = typeof(TypeGenInheritanceShould).Assembly;
+        var types = ReflectionScanner.ScanClientVisible(assembly);
+
+        // Act
+        var result = MergeFileEmitter.Emit(types, [assembly], includeSignalR: false);
+
+        // Assert
+        result.Should().Contain("export interface PublicAuditEvent extends AuditEventBase {");
+        result.Should().NotContain("RestrictedAuditEvent").And.NotContain("inheritedSecret");
+        result.Should().Contain("export interface PostedEntry extends LedgerEntryBase {");
+        result.Should().NotContain("ProvisionalEntry").And.NotContain("ReversalEntry").And.NotContain("reversalSecret");
+    }
+
+    [TestMethod]
     public void EmitBaseArrayPropertyAndAllSubtypes()
     {
         var assembly = typeof(TypeGenInheritanceShould).Assembly;

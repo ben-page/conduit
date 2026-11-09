@@ -275,7 +275,7 @@ public static class ReflectionScanner
     /// and appends them to <paramref name="results"/> with their <c>BaseFullTypeName</c> set to
     /// their immediate parent. Abstract intermediates (e.g. B in A &lt;- B &lt;- C) are included
     /// so multi-level chains emit <c>C extends B</c>, <c>B extends A</c> rather than collapsing
-    /// all descendants directly under A. Types marked <c>[LocalOnly]</c> are excluded.
+    /// all descendants directly under A. Types marked <c>[LocalOnly]</c> (on themselves or a base) are excluded.
     /// </summary>
     private static void AddDerivedTypes(
         Type baseType,
@@ -297,7 +297,7 @@ public static class ReflectionScanner
                     continue;
                 }
 
-                if (HasAttributeByFullName(candidate, LocalOnlyAttributeFullName))
+                if (IsLocalOnly(candidate))
                 {
                     continue;
                 }
@@ -352,6 +352,24 @@ public static class ReflectionScanner
         }
 
         return (null, null);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="type"/> is <c>[LocalOnly]</c>, on itself or a base: the attribute is inherited
+    /// (<c>AttributeUsage</c>'s default), and the source generator reads it through the base chain too.
+    /// <see cref="CustomAttributeData"/> lists only a type's own attributes, so the chain is walked here.
+    /// </summary>
+    internal static bool IsLocalOnly(Type type)
+    {
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            if (HasAttributeByFullName(current, LocalOnlyAttributeFullName))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

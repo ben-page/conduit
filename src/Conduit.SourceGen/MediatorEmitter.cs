@@ -376,10 +376,10 @@ public static class MediatorEmitter
         StringBuilder sb,
         List<DispatchableTypeInfo> events)
     {
-        // These are matched against the runtime type's full name (RuntimeTypeName), so they are the metadata ('+')
-        // form, as string literals: an event's attributes are its own, never a base event's.
-        var localOnlyTypes = new HashSet<string>(
-            events.Where(e => e.IsLocalOnly).Select(e => $"\"{e.FullTypeName}\""));
+        // These are matched against the runtime type's exact full name (RuntimeTypeName), so they are the metadata ('+')
+        // form, as string literals. A derived event is listed under its own name: the scanner has already resolved
+        // [LocalOnly] and [FireAndForget] through its base chain (both are inherited).
+        var broadcastTypes = events.Where(e => !e.IsLocalOnly).Select(e => $"\"{e.FullTypeName}\"").ToList();
         var fireAndForgetTypes = new HashSet<string>(
             events.Where(e => e.IsFireAndForget).Select(e => $"\"{e.FullTypeName}\""));
 
@@ -466,26 +466,21 @@ public static class MediatorEmitter
 
         sb.AppendLine();
 
-        if (localOnlyTypes.Count == events.Count)
+        // The broadcast gate lists the events that may leave the process; everything else stays in it. With no such
+        // event (none discovered, or all [LocalOnly]) nothing is broadcast and no gate is emitted.
+        if (broadcastTypes.Count > 0)
         {
-            // All events are local-only -- no broadcast needed
-        }
-        else if (localOnlyTypes.Count == 0)
-        {
-            // No local-only events -- always broadcast
-            EmitBroadcastBlock(sb, fireAndForgetTypes);
-        }
-        else
-        {
-            // Mix of local-only and broadcastable -- check type at runtime
+            sb.AppendLine("        // Fail closed: only an event type this compilation discovered, and that is not [LocalOnly] (on itself or a");
+            sb.AppendLine("        // base), reaches a transport. Any other runtime type -- private, file-local, internal to a referenced");
+            sb.AppendLine("        // assembly, or derived where the generator cannot see it -- may be local-only, so it is kept in process.");
             sb.AppendLine($"        var shouldBroadcast = {RuntimeTypeName("@event")} switch");
             sb.AppendLine("        {");
-            foreach (var localOnly in localOnlyTypes)
+            foreach (var broadcastType in broadcastTypes)
             {
-                sb.AppendLine($"            {localOnly} => false,");
+                sb.AppendLine($"            {broadcastType} => true,");
             }
 
-            sb.AppendLine("            _ => true,");
+            sb.AppendLine("            _ => false,");
             sb.AppendLine("        };");
             sb.AppendLine();
             sb.AppendLine("        if (shouldBroadcast)");

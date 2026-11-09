@@ -151,7 +151,7 @@ public class TodoService(IMediator mediator)
 
 The method names are intentionally distinct. `ExecuteAsync` performs an action, `FetchAsync` reads data, `PublishAsync` broadcasts. There is no ambiguous `Send` method.
 
-A message is dispatched by its exact type — by the full type name the wire carries, whether it is sent in process or over a transport. A record that derives from another message is a message of its own: it goes to its own handler, and a listener of the base event does not receive it. A message type cannot be generic ([CONDUIT007](diagnostics.md#conduit007--generic-message-types-are-not-supported)), and two assemblies cannot each declare one with the same full type name ([CONDUIT008](diagnostics.md#conduit008--message-type-declared-in-more-than-one-assembly)).
+A message is dispatched by its exact type — by the full type name the wire carries, whether it is sent in process or over a transport. A record that derives from another message is a message of its own: it goes to its own handler, and a listener of the base event does not receive it. It does inherit its base's `[LocalOnly]` and `[FireAndForget]`. A message type cannot be generic ([CONDUIT007](diagnostics.md#conduit007--generic-message-types-are-not-supported)), and two assemblies cannot each declare one with the same full type name ([CONDUIT008](diagnostics.md#conduit008--message-type-declared-in-more-than-one-assembly)).
 
 ## Validate()
 

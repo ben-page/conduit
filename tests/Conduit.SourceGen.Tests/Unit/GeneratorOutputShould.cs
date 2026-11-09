@@ -1,7 +1,12 @@
 using System.Globalization;
+using System.Reflection;
 using AwesomeAssertions;
+using Conduit.Configuration;
+using Conduit.Messages;
+using Conduit.Runtime;
 using Conduit.SourceGen.Tests.Support;
 using Microsoft.CodeAnalysis;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.SourceGen.Tests.Unit;
 
@@ -488,6 +493,144 @@ public class GeneratorOutputShould : GeneratorTestBase
         generated.Should().Contain("Host.Pong");
         generated.Should().NotContain("Shared.Ping");
     }
+
+    [TestMethod]
+    public async Task InheritLocalOnlyFromABaseEvent()
+    {
+        // Arrange -- [LocalOnly] is inherited (AttributeUsage's default), so an event deriving from a [LocalOnly]
+        // event is kept in process too
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+
+            namespace App.Events
+            {
+                [LocalOnly]
+                public record CacheCleared(string Key) : IEvent;
+
+                public sealed record RegionCacheCleared(string Key, string Region) : CacheCleared(Key);
+
+                public sealed record OrderShipped(int OrderId) : IEvent;
+            }
+            """;
+        var (output, _) = RunGenerator(source);
+        var generated = LoadOutput(output);
+        var broadcast = new RecordingTransport();
+        await using var services = BuildGeneratedServices(generated, broadcast);
+        var mediator = services.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.PublishAsync((IEvent)NewMessage(generated, "App.Events.RegionCacheCleared", "prices", "eu"));
+        await mediator.PublishAsync((IEvent)NewMessage(generated, "App.Events.CacheCleared", "prices"));
+        await mediator.PublishAsync((IEvent)NewMessage(generated, "App.Events.OrderShipped", 7));
+
+        // Assert -- only the event that is not local-only reached the transport; the outbox's classification agrees
+        broadcast.Events.Should().Equal("App.Events.OrderShipped");
+        var dispatcher = services.GetRequiredService<ILocalEnvelopeDispatcher>();
+        dispatcher.IsLocalOnly("App.Events.RegionCacheCleared").Should().BeTrue();
+        dispatcher.IsLocalOnly("App.Events.OrderShipped").Should().BeFalse();
+    }
+
+    [TestMethod]
+    public async Task InheritFireAndForgetFromABaseCommand()
+    {
+        // Arrange -- [FireAndForget] is inherited, so a routed command deriving from a [FireAndForget] command is sent
+        // with no reply expected, as its base is
+        const string source = """
+            using Conduit.Attributes;
+            using Conduit.Messages;
+
+            namespace App.Commands
+            {
+                [FireAndForget]
+                public record RecordAudit(string Detail) : ICommand;
+
+                public sealed record RecordSecurityAudit(string Detail, string Actor) : RecordAudit(Detail);
+
+                public sealed record ChargeCard(string Token) : ICommand;
+            }
+            """;
+        var (output, _) = RunGenerator(source);
+        var generated = LoadOutput(output);
+        var remote = new RecordingTransport();
+        await using var services = BuildGeneratedServices(generated, new RecordingTransport(), conduit => conduit.AddEndpoint("remote", endpoint =>
+        {
+            RouteType(endpoint, generated, "App.Commands.RecordAudit");
+            RouteType(endpoint, generated, "App.Commands.RecordSecurityAudit");
+            RouteType(endpoint, generated, "App.Commands.ChargeCard");
+            endpoint.UseTransport(remote);
+        }));
+        var mediator = services.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.ExecuteAsync((ICommand)NewMessage(generated, "App.Commands.RecordAudit", "opened"));
+        await mediator.ExecuteAsync((ICommand)NewMessage(generated, "App.Commands.RecordSecurityAudit", "opened", "admin"));
+        await mediator.ExecuteAsync((ICommand)NewMessage(generated, "App.Commands.ChargeCard", "tok"));
+
+        // Assert
+        remote.Events.Should().Equal("App.Commands.RecordAudit", "App.Commands.RecordSecurityAudit");
+        remote.Requests.Should().Equal("App.Commands.ChargeCard");
+    }
+
+    [TestMethod]
+    public async Task NotBroadcastAnEventTypeTheCompilationNeverDiscovered()
+    {
+        // Arrange -- the broadcast gate fails closed: an event type the generator did not discover (here a private one,
+        // which it cannot name) is not sent to a transport, with or without a [LocalOnly] event in the compilation
+        const string source = """
+            using Conduit.Messages;
+
+            namespace App.Events
+            {
+                public sealed record OrderShipped(int OrderId) : IEvent;
+
+                public static class Telemetry
+                {
+                    private sealed record Heartbeat(int Sequence) : IEvent;
+
+                    public static IEvent NewHeartbeat(int sequence) => new Heartbeat(sequence);
+                }
+            }
+            """;
+        var (output, _) = RunGenerator(source);
+        var generated = LoadOutput(output);
+        var broadcast = new RecordingTransport();
+        await using var services = BuildGeneratedServices(generated, broadcast);
+        var mediator = services.GetRequiredService<IMediator>();
+        var heartbeat = (IEvent)generated.GetType("App.Events.Telemetry", throwOnError: true)!
+            .GetMethod("NewHeartbeat")!.Invoke(null, [1])!;
+
+        // Act
+        await mediator.PublishAsync(heartbeat);
+        await mediator.PublishAsync((IEvent)NewMessage(generated, "App.Events.OrderShipped", 7));
+
+        // Assert
+        broadcast.Events.Should().Equal("App.Events.OrderShipped");
+    }
+
+    // Runs the generated AddConduit (with configure) on a container with logging and one broadcast transport.
+    private static ServiceProvider BuildGeneratedServices(
+        Assembly generated,
+        IConduitTransport broadcastTransport,
+        Action<ConduitBuilder>? configure = null)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        generated.GetType("Conduit.Generated.ConduitRegistration", throwOnError: true)!
+            .GetMethod("AddConduit", [typeof(IServiceCollection), typeof(Action<ConduitBuilder>)])!
+            .Invoke(null, [services, configure]);
+        services.AddSingleton<IConduitTransport>(broadcastTransport);
+        return services.BuildServiceProvider();
+    }
+
+    private static object NewMessage(Assembly generated, string fullTypeName, params object[] arguments)
+        => Activator.CreateInstance(generated.GetType(fullTypeName, throwOnError: true)!, arguments)!;
+
+    // EndpointBuilder.RouteType<T>() for a type only the generated assembly declares.
+    private static void RouteType(EndpointBuilder endpoint, Assembly generated, string fullTypeName)
+        => typeof(EndpointBuilder).GetMethod(nameof(EndpointBuilder.RouteType))!
+            .MakeGenericMethod(generated.GetType(fullTypeName, throwOnError: true)!)
+            .Invoke(endpoint, null);
 
     // Every generated file's text, joined (the test's own source tree has no file path).
     private static string GeneratedText(Compilation output)

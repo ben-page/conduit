@@ -326,11 +326,12 @@ namespace App.Events
         // Assert — interface on the class, classification switches keyed by METADATA names, publish entry
         mediatorSource.Should().NotBeNull();
         mediatorSource.Should().Contain("ILocalEnvelopeDispatcher");
-        mediatorSource.Should().Contain("public bool DeliversLocally(string messageType)");
-        mediatorSource.Should().Contain("\"TestApp.CapturedEvent\" => true");         // capturable F&F
-        mediatorSource.Should().NotContain("\"TestApp.ImmediateEvent\" => true");     // Immediate is not outbox-delivered
-        mediatorSource.Should().Contain("public bool IsLocalOnly(string messageType)");
-        mediatorSource.Should().Contain("\"TestApp.LocalOnlyEvent\" => true");
+        // (scoped to each switch: the broadcast gate lists every broadcastable event "=> true" too)
+        var deliversLocally = SwitchOf(mediatorSource, "public bool DeliversLocally(string messageType)");
+        deliversLocally.Should().Contain("\"TestApp.CapturedEvent\" => true");         // capturable F&F
+        deliversLocally.Should().NotContain("\"TestApp.ImmediateEvent\"");             // Immediate is not outbox-delivered
+        var isLocalOnly = SwitchOf(mediatorSource, "public bool IsLocalOnly(string messageType)");
+        isLocalOnly.Should().Contain("\"TestApp.LocalOnlyEvent\" => true");
         mediatorSource.Should().Contain("public async Task PublishLocalEnvelopeAsync(");
 
         // Nested types are the one case where metadata ('+') and C# ('.') forms differ: switch STRING
@@ -540,5 +541,13 @@ namespace App.Events
         // ... and skipped for a type the host's audit registration suppresses, which is never serialized
         mediatorSource.Should().Contain("ConduitRuntime.CapturesAuditPayload(");
         mediatorSource.Should().NotContain("MessageContext.Current?.SetPayload(");
+    }
+
+    // The emitted switch-expression member that starts with signature, through its closing "};".
+    private static string SwitchOf(string? source, string signature)
+    {
+        source.Should().Contain(signature);
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        return source[start..source.IndexOf("};", start, StringComparison.Ordinal)];
     }
 }
