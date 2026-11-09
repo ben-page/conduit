@@ -322,10 +322,12 @@ and `OutboxRelay` apply the identical per-entry delivery contract:
    `true` only for captured, non-Immediate `[FireAndForget]` events), run its local listener chain
    (with pipeline behaviors) against that fresh scope.
 3. Unless the type is `[LocalOnly]` (`IsLocalOnly(type)`), send the envelope via the appropriate
-   transport, routed exactly as it would have been at publish time. A routed `[FireAndForget]` void
-   command (`IsFireAndForget(type)`) goes to its endpoint with `SendEventAsync`, as the publish-time
-   path sends it: no reply is awaited, so it neither holds the relay until the transport's response
-   timeout nor counts a delivered message as failed.
+   transport, exactly as it would have been sent at publish time. An event (`IsEvent(type)`) is
+   broadcast with `SendEventAsync` to every registered transport and never routed, whatever route
+   its namespace happens to have. A routed `[FireAndForget]` void command (`IsFireAndForget(type)`)
+   goes to its endpoint with `SendEventAsync`, as the publish-time path sends it: no reply is
+   awaited, so it neither holds the relay until the transport's response timeout nor counts a
+   delivered message as failed.
 4. Mark the entry `Sent`.
 
 Plain events never reach step 2 for their *local* listeners — `DeliversLocally` is `false` for

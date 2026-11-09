@@ -386,6 +386,11 @@ namespace App.Events
         isFireAndForget.Should().Contain("\"TestApp.ImmediateEvent\" => true");          // Immediate is still fire-and-forget
         isFireAndForget.Should().Contain("\"TestApp.Outer+NestedCapturedEvent\" => true");
         isFireAndForget.Should().NotContain("\"TestApp.LocalOnlyEvent\"");
+        var isEvent = SwitchOf(mediatorSource, "public bool IsEvent(string fullTypeName)");
+        isEvent.Should().Contain("\"TestApp.CapturedEvent\" => true");
+        isEvent.Should().Contain("\"TestApp.ImmediateEvent\" => true");
+        isEvent.Should().Contain("\"TestApp.LocalOnlyEvent\" => true");               // never routed, and not broadcast
+        isEvent.Should().Contain("\"TestApp.Outer+NestedCapturedEvent\" => true");
         mediatorSource.Should().Contain("public async Task PublishLocalEnvelopeAsync(");
 
         // Nested types are the one case where metadata ('+') and C# ('.') forms differ: switch STRING

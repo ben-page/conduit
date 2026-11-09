@@ -38,6 +38,14 @@ public interface ILocalEnvelopeDispatcher
     public bool IsFireAndForget(string fullTypeName);
 
     /// <summary>
+    /// True when <paramref name="fullTypeName"/> is an event the generator discovered: <see cref="TransportDispatcher"/>
+    /// broadcasts it to every transport (unless it is <c>[LocalOnly]</c>) and never routes it, as the generated
+    /// mediator's publish does. False for commands, queries and any type the generator never discovered.
+    /// </summary>
+    /// <param name="fullTypeName">The envelope's <see cref="DispatchEnvelope.Type"/> (metadata name).</param>
+    public bool IsEvent(string fullTypeName);
+
+    /// <summary>
     /// Deserializes the envelope via the generated type registry and runs the local listener chain
     /// (with pipeline behaviors) against <paramref name="scopedServices"/> — callers supply a fresh
     /// scope per delivery, mirroring fire-and-forget's fresh-scope semantics.

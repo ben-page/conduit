@@ -594,6 +594,8 @@ public class GeneratorOutputShould : GeneratorTestBase
         var dispatcher = services.GetRequiredService<ILocalEnvelopeDispatcher>();
         dispatcher.IsLocalOnly("App.Events.RegionCacheCleared").Should().BeTrue();
         dispatcher.IsLocalOnly("App.Events.OrderShipped").Should().BeFalse();
+        dispatcher.IsEvent("App.Events.RegionCacheCleared").Should().BeTrue();
+        dispatcher.IsEvent("App.Events.OrderShipped").Should().BeTrue();
     }
 
     [TestMethod]
@@ -638,6 +640,7 @@ public class GeneratorOutputShould : GeneratorTestBase
         var dispatcher = services.GetRequiredService<ILocalEnvelopeDispatcher>();
         dispatcher.IsFireAndForget("App.Commands.RecordSecurityAudit").Should().BeTrue();
         dispatcher.IsFireAndForget("App.Commands.ChargeCard").Should().BeFalse();
+        dispatcher.IsEvent("App.Commands.RecordSecurityAudit").Should().BeFalse();
     }
 
     [TestMethod]

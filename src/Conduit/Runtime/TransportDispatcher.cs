@@ -31,10 +31,13 @@ public sealed class TransportDispatcher
     }
 
     /// <summary>
-    /// Sends a dispatch envelope to the appropriate transport(s): a routed type to its endpoint's transport, as a
-    /// request unless <paramref name="localDispatcher"/> classifies it as <c>[FireAndForget]</c>
-    /// (<see cref="ILocalEnvelopeDispatcher.IsFireAndForget"/>), which is sent with
-    /// <see cref="IConduitTransport.SendEventAsync"/> and awaits no reply; an unrouted type to every transport.
+    /// Sends a dispatch envelope to the appropriate transport(s). An event
+    /// (<see cref="ILocalEnvelopeDispatcher.IsEvent"/>) never routes: it is broadcast with
+    /// <see cref="IConduitTransport.SendEventAsync"/> to every registered transport, as the generated publish
+    /// broadcasts it, or to none when it is <c>[LocalOnly]</c>. A routed command or query goes to its endpoint's
+    /// transport, as a request unless <paramref name="localDispatcher"/> classifies it as <c>[FireAndForget]</c>
+    /// (<see cref="ILocalEnvelopeDispatcher.IsFireAndForget"/>), which awaits no reply; an unrouted one to every
+    /// transport.
     /// </summary>
     /// <param name="envelope">The envelope to send.</param>
     /// <param name="localDispatcher">
@@ -47,6 +50,19 @@ public sealed class TransportDispatcher
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
+
+        // Events never route (only commands and queries do): a route whose namespace happens to cover an event would
+        // otherwise send it point-to-point, as a request awaiting a reply, instead of to every transport
+        if (localDispatcher is not null && localDispatcher.IsEvent(envelope.Type))
+        {
+            if (localDispatcher.IsLocalOnly(envelope.Type))
+            {
+                return;
+            }
+
+            await this.BroadcastAsync(envelope, cancellationToken);
+            return;
+        }
 
         var endpoint = ConduitRuntime.ResolveRoute(this.options, envelope.Type);
         if (endpoint != null)
@@ -66,10 +82,17 @@ public sealed class TransportDispatcher
         }
         else
         {
-            foreach (var transport in this.transports)
-            {
-                await transport.SendEventAsync(envelope, cancellationToken);
-            }
+            await this.BroadcastAsync(envelope, cancellationToken);
+        }
+    }
+
+    // Every non-keyed IConduitTransport: the set the generated publish broadcasts to. Each is a singleton (a transport
+    // package registers one forwarder per endpoint), so the set resolved at construction is the one a scope sees.
+    private async Task BroadcastAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        foreach (var transport in this.transports)
+        {
+            await transport.SendEventAsync(envelope, cancellationToken);
         }
     }
 }

@@ -14,6 +14,8 @@ internal sealed class FireAndForgetClassifier(params string[] fireAndForgetTypes
 
     public bool IsFireAndForget(string fullTypeName) => fireAndForgetTypes.Contains(fullTypeName);
 
+    public bool IsEvent(string fullTypeName) => false;
+
     public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
         => throw new InvalidOperationException("A routed command has no local delivery.");
 }

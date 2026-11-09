@@ -817,6 +817,21 @@ public static class MediatorEmitter
         sb.AppendLine("    };");
         sb.AppendLine();
 
+        // Every discovered event: TransportDispatcher broadcasts a relayed event to every transport and never routes it,
+        // as PublishAsync does, whatever route a namespace happens to have.
+        sb.AppendLine("    /// <inheritdoc />");
+        sb.AppendLine("    public bool IsEvent(string fullTypeName) => fullTypeName switch");
+        sb.AppendLine("    {");
+
+        foreach (var evt in events)
+        {
+            sb.AppendLine($"        \"{evt.FullTypeName}\" => true,");
+        }
+
+        sb.AppendLine("        _ => false,");
+        sb.AppendLine("    };");
+        sb.AppendLine();
+
         // The delivery is an observed dispatch of its own: a child of the entry's restored context (a fresh MessageId,
         // CausationId = the entry's MessageId, the entry's ConversationId), so each attempt -- the flush's, then each
         // relay redelivery -- is one request-log row, and a listener's nested dispatch is caused by that row. Every

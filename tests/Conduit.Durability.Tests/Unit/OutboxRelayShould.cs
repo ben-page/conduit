@@ -363,6 +363,8 @@ file sealed class ThrowingLocalDispatcher : ILocalEnvelopeDispatcher
 
     public bool IsFireAndForget(string fullTypeName) => false;
 
+    public bool IsEvent(string fullTypeName) => false;
+
     public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
         => throw new InvalidOperationException("Simulated local dispatch failure");
 }
