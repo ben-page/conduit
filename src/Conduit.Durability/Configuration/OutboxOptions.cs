@@ -63,7 +63,7 @@ public sealed class OutboxOptions
 
     /// <summary>
     /// Capture outbound messages into the outbox on the caller's transaction, but never deliver them: no
-    /// <see cref="Runtime.Outbox.OutboxRelay"/> is registered and <see cref="Runtime.Outbox.IOutboxFlusher"/>
+    /// <see cref="Runtime.Outbox.OutboxRelay"/> is registered and <see cref="Outbox.IOutboxFlusher"/>
     /// is a no-op. For a process that shares its outbox table with another process whose relay owns
     /// delivery — a second relay could claim a row whose listener lives only in the other process and mark
     /// it sent with nobody having handled it. Messages published with no ambient transaction are not

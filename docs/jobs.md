@@ -156,7 +156,8 @@ var key = await jobs.TriggerNowAsync("rederive-totals", cancellationToken);
   not an occurrence), so it needs no new column.
 - **A manual run of it is a manual run of any schedule.** The [overlap](#overlap) rule refuses a
   second trigger with `JobOverlapException` while a run is outstanding unless `AllowOverlap()` is
-  declared; `MaxRuntime`, retries and [run history](#run-history) apply; and trigger-now does not
+  declared; `MaxRuntime`, retries and [run history](#run-history) apply, except that without a database
+  a manual run is not cancelled at `MaxRuntime` (a known issue, CONDUIT-83); and trigger-now does not
   consult pause, so pausing an on-demand schedule changes nothing. With a database, triggered on a
   host that runs jobs, the run is claimed at once (the trigger wakes that host's sweep); triggered on
   a [host that runs no jobs](#a-host-that-runs-no-jobs), it waits for a runner host's next sweep,
@@ -764,12 +765,13 @@ No engine means no tables. Each host runs one timer loop per timed schedule, wai
   the schedule is in progress on this host", and a manual run skips an occurrence that comes due
   while it is still going.
 - `OnMisfire` and event triggers are **rejected at startup**, not silently ignored.
-- Cancellation still works in-process, and `MaxRuntime` works normally — it needs nothing more than
-  a start time and a token. `CancelAsync` reaches a run in progress on this host by its run key,
-  shaped as with a database (the key `TriggerNowAsync` returns, `{schedule}@{occurrenceUtcIso}` for
-  an occurrence, `{schedule}@start-{instant}` for a start-up run), so code written against the
-  durable API behaves the same in a test host, or by its schedule's name; the run key wins when the
-  text is both.
+- Cancellation still works in-process, and `MaxRuntime` cancels a scheduled run on time — it needs
+  nothing more than a start time and a token. A manual run (`TriggerNowAsync`) is the exception: it
+  is not cancelled at `MaxRuntime` (a known issue, CONDUIT-83). `CancelAsync` reaches a run in
+  progress on this host by its run key, shaped as with a database (the key `TriggerNowAsync` returns,
+  `{schedule}@{occurrenceUtcIso}` for an occurrence, `{schedule}@start-{instant}` for a start-up run),
+  so code written against the durable API behaves the same in a test host, or by its schedule's name;
+  the run key wins when the text is both.
 
 ## A host that runs no jobs
 
@@ -942,7 +944,8 @@ claim to renew or time out, no ledger rows to retain, and no history to purge.
   follow-on whose blocking run's outcome was never recorded (its host died), wait for a runner
   host's next sweep, up to `ClaimTimeout`.
 - **`MaxRuntime` is as coarse as the heartbeat** with a database: it takes effect at the first
-  renewal at or after the limit.
+  renewal at or after the limit. Without a database, a manual run (`TriggerNowAsync`) is not
+  cancelled at `MaxRuntime` at all (CONDUIT-83).
 - **Shutdown does not wait for a job that ignores its token** past the host's shutdown deadline; that
   run's claim goes stale and another host re-runs it after `ClaimTimeout`.
 - **No runtime-defined schedules.** Schedules are code-declared; that is what lets every host agree

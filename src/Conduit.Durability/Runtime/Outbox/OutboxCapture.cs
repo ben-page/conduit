@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Conduit.Durability.Outbox;
 using Conduit.Middleware;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;

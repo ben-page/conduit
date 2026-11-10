@@ -1,3 +1,4 @@
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Middleware;
 using Conduit.TestUtils;

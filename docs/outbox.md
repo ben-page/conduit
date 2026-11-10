@@ -336,7 +336,8 @@ A Failed entry is the only copy of a message that never reached its listeners or
 table (until `FailedRetention`) instead of being dropped. Inject `IOutbox` to find failed entries and hand them
 back to the relay. It and the types it takes and returns (`FailedOutboxFilter`, `FailedOutboxPage`, `OutboxEntry`,
 `OutboxEntryStatus`) live in the `Conduit.Durability.Outbox` namespace, as the dead letter queue's live in
-`Conduit.Durability.DeadLetterQueue`:
+`Conduit.Durability.DeadLetterQueue` (so do `IOutboxFlusher` and `IOutboxPendingWriter`, the other two interfaces
+a host injects):
 
 ```csharp
 using Conduit.Durability.Outbox;
@@ -577,6 +578,8 @@ transaction is still open), but nothing writes them. Write them yourself with `I
 after the last publish and before the commit:
 
 ```csharp
+using Conduit.Durability.Outbox;
+
 public sealed class TransactionalBehavior<TRequest, TResult>(
     AppDbContext dbContext,
     DomainEventDispatcher domainEvents,
@@ -617,6 +620,8 @@ By default, outbox messages wait for the relay's next poll cycle before reaching
 Inject `IOutboxFlusher` and call `FlushAsync` after committing your transaction:
 
 ```csharp
+using Conduit.Durability.Outbox;
+
 public class PlaceOrderHandler(
     AppDbContext dbContext,
     IMediator mediator,
@@ -652,6 +657,8 @@ Because delivery is scheduled rather than synchronous, `FlushAsync` returning is
 For EF Core applications, a `SaveChangesInterceptor` can call `FlushAsync` automatically after every successful save. Because `FlushAsync` only schedules delivery, the interceptor itself still completes quickly:
 
 ```csharp
+using Conduit.Durability.Outbox;
+
 public class OutboxFlushInterceptor(IOutboxFlusher flusher) : SaveChangesInterceptor
 {
     public override async ValueTask<int> SavedChangesAsync(

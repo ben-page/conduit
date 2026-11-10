@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Runtime;
 using Conduit.Durability.Runtime.DeadLetterQueue;
 using Conduit.Durability.Runtime.Inbox;

@@ -1,3 +1,5 @@
+using Conduit.Durability.Outbox;
+
 namespace Conduit.Durability.Runtime.Outbox;
 
 /// <summary>The <see cref="IOutboxFlusher"/> of a capture-only outbox (<see cref="Configuration.OutboxOptions.CaptureOnly"/>):

@@ -130,8 +130,8 @@ The first public preview. The entries below are the changes since the earlier, u
   - A failed dispatch releases its inbox record, so the broker's redelivery or a dead-letter replay runs instead of
     being discarded as a duplicate.
   - So does an unexpected failure behind an HTTP endpoint mapped with `trustCallerContext: true` or a hub with
-    `TrustCallerContext` (CONDUIT-80): a Conduit retry under the same `MessageId` (the outbox relay's next attempt, a
-    resilience retry) was answered as an empty success and the message lost.
+    `TrustCallerContext` (CONDUIT-80): a retry under the same `MessageId` (the outbox relay's next attempt, a resend of the same
+    request) was answered as an empty success and the message lost.
 - **Dead-letter queue and persistence**
   - A replay claims its entry first, so two concurrent replays of one entry publish it once.
   - Concurrent table creation by replicas starting together succeeds; on SQL Server it runs under `sp_getapplock`.

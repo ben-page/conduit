@@ -1,4 +1,4 @@
-namespace Conduit.Durability.Runtime.Outbox;
+namespace Conduit.Durability.Outbox;
 
 /// <summary>
 /// Schedules immediate post-commit delivery of captured outbox messages from the in-memory
