@@ -54,17 +54,23 @@ public class JobScheduleShould
     [TestMethod]
     public void AlignAnIntervalBeforeTheEpochAndYieldNoneBeyondTheLastInstant()
     {
-        // Arrange
+        // Arrange — and an interval of some 24,600 years, whose period before the epoch starts so far
+        // back that the distance from it to the last instant overflows a tick count
         var fiveMinutes = JobSchedule.FromInterval("warm", TimeSpan.FromMinutes(5),
             allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+        var millennia = JobSchedule.FromInterval("rare", TimeSpan.FromDays(9_000_000),
+            allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+        var justBeforeTheEpoch = new DateTimeOffset(1969, 12, 31, 23, 57, 0, TimeSpan.Zero);
 
         // Act
-        var beforeTheEpoch = fiveMinutes.NextOccurrenceAfter(new DateTimeOffset(1969, 12, 31, 23, 57, 0, TimeSpan.Zero));
+        var beforeTheEpoch = fiveMinutes.NextOccurrenceAfter(justBeforeTheEpoch);
+        var vastBeforeTheEpoch = millennia.NextOccurrenceAfter(justBeforeTheEpoch);
         var lastPeriod = fiveMinutes.NextOccurrenceAfter(DateTimeOffset.MaxValue.AddMinutes(-1));
 
         // Assert — the period is floored, not truncated toward the epoch, and an occurrence that cannot
         // be represented is none, as a cron expression that yields none is
         beforeTheEpoch.Should().Be(DateTimeOffset.UnixEpoch);
+        vastBeforeTheEpoch.Should().Be(DateTimeOffset.UnixEpoch);
         lastPeriod.Should().BeNull();
     }
 

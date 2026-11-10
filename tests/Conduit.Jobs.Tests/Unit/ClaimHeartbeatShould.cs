@@ -17,6 +17,9 @@ public class ClaimHeartbeatShould
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(2);
 
+    // The fake clock moves a second at a time; noticing the fence can lag a step or two behind it.
+    private static readonly TimeSpan StepLag = TimeSpan.FromSeconds(5);
+
     [TestMethod]
     public async Task FenceItselfAfterClaimTimeoutOfFailures()
     {
@@ -42,11 +45,53 @@ public class ClaimHeartbeatShould
     }
 
     [TestMethod]
+    [Timeout(30_000)]
+    public async Task FenceAtTheClaimTimeoutWhenTheRenewalThatWouldDecideItHangs()
+    {
+        // Arrange — three renewals refused at once, then a connection that accepts and never answers
+        var timeProvider = new FakeTimeProvider(Start);
+        var store = UnreachableJobStore.Create(hangFromCall: 4);
+        using var jobCancellation = new CancellationTokenSource();
+        await using var heartbeat = StartHeartbeat(store, timeProvider, jobCancellation);
+
+        // Act
+        await FakeClock.AdvanceUntilAsync(
+            timeProvider, TimeSpan.FromSeconds(1), () => Task.FromResult(jobCancellation.IsCancellationRequested));
+
+        // Assert — after a failed renewal, reaching the fence is enough: a renewal begun there would be
+        // unbounded, and another host may already hold the claim
+        heartbeat.ClaimLost.Should().BeTrue();
+        timeProvider.GetUtcNow().Should().BeOnOrAfter(Start + ClaimTimeout).And.BeBefore(Start + ClaimTimeout + StepLag);
+        store.Calls.Should().Be(3);
+    }
+
+    [TestMethod]
+    public async Task FenceAtTheClaimTimeoutWhenTheIntervalDoesNotDivideIt()
+    {
+        // Arrange — renewals every 45 seconds: failures at 45 and 90, and the next beat would be at 135
+        var timeProvider = new FakeTimeProvider(Start);
+        var store = UnreachableJobStore.Create();
+        using var jobCancellation = new CancellationTokenSource();
+        await using var heartbeat = StartHeartbeat(
+            store, timeProvider, jobCancellation, heartbeatInterval: TimeSpan.FromSeconds(45));
+
+        // Act
+        await FakeClock.AdvanceUntilAsync(
+            timeProvider, TimeSpan.FromSeconds(1), () => Task.FromResult(jobCancellation.IsCancellationRequested));
+
+        // Assert — the wait after the second failure stops at the fence, not at the next beat
+        heartbeat.ClaimLost.Should().BeTrue();
+        timeProvider.GetUtcNow().Should().BeOnOrAfter(Start + ClaimTimeout).And.BeBefore(Start + ClaimTimeout + StepLag);
+        store.Calls.Should().Be(2);
+    }
+
+    [TestMethod]
+    [Timeout(30_000)]
     public async Task FenceItselfWhenARenewalOutlastsTheClaimTimeout()
     {
         // Arrange — the first renewal hangs: a connection that stopped answering, not one that refused
         var timeProvider = new FakeTimeProvider(Start);
-        var store = UnreachableJobStore.Create(hangs: true);
+        var store = UnreachableJobStore.Create(hangFromCall: 1);
         using var jobCancellation = new CancellationTokenSource();
         await using var heartbeat = StartHeartbeat(store, timeProvider, jobCancellation);
         timeProvider.Advance(HeartbeatInterval);
@@ -64,8 +109,34 @@ public class ClaimHeartbeatShould
         store.Calls.Should().Be(1);
     }
 
+    [TestMethod]
+    [Timeout(30_000)]
+    public async Task AbandonARenewalInFlightWhenStopped()
+    {
+        // Arrange — the job has ended while its heartbeat's renewal hangs
+        var timeProvider = new FakeTimeProvider(Start);
+        var store = UnreachableJobStore.Create(hangFromCall: 1);
+        using var jobCancellation = new CancellationTokenSource();
+        var heartbeat = StartHeartbeat(store, timeProvider, jobCancellation);
+        timeProvider.Advance(HeartbeatInterval);
+        await store.WaitForCallsAsync(1);
+
+        // Act
+        var stopping = heartbeat.DisposeAsync().AsTask();
+        var stopped = await Task.WhenAny(stopping, Task.Delay(TimeSpan.FromSeconds(5))) == stopping;
+
+        // Assert — the job's outcome, written under its claim, is the authority now: the heartbeat
+        // neither waits out the renewal nor fences, which would drop that outcome as a lost claim
+        stopped.Should().BeTrue("stopping cancels the renewal rather than waiting for the fence");
+        heartbeat.ClaimLost.Should().BeFalse();
+        jobCancellation.IsCancellationRequested.Should().BeFalse();
+    }
+
     private static ClaimHeartbeat StartHeartbeat(
-        UnreachableJobStore store, FakeTimeProvider timeProvider, CancellationTokenSource jobCancellation)
+        UnreachableJobStore store,
+        FakeTimeProvider timeProvider,
+        CancellationTokenSource jobCancellation,
+        TimeSpan? heartbeatInterval = null)
     {
         var services = new ServiceCollection()
             .AddScoped(_ => store.Store)
@@ -83,13 +154,18 @@ public class ClaimHeartbeatShould
             ClaimToken = "host-a",
             StartedAt = Start,
         };
+        var options = new JobsOptions
+        {
+            HeartbeatInterval = heartbeatInterval ?? HeartbeatInterval,
+            ClaimTimeout = ClaimTimeout,
+        };
 
         return ClaimHeartbeat.Start(
             run,
             maxRuntime: null,
             services.GetRequiredService<IServiceScopeFactory>(),
             timeProvider,
-            Options.Create(new JobsOptions { HeartbeatInterval = HeartbeatInterval, ClaimTimeout = ClaimTimeout }),
+            Options.Create(options),
             jobCancellation,
             NullLogger.Instance);
     }

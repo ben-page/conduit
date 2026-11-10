@@ -32,6 +32,20 @@ public class JobsConfigurationShould
     }
 
     [TestMethod]
+    public void RejectAClaimTimeoutAboveADay()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs) => jobs.ClaimTimeout = TimeSpan.FromDays(1) + TimeSpan.FromTicks(1);
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert — the heartbeat bounds each renewal by the time left to the claim timeout, which a
+        // timer cannot hold past about 49 days, and a crashed host's run waits out the whole timeout
+        act.Should().Throw<InvalidOperationException>().WithMessage("*ClaimTimeout*at most one day*");
+    }
+
+    [TestMethod]
     public void RejectDuplicateScheduleNames()
     {
         // Arrange

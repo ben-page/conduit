@@ -579,11 +579,12 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            // Read as a schedule with no cursor yet, anchored to this host's start, rather than end the
-            // loop. The cost: that start skips its misfire policy (no RunImmediately catch-up, no Skip
-            // cursor move), and an interval schedule's phase restarts from the host start. A completed
-            // run still cannot re-run: every occurrence's write checks the real cursor (under the
-            // overlap lock, or from the schedule row for AllowOverlap()).
+            // Read as a schedule with no cursor yet, rather than end the loop: it waits for the first
+            // occurrence after this host's start. The cost: that start skips its misfire policy (no
+            // RunImmediately catch-up, no Skip cursor move). The timetable is unchanged, since cron is
+            // absolute and an interval aligns to the Unix epoch. A completed run still cannot re-run:
+            // every occurrence's write checks the real cursor (under the overlap lock, or from the
+            // schedule row for AllowOverlap()).
             LogCursorReadFailed(this.logger, scheduleName, exception);
             return null;
         }

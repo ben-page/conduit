@@ -163,9 +163,7 @@ public sealed class JobSchedule
     /// resolves DST transitions: an occurrence in a skipped local hour is not produced, and one in a
     /// repeated local hour is produced once. An interval's occurrences are
     /// <see cref="DateTimeOffset.UnixEpoch"/> plus whole multiples of the interval, so every host
-    /// computes the same ones whenever it started, with no cursor to read: anchored to each host's start
-    /// instead, replicas started seconds apart each ran every interval at a time of their own, and the
-    /// cursor and the overlap lock, keyed on the occurrence, let each of them run it.
+    /// computes the same ones whenever it started.
     /// </summary>
     /// <param name="after">The instant to search forward from, exclusive.</param>
     /// <returns>
@@ -195,8 +193,10 @@ public sealed class JobSchedule
             intoPeriod += every.Ticks;
         }
 
+        // Compared this way round because the other cannot overflow: a period before the epoch can start
+        // so far back that its distance to the last instant exceeds a tick count.
         var periodStart = after.UtcTicks - intoPeriod;
-        if (DateTimeOffset.MaxValue.UtcTicks - periodStart < every.Ticks)
+        if (periodStart > DateTimeOffset.MaxValue.UtcTicks - every.Ticks)
         {
             return null;
         }

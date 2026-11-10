@@ -372,15 +372,29 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   `JobStoreShould.NotCompleteARunAnotherHostHolds` / `.NotMarkTerminalARunAnotherHostHolds` /
   `.NotCountAnAttemptOnARunAnotherHostHolds`, `ClaimedJobExecutorShould.WriteNothingWhenTheClaimWasLost`.
 - **A heartbeat that cannot renew fences itself.** `ClaimHeartbeat` tracks the last renewal that
-  landed (`ClaimedAt`, then each successful beat's `now`); once a renewal fails at or after that plus
-  `ClaimTimeout`, the instant another host's sweep may re-claim, it sets `ClaimLost` and cancels the
-  job token (`LogClaimFenced`). Two details make "at" true rather than "a beat after": the wait before
-  a beat is clamped to the fence (the interval need not divide `ClaimTimeout`), and each renewal call
-  carries a token cancelled at the fence, so a hung connection counts as a failure there. A renewal
-  begun after the fence (the host woke late) carries no deadline: if it lands, nobody took the claim.
-  Fencing is time-based, not count-based, so a discontinuous test clock with a healthy store never
-  fences. Tests: `ClaimHeartbeatShould.FenceItselfAfterClaimTimeoutOfFailures` /
-  `.FenceItselfWhenARenewalOutlastsTheClaimTimeout` (support: `UnreachableJobStore`).
+  landed (`ClaimedAt`, then each successful beat's `now`); `fenceAt` is that plus `ClaimTimeout`, the
+  instant another host's sweep may re-claim. At `fenceAt` it sets `ClaimLost` and cancels the job token
+  (`FenceAsync`, `LogClaimFenced`). Three details make "at" true rather than "a renewal later": the wait
+  before a beat is clamped to the fence (the interval need not divide `ClaimTimeout`); each renewal
+  begun before the fence carries a token cancelled at it, so a hung connection counts as a failure
+  there; and after a failed renewal (`lastRenewalFailed`) reaching the fence fences outright, with no
+  further try, because a try begun at the fence has no deadline left and fails no sooner than the last
+  one did (renewals whose connect times out after 15 s would otherwise fence 15 s late). A renewal
+  begun after the fence with the last one landed (the host woke late: a GC or VM pause) carries no
+  deadline: if it lands, nobody took the claim. That is why a discontinuous test clock with a healthy
+  store never fences. **Stopping wins:** `DisposeAsync` cancels `stop`, which is linked into every
+  renewal's token, and a renewal that fails once stopping returns without fencing. The job has ended
+  and its outcome's guarded write decides; fencing there would drop a finished job's outcome as a 410.
+  `ClaimTimeout` is capped at one day (`ConduitBuilderExtensions.LongestClaimTimeout`): the deadline's
+  `CancellationTokenSource(TimeSpan, TimeProvider)` throws past about 49.7 days, which would fail every
+  renewal. Tests: `ClaimHeartbeatShould.FenceItselfAfterClaimTimeoutOfFailures` /
+  `.FenceAtTheClaimTimeoutWhenTheRenewalThatWouldDecideItHangs` /
+  `.FenceAtTheClaimTimeoutWhenTheIntervalDoesNotDivideIt` / `.FenceItselfWhenARenewalOutlastsTheClaimTimeout` /
+  `.AbandonARenewalInFlightWhenStopped` (support: `UnreachableJobStore`, whose hang ends after 30 s real
+  time so a regression fails under the tests' `[Timeout(30_000)]` rather than holding the run),
+  `JobsConfigurationShould.RejectAClaimTimeoutAboveADay`; the executor's two other 410 paths are pinned by
+  `ClaimedJobExecutorShould.LogTheClaimLostForARunTheHeartbeatGaveUp` and
+  `.WriteNothingWhenAFailedAttemptsClaimWasLost`.
 - **`ClaimedJobExecutor` is shared** by the scheduler and by event triggers. They reach a claimed run
   from different directions but owe the ledger identical bookkeeping. Neither blocks on the job: the
   scheduler would delay the next occurrence and the next sweep, and a trigger would hold the

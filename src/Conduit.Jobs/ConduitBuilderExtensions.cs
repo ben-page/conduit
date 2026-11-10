@@ -16,6 +16,8 @@ namespace Conduit.Jobs;
 /// </summary>
 public static class ConduitBuilderExtensions
 {
+    private static readonly TimeSpan LongestClaimTimeout = TimeSpan.FromDays(1);
+
     /// <summary>
     /// Adds recurring schedules and event-triggered jobs to the Conduit configuration. Whether jobs
     /// are durable is inferred from whether a persistence engine is registered — an engine means
@@ -50,6 +52,16 @@ public static class ConduitBuilderExtensions
                 $"JobsOptions.ClaimTimeout ({options.ClaimTimeout}) must be more than twice " +
                 $"HeartbeatInterval ({options.HeartbeatInterval}). A claim that can expire within two " +
                 "heartbeats will be taken from a host that is still running the job, executing it twice.");
+        }
+
+        // The heartbeat bounds each renewal by a timer set to the time left before the claim timeout, and
+        // a timer cannot hold much past 49 days: above that, every renewal would fail before it began.
+        if (options.ClaimTimeout > LongestClaimTimeout)
+        {
+            throw new InvalidOperationException(
+                $"JobsOptions.ClaimTimeout ({options.ClaimTimeout}) must be at most one day " +
+                $"({LongestClaimTimeout}). Another host recovers a crashed host's run only once its claim is " +
+                "that old.");
         }
 
         var duplicate = jobsBuilder.Schedules

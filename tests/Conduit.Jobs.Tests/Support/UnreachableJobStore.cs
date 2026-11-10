@@ -5,13 +5,18 @@ namespace Conduit.Jobs.Tests.Support;
 
 /// <summary>
 /// An <see cref="IJobStore"/> whose database cannot be reached, for a heartbeat to renew against: every
-/// <see cref="IJobStore.HeartbeatAsync"/> fails at once or, when built to hang, only once the call's own
-/// token is cancelled, as a connection that stopped answering does. Counts the renewals it was asked for.
+/// <see cref="IJobStore.HeartbeatAsync"/> fails, at once (a refused connection) or, from a chosen call on,
+/// only once the call's own token is cancelled (a connection that stopped answering). Counts the
+/// renewals it was asked for.
 /// </summary>
 public class UnreachableJobStore : DispatchProxy
 {
+    // A hang the caller never cancels still ends, so a test that regresses fails rather than holding the
+    // run open: well past any test's fake-clock work, and within its [Timeout].
+    private static readonly TimeSpan LongestHang = TimeSpan.FromSeconds(30);
+
     private int calls;
-    private bool hangs;
+    private int hangFromCall;
 
     /// <summary>How many renewals have been attempted.</summary>
     public int Calls => Volatile.Read(ref this.calls);
@@ -20,12 +25,15 @@ public class UnreachableJobStore : DispatchProxy
     public IJobStore Store => (IJobStore)(object)this;
 
     /// <summary>Builds a store whose renewals fail.</summary>
-    /// <param name="hangs">Fail each renewal only once its token is cancelled, rather than at once.</param>
+    /// <param name="hangFromCall">
+    /// The first renewal, counting from 1, that hangs until its token is cancelled instead of failing at
+    /// once. The default never hangs; 1 hangs every renewal.
+    /// </param>
     /// <returns>The store.</returns>
-    public static UnreachableJobStore Create(bool hangs = false)
+    public static UnreachableJobStore Create(int hangFromCall = int.MaxValue)
     {
         var store = (UnreachableJobStore)(object)Create<IJobStore, UnreachableJobStore>();
-        store.hangs = hangs;
+        store.hangFromCall = hangFromCall;
         return store;
     }
 
@@ -57,8 +65,8 @@ public class UnreachableJobStore : DispatchProxy
             throw new NotSupportedException($"Only the heartbeat reaches this store, not {targetMethod.Name}.");
         }
 
-        Interlocked.Increment(ref this.calls);
-        if (!this.hangs)
+        var call = Interlocked.Increment(ref this.calls);
+        if (call < this.hangFromCall)
         {
             throw new InvalidOperationException("the database cannot be reached, on purpose");
         }
@@ -68,7 +76,7 @@ public class UnreachableJobStore : DispatchProxy
 
     private static async Task<HeartbeatResult> HangAsync(CancellationToken cancellationToken)
     {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
-        throw new InvalidOperationException("An infinite wait ended without being cancelled.");
+        await Task.Delay(LongestHang, cancellationToken);
+        throw new InvalidOperationException("the database never answered, on purpose");
     }
 }

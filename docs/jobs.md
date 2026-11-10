@@ -114,7 +114,9 @@ An interval's occurrences are the whole multiples of the interval since the Unix
 still has the one timetable every replica shares; it just does not line up with the clock face. A
 host's first occurrence is therefore the next one after it starts, up to one interval away, not one
 interval after its start: anchored to each host's start instead, replicas that came up seconds apart
-would each run every interval at a time of their own.
+would each run every interval at a time of their own. The epoch was a Thursday, 00:00 UTC, so
+`Every(TimeSpan.FromDays(7))` runs every Thursday at 00:00 UTC, not weekly from a deploy; use
+`Cron(...)` for a weekly job on another day or at another time.
 
 Cron is parsed by [Cronos](https://github.com/HangfireIO/Cronos), chosen for DST correctness. On a
 spring-forward, a daily job whose local time does not exist that day runs once at the instant the
@@ -365,7 +367,8 @@ occurrence rather than losing it. Without renewal, "long job" and "dead host" ar
 observation and the recovery that makes the second safe executes the first twice.
 
 Startup rejects a `ClaimTimeout` that is not more than twice `HeartbeatInterval`, because that
-misconfiguration produces exactly the double execution renewal exists to prevent.
+misconfiguration produces exactly the double execution renewal exists to prevent, and one above a
+day.
 
 Two more things ride the same round-trip, since it is already happening: the renewal reports whether
 the claim is still held (so a host that lost it stops rather than finishing work it no longer owns),
@@ -376,8 +379,10 @@ A host that cannot renew at all — its database unreachable, its connection hun
 its claim was taken, so it **fences itself**: once `ClaimTimeout` has passed since its last renewal
 that landed, which is the moment another host may take the claim over, it cancels the job's
 `CancellationToken` and gives the run up. A renewal still outstanding at that moment counts as
-failed. A handler that honours its token stops before the other host's run is far along; one that
-ignores it runs on, but this host still records nothing for it.
+failed, and after a failed renewal reaching that moment is enough: the host does not try once more
+first. A handler that honours its token stops before the other host's run is far along; one that
+ignores it runs on, but this host still records nothing for it. A job that finishes while a renewal
+is still outstanding does not wait for it: the outcome is written under the claim, which decides.
 
 **An outcome is recorded only under the claim it ran with.** Completing a run, counting a failed
 attempt and marking it failed or cancelled each change the run row only while it is still claimed
@@ -881,7 +886,7 @@ conduit.AddJobs(jobs =>
 });
 ```
 
-`ClaimTimeout` must be more than twice `HeartbeatInterval`, or startup fails.
+`ClaimTimeout` must be more than twice `HeartbeatInterval` and at most one day, or startup fails.
 
 Every knob here but `ManageOnly` describes the durable path.
 [Without a database](#without-a-database) none of them apply — there are no tables to create, no
