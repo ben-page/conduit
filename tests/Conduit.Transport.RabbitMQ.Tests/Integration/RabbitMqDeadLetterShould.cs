@@ -375,6 +375,102 @@ public class RabbitMqDeadLetterShould : RabbitMqTestBase
         (await channel.BasicGetAsync(deadLetterQueueName, autoAck: true)).Should().BeNull();
     }
 
+    [TestMethod]
+    [Timeout(60_000)]
+    public async Task CaptureAFailedFireAndForgetCommand()
+    {
+        // Arrange — a routed [FireAndForget] command arrives with no reply address, so no caller hears that its
+        // handler threw: the dead-letter store must keep it
+        var handlerName = UniqueAppName("dlq-h");
+        var senderName = UniqueAppName("dlq-s");
+        var dbPath = CreateDeadLetterDatabasePath();
+
+        try
+        {
+            await using var handler = await CreateHostWithDeadLettersAsync(handlerName, dbPath);
+            var prefix = handler.TopologyPrefix!;
+            await using var sender = await CreateSenderHostAsync(
+                senderName,
+                prefix,
+                typeof(ThrowingFireAndForgetCommand).Namespace!,
+                "self");
+
+            var conduitOptions = handler.GetRequiredService<ConduitOptions>();
+            var handlerSpy = handler.GetRequiredService<SpyLog>();
+            var deadLetters = handler.GetRequiredService<IDeadLetters>();
+            var mediator = sender.GetRequiredService<IMediator>();
+
+            // Act — a requeued copy would run the handler again, so give it time to
+            await mediator.ExecuteAsync(new ThrowingFireAndForgetCommand("capture-me"));
+            await WaitForDeadLetterCountAsync(deadLetters, 1, TimeSpan.FromSeconds(10));
+            await Task.Delay(2000);
+
+            // Assert — handled once, captured once under the reference its failure was logged with
+            handlerSpy.Invocations.OfType<ThrowingFireAndForgetCommand>().Should().ContainSingle();
+            var page = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+            var entry = page.Entries.Should().ContainSingle().Subject;
+            entry.MessageType.Should().Be(typeof(ThrowingFireAndForgetCommand).FullName);
+            entry.Reference.Should().NotBeNullOrEmpty();
+            entry.SourceEndpoint.Should().Be("self");
+
+            // ...and acknowledged: not back on its queue, not rejected to the system's dead-letter queue
+            var factory = new ConnectionFactory { Uri = new Uri(ConnectionString!) };
+            await using var connection = await factory.CreateConnectionAsync();
+            await using var channel = await connection.CreateChannelAsync();
+            var commandQueueName = TopologyNaming.CreateSharedResourceName(
+                conduitOptions, typeof(ThrowingFireAndForgetCommand).FullName!, 255);
+            (await channel.MessageCountAsync(commandQueueName)).Should().Be(0);
+            (await channel.MessageCountAsync($"{prefix}-conduit-dead-letter")).Should().Be(0);
+        }
+        finally
+        {
+            DeleteIfExists(dbPath);
+        }
+    }
+
+    [TestMethod]
+    [Timeout(60_000)]
+    public async Task RouteAFailedFireAndForgetCommandToTheDeadLetterExchangeWithoutAConduitDlq()
+    {
+        // Arrange — no dead-letter store, so a fire-and-forget command whose handler throws is left to the broker
+        var handlerName = UniqueAppName("dlx-h");
+        var senderName = UniqueAppName("dlx-s");
+
+        await using var handler = await CreateHostAsync(handlerName);
+        await using var sender = await CreateSenderHostAsync(
+            senderName,
+            handler.TopologyPrefix!,
+            typeof(ThrowingFireAndForgetCommand).Namespace!,
+            "self");
+
+        var conduitOptions = handler.GetRequiredService<ConduitOptions>();
+        var handlerSpy = handler.GetRequiredService<SpyLog>();
+        var mediator = sender.GetRequiredService<IMediator>();
+        var deadLetterQueueName = $"{handler.TopologyPrefix}-conduit-dead-letter";
+
+        // Act — a requeued copy would come straight back, so give it time to
+        await mediator.ExecuteAsync(new ThrowingFireAndForgetCommand("dead-letter-me"));
+        await handlerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+        await Task.Delay(2000);
+
+        // Assert — the handler ran once: the command was rejected, neither acknowledged nor requeued
+        handlerSpy.Invocations.OfType<ThrowingFireAndForgetCommand>().Should().ContainSingle();
+
+        // ...and the dead-letter exchange routed it from its queue to the system's dead-letter queue, once
+        var factory = new ConnectionFactory { Uri = new Uri(ConnectionString!) };
+        await using var connection = await factory.CreateConnectionAsync();
+        await using var channel = await connection.CreateChannelAsync();
+
+        var deadLettered = await channel.BasicGetAsync(deadLetterQueueName, autoAck: true);
+        deadLettered.Should().NotBeNull();
+        deadLettered!.BasicProperties.Type.Should().Be(typeof(ThrowingFireAndForgetCommand).FullName);
+        Encoding.UTF8.GetString(deadLettered.Body.Span).Should().Contain("dead-letter-me");
+        GetHeaderString(deadLettered.BasicProperties.Headers, "x-first-death-reason").Should().Be("rejected");
+        GetHeaderString(deadLettered.BasicProperties.Headers, "x-first-death-queue").Should().Be(
+            TopologyNaming.CreateSharedResourceName(conduitOptions, typeof(ThrowingFireAndForgetCommand).FullName!, 255));
+        (await channel.BasicGetAsync(deadLetterQueueName, autoAck: true)).Should().BeNull();
+    }
+
     private static string? GetHeaderString(IDictionary<string, object?>? headers, string key) =>
         headers is not null && headers.TryGetValue(key, out var value) && value is byte[] bytes
             ? Encoding.UTF8.GetString(bytes)

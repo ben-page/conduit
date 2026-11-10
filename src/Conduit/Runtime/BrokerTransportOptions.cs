@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Conduit.Runtime;
 
 /// <summary>
@@ -9,6 +11,12 @@ namespace Conduit.Runtime;
 public abstract class BrokerTransportOptions
 {
     /// <summary>
+    /// The longest <see cref="ResponseTimeout"/>, the longest delay a timer accepts (about 49.7 days): a longer one
+    /// would fail every request with an <see cref="ArgumentOutOfRangeException"/> from the timer that bounds it.
+    /// </summary>
+    internal static readonly TimeSpan MaxResponseTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    /// <summary>
     /// Default concurrency budget for the transport's default consumer. Interpreted per broker
     /// (prefetch count for RabbitMQ/ActiveMQ, max concurrent calls for Azure Service Bus, polling
     /// parallelism for Amazon SQS). Defaults to 10.
@@ -18,6 +26,7 @@ public abstract class BrokerTransportOptions
     /// <summary>
     /// How long a request waits for its reply. A request with no reply within it fails with a
     /// <see cref="TimeoutException"/> naming the request, the endpoint and this timeout. Default 60 seconds.
+    /// Positive and finite (at most <c>49.17:02:47.294</c>): the transport's registration refuses anything else.
     /// </summary>
     public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
@@ -69,6 +78,26 @@ public abstract class BrokerTransportOptions
         }
 
         configure(pool);
+    }
+
+    /// <summary>
+    /// Throws unless <see cref="ResponseTimeout"/> is positive and finite. Zero or less (<see cref="Timeout.InfiniteTimeSpan"/>
+    /// among them) would fail every request at once or never time it out, and beyond <see cref="MaxResponseTimeout"/>
+    /// the timer bounding a request refuses the delay.
+    /// </summary>
+    /// <param name="endpointName">The endpoint the options are registered for, named in the exception.</param>
+    /// <exception cref="InvalidOperationException">The response timeout is out of range.</exception>
+    internal void ThrowIfResponseTimeoutOutOfRange(string endpointName)
+    {
+        if (this.ResponseTimeout <= TimeSpan.Zero || this.ResponseTimeout > MaxResponseTimeout)
+        {
+            throw new InvalidOperationException(string.Format(
+                CultureInfo.InvariantCulture,
+                "The transport for endpoint '{0}' has ResponseTimeout {1}: it must be positive and at most {2}.",
+                endpointName,
+                this.ResponseTimeout,
+                MaxResponseTimeout));
+        }
     }
 
     /// <summary>

@@ -60,6 +60,10 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(509, "MessageReturnedOnStop"),
             "Returned message '{Type}' to the broker undispatched: the transport is stopping");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogFireAndForgetCommandRefused =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(511, "FireAndForgetCommandRefused"),
+            "Acknowledged fire-and-forget command '{Type}', refused with {Code}: no caller waits for its answer");
+
     private readonly ReplyCorrelator replies = new(TimeProvider.System);
 
     // The ProcessInboundMessageAsync calls still running, and whether stop has stopped admitting new
@@ -594,7 +598,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             // reference the caller is given; the entry records it to find that line.
             if (result.Error is { } error && error.Code == ErrorCode.InternalError.Value)
             {
-                handlerException = new InvalidOperationException($"[{error.Code}] {error.Message}");
+                handlerException = AnswerAsException(error);
                 reference = error.Reference;
             }
 
@@ -657,13 +661,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
         catch (EventListenerException ex)
         {
-            if (await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, ex, reference: null))
-            {
-                return;
-            }
-
-            LogMessageAbandoned(this.Logger, messageType, ex);
-            await this.AbandonAsync(message);
+            await this.CaptureOrAbandonAsync(scope.ServiceProvider, message, messageType, ex, reference: null);
         }
         catch (ConduitException ex) when (ex is BadRequestException or ContractMismatchException)
         {
@@ -715,7 +713,11 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     }
 
     /// <summary>
-    /// Dispatches a fire-and-forget command: runs the handler, acknowledges, no reply sent.
+    /// Dispatches a fire-and-forget command (no reply address: a routed <c>[FireAndForget]</c> command, or a
+    /// dead-letter replay) and settles it by its result, which no caller receives: an unexpected failure
+    /// (<c>InternalError</c>) is captured, else abandoned, as a failed event listener is; a body its type cannot read
+    /// (<c>BadRequest</c>, <c>ContractMismatch</c>) is captured, else acknowledged, as an unreadable event is; any other
+    /// refusal is final, so it is acknowledged with a Warning.
     /// </summary>
     private async Task DispatchFireAndForgetCommandAsync(
         TMessage message,
@@ -724,26 +726,70 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         IWireMediator wireMediator,
         AsyncServiceScope scope)
     {
+        DispatchResult<object> result;
         try
         {
-            await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
-            await this.AcknowledgeAsync(message);
-            LogMessageCompleted(this.Logger, messageType, null);
+            result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
         }
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031
         {
             LogMessageProcessingError(this.Logger, messageType, ex);
+            await this.CaptureOrAbandonAsync(scope.ServiceProvider, message, messageType, ex, reference: null);
+            return;
+        }
 
-            if (await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, ex, reference: null))
+        if (result.Error is not { } error)
+        {
+            await this.AcknowledgeAsync(message);
+            LogMessageCompleted(this.Logger, messageType, null);
+        }
+        else if (error.Code == ErrorCode.InternalError.Value)
+        {
+            // The runtime logged the real exception under the reference; the entry records it to find that line
+            await this.CaptureOrAbandonAsync(scope.ServiceProvider, message, messageType, AnswerAsException(error), error.Reference);
+        }
+        else if (error.Code == ErrorCode.BadRequest.Value || error.Code == ErrorCode.ContractMismatch.Value)
+        {
+            if (!await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, AnswerAsException(error), reference: null))
             {
-                return;
+                await this.AcknowledgeAsync(message);
             }
-
-            await this.AbandonAsync(message);
+        }
+        else
+        {
+            LogFireAndForgetCommandRefused(this.Logger, messageType, error.Code, null);
+            await this.AcknowledgeAsync(message);
         }
     }
+
+    /// <summary>
+    /// Settles a dispatch that failed: captured when an <see cref="IInboundErrorInterceptor"/> takes it, otherwise
+    /// abandoned, so the broker redelivers or dead-letters it.
+    /// </summary>
+    private async Task CaptureOrAbandonAsync(
+        IServiceProvider services,
+        TMessage message,
+        string messageType,
+        Exception exception,
+        string? reference)
+    {
+        if (await this.TryCaptureErrorAsync(services, message, messageType, exception, reference))
+        {
+            return;
+        }
+
+        LogMessageAbandoned(this.Logger, messageType, exception);
+        await this.AbandonAsync(message);
+    }
+
+    /// <summary>
+    /// What a capture records for a failed result: the answer, not the exception behind it, which the runtime logged
+    /// under the answer's reference.
+    /// </summary>
+    private static InvalidOperationException AnswerAsException(DispatchError error) =>
+        new($"[{error.Code}] {error.Message}");
 
     /// <summary>
     /// Settles a message that failed before it could be dispatched (unreadable body, a scope or mediator

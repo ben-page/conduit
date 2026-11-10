@@ -195,7 +195,8 @@ transport receives raw message
   |  body -> JsonElement payload -> DispatchEnvelope(messageType, payload)
   5. dispatch by kind:
   |     IsRequest(message)              -> DispatchRequestAsync           (command/query w/ reply)
-  |     IsFireAndForgetCommand(...)     -> DispatchFireAndForgetCommandAsync (no reply)
+  |     IsFireAndForgetCommand(...)     -> DispatchFireAndForgetCommandAsync (no reply: its result
+  |                                        decides capture/abandon/acknowledge, see Transports -> Failed messages)
   |     else                            -> DispatchEventAsync             (event)
   6. MessageContext.RestoreContext(previous)   -- in finally
 ```

@@ -63,6 +63,6 @@ public static class EndpointBuilderExtensions
         builder.Services.AddSingleton<IHostedService>(
             serviceProvider => serviceProvider.GetRequiredKeyedService<ActiveMQTransport>(endpointName));
 
-        return builder.UseTransport<ActiveMQTransport>();
+        return builder.UseTransport<ActiveMQTransport>(options);
     }
 }

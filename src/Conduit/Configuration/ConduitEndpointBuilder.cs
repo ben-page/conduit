@@ -64,6 +64,22 @@ public sealed class ConduitEndpointBuilder
     }
 
     /// <summary>
+    /// Registers a DI-managed broker transport for this endpoint, as <see cref="UseTransport{TTransport}()"/>, once the
+    /// settings every broker transport shares are valid, so a misconfigured endpoint fails here rather than at its first
+    /// request. A broker transport's extension calls it last, after configuration and its <c>configure</c> callback
+    /// have set <paramref name="options"/>.
+    /// </summary>
+    /// <param name="options">This endpoint's transport options.</param>
+    /// <exception cref="InvalidOperationException"><see cref="BrokerTransportOptions.ResponseTimeout"/> is not positive
+    /// and finite.</exception>
+    public ConduitEndpointBuilder UseTransport<TTransport>(BrokerTransportOptions options) where TTransport : class, IConduitTransport
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        options.ThrowIfResponseTimeoutOutOfRange(this.EndpointName);
+        return this.UseTransport<TTransport>();
+    }
+
+    /// <summary>
     /// Registers a transport instance for this endpoint. The instance is registered
     /// as a keyed singleton in DI. Useful for simple transports and test spies.
     /// </summary>

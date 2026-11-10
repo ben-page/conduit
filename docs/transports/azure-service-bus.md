@@ -163,7 +163,7 @@ A request with no reply within `ResponseTimeout` fails with a `TimeoutException`
 
 A reply nobody will read does not stay in the reply queue. The sender reads its reply as soon as it arrives or never (the request timed out, or the sender stopped or crashed), and nothing else accepts a request's session, so each reply carries a time to live of twice the replying endpoint's `ResponseTimeout`, and the reply queue is created with a default message time to live of twice the requesting endpoint's. Service Bus discards a reply when either passes, where it would otherwise stay until the queue reached its size quota and every reply failed. A reply queue that already exists keeps the settings it was created with; the reply's own time to live still applies.
 
-The time to live is never shorter than one second, the least Service Bus accepts, so a `ResponseTimeout` under 500 ms still gives one second. A `ResponseTimeout` with no finite double (`Timeout.InfiniteTimeSpan`, zero or less, or more than half of `TimeSpan.MaxValue`) sets no time to live at all, on the reply or on the queue: such replies never expire.
+The time to live is never shorter than one second, the least Service Bus accepts, so a `ResponseTimeout` under 500 ms still gives one second. It is always finite: `UseAzureServiceBus` refuses a `ResponseTimeout` that is not positive and finite (see [Request timeouts](index.md#request-timeouts)).
 
 A handler still running when its host stops replies and completes its message before the transport closes, as on every broker (see [Stopping a host with work in flight](index.md#stopping-a-host-with-work-in-flight)): the transport replies and settles without the processor's cancellation token, which stopping cancels.
 

@@ -281,6 +281,28 @@ publish's confirm, which a broker under a memory or disk alarm withholds). It is
 `OperationCanceledException`: only the caller's own cancellation token produces one. A request still
 waiting when the transport stops fails with an `InvalidOperationException`.
 
+`ResponseTimeout` must be positive and finite: zero, a negative value, `Timeout.InfiniteTimeSpan` and
+anything longer than about 49.7 days (the longest delay a .NET timer takes) fail the endpoint's
+registration with an `InvalidOperationException` naming the endpoint, rather than every request later.
+
+## Failed messages
+
+A broker transport settles each message it receives once, by what became of its dispatch. The
+transport never retries a failed message itself: retry happens inside the dispatch, before the transport
+sees the failure ([dispatch retry](../dispatch-retry.md), or a [pipeline behavior](../pipeline-behaviors.md)).
+
+| What happened | With a [dead-letter queue](../dead-letter-queue.md) | Without one |
+|---|---|---|
+| Handled | Acknowledged | Acknowledged |
+| A request (it carries a reply address) failed or was refused | The failure is its reply; an unexpected failure (`InternalError`) is also captured | Acknowledged after the reply |
+| An event listener threw, or a `[FireAndForget]` command's handler failed unexpectedly (`InternalError`): no caller is waiting to hear it | Captured, then acknowledged | Abandoned, so the broker's own dead-lettering applies: [RabbitMQ](rabbitmq.md#failed-messages) rejects it to the system's dead-letter queue, [ActiveMQ](activemq.md#failed-messages) counts a delivery attempt and moves it to the dead-letter address after `max-delivery-attempts`, [Amazon SQS](amazon-sqs.md#failed-messages) delivers it again until the redrive policy moves it to the queue's dead-letter queue, and Azure Service Bus delivers it again until the entity's maximum delivery count dead-letters it |
+| A message this host cannot read: not JSON, an unknown type, or a body its type cannot read (`BadRequest`, `ContractMismatch`) | Captured, then acknowledged | Acknowledged: a redelivery would fail the same way |
+| An event or `[FireAndForget]` command was refused (the type filter's `Forbidden`, or any other `ConduitException`) | Acknowledged, not captured | Acknowledged: a redelivery would be refused again |
+
+A refused `[FireAndForget]` command is logged once at Warning (`FireAndForgetCommandRefused`), naming its type
+and the refusal's code, since nothing else will report it. A dead-letter replay of a command or query arrives
+without a reply address too, so it is settled as a `[FireAndForget]` command is.
+
 ## Stopping a host with work in flight
 
 When the host stops (SIGTERM, `StopAsync`), a broker transport finishes the messages it is already

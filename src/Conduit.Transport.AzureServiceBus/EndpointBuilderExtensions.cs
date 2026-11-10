@@ -63,6 +63,6 @@ public static class EndpointBuilderExtensions
         builder.Services.AddSingleton<IHostedService>(
             serviceProvider => serviceProvider.GetRequiredKeyedService<AzureServiceBusTransport>(endpointName));
 
-        return builder.UseTransport<AzureServiceBusTransport>();
+        return builder.UseTransport<AzureServiceBusTransport>(options);
     }
 }

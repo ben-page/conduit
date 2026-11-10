@@ -63,7 +63,7 @@ public static class EndpointBuilderExtensions
         builder.Services.AddSingleton<IHostedService>(
             serviceProvider => serviceProvider.GetRequiredKeyedService<AmazonSqsTransport>(endpointName));
 
-        return builder.UseTransport<AmazonSqsTransport>();
+        return builder.UseTransport<AmazonSqsTransport>(options);
     }
 
     /// <summary>

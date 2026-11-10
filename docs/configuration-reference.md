@@ -252,7 +252,7 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 |---|---|---|
 | `ConnectionString` | `string` | Required (or pass it to `UseRabbitMQ(connectionString)`) |
 | `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00` |
+| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration |
 | `Pools` | array | See [Pool merging](#pool-merging) |
 
 **ActiveMQ** (`endpoint.UseActiveMQ()`)
@@ -263,7 +263,7 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 | `Username` | `string` | Optional, SASL PLAIN |
 | `Password` | `string` | Optional, SASL PLAIN |
 | `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00` |
+| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration |
 | `Pools` | array | See [Pool merging](#pool-merging) |
 
 **Azure Service Bus** (`endpoint.UseAzureServiceBus()`)
@@ -273,7 +273,7 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 | `ConnectionString` | `string` | Required (or pass it to `UseAzureServiceBus(connectionString)`) |
 | `AdminConnectionString` | `string` | Optional; defaults to `ConnectionString`. Needed for the ASB Emulator (separate AMQP/HTTP ports) |
 | `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00` |
+| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration |
 | `Pools` | array | See [Pool merging](#pool-merging) |
 
 **Amazon SQS** (`endpoint.UseAmazonSqs()`)
@@ -286,7 +286,7 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 | `Credentials:SessionToken` | `string` | Optional; presence selects `SessionAWSCredentials` over `BasicAWSCredentials` |
 | `ServiceUri` | `Uri` | For LocalStack/local development |
 | `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; must be `<= VisibilityTimeoutSeconds` |
+| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration; must be `<= VisibilityTimeoutSeconds` |
 | `VisibilityTimeoutSeconds` | `int` | Default `60` |
 | `MaxReceiveCount` | `int` | Default `5`; 1 to 1000. Deliveries before SQS moves a message to its queue's dead-letter queue |
 | `RawMessageDelivery` | `bool` | Default `true` |

@@ -64,9 +64,11 @@ What counts is what could not be handled, never what was refused. The last colum
 | A request's handler fails **unexpectedly** (the caller is answered `InternalError`) | Yes, with the answer's support reference in `Reference` | Acknowledged: the caller already has its error reply |
 | A request is **refused**: the handler (or a gate, or a translator) throws a `ConduitException` — `NotFoundException` (404), `ConflictException` (409), `PreconditionFailedException` (412), `ForbiddenException`, `BadRequestException`, ... | No: a refusal is the handler's answer, already delivered to the caller, and a replay would be refused again | Acknowledged |
 | An event is **refused by a gate**: the type filter's `ForbiddenException`, or another gate's refusal that is not a bad request | No: a replay would be refused again | Acknowledged |
-| A `[FireAndForget]` command's handler fails | No — a known limitation | Logged at Error and acknowledged |
+| A `[FireAndForget]` command's handler fails **unexpectedly** (its result is `InternalError`): no caller is waiting to hear it | Yes, with its support reference in `Reference` | Abandoned, as an event whose listener throws is |
+| A `[FireAndForget]` command **its type cannot read**: valid JSON its type cannot read (`BadRequestException`, `ContractMismatchException`) | Yes | Acknowledged: a redelivery would fail the same way |
+| A `[FireAndForget]` command is **refused**: the handler (or a gate, or a translator) throws a `ConduitException` — the type filter's `ForbiddenException`, `NotFoundException`, `ConflictException`, ... | No: a replay would be refused again | Acknowledged, logged once at Warning (`FireAndForgetCommandRefused`, naming the type and the code), since no caller is waiting for the refusal |
 
-For a request that failed unexpectedly, the runtime logs the real exception under a support reference and answers the caller with that reference rather than the exception. The entry's `ExceptionType`/`ExceptionMessage` therefore name the answer (`[InternalError] An unexpected error occurred.`), and its `Reference` is the value the caller saw and the logged exception carries — search your logs for it.
+For a request or a `[FireAndForget]` command that failed unexpectedly, the runtime logs the real exception under a support reference, and answers a request's caller with that reference rather than the exception. The entry's `ExceptionType`/`ExceptionMessage` therefore name the answer (`[InternalError] An unexpected error occurred.`), and its `Reference` is the value the caller saw and the logged exception carries — search your logs for it.
 
 ### Browse
 
@@ -159,7 +161,7 @@ Bulk replay processes messages sequentially — the broker handles distribution 
 4. Call `RedeliverAsync` on the transport with the entry's `MessageId`, `CausationId` and `ConversationId` — it publishes directly to the service's inbound queue, those ids in the broker's native properties (an entry missing any of the three, captured outside a context, is sent with a fresh message id)
 5. Remove the entry from the dead letter store
 
-The message enters the normal inbound processing path. Any available instance of the handling service picks it up. A replayed **event** whose listener fails again is captured as a new dead letter entry through the normal flow, under the same ids. A replayed **command or query** arrives without a reply address, so it runs as a `[FireAndForget]` command does: its result goes nowhere, and a handler that fails again is logged and acknowledged, not captured — the same known limitation (see [Limitations](#limitations)).
+The message enters the normal inbound processing path. Any available instance of the handling service picks it up. A replayed **event** whose listener fails again is captured as a new dead letter entry through the normal flow, under the same ids. A replayed **command or query** arrives without a reply address, so it is settled as a `[FireAndForget]` command is: its result reaches no one, a handler that fails unexpectedly again is captured as a new entry under the same ids, and a refusal is acknowledged.
 
 ### Interaction with inbox
 
@@ -251,7 +253,6 @@ Note that the broker's own DLQ still functions as an infrastructure safety net: 
 
 - **Requires a database.** The DLQ shares the durability database. A stateless service with no database can't use it (use broker-native redelivery/DLQ at the infrastructure level instead).
 - **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response, and nothing receives it. `ReplayResult.Success` says the message was re-published, not that it was handled.
-- **Fire-and-forget failures are not captured.** A `[FireAndForget]` command whose handler fails, and a replayed command or query that fails again, are logged at Error and acknowledged: the transport does not dead-letter them.
 - **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and a replay carries the original one (see [Interaction with inbox](#interaction-with-inbox)).
-- **Refusals are not captured.** A request answered with a `ConduitException` (404, 409, 412, ...) is final: the caller has its answer, and nothing is stored to replay.
+- **Refusals are not captured.** A request answered with a `ConduitException` (404, 409, 412, ...) is final: the caller has its answer, and nothing is stored to replay. A refused `[FireAndForget]` command is just as final, although no one hears the refusal but the log.
 - **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.

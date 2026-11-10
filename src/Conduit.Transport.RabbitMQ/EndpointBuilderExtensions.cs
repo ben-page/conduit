@@ -23,7 +23,10 @@ public static class EndpointBuilderExtensions
     /// </param>
     /// <param name="configure">Optional callback to configure RabbitMQ-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    /// <exception cref="InvalidOperationException">Neither configuration nor code supplied a connection string.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Neither configuration nor code supplied a connection string, or <see cref="BrokerTransportOptions.ResponseTimeout"/>
+    /// is not positive and finite.
+    /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <see cref="BrokerTransportOptions.DefaultConcurrency"/> or a pool's <see cref="ReceiverPoolOptions.Concurrency"/>
     /// is outside 1..65535.
@@ -77,6 +80,6 @@ public static class EndpointBuilderExtensions
         builder.Services.AddSingleton<IHostedService>(
             serviceProvider => serviceProvider.GetRequiredKeyedService<RabbitMQTransport>(endpointName));
 
-        return builder.UseTransport<RabbitMQTransport>();
+        return builder.UseTransport<RabbitMQTransport>(options);
     }
 }

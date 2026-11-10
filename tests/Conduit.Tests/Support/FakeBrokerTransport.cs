@@ -23,8 +23,9 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     public FakeBrokerTransport(
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
-        FakeBrokerOptions? options = null)
-        : base(options ?? new FakeBrokerOptions(), conduitOptions, serviceProvider, NullLogger.Instance)
+        FakeBrokerOptions? options = null,
+        ILogger? logger = null)
+        : base(options ?? new FakeBrokerOptions(), conduitOptions, serviceProvider, logger ?? NullLogger.Instance)
     {
     }
 
