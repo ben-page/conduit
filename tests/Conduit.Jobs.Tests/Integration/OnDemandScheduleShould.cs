@@ -115,8 +115,12 @@ public class OnDemandScheduleShould
             jobs => DeclareOnDemand(jobs, allowOverlap), spy, timeProvider, database.ConnectionString);
         var jobsApi = host.GetRequiredService<IJobs>();
         await jobsApi.TriggerNowAsync(OnDemand, CancellationToken.None);
-        await FakeClock.AdvanceUntilAsync(
-            timeProvider, TimeSpan.FromSeconds(30), () => Task.FromResult(spy.StartedCount > 0));
+        await spy.WaitForStartedAsync(1);
+
+        // A moment later, so the second trigger is a second request: a manual run's key is its instant, and two
+        // triggers in the same tick are one run (the second returns the first's key). The test used to step the
+        // clock until the run started, which moved it only when the start was slower than its first check.
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
 
         // Act
         var act = () => jobsApi.TriggerNowAsync(OnDemand, CancellationToken.None);

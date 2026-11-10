@@ -160,12 +160,12 @@ public class JobsApiShould
             database.ConnectionString);
         var jobsApi = host.GetRequiredService<IJobs>();
 
-        // Act
+        // Act — past the 02:00 occurrence and short of the next, then wait without moving the clock again: the
+        // job fails at once. Stepping the clock until a failure showed up let a slow host reach 02:05 first, and the
+        // second occurrence failed too
         timeProvider.Advance(TimeSpan.FromMinutes(5));
-        await FakeClock.AdvanceUntilAsync(
-            timeProvider,
-            TimeSpan.FromMinutes(1),
-            async () => (await jobsApi.GetFailedAsync(JobFilter.All, CancellationToken.None)).Count > 0);
+        await JobsDatabaseProbe.WaitForTerminalAsync(
+            database, DurableJobScheduler.BuildJobKey("warm", new DateTimeOffset(2026, 8, 25, 2, 0, 0, TimeSpan.Zero)));
 
         // Assert
         var failed = await jobsApi.GetFailedAsync(JobFilter.All, CancellationToken.None);
