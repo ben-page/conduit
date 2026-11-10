@@ -60,7 +60,7 @@ What counts is what could not be handled, never what was refused. The last colum
 |---|---|---|
 | The message fails **before dispatch**: its body is not JSON, or its DI scope or the mediator cannot be built | Yes | Acknowledged, logged at Error: it never reached a handler, and a redelivery would fail the same way, forever |
 | An **event this host cannot read**: valid JSON its type cannot read (a wrong-typed field, a JSON `null`), or a type it does not know (`BadRequestException`, `ContractMismatchException`) | Yes | Acknowledged, logged at Warning as a refused event, for the same reason |
-| An event listener throws | Yes | Abandoned: RabbitMQ rejects it to the system's [dead-letter exchange](transports/rabbitmq.md#failed-messages); the other brokers redeliver it per their own configuration |
+| An event listener throws | Yes | Abandoned: RabbitMQ rejects it to the system's [dead-letter exchange](transports/rabbitmq.md#failed-messages); Amazon SQS delivers it again a visibility timeout later, and moves it to the queue's [dead-letter queue](transports/amazon-sqs.md#failed-messages) after `MaxReceiveCount` deliveries; the other brokers redeliver it per their own configuration |
 | A request's handler fails **unexpectedly** (the caller is answered `InternalError`) | Yes, with the answer's support reference in `Reference` | Acknowledged: the caller already has its error reply |
 | A request is **refused**: the handler (or a gate, or a translator) throws a `ConduitException` — `NotFoundException` (404), `ConflictException` (409), `PreconditionFailedException` (412), `ForbiddenException`, `BadRequestException`, ... | No: a refusal is the handler's answer, already delivered to the caller, and a replay would be refused again | Acknowledged |
 | An event is **refused by a gate**: the type filter's `ForbiddenException`, or another gate's refusal that is not a bad request | No: a replay would be refused again | Acknowledged |
@@ -245,7 +245,7 @@ The DLQ has a single backing store: the Conduit database. We evaluated also wrap
 
 This isn't a permanent exclusion — broker-native capture could be added later as an additive per-transport option if a strong use case appears (e.g. avoiding a database dependency entirely). Today the cost/inconsistency isn't worth it.
 
-Note that the broker's own DLQ still functions as an infrastructure safety net: if you don't enable Conduit's DLQ, failed messages are abandoned and the broker redelivers (and dead-letters) per its own configuration — Conduit just doesn't browse or replay through it. RabbitMQ has no redelivery limit on a classic queue, so its transport dead-letters an abandoned message at once, to the `{system}-dead-letter` exchange and queue it declares (see [Failed messages](transports/rabbitmq.md#failed-messages)).
+Note that the broker's own DLQ still functions as an infrastructure safety net: if you don't enable Conduit's DLQ, failed messages are abandoned and the broker redelivers (and dead-letters) per its own configuration — Conduit just doesn't browse or replay through it. RabbitMQ has no redelivery limit on a classic queue, so its transport dead-letters an abandoned message at once, to the `{system}-dead-letter` exchange and queue it declares (see [Failed messages](transports/rabbitmq.md#failed-messages)). SQS dead-letters only through a queue's redrive policy, so its transport gives every queue it consumes a dead-letter queue, `{queue}-dlq`, and a redrive policy to it (see [Failed messages](transports/amazon-sqs.md#failed-messages)).
 
 ## Limitations
 

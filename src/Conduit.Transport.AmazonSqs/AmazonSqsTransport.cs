@@ -32,6 +32,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     private readonly List<Task> inboundPollers = [];
     private readonly List<SemaphoreSlim> pollerSlots = [];
     private Task? replyPoller;
+    private bool replyQueueDeleted;
     private bool disposed;
 
     private AmazonSimpleNotificationServiceClient? snsClient;
@@ -62,6 +63,22 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(109, "PollingError"),
             "Error polling SQS queue '{QueueAddress}'");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogInboundMessageFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(110, "InboundMessageFailed"),
+            "Processing SQS message '{SqsMessageId}' from queue '{QueueAddress}' failed outside its dispatch; " +
+            "SQS delivers it again once its visibility timeout lapses");
+
+    private static readonly Action<ILogger, string, Exception?> LogLateReply =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(111, "LateReply"),
+            "Deleted a reply nobody awaits (correlation id '{CorrelationId}'): its request timed out or was cancelled");
+
+    private static readonly Action<ILogger, string, Exception?> LogReplyQueueNotDeleted =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(112, "ReplyQueueNotDeleted"),
+            "Could not delete reply queue '{QueueAddress}'; it stays behind, empty");
+
+    // How long disposal tries to delete a reply queue that stop did not
+    private static readonly TimeSpan ReplyQueueDeleteTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// Creates a new Amazon SQS (+SNS) transport.
     /// </summary>
@@ -79,6 +96,11 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
     /// <inheritdoc/>
     protected override string TransportName => "sqs";
+
+    // This instance's reply queue, under an id of its own: each instance polls its own reply queue, so a
+    // reply reaches the instance that sent the request
+    private string ReplyQueueName =>
+        field ??= AmazonSqsTopologyManager.ReplyQueueName(this.ConduitOptions, Guid.NewGuid().ToString("N"));
 
     // -----------------------------------------------------------------------
     // Lifecycle
@@ -100,12 +122,18 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         var topologyManager = new AmazonSqsTopologyManager(
             this.snsClient!, this.sqsClient!, this.options, this.ConduitOptions);
 
-        await topologyManager.EnsureTopologyAsync(
-            eventTypeNames, commandQueryTypeNames, cancellationToken);
+        try
+        {
+            await topologyManager.EnsureTopologyAsync(
+                this.ReplyQueueName, eventTypeNames, commandQueryTypeNames, cancellationToken);
+        }
+        finally
+        {
+            this.KeepReplyQueueAddress(topologyManager);
+        }
 
         this.topicArn = topologyManager.TopicArn;
         this.appQueueAddress = topologyManager.AppQueueAddress;
-        this.replyQueueAddress = topologyManager.ReplyQueueAddress;
         this.poolQueueAddresses = new Dictionary<string, string>(
             topologyManager.PoolQueueAddresses, StringComparer.Ordinal);
     }
@@ -116,13 +144,29 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         var topologyManager = new AmazonSqsTopologyManager(
             this.snsClient!, this.sqsClient!, this.options, this.ConduitOptions);
 
-        await topologyManager.EnsureOutboundTopologyAsync(cancellationToken);
+        try
+        {
+            await topologyManager.EnsureOutboundTopologyAsync(this.ReplyQueueName, cancellationToken);
+        }
+        finally
+        {
+            this.KeepReplyQueueAddress(topologyManager);
+        }
 
         this.topicArn = topologyManager.TopicArn;
-        this.replyQueueAddress = topologyManager.ReplyQueueAddress;
 
         // Start reply queue consumer for request/response
         this.replyPoller = this.PollReplyQueueAsync(this.replyPolling.Token);
+    }
+
+    // Kept even when a later step of the start failed, so disposal deletes the reply queue the start created:
+    // a host that fails to start on every restart would otherwise leave one behind each time
+    private void KeepReplyQueueAddress(AmazonSqsTopologyManager topologyManager)
+    {
+        if (topologyManager.ReplyQueueAddress.Length > 0)
+        {
+            this.replyQueueAddress = topologyManager.ReplyQueueAddress;
+        }
     }
 
     /// <inheritdoc />
@@ -156,8 +200,8 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         LogTransportStopping(this.Logger, null);
 
         // Stop polling the app and pool queues. A handler already started keeps its slot and the
-        // client it deletes its message with; a message received but not yet started stays
-        // invisible until its visibility timeout lapses, then is redelivered.
+        // client it deletes its message with; a message received but not yet started is made visible
+        // again at once, for another instance to take.
         await this.inboundPolling.CancelAsync();
         await Task.WhenAll(this.inboundPollers)
             .WaitAsync(cancellationToken)
@@ -175,6 +219,10 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
+
+        // Nothing reads the reply queue now. Best effort within the shutdown deadline: DisposeAsync
+        // tries again, and logs a failure.
+        _ = await this.DeleteReplyQueueAsync(cancellationToken);
     }
 
     /// <inheritdoc />
@@ -194,6 +242,15 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         await this.replyPolling.CancelAsync();
         this.inboundPolling.Dispose();
         this.replyPolling.Dispose();
+
+        // Deleted on stop, unless stop never ran or ran out of time
+        using (var timeout = new CancellationTokenSource(ReplyQueueDeleteTimeout))
+        {
+            if (await this.DeleteReplyQueueAsync(timeout.Token) is { } failure)
+            {
+                LogReplyQueueNotDeleted(this.Logger, this.replyQueueAddress!, failure);
+            }
+        }
 
         foreach (var slots in this.pollerSlots)
         {
@@ -282,12 +339,21 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     }
 
     /// <inheritdoc />
-    protected override Task AbandonAsync(AmazonSqsInboundMessage message)
-    {
-        // Do nothing -- let visibility timeout expire for redelivery.
-        // SQS native maxReceiveCount + redrive policy handles dead-lettering.
-        return Task.CompletedTask;
-    }
+    /// <remarks>
+    /// Leaves the message invisible until its visibility timeout lapses: SQS then delivers it again,
+    /// counting the delivery, and once it has delivered it <see cref="AmazonSqsOptions.MaxReceiveCount"/>
+    /// times the queue's redrive policy moves it to the queue's dead-letter queue. So a failure is retried
+    /// a visibility timeout apart, never in a loop.
+    /// </remarks>
+    protected override Task AbandonAsync(AmazonSqsInboundMessage message) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Makes the message visible again at once, rather than when its visibility timeout lapses: nothing
+    /// about it failed, and another instance can take it now. SQS counts the delivery all the same.
+    /// </remarks>
+    protected override Task RequeueAsync(AmazonSqsInboundMessage message) =>
+        this.MakeVisibleAsync(message.SourceQueue, [message.Message]);
 
     // -----------------------------------------------------------------------
     // Outbound primitives
@@ -425,19 +491,39 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                     },
                     cancellationToken);
 
-                foreach (var sqsMessage in response.Messages ?? [])
+                var messages = response.Messages ?? [];
+                for (var index = 0; index < messages.Count; index++)
                 {
-                    await semaphore.WaitAsync(cancellationToken);
+                    try
+                    {
+                        await semaphore.WaitAsync(cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Receiving stopped with the rest of the batch received but not started: hand it
+                        // back visible at once, as the drain does a message delivered after it began
+                        await this.MakeVisibleAsync(queueAddress, messages.Skip(index));
+                        throw;
+                    }
 
                     // Not awaited: the slot bounds concurrency, and the base class tracks the call so
                     // stop can drain it. No token: a message that holds a slot always runs, or is
                     // handed back by the base class once stop is draining.
+                    var sqsMessage = messages[index];
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             var inboundMessage = new AmazonSqsInboundMessage(sqsMessage, queueAddress);
                             await this.ProcessInboundMessageAsync(inboundMessage);
+                        }
+#pragma warning disable CA1031
+                        catch (Exception exception)
+#pragma warning restore CA1031
+                        {
+                            // What escapes the dispatch (a delete that failed) leaves the message
+                            // unsettled, and nothing else observes this task
+                            LogInboundMessageFailed(this.Logger, sqsMessage.MessageId, queueAddress, exception);
                         }
                         finally
                         {
@@ -480,6 +566,71 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         }
     }
 
+    /// <summary>
+    /// Makes received messages visible again at once, for another instance to take. Best effort: one it
+    /// fails for reappears when its visibility timeout lapses.
+    /// </summary>
+    private async Task MakeVisibleAsync(string queueAddress, IEnumerable<Message> messages)
+    {
+        var entries = messages
+            .Select((message, index) => new ChangeMessageVisibilityBatchRequestEntry
+            {
+                Id = index.ToString(CultureInfo.InvariantCulture),
+                ReceiptHandle = message.ReceiptHandle,
+                VisibilityTimeout = 0,
+            })
+            .ToList();
+
+        if (entries.Count == 0 || this.sqsClient is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await this.sqsClient.ChangeMessageVisibilityBatchAsync(
+                new ChangeMessageVisibilityBatchRequest { QueueUrl = queueAddress, Entries = entries },
+                CancellationToken.None);
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Visible again when the visibility timeout lapses
+        }
+    }
+
+    /// <summary>
+    /// Deletes this instance's reply queue, once nothing reads it: SQS has no auto-delete, so every
+    /// instance that stopped would leave one behind. Returns why it could not, or null.
+    /// </summary>
+    private async Task<Exception?> DeleteReplyQueueAsync(CancellationToken cancellationToken)
+    {
+        if (this.replyQueueDeleted || this.sqsClient is null || this.replyQueueAddress is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            await this.sqsClient.DeleteQueueAsync(
+                new DeleteQueueRequest { QueueUrl = this.replyQueueAddress }, cancellationToken);
+        }
+        catch (QueueDoesNotExistException)
+        {
+            // Already gone
+        }
+#pragma warning disable CA1031
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            return exception;
+        }
+
+        this.replyQueueDeleted = true;
+        return null;
+    }
+
     private async Task PollReplyQueueAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -504,9 +655,11 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                             ? attr.StringValue
                             : null;
 
-                    if (!string.IsNullOrEmpty(correlationId))
+                    // The queue is this instance's, so a reply nobody awaits is a late one to its own request
+                    if (!string.IsNullOrEmpty(correlationId)
+                        && !this.CompleteReply(correlationId, Encoding.UTF8.GetBytes(sqsMessage.Body)))
                     {
-                        this.CompleteReply(correlationId, Encoding.UTF8.GetBytes(sqsMessage.Body));
+                        LogLateReply(this.Logger, correlationId, null);
                     }
 
                     // Always delete reply messages after processing
@@ -630,6 +783,16 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 "SNS filter policies on message attributes require raw message delivery. " +
                 "Without it, SNS wraps the message in a JSON envelope and attributes are " +
                 "embedded in the body rather than exposed as SQS message attributes.");
+        }
+
+        if (this.options.MaxReceiveCount is < 1 or > 1000)
+        {
+            throw new InvalidOperationException(
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "MaxReceiveCount ({0}) must be between 1 and 1000, the range SQS accepts for the " +
+                    "maxReceiveCount of a redrive policy.",
+                    this.options.MaxReceiveCount));
         }
 
         if (this.options.VisibilityTimeoutSeconds < this.options.ResponseTimeout.TotalSeconds)

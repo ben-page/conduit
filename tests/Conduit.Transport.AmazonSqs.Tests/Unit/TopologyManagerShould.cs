@@ -150,7 +150,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
 
         // Act
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);
@@ -158,9 +158,9 @@ public class TopologyManagerShould
         var replyQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 80);
 
         // Assert — developer prefix appears in all resource names
-        topicName.Should().Be("bpage-conduit");
-        appQueueName.Should().Be("bpage-conduit-orders");
-        replyQueueName.Should().Be("bpage-conduit-orders-replies");
+        topicName.Should().Be("alice-conduit");
+        appQueueName.Should().Be("alice-conduit-orders");
+        replyQueueName.Should().Be("alice-conduit-orders-replies");
     }
 
     [TestMethod]
@@ -346,5 +346,39 @@ public class TopologyManagerShould
         // Assert — verify the serialized JSON contains the type array
         filterPolicy.Should().Contain("\"Type\"");
         filterPolicy.Should().Contain("\"Shipping.Events.OrderShipped\"");
+    }
+
+    [TestMethod]
+    public void RefuseAFilterPolicyOverTheSnsLimit()
+    {
+        // Arrange — SNS allows at most 150 values in one filter policy, and each type is one value
+        var atTheLimit = Enumerable.Range(0, 150).Select(index => $"Orders.Events.Event{index}").ToList();
+        var overTheLimit = Enumerable.Range(0, 151).Select(index => $"Orders.Events.Event{index}").ToList();
+
+        // Act
+        var filterPolicy = AmazonSqsTopologyManager.FilterPolicy(atTheLimit, "the queue of application 'orders'");
+        var refuse = () => AmazonSqsTopologyManager.FilterPolicy(overTheLimit, "the queue of application 'orders'");
+
+        // Assert — 150 types make a policy; 151 are refused before AWS is asked, naming the queue and the count
+        JsonSerializer.Deserialize<Dictionary<string, string[]>>(filterPolicy)!["Type"].Should().HaveCount(150);
+        refuse.Should().Throw<InvalidOperationException>()
+            .WithMessage("*the queue of application 'orders'*151*150*");
+    }
+
+    [TestMethod]
+    public void NameEachDeadLetterQueueAfterItsQueueWithinTheSqsLimit()
+    {
+        // Arrange — a short application name, and one long enough that its queue name is cut and hashed
+        var shortOptions = CreateConduitOptions(applicationName: "orders");
+        var longOptions = CreateConduitOptions(applicationName: new string('a', 90));
+
+        // Act
+        var shortQueueName = AmazonSqsTopologyManager.AppQueueName(shortOptions);
+        var longQueueName = AmazonSqsTopologyManager.PoolQueueName(longOptions, "bulk");
+
+        // Assert — {queue}-dlq, which still fits SQS's 80 characters however long the queue's name
+        AmazonSqsTopologyManager.DeadLetterQueueName(shortQueueName).Should().Be("conduit-orders-dlq");
+        AmazonSqsTopologyManager.DeadLetterQueueName(longQueueName).Should().Be($"{longQueueName}-dlq")
+            .And.HaveLength(80);
     }
 }

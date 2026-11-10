@@ -425,11 +425,11 @@ Reply Queue: exclusive auto-delete (per connection)
 **Amazon SQS (+SNS) topology:**
 ```
 SNS Topic: {systemName}
-├── Subscription → SQS Queue (shared name, filter: Type = '{FullTypeName}', unicast)
-├── Subscription → SQS Queue (per-app name, filter: Type = '{FullTypeName}', multicast)
-SQS Queue: {systemName}-{appName} (app queue)
-SQS Queue: {systemName}-{appName}-replies (reply queue, direct send)
-SQS Queue: {systemName}-{appName}-{poolName} (optional)
+├── Subscription → SQS Queue (one per queue, filter policy: {"Type": [the queue's types]})
+SQS Queue: {systemName}-{appName} (app queue; redrive policy → {systemName}-{appName}-dlq)
+SQS Queue: {systemName}-{appName}-{poolName} (optional; redrive policy → {systemName}-{appName}-{poolName}-dlq)
+SQS Queue: {queue}-dlq (dead-letter queue of each queue above)
+SQS Queue: {systemName}-{appName}-replies-{instanceId} (reply queue per transport instance, direct send, deleted on stop)
 ```
 
 **ActiveMQ Artemis topology:**
@@ -441,7 +441,7 @@ Multicast Address: {systemName}-events
 Reply Queue: per-connection exclusive temporary queue
 ```
 
-Unicast correctness for commands/queries in RabbitMQ relies on only one app binding/subscribing a given type. ASB enforces unicast via shared subscription names. SQS uses shared subscription names for filter policies. ActiveMQ uses shared queue names on the anycast address.
+Unicast correctness for commands/queries in RabbitMQ relies on only one app binding/subscribing a given type. ASB enforces unicast via shared subscription names. SQS, like RabbitMQ, relies on only one app's filter policy listing a given command or query type. ActiveMQ uses shared queue names on the anycast address.
 
 ### Error Model
 
@@ -1058,10 +1058,10 @@ All 4 broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) shar
 
 **Topology:**
 - Single SNS topic for all messages
-- SQS queues per app, SNS subscriptions with filter policies route by type (`{"Type": ["FullTypeName"]}`)
-- Commands/queries: shared subscription names (unicast). Events: per-app subscription names (multicast).
-- Reply via direct SQS send (bypasses SNS)
-- SQS queue name limit is 80 characters — `TopologyNaming` hash truncation activates frequently
+- SQS queues per app (and per pool), one SNS subscription per queue whose filter policy routes by type (`{"Type": ["FullTypeName", ...]}`, at most 150 types, checked before startup touches AWS)
+- Every app and pool queue has a dead-letter queue `{queue}-dlq` and a redrive policy (`MaxReceiveCount`, default 5); queue attributes and subscription attributes are set on every start, so changed settings reach existing resources
+- Reply via direct SQS send (bypasses SNS) to the requesting instance's own reply queue, `{system}-{app}-replies-{instanceId}`, deleted on stop
+- SQS queue name limit is 80 characters (app and pool queues 76, so `-dlq` fits) — `TopologyNaming` hash truncation activates frequently
 
 **Wire format:** SQS/SNS message attributes: `Type`, `MessageId`, `CausationId`, `ConversationId`, `ReplyQueueUrl`, `CorrelationId`.
 

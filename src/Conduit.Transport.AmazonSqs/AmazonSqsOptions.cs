@@ -51,6 +51,16 @@ public sealed class AmazonSqsOptions : BrokerTransportOptions
     public int VisibilityTimeoutSeconds { get; set; } = 60;
 
     /// <summary>
+    /// How many times SQS delivers a message from the application's queue, or a pool's, before moving it to
+    /// that queue's dead-letter queue (<c>{queue}-dlq</c>): the <c>maxReceiveCount</c> of the redrive policy
+    /// the transport sets on each. A failed message that no Conduit dead-letter store captured is delivered
+    /// again once its visibility timeout lapses, so a listener that always fails runs this many times, a
+    /// visibility timeout apart. Every delivery counts, one handed back undispatched on shutdown included.
+    /// Between 1 and 1000. Default 5.
+    /// </summary>
+    public int MaxReceiveCount { get; set; } = 5;
+
+    /// <summary>
     /// Whether raw message delivery is enabled on SNS subscriptions.
     /// Must be <c>true</c> for filter policies to work correctly.
     /// The transport validates this at startup and throws if <c>false</c>.

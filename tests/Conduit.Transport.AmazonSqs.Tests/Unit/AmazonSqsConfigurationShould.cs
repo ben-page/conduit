@@ -34,6 +34,7 @@ public class AmazonSqsConfigurationShould
             ["Conduit:Endpoints:events:Credentials:AccessKey"] = "AKIAEXAMPLE",
             ["Conduit:Endpoints:events:Credentials:SecretKey"] = "secret",
             ["Conduit:Endpoints:events:VisibilityTimeoutSeconds"] = "120",
+            ["Conduit:Endpoints:events:MaxReceiveCount"] = "3",
             ["Conduit:Endpoints:events:ServiceUri"] = "http://localhost:4566",
         });
 
@@ -46,6 +47,7 @@ public class AmazonSqsConfigurationShould
         options.Region.Should().Be(RegionEndpoint.EUWest1);
         options.Credentials.Should().BeOfType<BasicAWSCredentials>();
         options.VisibilityTimeoutSeconds.Should().Be(120);
+        options.MaxReceiveCount.Should().Be(3);
         options.ServiceUri.Should().Be(new Uri("http://localhost:4566"));
     }
 

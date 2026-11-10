@@ -1,4 +1,8 @@
+using Amazon.SQS;
+using Amazon.SQS.Model;
 using AwesomeAssertions;
+using Conduit.Configuration;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Transport.AmazonSqs.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -134,5 +138,60 @@ public class SqsCompetingInstanceShould : SqsTestBase
             $"AppB should have received {messageCount} events total across 2 instances, got {totalB}");
         totalC.Should().Be(messageCount,
             $"AppC should have received {messageCount} events total across 2 instances, got {totalC}");
+    }
+
+    [TestMethod]
+    [Timeout(120_000)]
+    public async Task DeliverRepliesToTheInstanceThatAsked()
+    {
+        // Arrange -- two instances of one sending application, each polling for replies; with one reply
+        // queue for the application, either could take the other's reply and the asker would time out
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
+
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var firstSender = await CreateSenderHostAsync(
+            senderName, prefix, ContractsNamespace, "broker", ShortResponseTimeout);
+        await using var secondSender = await CreateSenderHostAsync(
+            senderName, prefix, ContractsNamespace, "broker", ShortResponseTimeout);
+
+        using var sqsClient = CreateSqsClient();
+        var replyQueuePrefix = TopologyNaming.CreateAppResourceName(
+            firstSender.GetRequiredService<ConduitOptions>(), "replies", 80) + "-";
+        var firstMediator = firstSender.GetRequiredService<IMediator>();
+        var secondMediator = secondSender.GetRequiredService<IMediator>();
+
+        // Act -- each instance asks ten questions at once
+        var firstQueries = Enumerable.Range(0, 10).Select(index => $"first-{index}").ToList();
+        var secondQueries = Enumerable.Range(0, 10).Select(index => $"second-{index}").ToList();
+        var firstReplies = Task.WhenAll(firstQueries.Select(input => firstMediator.FetchAsync(new TestQuery(input))));
+        var secondReplies = Task.WhenAll(secondQueries.Select(input => secondMediator.FetchAsync(new TestQuery(input))));
+
+        // Assert -- every question reached the instance that asked it, on a reply queue of its own
+        (await firstReplies).Select(result => result.Value).Should()
+            .BeEquivalentTo(firstQueries.Select(input => $"result:{input}"));
+        (await secondReplies).Select(result => result.Value).Should()
+            .BeEquivalentTo(secondQueries.Select(input => $"result:{input}"));
+        (await ListQueuesAsync(sqsClient, replyQueuePrefix)).Should().HaveCount(2);
+
+        // Stopping an instance deletes its reply queue: nothing is left behind for each restart
+        await firstSender.DisposeAsync();
+        await secondSender.DisposeAsync();
+        (await ListQueuesAsync(sqsClient, replyQueuePrefix)).Should().BeEmpty();
+    }
+
+    // Replies lost to the other instance fail in seconds rather than a minute. The visibility timeout
+    // may not be shorter than the response timeout.
+    private static void ShortResponseTimeout(AmazonSqsOptions options)
+    {
+        options.ResponseTimeout = TimeSpan.FromSeconds(10);
+        options.VisibilityTimeoutSeconds = 10;
+    }
+
+    private static async Task<List<string>> ListQueuesAsync(AmazonSQSClient sqsClient, string namePrefix)
+    {
+        var response = await sqsClient.ListQueuesAsync(new ListQueuesRequest { QueueNamePrefix = namePrefix });
+        return response.QueueUrls ?? [];
     }
 }

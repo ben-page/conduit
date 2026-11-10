@@ -1,3 +1,6 @@
+using Amazon.Runtime;
+using Amazon.SimpleNotificationService;
+using Amazon.SQS;
 using Conduit.Configuration;
 using Conduit.Durability;
 using Conduit.Persistence.Sqlite;
@@ -193,6 +196,14 @@ public abstract class SqsTestBase
 
     protected static string UniqueAppName(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}"[..15];
+
+    /// <summary>An SQS client on the test's LocalStack, to read what the transport created.</summary>
+    protected static AmazonSQSClient CreateSqsClient() =>
+        new(new BasicAWSCredentials("test", "test"), new AmazonSQSConfig { ServiceURL = ServiceAddress });
+
+    /// <summary>An SNS client on the test's LocalStack, to read what the transport created.</summary>
+    protected static AmazonSimpleNotificationServiceClient CreateSnsClient() =>
+        new(new BasicAWSCredentials("test", "test"), new AmazonSimpleNotificationServiceConfig { ServiceURL = ServiceAddress });
 
     /// <summary>
     /// Creates a host with the dead letter queue configured alongside SQS.

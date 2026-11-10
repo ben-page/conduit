@@ -288,6 +288,7 @@ and is not configurable. `DefaultConcurrency` and `Pools` are common to every br
 | `DefaultConcurrency` | `int` | Default `10` |
 | `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; must be `<= VisibilityTimeoutSeconds` |
 | `VisibilityTimeoutSeconds` | `int` | Default `60` |
+| `MaxReceiveCount` | `int` | Default `5`; 1 to 1000. Deliveries before SQS moves a message to its queue's dead-letter queue |
 | `RawMessageDelivery` | `bool` | Default `true` |
 | `Pools` | array | See [Pool merging](#pool-merging) |
 

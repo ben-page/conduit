@@ -189,11 +189,21 @@ Several of these read what the broker holds through the Artemis management addre
 | 11.18 | `ActiveMQReplySendersShould.CloseADiscardedLinkOnlyOnceItsSendsDrain` | No hosts; two leases on one requester's link, the first discarded (a failed send) and released | The link stays open until the second lease is released, then closes; the next lease for that address gets a fresh link |
 | 11.19 | `ActiveMQEventRoutingShould.DeliverAnEventTypeAddedSinceTheQueueWasCreated` | B's first release (listens for `TestEvent`) starts and stops; its second release, same app name and prefix, also listens for `FireAndForgetEvent`; A publishes `FireAndForgetEvent` | B's second release receives it, and the existing queue's filter names both types: the filter was updated on start. Disabling the update makes it fail |
 
+#### Amazon SQS
+
+These read what the transport created through an SQS or SNS client on the same LocalStack (`SqsTestBase.CreateSqsClient`/`CreateSnsClient`).
+
+| # | Test Method | Hosts | Assert |
+|---|---|---|---|
+| 11.20 | `SqsCompetingInstanceShould.DeliverRepliesToTheInstanceThatAsked` | B handles; A1 and A2, two instances of one sending application (10 s `ResponseTimeout`), each send 10 `TestQuery`s at once | Every query gets its own answer on the instance that asked it (with one reply queue per application, half the replies went to the other instance, were deleted, and their requests timed out); two `{prefix}-conduit-{A}-replies-` queues exist, and none once A1 and A2 are disposed |
+| 11.21 | `SqsTopologyShould.CreateADeadLetterQueueWithARedrivePolicy` | B (`MaxReceiveCount` 2, 2 s visibility timeout, a pool) listens with no dead-letter store; A publishes `ThrowingTestEvent` | B's app queue and pool queue each carry a `RedrivePolicy` naming their own `{queue}-dlq` with `maxReceiveCount` 2; the reply queue and the dead-letter queues carry none; the event arrives in the app queue's dead-letter queue with its `Type` attribute, after the listener ran exactly twice |
+| 11.22 | `SqsTopologyShould.ApplyChangedAttributesToAnExistingQueueAndSubscription` | B's first release (listens for `TestEvent`, 2 s visibility timeout) starts and stops; its second release, same app name and prefix, sets a 10 s visibility timeout and `MaxReceiveCount` 7 and also listens for `FireAndForgetEvent`; A publishes `FireAndForgetEvent` | B's second release receives it (LocalStack may first hand it to the first release's cancelled long poll, hence the short visibility timeouts), and the existing queue reads back `VisibilityTimeout` 10 and `maxReceiveCount` 7, its subscription a filter policy of both types and raw delivery. Before the fix the second start failed with `QueueNameExists`. LocalStack does not refuse a re-subscription with different attributes, so the SNS side's refusal path is not exercised here |
+
 ### Totals (verified 2026-11-10)
 
-Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **12**, bringing its total to **50**.
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class and its **3 transport-specific tests** of category 11, bringing its total to **42**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **12**, bringing its total to **50**.
 
-Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 39 (SQS) + 50 (ActiveMQ) = **172 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 42 (SQS) + 50 (ActiveMQ) = **175 `[TestMethod]` integration tests**.
 
 ---
 
@@ -210,7 +220,7 @@ These tests verify naming logic and configuration without requiring a live broke
 | TM-1.1 | `UseCorrectMaxLengthForBroker` | Passes correct maxLength to `TopologyNaming` (RMQ=255, ASB=260/50, SQS=80/256, ActiveMQ=256) |
 | TM-1.2 | `UseSharedResourceNameForMainTopic` | Main topic/exchange/address uses `TopologyNaming.CreateSharedResourceName(options, maxLen)` |
 | TM-1.3 | `UseAppResourceNameForAppQueue` | Per-app queue uses `TopologyNaming.CreateAppResourceName(options, maxLen)` |
-| TM-1.4 | `UseAppResourceNameForReplyQueue` | Reply resource uses `TopologyNaming.CreateAppResourceName(options, "replies", maxLen)` (RabbitMQ: one per transport instance, `"replies-{instanceId}"`, through `RabbitMQTopologyManager.ReplyQueueName`) |
+| TM-1.4 | `UseAppResourceNameForReplyQueue` | Reply resource uses `TopologyNaming.CreateAppResourceName(options, "replies", maxLen)` (RabbitMQ and Amazon SQS: one per transport instance, `"replies-{instanceId}"`, through `RabbitMQTopologyManager.ReplyQueueName` and `AmazonSqsTopologyManager.ReplyQueueName`) |
 | TM-1.5 | `UseSharedResourceNameForCommandQueues` | Command/query queue names use `TopologyNaming.CreateSharedResourceName(options, type, maxLen)` — shared across apps (unicast) |
 | TM-1.6 | `UseAppResourceNameForEventQueues` | Event queue names use `TopologyNaming.CreateAppResourceName(options, type, maxLen)` — per-app (multicast) |
 | TM-1.7 | `TruncateLongNamesWithHash` | Names exceeding maxLength keep `maxLength - 9` characters, then `-` and 8 hex characters of an xxHash64 of the whole name (the exact format is pinned once, in `TopologyNamingShould.KeepLongSiblingNamesDistinct`) |
@@ -268,6 +278,8 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.7 | `CreateSnsFilterPolicy` | SNS subscription filter policy: `{"Type": ["FullTypeName"]}` |
 | TM-S.8 | `EnableRawMessageDelivery` | Raw message delivery enabled on all SNS subscriptions |
 | TM-S.9 | `SetSqsQueuePolicy` | SQS queue policy allows SNS topic to send messages |
+| TM-S.9b | `RefuseAFilterPolicyOverTheSnsLimit` | `AmazonSqsTopologyManager.FilterPolicy`: 150 types make a policy; 151 throw `InvalidOperationException` naming the queue and the count, before AWS is called |
+| TM-S.9c | `NameEachDeadLetterQueueAfterItsQueueWithinTheSqsLimit` | `DeadLetterQueueName` is `{queue}-dlq`, and an app or pool queue name is cut short enough (76) that it stays within 80 characters |
 
 #### ActiveMQ Artemis
 
@@ -278,7 +290,7 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | `[DataRow]` Developer (14,400,000 ms) and Test (300,000 ms): `EnsureTopologyAsync` against the real broker, then each queue's configuration read back through the management API is non-durable, `auto-delete` true, `auto-delete-delay` the mode's, `auto-delete-message-count` -1. The one container-backed test in `Unit/` (`ActiveMQTestBase.RequireBroker`, Inconclusive without a broker) |
 | TM-S.13 | `UseUniqueLinkNames` | `ConsumerLinkName()` gives `consumer-{32 hex}`, unique per link, whatever the queue is called (a name cut from the queue's name to 50 characters made two long names equal and threw for a short one) |
 
-### Totals (verified 2026-06-09; RabbitMQ, Azure Service Bus and ActiveMQ 2026-11-10)
+### Totals (verified 2026-06-09; RabbitMQ, Azure Service Bus, Amazon SQS and ActiveMQ 2026-11-10)
 
 The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-4 (3). Each transport adds a varying number of transport-specific (TM-S) tests, so the actual `Unit/TopologyManagerShould.cs` `[TestMethod]` count differs per transport:
 
@@ -286,7 +298,7 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 |---|---|
 | RabbitMQ | 24 |
 | Azure Service Bus | 26 |
-| Amazon SQS | 17 |
+| Amazon SQS | 19 |
 | ActiveMQ | 22 |
 
 (The TM-S.x rows in this document are illustrative; the per-transport tables have grown past the original 12 transport-specific cases. The 16 universal tests are the required floor every new transport must implement.)
@@ -338,7 +350,7 @@ Only where a transport hand-maps something the binder cannot handle:
 
 | # | Test Method | Transport | Validates |
 |---|---|---|---|
-| C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials` |
+| C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials`, and the scalars (`VisibilityTimeoutSeconds`, `MaxReceiveCount`, `ServiceUri`) |
 | C-S.2 | `BuildSessionCredentialsWhenATokenIsSupplied` | Amazon SQS | A `SessionToken` selects `SessionAWSCredentials` |
 | C-S.3 | `LeaveCredentialsNullForTheDefaultAwsChain` | Amazon SQS | No key pair leaves `Credentials` null so the AWS default chain applies |
 
