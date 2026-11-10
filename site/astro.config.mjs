@@ -6,10 +6,8 @@ import { base, editBaseUrl, repository, sidebar, site } from './site.config.mjs'
 
 // Links in docs/ known to point at no heading, tolerated so the site builds until they are fixed at the source.
 // Each entry is a page slug and the link exactly as written. Fix the link in docs/, then delete its entry here.
-const knownBrokenLinks = [
-    // docs/security.md: the heading is "IInboundInterceptor", so its anchor is #iinboundinterceptor.
-    { slug: 'security', link: '#iwireinterceptor' },
-];
+/** @type {{ slug: string, link: string }[]} */
+const knownBrokenLinks = [];
 
 // The pages come from the repository's docs/: scripts/prepare-docs.mjs copies them into src/content/docs/ before
 // every dev and build run. See README.md.

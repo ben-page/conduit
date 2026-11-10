@@ -11,7 +11,8 @@
 //   - docs/why-conduit.md is copied to the content root as index.md, the landing page;
 //   - a 404 page is written alongside.
 //
-// docs/design.md, docs/transport-test-matrices.md and docs/superpowers/ are maintainer documents and are left out.
+// docs/design.md, docs/transport-test-matrices.md and docs/superpowers/ are maintainer documents, and docs/history/
+// holds notes kept for the record; all are left out (a link to one points at it on GitHub).
 // The script fails, and the build with it, on a link to a file that does not exist, a page with no "# Heading", or a
 // page the sidebar in site.config.mjs does not list exactly once.
 //
@@ -28,7 +29,7 @@ const docsDir = path.join(repoRoot, 'docs');
 const outDir = path.join(siteDir, 'src', 'content', 'docs');
 
 /** Paths under docs/ that are not part of the site. */
-const excluded = new Set(['design.md', 'transport-test-matrices.md', 'superpowers']);
+const excluded = new Set(['design.md', 'transport-test-matrices.md', 'superpowers', 'history']);
 
 /** "Previous: [A](a.md) | [Home](../README.md) | Next: [B](b.md)", either side optional. */
 const footerPattern =

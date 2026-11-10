@@ -1,8 +1,22 @@
 # Configuration Reference
 
-- [ConduitBuilder methods](#conduitbuilder-methods)
+- [AddConduit](#addconduit)
 - [ConduitBuilder properties](#conduitbuilder-properties)
-- [ConduitEndpointBuilder methods](#conduitendpointbuilder-methods)
+- [ConduitBuilder methods](#conduitbuilder-methods)
+  - [AddDispatchRetry options](#adddispatchretry-options)
+- [Feature packages](#feature-packages)
+  - [Persistence engines](#persistence-engines)
+  - [Durability](#durability)
+  - [Audit](#audit)
+  - [Jobs](#jobs)
+  - [Resilience](#resilience)
+  - [The clock](#the-clock)
+- [ConduitEndpointBuilder](#conduitendpointbuilder)
+  - [Routes](#routes)
+  - [Transports](#transports)
+  - [Options every broker transport shares](#options-every-broker-transport-shares)
+- [Registrations outside the builder](#registrations-outside-the-builder)
+- [Topology modes](#topology-modes)
 - [Loading from IConfiguration](#loading-from-iconfiguration)
   - [Core scalars](#core-scalars)
   - [Endpoint sections](#endpoint-sections)
@@ -11,82 +25,304 @@
   - [Unmatched endpoint sections](#unmatched-endpoint-sections)
   - [Per-transport keys](#per-transport-keys)
   - [What configuration does not cover](#what-configuration-does-not-cover)
-  - [Upgrading an existing host](#upgrading-an-existing-host)
 - [Attributes](#attributes)
 - [MSBuild properties (TypeGen)](#msbuild-properties-typegen)
 - [Diagnostics](#diagnostics)
 
-## ConduitBuilder methods
+## AddConduit
 
-Available inside the `AddConduit` callback:
+The source generator writes `AddConduit` into the host project, in the `Conduit.Generated` namespace. It registers
+every discovered handler and listener, the generated mediator and Conduit's core services, and runs the callback.
+
+| Overload | Purpose |
+|---|---|
+| `services.AddConduit(Action<ConduitBuilder>? configure = null)` | Code-only configuration. |
+| `services.AddConduit(IConfiguration configuration, Action<ConduitBuilder>? configure = null)` | Binds the `Conduit` section first, then runs the callback, so code wins ([Loading from IConfiguration](#loading-from-iconfiguration)). Pass the application's configuration, or the `Conduit` section itself. |
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
-    // methods below
+    conduit.SystemName = "acme";
+    conduit.ApplicationName = "orders-api";
+    conduit.TopologyMode = TopologyMode.Developer;
+    conduit.TopologyPrefix = "alice";  // optional: Developer mode defaults to Environment.UserName
+
+    conduit.AddEndpoint("orders", endpoint =>
+    {
+        endpoint.UseRabbitMQ("amqp://guest:guest@localhost:5672/");
+        endpoint.RouteNamespace<CreateOrderCommand>();
+    });
 });
 ```
-
-| Method | Purpose | Example |
-|---|---|---|
-| `AddEndpoint(name, configure)` | Register a named remote endpoint with a transport and routes. The name is required and unique: a blank or repeated name throws `ArgumentException`. | `conduit.AddEndpoint("orders", e => { e.UseHttp(httpClient); e.RouteNamespace<CreateOrder>(); })` |
-| `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>` with two type parameters (request, result); a closed or other-arity type throws `ArgumentException` at registration. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
-| `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
-| `AddDispatchRetry<TPolicy>(configure?)` | Retry a failed top-level command or query that `TPolicy` (a singleton `IDispatchRetryPolicy`) covers and gives a reason for, each attempt in a fresh DI scope. `DispatchRetryOptions`: `MaxAttempts` (default 3), `Delays` (jittered ranges, default 10-100 ms then 50-300 ms; the last repeats), `TimeProvider` (the retry clock, default `TimeProvider.System`). Once per host; options validated in the call. See [Dispatch Retry](dispatch-retry.md). | `conduit.AddDispatchRetry<MyRetryPolicy>(o => o.MaxAttempts = 4)` |
-| `AddDurability(configure)` | Configure durable messaging by nesting `AddOutbox()` / `AddInbox()` / `AddDeadLetterQueue()`. The persistence engine is set once on the `ConduitBuilder` (via `conduit.UseSqlite(...)` etc.) and shared with audit. `OutboxOptions`: the relay retries a failed send after `InitialBackoff` (default 5 s), doubling the wait with each failed attempt up to `MaxBackoff` (default 5 min), and marks the entry Failed after `MaxRetries` attempts (default 10); a claim older than `ClaimTimeout` (default 5 min) may be taken over by another relay, and the worker that lost it writes nothing more for the entry; `AddOutbox` refuses, with `OptionsValidationException`, a `RelayInterval`, `CleanupInterval` or `ClaimTimeout` that is not positive or is above one day, a negative `GracePeriod` or one above a day, a `BatchSize` that is not positive, a `MaxRetries` below 2, a negative `InitialBackoff`, a `MaxBackoff` below it or above one day, and a negative retention or one above 3650 days (`TimeSpan.Zero` keeps entries forever); `AddInbox` refuses a `RetentionPeriod` or `CleanupInterval` that is not positive or is above its limit (3650 days, one day). A second `AddOutbox`/`AddInbox`/`AddDeadLetterQueue` (or `AddDurability`) registers nothing twice and configures the same options. Every "now" the stores read (claims, backoff, outcomes, retention, captures, replay claims) is the host's `TimeProvider`; `AddDurability` registers `TimeProvider.System` when the host has none ([the clock](persistence.md#the-clock)). Set in code only (see [What configuration does not cover](#what-configuration-does-not-cover)). See [Outbox](outbox.md#backoff) ([claim timeout](outbox.md#claim-timeout)), [Inbox](inbox.md), and [Dead Letter Queue](dead-letter-queue.md). | `conduit.UseSqlite("Data Source=app.db"); conduit.AddDurability(d => d.AddOutbox());` |
-| `AddAudit(configure)` | Capture dispatch lifecycle observations and emit `AuditBatch` events. `MaxPayloadBytes` (default 64 KB, `0` = no cap, an enabled cap must be at least 1 KB) caps each record's request body in UTF-8 bytes when the record seals: a body over it is stored with its longest strings shortened and a `"$truncated": { "bytes", "cap" }` marker, or as the marker alone when that cannot fit. A dispatch that observes nothing for `StaleGroupTimeout` (default 5 min) gets a provisional record with no outcome, then its real record when it ends (the later one authoritative); on stop the publisher drains queued records for `ShutdownGrace` at most (default 5 s) and logs what it abandons (EventId 520). `AddAudit` refuses, with `OptionsValidationException`, a `BatchSize` or `ChannelCapacity` that is not positive, a `StaleGroupTimeout` that is not positive or is above one day, a negative `ShutdownGrace` or one above a day, and an enabled `MaxPayloadBytes` below 1 KB; the same rules run on `IOptions<AuditOptions>` as the host starts. A record's and a batch's timestamps, and the stale-group sweep, read the host's `TimeProvider` (`TimeProvider.System` registered when the host has none; [the clock](persistence.md#the-clock)). See [Audit Trail](audit.md#validated-options) ([payload cap](audit.md#payload-size-cap), [stale groups](audit.md#stale-dispatch-groups), [shutdown](audit.md#shutdown)). | `conduit.AddAudit(a => a.ServiceName = "orders")` |
-| `AddAuditListener(configure?)` | Consume `AuditBatch` events (local or over a transport) and persist them, each batch in one transaction. Set the persistence engine separately via `conduit.UseSqlite(...)` (shared with durability). `AddAuditListener` refuses, with `OptionsValidationException`, a `RetentionPeriod` that is not positive or is above 3650 days and a `PurgeInterval` that is not positive or is above one day. The retention purge counts back from the host's `TimeProvider` (`TimeProvider.System` registered when the host has none). See [Audit Trail](audit.md). | `conduit.UseSqlite("Data Source=audit.db"); conduit.AddAuditListener();` |
 
 ## ConduitBuilder properties
 
-Properties set directly on the builder instance:
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `SystemName` | `string` | `"conduit"` | The base name of every broker resource (topic, exchange, queues). |
+| `ApplicationName` | `string?` | `null` | The application's name in queue names. When unset, a transport uses `IHostEnvironment.ApplicationName` as it starts. |
+| `TopologyMode` | `TopologyMode` | `Production` | Resource naming and lifetime: `Production`, `Developer` or `Test` ([Topology modes](#topology-modes)). |
+| `TopologyPrefix` | `string?` | resolved on first read | The prefix of every broker resource name. Unset, it resolves to `Environment.UserName` in Developer mode, `test-` and 8 random hex characters in Test mode, and `null` in Production. Set it to share one prefix across hosts; a prefix set explicitly applies in Production too. Setting `null` returns it to the default. |
+| `ProducerOnly` | `bool` | `false` | Publish only: a broker transport creates no inbound topology and starts no consumers. Reply queues for request/response are still created. |
+| `Services` | `IServiceCollection` | | The service collection, for a feature's extension method. |
+| `Options` | `ConduitOptions` | | What the builder fills: the five settings above, and the `Endpoints`, `Routes` and `PipelineTypes` the methods below add to. |
+| `Configuration` | `IConfiguration?` | `null` | The `Conduit` section, once `UseConfiguration` has run. |
+
+## ConduitBuilder methods
+
+| Method | Purpose |
+|---|---|
+| `AddEndpoint(string name, Action<ConduitEndpointBuilder> configure)` | Declares a named remote endpoint; the callback picks its transport and routes ([ConduitEndpointBuilder](#conduitendpointbuilder)). A blank or repeated name throws `ArgumentException`. |
+| `AddPipeline(Type behaviorType)` | Adds an open generic `IPipelineBehavior<,>` with two type parameters, such as `typeof(LoggingBehavior<,>)`; any other type throws `ArgumentException`. First registered is outermost. See [Pipeline Behaviors](pipeline-behaviors.md). |
+| `AddTypeFilter(Action<TypeFilterBuilder> configure)` | Restricts the message types an inbound wire edge accepts, commands, queries and events, to those listed with `TypeFilterBuilder.AllowType(string fullTypeName)`. Repeated calls add to the list. See [Security](security.md#typefilterinterceptor). |
+| `AddDispatchRetry<TPolicy>(Action<DispatchRetryOptions>? configure = null)` | Retries a failed top-level command or query that `TPolicy` (a singleton `IDispatchRetryPolicy`) covers and gives a reason for, each attempt in a fresh DI scope ([options below](#adddispatchretry-options)). A second call throws `InvalidOperationException`. See [Dispatch Retry](dispatch-retry.md). |
+| `UseConfiguration(IConfiguration configuration)` | Binds the core settings and keeps the section for the endpoints. `AddConduit(IConfiguration, …)` calls it first; called by hand, it must come before every `AddEndpoint`, which reads the section when it runs. |
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
-    conduit.SystemName = "myapp";
-    conduit.ApplicationName = "orders-service";
-    conduit.TopologyMode = TopologyMode.Developer;
-    conduit.TopologyPrefix = "myprefix";  // optional, defaults to Environment.UserName
+    conduit.AddPipeline(typeof(LoggingBehavior<,>));
+    conduit.AddTypeFilter(filter => filter.AllowType("MyApp.Commands.CreateOrderCommand"));
+    conduit.AddDispatchRetry<MyRetryPolicy>(options => options.MaxAttempts = 4);
 });
 ```
 
-| Property | Type | Default | Description |
-|---|---|---|---|
-| `SystemName` | `string` | `"conduit"` | Base name for all broker resources (topic/exchange, queues). Replaces per-transport `TopicName`/`ExchangeName`. |
-| `ApplicationName` | `string?` | `null` | Application name used in queue naming. Defaults to `IHostEnvironment.ApplicationName` at transport startup if not set. |
-| `TopologyMode` | `TopologyMode` | `Production` | Controls resource naming and durability. `Production` = durable, no prefix. `Developer` = prefixed, 4h auto-delete. `Test` = random prefix, 5min auto-delete. |
-| `TopologyPrefix` | `string?` | auto-resolved | Prefix for broker resource names. Auto-resolves on first access: Developer = `Environment.UserName`, Test = random 13-char prefix, Production = null. Set explicitly to share topology across hosts. |
-| `ProducerOnly` | `bool` | `false` | When true, only publishes messages -- skips inbound topology and consumers. Reply queues for request/response still created. |
+### AddDispatchRetry options
 
-Example `appsettings.Development.json` for developer mode:
+`DispatchRetryOptions`, validated in the call (`InvalidOperationException` names the option):
 
-```json
+| Option | Default | Rule |
+|---|---|---|
+| `MaxAttempts` | `3` | At least 1; the first attempt counts. |
+| `Delays` | 10–100 ms, then 50–300 ms | The wait before each retry, drawn uniformly from a range; the last range repeats. Not empty when `MaxAttempts` is above 1; each `Min` at least zero and at most its `Max`. |
+| `TimeProvider` | `TimeProvider.System` | The retry clock. Never the host's DI `TimeProvider`. |
+
+## Feature packages
+
+Each feature package adds an extension method to `ConduitBuilder`. Options are validated in the call, and a value out
+of range fails the host at startup.
+
+### Persistence engines
+
+| Method | Package |
+|---|---|
+| `UseSqlite(string connectionString)` | `Conduit.NET.Persistence.Sqlite` |
+| `UsePostgres(string connectionString)` | `Conduit.NET.Persistence.Postgres` |
+| `UseSqlServer(string connectionString)` | `Conduit.NET.Persistence.SqlServer` |
+| `UseMySql(string connectionString)` | `Conduit.NET.Persistence.MySql` |
+
+One engine serves every durable feature: the outbox, inbox and dead-letter queue, the audit listener, and jobs. Call it
+before `AddJobs`. The outbox also needs a transaction-aware connection factory of your own
+([Persistence](persistence.md#the-outbox-needs-a-transaction-aware-factory)).
+
+### Durability
+
+`AddDurability(Action<DurabilityBuilder> configure)` (`Conduit.NET.Durability`) takes three calls, each
+`Add*(Action<options>? configure = null)`: `AddOutbox`, `AddInbox` and `AddDeadLetterQueue`. A value out of range
+throws `OptionsValidationException`, naming each failure. A second call to any of them, from this builder or another
+`AddDurability`, configures the same feature and registers nothing twice.
+
+```csharp
+conduit.UseSqlite("Data Source=app.db");
+conduit.AddDurability(durability =>
 {
-  "Conduit": {
-    "TopologyMode": "Developer"
-  }
-}
+    durability.AddOutbox(outbox => outbox.MaxRetries = 20);
+    durability.AddInbox();
+    durability.AddDeadLetterQueue();
+});
 ```
 
-## ConduitEndpointBuilder methods
+`OutboxOptions` ([Outbox](outbox.md#relay-configuration)):
 
-Available inside the `AddEndpoint` callback:
-
-| Method | Purpose | Example |
+| Option | Default | Rule |
 |---|---|---|
-| `RouteNamespace<T>()` | Route all types in `T`'s namespace and the namespaces beneath it to this endpoint, matched on whole segments (`Orders.Commands` never covers `Orders.CommandsArchive`) | `ep.RouteNamespace<CreateOrder>()` |
-| `RouteType<T>()` | Route exactly one type to this endpoint (`CreateOrderLine` is not `CreateOrder`) | `ep.RouteType<CreateOrder>()` |
-| `UseSignalR(uri)` | Connect via SignalR client mode | `ep.UseSignalR(new Uri("https://..."))` |
-| `UseHttp(httpClient)` | Connect via HTTP POST to `/api/conduit/dispatch` | `ep.UseHttp(httpClient)` |
-| `UseAzureServiceBus(conn)` | Connect via Azure Service Bus | `ep.UseAzureServiceBus(connectionString)` |
-| `UseRabbitMQ(conn)` | Connect via RabbitMQ | `ep.UseRabbitMQ(connectionString)` |
+| `RelayInterval` | 5 s | How often the relay polls. Positive, at most one day. |
+| `GracePeriod` | 10 s | The relay ignores entries newer than this. Not negative, at most one day. |
+| `BatchSize` | `100` | Entries claimed per sweep. Positive. |
+| `MaxRetries` | `10` | Attempts before an entry is marked failed, the first included. At least 2. |
+| `InitialBackoff` | 5 s | The wait after the first failed attempt, doubled after each one after it. Not negative. |
+| `MaxBackoff` | 5 min | The longest wait between attempts. At least `InitialBackoff`, at most one day. |
+| `ClaimTimeout` | 5 min | After this a claimed entry counts as abandoned and another relay may take it ([claim timeout](outbox.md#claim-timeout)). Positive, at most one day. |
+| `CompletedRetention` | 7 days | Sent entries are deleted this long after they were sent. `TimeSpan.Zero` keeps them. Not negative, at most 3650 days. |
+| `FailedRetention` | `null` | Failed entries are deleted this long after their last attempt; `null` follows `CompletedRetention`, `TimeSpan.Zero` keeps them. Not negative, at most 3650 days. |
+| `CleanupInterval` | 1 hour | How often the retention cleanup runs. Positive, at most one day. |
+| `AutoCreateTable` | `true` | Creates the outbox table at startup. |
+| `CaptureOnly` | `false` | Capture on the caller's transaction, never deliver: another process's relay owns delivery ([capture-only](outbox.md#capture-only)). |
+| `PersistedProperties` | empty | The `MessageContext.Properties` keys an entry carries to its delivery, each with its type: `string`, `int`, `long`, `bool` or `Guid` ([carrying dispatch properties](outbox.md#carrying-dispatch-properties)). |
+
+`InboxOptions` ([Inbox](inbox.md#configuration)):
+
+| Option | Default | Rule |
+|---|---|---|
+| `RetentionPeriod` | 30 min | How long a processed message id is kept. Positive, at most 3650 days. |
+| `CleanupInterval` | 5 min | How often expired ids are deleted. Positive, at most one day. |
+
+`DeadLetterQueueOptions` ([Dead-Letter Queue](dead-letter-queue.md#setup)):
+
+| Option | Default | Rule |
+|---|---|---|
+| `AutoCreateTable` | `true` | Creates the dead-letter table at startup. |
+
+### Audit
+
+`Conduit.NET.Audit` adds two methods. A value out of range throws `OptionsValidationException`, naming each failure,
+and the same rules run on `IOptions<AuditOptions>` as the host starts ([validated options](audit.md#validated-options)).
+
+`AddAudit(Action<AuditBuilder>? configure = null)` captures each dispatch and publishes `AuditBatch` events
+([capture tuning](audit.md#capture-tuning)):
+
+| Member | Default | Rule |
+|---|---|---|
+| `ServiceName` | the host's application name | The service named on each batch; `"unknown"` when the host has no name either. |
+| `BatchSize` | `100` | Records per published batch. Positive. |
+| `ChannelCapacity` | `10000` | Records buffered before `BackpressureMode` applies. Positive. |
+| `BackpressureMode` | `DropOldest` | What a full buffer does (`BoundedChannelFullMode`). |
+| `StaleGroupTimeout` | 5 min | A dispatch silent this long gets a provisional record, then its real one when it ends. Positive, at most one day. |
+| `ShutdownGrace` | 5 s | How long the publisher drains queued records when the host stops. Not negative, at most one day. |
+| `MaxPayloadBytes` | 64 KB | The largest request body a record keeps, in UTF-8 bytes; a longer one is shortened and marked `$truncated` ([payload cap](audit.md#payload-size-cap)). 0 or less means no cap; an enabled cap is at least 1 KB. |
+| `Suppress<T>()` | | Records nothing for `T`. |
+| `SuppressPayload<T>()` | | Records `T`'s dispatches without its body. |
+
+`AddAuditListener(Action<AuditListenerBuilder>? configure = null)` persists `AuditBatch` events, from this process or
+from other services over a transport, in the persistence engine ([retention](audit.md#retention)):
+
+| Member | Default | Rule |
+|---|---|---|
+| `RetentionPeriod` | 90 days | How long a stored record is kept. Positive, at most 3650 days. |
+| `PurgeInterval` | 24 hours | How often expired records are deleted. Positive, at most one day. |
+
+### Jobs
+
+`AddJobs(Action<JobsBuilder> configure)` (`Conduit.NET.Jobs`) declares schedules (`jobs.Schedule(name)`) and event
+triggers (`jobs.On<TEvent>(name)`, the name optional) whose bodies are commands. With a persistence engine registered
+before it, every schedule fires once across the cluster; without one, on every host. A value out of range throws
+`InvalidOperationException` from the call. See [Background Jobs](jobs.md#configuration-reference).
+
+| Member | Default | Rule |
+|---|---|---|
+| `HeartbeatInterval` | 30 s | How often a running host renews its claim. Positive. |
+| `ClaimTimeout` | 2 min | How stale a claim must be before another host may take it. More than twice `HeartbeatInterval`, at most one day. |
+| `MaxAttempts` | `3` | Attempts before a run is marked failed, the first included. Positive. |
+| `RetryBackoff` | 1, 2, 4 min | The wait before each further attempt; the last repeats. At least one entry, each positive and at most one day. |
+| `FailedRetention` | 7 days | How long a failed run is kept. Not negative, at most 3650 days. |
+| `CompletedRetention` | 1 day | How long a completed event-triggered run is kept. Not negative, at most 3650 days. |
+| `HistoryRetention` | 30 days | How long run history is kept. Not negative, at most 3650 days. |
+| `CleanupInterval` | 1 hour | How often expired runs and history are deleted. Positive, at most one day. |
+| `AutoCreateTable` | `true` | Creates the jobs tables at startup. |
+| `ManageOnly` | `false` | Registers `IJobs` without the runner, for a host that must never run a job. |
+
+### Resilience
+
+`AddResilience(Action<ConduitResilienceBuilder>? configure = null)` (`Conduit.NET.Resilience`) adds a Polly
+pipeline behavior as the outermost behavior, wherever the call stands among the `AddPipeline` calls. The builder names
+the Polly pipelines it applies:
+
+| Method | Applies to |
+|---|---|
+| `AddDefaultPipeline(Action<ResiliencePipelineBuilder> configure)` | Every dispatch no other pipeline covers. |
+| `AddPipelineForType<T>(Action<ResiliencePipelineBuilder> configure)` | `T`; wins over every other pipeline. |
+| `AddPipelineForNamespace(string namespacePrefix, Action<ResiliencePipelineBuilder> configure)` | Every type in the namespace and beneath it, on whole segments; the longest enclosing namespace wins. |
+
+See [Pipeline Behaviors → Resilience](pipeline-behaviors.md#resilience-polly).
+
+### The clock
+
+`AddDurability`, `AddAudit`, `AddAuditListener` and `AddJobs` read "now" from the host's `TimeProvider` and register
+`TimeProvider.System` when the host registers none; a host that registers its own keeps it
+([Persistence → The clock](persistence.md#the-clock)). `AddDispatchRetry` waits on its own
+`DispatchRetryOptions.TimeProvider`.
+
+## ConduitEndpointBuilder
+
+The `AddEndpoint` callback's argument. Its properties are for transport extensions: `EndpointName`, `Services`, and
+`Configuration` (the endpoint's `Conduit:Endpoints:{name}` section, or `null`).
+
+### Routes
+
+| Method | Routes to this endpoint |
+|---|---|
+| `RouteNamespace<T>()` | Every command and query in `T`'s namespace and the namespaces beneath it, on whole segments: `Orders.Commands` never covers `Orders.CommandsArchive`. |
+| `RouteType<T>()` | `T` alone: `CreateOrderLine` is not `CreateOrder`. |
+
+Routes are tried in the order they were declared, across endpoints, and the first that matches wins, so declare a
+`RouteType<T>()` before a `RouteNamespace` that encloses `T` if they name different endpoints. A command or query no
+route matches runs locally. Events are not routed: they are broadcast ([Transports](transports/index.md#event-broadcasting)).
+
+### Transports
+
+One per endpoint. Each `Use*` method binds the endpoint's configuration section first, then applies its arguments,
+then its callback ([Precedence](#precedence)). A required value neither supplies throws `InvalidOperationException`
+from the call, naming the configuration key and the argument.
+
+| Method | Package | Needs |
+|---|---|---|
+| `UseHttp(HttpClient httpClient, string? basePath = null)` | `Conduit.NET.Transport.Http` | A client with its `BaseAddress` set, which the transport holds for the host's life and never disposes. `basePath` defaults to the configured `BasePath`, then `/api/conduit`. |
+| `UseHttp(Action<HttpOptions>? configure = null)` | `Conduit.NET.Transport.Http` | `BaseAddress`. Registers a named `HttpClient` for the endpoint; `BasePath` defaults to `/api/conduit`. |
+| `UseSignalR(Uri? hubUri = null, Action<SignalROptions>? configure = null)` | `Conduit.NET.Transport.SignalR` | `HubUri`. `SignalROptions.ConfigureConnection` (an access token, headers) is code only. |
+| `UseRabbitMQ(string? connectionString = null, Action<RabbitMQOptions>? configure = null)` | `Conduit.NET.Transport.RabbitMQ` | `ConnectionString` |
+| `UseAzureServiceBus(string? connectionString = null, Action<AzureServiceBusOptions>? configure = null)` | `Conduit.NET.Transport.AzureServiceBus` | `ConnectionString` |
+| `UseAmazonSqs(Action<AmazonSqsOptions>? configure = null)` | `Conduit.NET.Transport.AmazonSqs` | `Region`, or `ServiceUri` for LocalStack; with neither, the AWS SDK's default region and credential chain |
+| `UseActiveMQ(string? connectionString = null, Action<ActiveMQOptions>? configure = null)` | `Conduit.NET.Transport.ActiveMQ` | `ConnectionString` |
+
+Each transport's options and their defaults are in its guide: [SignalR](transports/signalr.md),
+[HTTP](transports/http.md), [Azure Service Bus](transports/azure-service-bus.md), [RabbitMQ](transports/rabbitmq.md),
+[Amazon SQS](transports/amazon-sqs.md) and [ActiveMQ](transports/activemq.md).
+
+`UseTransport<TTransport>()`, `UseTransport<TTransport>(BrokerTransportOptions options)` and
+`UseTransport(IConduitTransport transport)` register a transport by hand, for a transport package's own `Use*` method
+or a test.
+
+### Options every broker transport shares
+
+`RabbitMQOptions`, `AzureServiceBusOptions`, `AmazonSqsOptions` and `ActiveMQOptions` derive from
+`BrokerTransportOptions`:
+
+| Member | Default | Description |
+|---|---|---|
+| `DefaultConcurrency` | `10` | How many messages the application's consumer handles at once: the prefetch count on RabbitMQ and ActiveMQ, the maximum concurrent calls on Azure Service Bus, the polling parallelism on Amazon SQS. |
+| `ResponseTimeout` | 60 s | How long a request waits for its reply before it fails with a `TimeoutException`. Positive and finite, checked in the `Use*` call. |
+| `AddPool(string name, Action<ReceiverPoolOptions> configure)`, `Pools` | empty | A named receiver pool: its own queue and consumer for the types it `Handle`s; `Pools` lists them. `ReceiverPoolOptions.Concurrency` defaults to `1`. The names `replies` and `dead-letter` are reserved ([Pool merging](#pool-merging)). |
+| `EndpointName` | the endpoint's name | Set by the `Use*` call; read-only to you. |
+
+## Registrations outside the builder
+
+| Call | Package | Purpose |
+|---|---|---|
+| `services.AddConduitSignalR(Action<ConduitSignalROptions>? configure = null)` | `Conduit.NET.Transport.SignalR` | Registers SignalR, the hub's services and the server-mode transport that pushes events to browsers. `ConduitSignalROptions.TrustCallerContext` (default `false`) lets the hub honor its callers' correlation ids ([Security](security.md#correlation-ids)). |
+| `services.AddConduitSignalR(ConduitServerInfo serverInfo, Action<ConduitSignalROptions>? configure = null)` | `Conduit.NET.Transport.SignalR` | The same, and the hub sends `serverInfo` to each client as it connects. |
+| `app.MapHub<ConduitHub>(string pattern)` | ASP.NET Core | Maps the hub browsers and client-mode services connect to. |
+| `app.MapConduitEndpoint(string basePath = "/api/conduit", bool trustCallerContext = false, bool readClientProperties = false)` | `Conduit.NET.Transport.Http` | Maps `{basePath}/dispatch` and `{basePath}/publish` and returns their route group, so a convention chained on it applies to both ([Security](security.md#what-a-caller-may-set)). |
+| `app.MapConduitGet<T>(pattern)`, `MapConduitPost<T>`, `MapConduitPut<T>`, `MapConduitPatch<T>`, `MapConduitDelete<T>`, `MapConduit<T>(method, pattern)` | generated with the HTTP transport | RESTful endpoints, one type each ([HTTP](transports/http.md#restful-endpoints)). |
+| `routeOrGroup.WithConduitDispatchContext()` | `Conduit.NET.Transport.Http` | Starts the inbound dispatch context (your `IDispatchContextEnricher`s) before a minimal-API route runs, so its in-process dispatches carry the same properties as the wire. |
+| `services.ConfigureConduitRegistrations(Action<ConduitRegistrationOverrides> configure)` | `Conduit.NET` | After `AddConduit`: clears or replaces auto-registered handlers and listeners, and the broker topology that goes with them: for test doubles, for several applications simulated in one test assembly, or for a host that must not subscribe to types it does not handle. |
+
+## Topology modes
+
+`TopologyMode` names a broker's resources and decides how long they live. HTTP and SignalR create no broker
+resources.
+
+| Mode | Prefix by default | Lifetime |
+|---|---|---|
+| `Production` | none | Durable; nothing is deleted. |
+| `Developer` | `Environment.UserName` | Ephemeral, where the broker can delete a resource itself. |
+| `Test` | `test-` and 8 random hex characters | As Developer, sooner. |
+
+| Transport | Developer | Test |
+|---|---|---|
+| RabbitMQ | Non-durable and auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes | As Developer, and the dead-letter queue expires once unused for 5 minutes |
+| Azure Service Bus | Each topic, queue and subscription is deleted after 4 hours idle (`AutoDeleteOnIdle`) | After 5 minutes idle |
+| ActiveMQ | A queue is deleted 4 hours after its last consumer left; the two addresses stay | 5 minutes; the addresses stay |
+| Amazon SQS | Nothing is deleted: SNS and SQS have no auto-delete | Nothing is deleted |
+
+On Amazon SQS, `AmazonSqsTopologyReaper.ReapByPrefixAsync(options, prefix)` deletes the topics and queues whose names
+start with a prefix, as Conduit's own tests do once per test project. See each transport's guide, and
+[Transports → Ephemeral resource cleanup](transports/index.md#ephemeral-resource-cleanup).
 
 ## Loading from IConfiguration
 
-Everything above can also be supplied from `IConfiguration`, so operational values (connection
-strings, regions, timeouts) live in `appsettings.json` instead of being compiled in. Pass the
-configuration as a second argument to `AddConduit`:
+The core settings and every endpoint's transport options can come from `IConfiguration`, so operational values
+(connection strings, regions, timeouts) live in `appsettings.json` rather than in code. Pass the configuration to
+`AddConduit`:
 
 ```csharp
 builder.Services.AddConduit(builder.Configuration, conduit =>
@@ -105,50 +341,35 @@ builder.Services.AddConduit(builder.Configuration, conduit =>
 });
 ```
 
-This overload binds the `Conduit` section onto `ConduitOptions` and hands the section to every
-`AddEndpoint` call, so each endpoint's `Use*` extension can bind its own transport options from
-`Conduit:Endpoints:{endpointName}`. Endpoints, routes, pipelines, and type filters stay
-code-declared — only core options and transport options come from configuration.
+This overload binds the `Conduit` section onto `ConduitOptions` and hands each `AddEndpoint` its
+`Conduit:Endpoints:{endpointName}` section, which the endpoint's `Use*` method binds onto its transport's options.
+Endpoints, routes, pipelines and type filters stay in code.
 
-`AddConduit(IConfiguration, Action<ConduitBuilder>?)` is a second overload of the same
-source-generated `AddConduit` — pass the plain `IConfiguration` (or an `IConfigurationSection` if
-you already have the `Conduit` section) and an optional callback, same as the code-only overload.
-
-**The configuration shape mirrors the fluent builder API, not the runtime object graph.** A key's
-name and position is exactly the name of the property that fluent call sets, nested the same way
-the property is nested. `Conduit:Endpoints:orders` corresponds to `AddEndpoint("orders", …)`;
-`Conduit:Endpoints:events:VisibilityTimeoutSeconds` corresponds to
-`AmazonSqsOptions.VisibilityTimeoutSeconds`. If you know the C# property name, you know the key — there is no separate config
-vocabulary to learn. (`AmazonSqsOptions.Credentials` is the one exception to this — see
-[Per-transport keys](#per-transport-keys) below, where it is mapped by hand rather than bound
-generically.)
+**The keys follow the code.** A key's name is the name of the property the corresponding code sets, nested as the
+property is: `Conduit:Endpoints:orders` is `AddEndpoint("orders", …)`, and
+`Conduit:Endpoints:events:VisibilityTimeoutSeconds` is `AmazonSqsOptions.VisibilityTimeoutSeconds`. If you know the
+property, you know the key. Amazon SQS's `Region` and `Credentials` are the exception, mapped by hand
+([Per-transport keys](#per-transport-keys)).
 
 ### Core scalars
 
-The `Conduit` section binds five scalars onto `ConduitOptions`, the same ones settable as
-`ConduitBuilder` properties above:
+The `Conduit` section binds the five settings that are also `ConduitBuilder` properties:
 
 | Key | Type | Notes |
 |---|---|---|
 | `Conduit:SystemName` | `string` | |
 | `Conduit:ApplicationName` | `string?` | |
-| `Conduit:TopologyMode` | `TopologyMode` | Enum member name: `Production`, `Developer`, or `Test` |
-| `Conduit:TopologyPrefix` | `string?` | Setting this key resolves the lazy prefix immediately, same as an explicit code assignment |
+| `Conduit:TopologyMode` | `TopologyMode` | `Production`, `Developer` or `Test` |
+| `Conduit:TopologyPrefix` | `string?` | Set, it is used as given, as if set in code |
 | `Conduit:ProducerOnly` | `bool` | |
 
-A key absent from configuration leaves the property's existing default untouched — it is never
-bound to `null`/`false`/etc.
-
-`ConduitOptions.Endpoints` (`Dictionary<string, ConduitEndpoint>`), `Routes`
-(`List<ConduitRoute>`), and `PipelineTypes` (`List<Type>`) are never bound from configuration:
-`Conduit:Endpoints` holds transport options, not `ConduitEndpoint` instances, and the other two
-have no configuration-friendly shape (required members, `Type` values).
+A key that is absent, or an empty string, leaves the setting as it was. `ConduitOptions.Endpoints`, `Routes` and
+`PipelineTypes` are never bound: `Conduit:Endpoints` holds transport options, not endpoint declarations.
 
 ### Endpoint sections
 
-Each endpoint's transport options bind from `Conduit:Endpoints:{endpointName}`, where
-`{endpointName}` is the exact string passed to `AddEndpoint`. Worked example combining every
-transport:
+Each endpoint's transport options bind from `Conduit:Endpoints:{endpointName}`, where `{endpointName}` is the exact
+string passed to `AddEndpoint`:
 
 ```jsonc
 {
@@ -156,8 +377,7 @@ transport:
     "SystemName": "acme",
     "ApplicationName": "orders-api",
     "TopologyMode": "Developer",
-    "TopologyPrefix": "ben",
-    "ProducerOnly": false,
+    "TopologyPrefix": "alice",
 
     "Endpoints": {
       "orders": {
@@ -170,7 +390,6 @@ transport:
       },
       "events": {
         "Region": "eu-west-1",
-        "Credentials": { "AccessKey": "AKIA…", "SecretKey": "…" },
         "VisibilityTimeoutSeconds": 120
       },
       "inventory": { "HubUri": "https://inventory/conduit" },
@@ -180,248 +399,123 @@ transport:
 }
 ```
 
-Here `orders` is a RabbitMQ (or any other broker) endpoint, `events` is Amazon SQS, `inventory` is
-SignalR, and `billing` is HTTP — see [Per-transport keys](#per-transport-keys)
-below for the full key set each transport reads.
+Here `orders` is a RabbitMQ endpoint (any broker reads the same shared keys), `events` Amazon SQS, `inventory`
+SignalR and `billing` HTTP.
 
 ### Precedence
 
-**Configuration binds first, code runs second — the `configure` callback is always the final
-word.** Every `Use*` extension follows the same order: bind from `ConduitEndpointBuilder.Configuration`,
-apply the extension's explicit argument if one was passed and is non-null (e.g. `UseRabbitMQ("amqp://…")`),
-then invoke the `configure` callback if one was given. An explicit `UseRabbitMQ("amqp://prod")`
-can never be silently redirected by a stray `appsettings.json` entry.
+**Configuration binds first, code runs second, so the `configure` callback always has the last word.** Every `Use*`
+method binds its section, then applies its explicit argument if one was passed and is not null (for example
+`UseRabbitMQ("amqp://…")`), then runs its callback. An explicit `UseRabbitMQ("amqp://prod")` is never redirected by a
+stray `appsettings.json` entry. The core settings follow the same order: `AddConduit(IConfiguration, …)` binds them
+before the callback runs.
 
 ### Pool merging
 
-Named receiver pools (`options.AddPool(name, configure)`, shared by all four broker transports)
-declare in both places without conflicting:
+A named receiver pool can be declared in configuration, in code, or in both:
 
-- **`AddPool` is get-or-create.** If configuration already produced a pool with that name, the
-  code callback configures the *same* pool instead of adding a duplicate.
-- **Name matching is case-insensitive.** A pool named `"Bulk"` in configuration and
-  `AddPool("bulk", …)` in code merge into one pool, not two. Because configuration binds first and
-  creates the pool instance, **the configured spelling of `Name` is the one that survives** into
-  broker resource naming — the code callback's casing of the name argument is only used to look the
-  pool up, never to rename it.
-- **`ReceiverPoolOptions.Handle` de-duplicates.** `Handle(string)`, `Handle<TMessage>()`, and
-  `Handle(Type)` all resolve to the same `FullTypeName` and skip a type already present. A pool
-  assembled from both sources ends up with the **union** of its configured `MessageTypes` and its
-  code-declared `Handle(...)` calls.
+- **`AddPool` is get-or-create.** If configuration already produced a pool of that name, the code callback
+  configures the same pool instead of adding a second.
+- **Names match case-insensitively**, and the configured spelling is the one that survives into the broker's
+  resource names: the code's spelling only looks the pool up.
+- **`Handle` skips a type the pool already has.** `Handle(string)`, `Handle<TMessage>()` and `Handle(Type)` resolve
+  to the same full type name, so a pool from both sources handles the union of its configured `MessageTypes` and its
+  code's `Handle` calls.
+- **`Concurrency` defaults to `1`** and follows the precedence rule: a value set in code wins.
 
 ```jsonc
 { "Name": "bulk", "Concurrency": 50, "MessageTypes": [ "Orders.Commands.Import" ] }
 ```
 ```csharp
-options.AddPool("bulk", pool => pool.Handle<ReindexCommand>());
-// → one pool "bulk", Concurrency 50, handling [Orders.Commands.Import, Orders.Commands.ReindexCommand]
+endpoint.UseRabbitMQ(configure: options =>
+    options.AddPool("bulk", pool => pool.Handle<ReindexCommand>()));
+// one pool "bulk", Concurrency 50, handling Orders.Commands.Import and Orders.Commands.ReindexCommand
 ```
 
-Everything else in a pool section binds the same as any other options property: `Concurrency`
-follows the precedence rule above (a code-set value on an existing pool overrides the configured
-one), and `Name` must be present and unique within `Pools` or `ConduitConfigurationBinder` throws,
-naming the offending configuration path.
-
-Two names are **reserved**: `replies` and `dead-letter`, in any case and however written before the
-name is sanitized for the broker (`dead letter` is `dead-letter`). A pool's queue is named after the
-pool: `replies` would give it the name of a transport's reply queue, and `dead-letter` is held for a
-broker-side dead-letter queue a transport may name per application (RabbitMQ's is one per system,
-`{system}-dead-letter`, which no pool name produces). `AddPool` throws
-`ArgumentException` for either, configuration `InvalidOperationException`.
+A configured pool needs a `Name`, unique within `Pools`, or the `Use*` call throws `InvalidOperationException` naming
+the configuration path. Two names are reserved, in any case and however they are written before the name is
+sanitized for the broker (`dead letter` is `dead-letter`): `replies`, the name of a transport's reply queue, and
+`dead-letter`, held for a broker-side dead-letter queue. `AddPool` throws `ArgumentException` for either, and
+configuration `InvalidOperationException`.
 
 ### Unmatched endpoint sections
 
-A `Conduit:Endpoints:{name}` section whose name matches no `AddEndpoint` call in this process is
-**ignored silently** — nothing ever reads it, because `ConduitEndpointBuilder.Configuration` is only
-materialized for endpoints you actually declare. This is deliberate: one shared `appsettings.json`
-can describe every endpoint across a fleet of hosts, and each host's `AddEndpoint` calls pick out
-just the subset it declares. Failing fast on an unrecognized section would break that pattern, at
-the cost of not catching a typo'd endpoint name — the tradeoff this design makes on purpose.
+A `Conduit:Endpoints:{name}` section that no `AddEndpoint` call in the process names is ignored: only a declared
+endpoint reads its section. One shared `appsettings.json` can therefore describe every endpoint of a fleet, each host
+picking out the ones it declares. The price is that a misspelled endpoint name is not reported.
 
 ### Per-transport keys
 
-Every key below is a settable property on that transport's options type, bound from
-`Conduit:Endpoints:{endpointName}`. `EndpointName` itself is set internally by the `Use*` extension
-and is not configurable. `DefaultConcurrency` and `Pools` are common to every broker transport
-(RabbitMQ, ActiveMQ, Azure Service Bus, Amazon SQS) — both are inherited from
-`BrokerTransportOptions` and listed once per table below for completeness.
+Each transport reads the keys named after its options' properties. The four broker transports also read the shared
+keys: `DefaultConcurrency`, `ResponseTimeout` and `Pools` (each with `Name`, `Concurrency` and `MessageTypes`).
+Each guide's *Options and configuration keys* section has the full table, with types and defaults.
 
-**RabbitMQ** (`endpoint.UseRabbitMQ()`)
-
-| Key | Type | Notes |
+| Transport | Keys under `Conduit:Endpoints:{name}` | Guide |
 |---|---|---|
-| `ConnectionString` | `string` | Required (or pass it to `UseRabbitMQ(connectionString)`) |
-| `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration |
-| `Pools` | array | See [Pool merging](#pool-merging) |
+| RabbitMQ | `ConnectionString`, the shared keys | [RabbitMQ](transports/rabbitmq.md) |
+| ActiveMQ | `ConnectionString`, `Username`, `Password`, the shared keys | [ActiveMQ](transports/activemq.md) |
+| Azure Service Bus | `ConnectionString`, `AdminConnectionString`, the shared keys | [Azure Service Bus](transports/azure-service-bus.md) |
+| Amazon SQS | `Region`, `ServiceUri`, `Credentials:AccessKey`, `Credentials:SecretKey`, `Credentials:SessionToken`, `VisibilityTimeoutSeconds`, `MaxReceiveCount`, `RawMessageDelivery`, the shared keys | [Amazon SQS](transports/amazon-sqs.md) |
+| SignalR (client mode) | `HubUri` | [SignalR](transports/signalr.md) |
+| HTTP (client) | `BaseAddress`, `BasePath` | [HTTP](transports/http.md) |
 
-**ActiveMQ** (`endpoint.UseActiveMQ()`)
+Amazon SQS maps two keys by hand, because the binder cannot build their types. `Region` is an AWS region's system name
+(`eu-west-1`), read with `RegionEndpoint.GetBySystemName`, which does not check it against a list: a misspelled region
+fails at the first connection, not at startup. `Credentials` becomes static credentials when both `AccessKey` and
+`SecretKey` are set (session credentials when `SessionToken` is set too), and they apply whether or not `ServiceUri`
+is set. Without them the default AWS credential chain applies, or, with a `ServiceUri` (LocalStack), placeholder
+credentials.
 
-| Key | Type | Notes |
-|---|---|---|
-| `ConnectionString` | `string` | Required (or pass it to `UseActiveMQ(connectionString)`) |
-| `Username` | `string` | Optional, SASL PLAIN |
-| `Password` | `string` | Optional, SASL PLAIN |
-| `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration |
-| `Pools` | array | See [Pool merging](#pool-merging) |
-
-**Azure Service Bus** (`endpoint.UseAzureServiceBus()`)
-
-| Key | Type | Notes |
-|---|---|---|
-| `ConnectionString` | `string` | Required (or pass it to `UseAzureServiceBus(connectionString)`) |
-| `AdminConnectionString` | `string` | Optional; defaults to `ConnectionString`. Needed for the ASB Emulator (separate AMQP/HTTP ports) |
-| `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration |
-| `Pools` | array | See [Pool merging](#pool-merging) |
-
-**Amazon SQS** (`endpoint.UseAmazonSqs()`)
-
-| Key | Type | Notes |
-|---|---|---|
-| `Region` | `string` | AWS system name, e.g. `"eu-west-1"` — mapped via `RegionEndpoint.GetBySystemName` |
-| `Credentials:AccessKey` | `string` | Nested under `Credentials`, never a flat `AccessKey` |
-| `Credentials:SecretKey` | `string` | |
-| `Credentials:SessionToken` | `string` | Optional; presence selects `SessionAWSCredentials` over `BasicAWSCredentials` |
-| `ServiceUri` | `Uri` | For LocalStack/local development |
-| `DefaultConcurrency` | `int` | Default `10` |
-| `ResponseTimeout` | `TimeSpan` | Default `00:01:00`; positive and finite, validated at registration; must be `<= VisibilityTimeoutSeconds` |
-| `VisibilityTimeoutSeconds` | `int` | Default `60` |
-| `MaxReceiveCount` | `int` | Default `5`; 1 to 1000. Deliveries before SQS moves a message to its queue's dead-letter queue |
-| `RawMessageDelivery` | `bool` | Default `true` |
-| `Pools` | array | See [Pool merging](#pool-merging) |
-
-`Region` and `Credentials` are excluded from the generic bind and mapped by hand: the binder
-resolves `RegionEndpoint` to `null` silently and throws outright on the abstract `AWSCredentials`.
-`RegionEndpoint.GetBySystemName` accepts any well-formed name without checking it against a known
-list, so a typo in `Region` surfaces later as a connection failure rather than at startup.
-Leaving `Credentials` unset (or supplying no `AccessKey`/`SecretKey` pair) falls back to the
-default AWS credential chain — this is the common case, not an error state.
-
-**SignalR** (`endpoint.UseSignalR()`)
-
-| Key | Type | Notes |
-|---|---|---|
-| `HubUri` | `Uri` | Required (or pass it to `UseSignalR(hubUri)`) |
-
-`SignalROptions.ConfigureConnection` (an `Action<HttpConnectionOptions>`: access token provider, headers) is code
-only, set in the `configure` callback; configuration never binds it.
-
-**HTTP** (`endpoint.UseHttp()`)
-
-| Key | Type | Notes |
-|---|---|---|
-| `BaseAddress` | `Uri` | Required. Registers a named `HttpClient` via `AddHttpClient` |
-| `BasePath` | `string` | Default `/api/conduit` |
-
-The caller-owned `UseHttp(httpClient, basePath?)` overload never reads `BaseAddress` from
-configuration — it exists for when you own a long-lived `HttpClient` yourself (the transport holds
-it for the life of the host and never disposes it), and the `HttpClient` you pass in already has a `BaseAddress`. It
-does still read the endpoint's configured `BasePath` when the `basePath` argument is omitted, so
-`Conduit:Endpoints:{name}:BasePath` applies to either `UseHttp` overload.
+The HTTP overload that takes an `HttpClient` never reads `BaseAddress`, since the client has one, but still reads
+`BasePath` when its `basePath` argument is omitted.
 
 ### What configuration does not cover
 
-Configuration supplies an endpoint's *values*. It never declares its *existence*, and it does not
-reach the rest of the library:
+Configuration supplies an endpoint's values. It never declares one, and it does not reach the rest of the library:
 
-- **Endpoints and routes stay in code.** `AddEndpoint`, `RouteNamespace<T>()`, and `RouteType<T>()`
-  are compile-time declarations. Declaring them in configuration would need a transport-name
-  registry across all six transport packages, so a string like `"RabbitMQ"` could resolve to a
-  `Use*` call, plus a string-based route API to replace the generic ones — neither exists, and
-  routing by string would give up the compile-time type checking the generic overloads buy.
-- **Pipelines and type filters stay in code.** `AddPipeline(typeof(...))` and `AddTypeFilter(...)`
-  take `Type` values; a configuration binder cannot produce one.
-- **Durability, audit, resilience, and persistence are not configurable.** `AddDurability(...)`,
-  `AddAudit(...)`, `AddResilience(...)`, and the engine calls (`UseSqlite(...)`, `UsePostgres(...)`,
-  …) read nothing from the `Conduit` section, so the outbox's relay timing, retries and backoff are set
-  in `AddOutbox(o => ...)`. Their connection strings come from wherever your code reads them.
-- **No reload-on-change.** Options bind once during `AddConduit` and are registered as plain
-  singletons, not `IOptionsMonitor<T>`. Editing `appsettings.json` on a running host changes
-  nothing until it restarts.
-
-### Upgrading an existing host
-
-Almost every existing code-only registration still compiles unchanged — the connection-string and
-hub-URI arguments became optional rather than moving; the one exception is a job declaration whose
-lambda returns unrelated command types (below). A few consequences are worth knowing before you
-upgrade the packages:
-
-- **Recompile downstream assemblies.** `RabbitMQOptions.ConnectionString`,
-  `ActiveMQOptions.ConnectionString`, and `AzureServiceBusOptions.ConnectionString` relaxed from `required init` to `{ get; set; }` so configuration
-  can supply them. That is source-compatible — object initializers still work — but *binary*
-  breaking: dropping `init` removes the setter's `IsExternalInit` modreq, so an assembly compiled
-  against the previous package version must be rebuilt rather than swapped in. `UseSignalR` also
-  gained parameters, so it is binary breaking in the same way.
-- **`JobSchedule.FromInterval` gained a trailing optional `runsAtStart` parameter** for
-  `ScheduleBuilder.RunAtStart()`. Callers still compile unchanged, but the method's signature changed,
-  so an assembly compiled against the previous package version must be rebuilt rather than swapped in
-  (binary breaking, as above).
-- **`ScheduleBuilder.Run` and `EventTriggerBuilder<TEvent>.Run` are now generic, `Run<TCommand>(...)`**,
-  so the declared command type is known when the job is declared (a `[FireAndForget]` command is
-  refused there; see [jobs](jobs.md#two-kinds-of-job)). A lambda returning one command type infers it
-  and compiles unchanged; one whose branches return unrelated command types has no type to infer and
-  needs `Run<ICommand>(...)`. The signatures changed, so this is binary breaking as above.
-- **`AddJobs` refuses values it used to accept**, failing at startup with an
-  `InvalidOperationException` naming the option: a `HeartbeatInterval` or `MaxAttempts` of zero or
-  less, a declaration's `MaxRuntime` of zero or less, a negative retention, and durations above their
-  ceiling (one day for `CleanupInterval` and each `RetryBackoff` entry, 3650 days for a retention).
-  See [jobs](jobs.md#configuration-reference).
-- **`AddAudit` and `AddAuditListener` refuse values they used to accept**, failing at startup with an
-  `OptionsValidationException` naming each option: a `BatchSize` or `ChannelCapacity` of zero or less,
-  a `StaleGroupTimeout`, `RetentionPeriod` or `PurgeInterval` of zero or less, a negative
-  `ShutdownGrace`, and durations above their ceiling (one day for `StaleGroupTimeout`, `ShutdownGrace`
-  and `PurgeInterval`, 3650 days for `RetentionPeriod`). An enabled `MaxPayloadBytes` below 1 KB, refused
-  before with an `ArgumentOutOfRangeException`, is now one of those failures. The same rules run on
-  `IOptions<AuditOptions>` as the host starts, so a value set with `services.Configure<AuditOptions>`
-  fails the start too. See [audit](audit.md#validated-options).
-- **`AuditBatchPublisher`'s constructor gained a `ChannelWriter<DispatchAuditRecord>` second parameter**,
-  so code constructing it directly no longer compiles (source breaking); registered by `AddAudit`, it
-  is unaffected. `AuditOptions.ShutdownGrace` and `AuditBuilder.ShutdownGrace` are new.
-- **A dispatch silent past `StaleGroupTimeout` now stores two records** with its `MessageId`: a
-  provisional one ending in a `Conduit.Audit.StaleGroupEviction` marker, with no outcome, and then its
-  real one. It used to store one, recorded as failed (`Conduit.Audit.StaleGroupEviction` as a
-  `DispatchFailed`), and drop its real outcome. `IAuditStore.GetByMessageIdAsync` returns the most
-  recently stored record of a `MessageId` that is not provisional. See [audit](audit.md#stale-dispatch-groups).
-- **A missing required value now throws `InvalidOperationException`.**
-  Where `UseRabbitMQ(null)` or `UseSignalR(null)` used to fail immediately in a guard clause with
-  an `ArgumentNullException`/`ArgumentException`, the
-  value is now validated after configuration and code have both been applied, and the message names
-  both ways to supply it: *"RabbitMQ transport for endpoint 'orders' has no connection string. Set
-  'Conduit:Endpoints:orders:ConnectionString' in configuration or pass it to UseRabbitMQ()."*
-  It is still thrown from the `AddConduit` call, so a misconfigured host still fails at startup.
+- **Endpoints and routes stay in code.** `AddEndpoint`, `RouteNamespace<T>()` and `RouteType<T>()` are typed
+  declarations; there is no string form of a transport or a route to bind.
+- **Pipelines and type filters stay in code.** `AddPipeline` takes a `Type`, and the type filter's list is declared
+  with `AddTypeFilter`.
+- **Durability, audit, jobs, resilience and the persistence engines read no configuration.** `AddDurability`,
+  `AddAudit`, `AddJobs`, `AddResilience` and `UseSqlite` and its siblings read nothing from the `Conduit` section: set
+  their options in their callbacks, and pass connection strings from wherever your code keeps them.
+- **Nothing reloads.** Options bind once, during `AddConduit`, and are registered as plain singletons, not
+  `IOptionsMonitor<T>`. A change to `appsettings.json` on a running host takes effect when it restarts.
 
 ## Attributes
 
+All in `Conduit.Attributes` (`Conduit.NET.Contracts`).
+
 | Attribute | Target | Purpose |
 |---|---|---|
-| `[LocalOnly]` | Event types | Prevent event from broadcasting to transports; inherited by a derived event |
-| `[ClientVisible]` | Any type | Include in TypeScript generation output |
-| `[DoNotAudit]` | Type, property, record parameter | Type: no payload captured. Member: left out of the captured body. A raw-JSON member (`JsonElement`, `JsonNode`, `object`, extension data) is otherwise captured verbatim, so mark it, type it with `[AuditAs]`, or suppress the type's payload |
-| `[AuditRedacted]` | Property, record parameter | Audit payload holds `"•••"` for a present value (null/`""` as themselves), never the value; not combinable with `[DoNotAudit]` (CONDUIT005) |
-| `[AuditAs(nameof(Type))]` | Property, record parameter | On a `JsonElement`/`JsonElement?` member holding a serialized message named by the sibling `string` property: the audit payload holds that message redacted by its own marks; `"•••"` when the name is not a registered message type or the JSON does not read as it; left out when that type is `[DoNotAudit]` or suppressed by `AddAudit` (`Suppress<T>()`/`SuppressPayload<T>()`) (CONDUIT006 when misapplied) |
-| `[assembly: RemoteContracts("Ns")]` | Assembly | Suppress CONDUIT001 for types in namespace and its sub-namespaces |
+| `[LocalOnly]` | Class | The event never leaves the process: its local listeners run and no transport receives it. Inherited by a derived event. See [Security](security.md#localonly). |
+| `[FireAndForget]` | Class | A void command or an event: its local handler or listeners run in the background, so the caller does not wait for them, and a routed command is sent without waiting for a reply. Invalid on `ICommand<TResult>` and `IQuery<TResult>` (CONDUIT003). Inherited. `Immediate = true` bypasses the outbox ([Outbox](outbox.md#the-immediate-escape-hatch)). |
+| `[ClientVisible]` | Class | Emits a TypeScript type for the class. On an event, or a base of one, it is also what lets a SignalR hub push the event to browsers when no `IEventRecipientResolver` is registered. |
+| `[ClosedSet("a", "b", …)]` | Class | States a closed set's wire values for TypeGen. The class implements `IClosedSet<TSelf>`, and the list must equal its `All` values, in order (checked when the type is first serialized). |
+| `[DoNotAudit]` | Class, struct, property, record parameter | On a type, its dispatches are audited without a body. On a member, the body leaves that member out. A raw-JSON member (`JsonElement`, `JsonNode`, `object`, extension data) is otherwise captured verbatim, so mark it, type it with `[AuditAs]`, or suppress the type's payload. |
+| `[AuditRedacted]` | Property, record parameter | The audited body holds `"•••"` for a present value (null and `""` as themselves), never the value. Not combinable with `[DoNotAudit]` (CONDUIT005). |
+| `[AuditAs(nameof(Type))]` | Property, record parameter | On a `JsonElement` or `JsonElement?` member holding a serialized message whose type name is in the named sibling `string` property: audited as that message, redacted by its own marks. `"•••"` when the name is not a registered message type or the JSON does not read as it; left out when that type records no body. CONDUIT006 when misapplied. |
+| `[NotAutoRegistered]` | Class | The generator does not register this handler or listener. For a listener a feature registers itself, as `AddAuditListener` does. On a command or query handler it leaves the message with no local handler (CONDUIT001). |
+| `[assembly: RemoteContracts("Ns")]` | Assembly, repeatable | In the host project: suppresses CONDUIT001 for the commands and queries in that namespace and those beneath it, on whole segments, or for one type by its full name. |
 
 ## MSBuild properties (TypeGen)
 
+Read by `Conduit.NET.TypeGen`'s build step. See [TypeScript Client](transports/typescript-client.md).
+
 | Property | Default | Purpose |
 |---|---|---|
-| `ConduitTypeGenEnabled` | `false` | Set to `true` to enable TypeScript generation |
-| `ConduitTypeGenOutput` | `ClientApp/generated` | Output directory for `.ts` files |
-| `ConduitTransports` | `Http;SignalR` | Transports to include in `conduit.ts` |
+| `ConduitTypeGenEnabled` | unset | Set to `true` to generate TypeScript after each build. |
+| `ConduitTypeGenOutput` | `ClientApp/generated` | The output directory, relative to the project directory. |
+| `ConduitTransports` | `Http;SignalR` | The transports `conduit.ts` includes. |
+| `ConduitBasePath` | `/api/conduit` | The generated `HttpTransport`'s default base path: where the host maps `MapConduitEndpoint`. |
+| `ConduitHubPath` | `/conduit` | The generated `SignalRTransport`'s default hub path: where the host maps `ConduitHub`. |
+| `ConduitTypeGenAssemblyPath` | `$(TargetPath)` | The compiled assembly TypeGen reads. |
 
 ## Diagnostics
 
-| Code | Severity | Description | Resolution |
-|---|---|---|---|
-| CONDUIT001 | Warning | No handler found for a command or query | Add a handler or use `[assembly: RemoteContracts("Ns")]` |
-| CONDUIT002 | Error | Multiple handlers for a command or query | Remove the duplicate handler |
-| CONDUIT004 | Warning | Type has neither `[Authorize]` nor `[AllowAnonymous]` | Add one of the attributes |
-| CONDUIT005 | Error | A message member is marked both [DoNotAudit] and [AuditRedacted] | Keep one |
-| CONDUIT006 | Error | [AuditAs] on a member of a message, or of a type a message carries (in the compilation or a referenced assembly that references Conduit.Contracts), that is not JsonElement, or naming no sibling string property | Put it on a `JsonElement` member and name a `string` property |
-| CONDUIT007 | Error | A message type is generic, or nested in a generic type | Declare one non-generic type per message |
-| CONDUIT008 | Error | Two assemblies declare a message with the same full type name | Rename or move one of them |
+The source generator's diagnostics, CONDUIT001 to CONDUIT008, are listed with their causes and fixes in
+[Diagnostics](diagnostics.md).
 
 ---
 
