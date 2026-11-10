@@ -70,11 +70,11 @@ Orders handles `CreateOrderCommand` itself, and its handler sends `ReserveInvent
 The answer is a `DispatchResult` envelope, `data` on success and `error` on a refusal:
 
 ```json
-{"data":{"orderId":"99a37c3c-d358-4da9-90f6-388a842d34b4","inventoryReserved":true},"error":null}
+{"data":{"orderId":"99a37c3c-d358-4da9-90f6-388a842d34b4","inventoryReserved":true}}
 ```
 
 A message Orders has no handler for but routes is forwarded as it arrived. This query reaches Inventory's handler
-and answers the stock left (`{"data":98,"error":null}` after the order above):
+and answers the stock left (`{"data":98}` after the order above):
 
 ```shell
 curl -k https://localhost:5002/api/conduit/dispatch \

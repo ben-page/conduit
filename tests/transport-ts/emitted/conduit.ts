@@ -4,28 +4,29 @@ import { HubConnectionBuilder, HubConnection, HubConnectionState } from '@micros
 import type { IRetryPolicy, RetryContext } from '@microsoft/signalr';
 
 export interface DispatchResult<T> {
-  /** The handler's result. Null (or absent) on a refusal. */
+  /** The handler's result: null when the handler answers null (a `T?` result), and on a refusal. Always written. */
   data?: T | null;
-  /** The server's refusal. Null (or absent) on success. */
-  error?: ConduitError | null;
+  /** The server's refusal. Absent on success: the server leaves an absent member off rather than sending null. */
+  error?: ConduitError;
 }
 
 export interface ConduitError {
   code: string;
   message: string;
-  details?: ConduitErrorDetail[] | null;
+  /** Absent when the refusal carries none. */
+  details?: ConduitErrorDetail[];
   /** The error's HTTP-status category. 0 from a server that predates it. */
   status: number;
-  /** A declared refusal's full type name; narrow with `isError`. Null (or absent) otherwise. */
-  type?: string | null;
+  /** A declared refusal's full type name; narrow with `isError`. Absent otherwise. */
+  type?: string;
   data?: unknown;
-  /** An unexpected failure's support reference. Null (or absent) on a refusal and from older servers. */
-  reference?: string | null;
+  /** An unexpected failure's support reference. Absent on a refusal. */
+  reference?: string;
 }
 
 export interface ConduitErrorDetail {
-  /** The field the detail is about. Null (or absent) for an object-level detail. */
-  field?: string | null;
+  /** The field the detail is about. Absent for an object-level detail. */
+  field?: string;
   message: string;
 }
 

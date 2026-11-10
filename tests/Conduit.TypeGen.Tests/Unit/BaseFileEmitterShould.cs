@@ -14,7 +14,7 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain("export interface DispatchResult<T>");
         result.Should().Contain("data?: T | null;");
-        result.Should().Contain("error?: ConduitError | null;");
+        result.Should().Contain("error?: ConduitError;", "the server leaves an absent error off the wire");
     }
 
     [TestMethod]
@@ -26,6 +26,10 @@ public class BaseFileEmitterShould
         // Assert
         result.Should().Contain("export interface ConduitError");
         result.Should().Contain("export interface ConduitErrorDetail");
+        result.Should().Contain("  details?: ConduitErrorDetail[];");
+        result.Should().Contain("  field?: string;");
+        result.Should().NotContain("ConduitError | null").And.NotContain("string | null",
+            "the server writes no null in the error envelope; only a result's data may be null");
     }
 
     // A dispatch error now carries its HTTP-status category and, for a declared refusal, the type name
@@ -41,9 +45,9 @@ public class BaseFileEmitterShould
         start.Should().BeGreaterThan(-1);
         var conduitError = result[start..result.IndexOf("\n}", start, StringComparison.Ordinal)];
         conduitError.Should().Contain("  status: number;");
-        conduitError.Should().Contain("  type?: string | null;");
+        conduitError.Should().Contain("  type?: string;");
         conduitError.Should().Contain("  data?: unknown;");
-        conduitError.Should().Contain("  reference?: string | null;");
+        conduitError.Should().Contain("  reference?: string;");
     }
 
     [TestMethod]

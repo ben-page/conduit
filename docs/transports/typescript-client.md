@@ -33,7 +33,7 @@ const result = await client.execute(
   { text: 'Buy groceries' }
 );
 // result.data is string (the Guid returned by the handler)
-// result.error is the server's refusal, null or absent on success
+// result.error is the server's refusal, absent on success (the server sends no null in the error envelope)
 
 const notes = await client.fetch(
   'MyApp.Queries.GetNotesQuery',

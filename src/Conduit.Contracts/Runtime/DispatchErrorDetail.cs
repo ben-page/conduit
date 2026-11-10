@@ -17,9 +17,12 @@ namespace Conduit.Runtime;
 /// call site changes. The record is positional over <c>string?</c>/<c>string</c> and adds no package
 /// reference, so the zero-dependency guarantee holds.
 /// </remarks>
-/// <param name="Field">The field that caused the error, or <see langword="null"/> for object-level errors.</param>
+/// <param name="Field">The field that caused the error, or <see langword="null"/> for object-level errors -- and then not
+/// written, so a client reads an object-level detail as one with no <c>field</c>.</param>
 /// <param name="Message">A human-readable description of the error.</param>
-public sealed record DispatchErrorDetail(string? Field, string Message)
+public sealed record DispatchErrorDetail(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Field,
+    string Message)
 {
     /// <summary>
     /// The name and values of this detail's sentence, so a host can write it in the reader's language.

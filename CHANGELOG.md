@@ -36,6 +36,10 @@ The first public preview. The entries below are the changes since the earlier, u
 
 ### Changed
 
+- The dispatch envelope leaves an absent member off the wire instead of sending null: `error` on a success, and an
+  error's `details`, `type`, `data` and `reference`, and a detail's `field`, when they are empty. The TypeScript client's
+  `DispatchResult.error`, `ConduitError` and `ConduitErrorDetail` lose their `| null`. `data` is always written, so a
+  `T?` handler's null still arrives as null. A C# client reads an absent member as null, as before.
 - Packages publish under the `Conduit.NET` prefix (`Conduit.NET`, `Conduit.NET.SourceGen`, `Conduit.NET.Transport.Http`
   and so on); namespaces and assembly names stay `Conduit`.
 - `EndpointBuilder` is renamed `ConduitEndpointBuilder`; the old name collided with ASP.NET Core's `EndpointBuilder`.

@@ -148,11 +148,12 @@
     was found); and the narrowing helper `export function isError<K extends keyof ErrorMap>(error: unknown, type:
     K): error is { type: K; data: ErrorMap[K] }`.
   - `conduit.ts`'s `ConduitError` carries `status: number` (the HTTP-status category; 0 from a server that
-    predates it), `type?: string | null` (a declared refusal's full type name), `data?: unknown`, and
-    `reference?: string | null` (an unexpected failure's support reference; null or absent on refusals and from
-    older servers). `base.ts` types every member the server writes as `null` as `?: T | null` (`DispatchResult`'s
-    `data`/`error`, `details`, `field`, `type`, `reference`): optional for older servers, nullable for what
-    `ConduitRuntime.JsonOptions` actually writes.
+    predates it), `type?: string` (a declared refusal's full type name), `data?: unknown`, and
+    `reference?: string` (an unexpected failure's support reference; absent on refusals). The envelope's optional
+    members (`DispatchResult.Error`, `DispatchError`'s `Details`/`Type`/`Data`/`Reference`, `DispatchErrorDetail.Field`)
+    carry `[JsonIgnore(Condition = WhenWritingNull)]`, so the server leaves an absent one off the wire and `base.ts`
+    types each `?: T` with no `| null`. Only `DispatchResult.data` is `?: T | null`: it is always written, since a `T?`
+    handler's null is its answer (`DispatchResultShould.LeaveAnAbsentErrorMemberOffTheWire_AndKeepANullResult`).
   - **camelCase parity with the wire**: the emitted interface keys use `TypeScriptEmitter.ToCamelCase`; the
     wire (`ConduitException.GetClientData`) keys with `JsonNamingPolicy.CamelCase.ConvertName`. These are two
     separate implementations, so they could in principle disagree — checked exhaustively (every combination of

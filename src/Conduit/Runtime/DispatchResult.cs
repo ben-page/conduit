@@ -20,8 +20,11 @@ public sealed record DispatchResult<T>
     public T? Data { get; init; }
 
     /// <summary>
-    /// Structured error information when the dispatch fails. <see langword="null"/> on success.
+    /// Structured error information when the dispatch fails. <see langword="null"/> on success, and then not written:
+    /// the wire leaves an absent member off rather than sending null. <see cref="Data"/> is always written, since a
+    /// <c>T?</c> handler's null is its answer.
     /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DispatchError? Error { get; init; }
 
     /// <summary>
@@ -83,27 +86,31 @@ public sealed record DispatchResult<T>
 /// </summary>
 /// <param name="Code">A machine-readable error code (e.g. "VALIDATION", "NOT_FOUND").</param>
 /// <param name="Message">A human-readable error message.</param>
-/// <param name="Details">Optional field-level error details.</param>
+/// <param name="Details">Optional field-level error details; not written when null.</param>
+/// <remarks>Every optional member is left off the wire when it is null, so a client reads it as absent, never as null.</remarks>
 public sealed record DispatchError(
     string Code,
     string Message,
-    IReadOnlyList<DispatchErrorDetail>? Details = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<DispatchErrorDetail>? Details = null)
 {
     /// <summary>The HTTP status the error's <c>ErrorCode</c> declares: its CATEGORY. 0 from a server that predates it.</summary>
     public int Status { get; init; }
 
     /// <summary>The <c>ConduitException</c> subclass's full type name when <c>ConduitException.IsClientTyped</c> is
     /// true for it (a consumer's refusal, or any subclass that declares data); otherwise null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Type { get; init; }
 
     /// <summary>That subclass's declared data (<c>ConduitException.GetClientData</c>) when <see cref="Type"/> is
     /// set -- an empty object when the refusal declares no data (or its override returns null); otherwise
     /// null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Data { get; init; }
 
     /// <summary>The support reference of an UNEXPECTED failure (the <c>InternalError</c> arm): quotable by the user,
     /// greppable in the log line that carries the same value. Null on a refusal and from a server that predates it.
     /// <see cref="Exceptions.ConduitException.Reference"/> forwards onto it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Reference { get; init; }
 
     /// <summary>The refusal's sentence name and values, for the edge that writes it in the reader's language. Never

@@ -78,6 +78,35 @@ public class DispatchResultShould
     }
 
     [TestMethod]
+    public void LeaveAnAbsentErrorMemberOffTheWire_AndKeepANullResult()
+    {
+        // Arrange -- a success, a refusal with nothing optional, and a detail about no field
+        var ok = DispatchResult<Receipt>.Ok(new Receipt("order-7", 3));
+        var nullResult = DispatchResult<Receipt?>.Ok(null);
+        var refused = DispatchResult<Receipt>.Fail(
+            ErrorCode.BadRequest, "The order is invalid.", [new DispatchErrorDetail(null, "The order is closed.")]);
+        var bare = DispatchResult<Receipt>.Fail(ErrorCode.NotFound, "No such order.");
+
+        // Act
+        var okJson = JsonSerializer.SerializeToElement(ok, ConduitRuntime.JsonOptions);
+        var nullJson = JsonSerializer.SerializeToElement(nullResult, ConduitRuntime.JsonOptions);
+        var refusedError = JsonSerializer.SerializeToElement(refused, ConduitRuntime.JsonOptions).GetProperty("error");
+        var bareError = JsonSerializer.SerializeToElement(bare, ConduitRuntime.JsonOptions).GetProperty("error");
+
+        // Assert -- an absent member is not written, so a client reads it as absent, never as null
+        okJson.TryGetProperty("error", out _).Should().BeFalse("a success carries no error");
+        refusedError.TryGetProperty("type", out _).Should().BeFalse("an undeclared refusal has no type");
+        refusedError.TryGetProperty("reference", out _).Should().BeFalse("a refusal carries no support reference");
+        refusedError.TryGetProperty("data", out _).Should().BeFalse("an undeclared refusal has no data");
+        refusedError.GetProperty("details")[0].TryGetProperty("field", out _).Should().BeFalse("an object-level detail names no field");
+        bareError.TryGetProperty("details", out _).Should().BeFalse("a refusal without details writes none");
+
+        // ...but a result is always written: a T? handler's null is its answer, not a missing one
+        nullJson.GetProperty("data").ValueKind.Should().Be(JsonValueKind.Null);
+        okJson.GetProperty("data").GetProperty("orderId").GetString().Should().Be("order-7");
+    }
+
+    [TestMethod]
     public void RoundTripAnOkResultUnchanged()
     {
         // Arrange
