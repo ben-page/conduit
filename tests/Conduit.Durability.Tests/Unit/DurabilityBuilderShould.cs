@@ -149,6 +149,31 @@ public sealed class DurabilityBuilderShould
             .Which.ImplementationType.Should().Be<CaptureOnlyOutboxFlusher>();
     }
 
+    [TestMethod]
+    public async Task RelayAgainWhenALaterAddOutboxCallTurnsCaptureOnlyOff()
+    {
+        // Arrange — the last call that sets CaptureOnly wins, as for every other option
+        var services = NewServices();
+
+        // Act
+        services.AddConduit(conduit =>
+        {
+            conduit.UseSqlite("Data Source=:memory:");
+            conduit.AddDurability(durability =>
+            {
+                durability.AddOutbox(options => options.CaptureOnly = true);
+                durability.AddOutbox(options => options.CaptureOnly = false);
+            });
+        });
+
+        // Assert
+        HostedServices(services).Should().ContainSingle(type => type == typeof(OutboxRelay));
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        scope.ServiceProvider.GetServices<IOutboxFlusher>().Should().ContainSingle()
+            .Which.Should().BeOfType<OutboxCapture>();
+    }
+
     private static void AskForCaptureOnlyWhen(bool asks, OutboxOptions options)
     {
         if (asks)

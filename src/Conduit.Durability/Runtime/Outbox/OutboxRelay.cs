@@ -205,9 +205,10 @@ public sealed partial class OutboxRelay(
         => o.CompletedRetention > TimeSpan.Zero || (o.FailedRetention ?? o.CompletedRetention) > TimeSpan.Zero;
 
     /// <summary>
-    /// Deletes Sent entries older than <see cref="OutboxOptions.CompletedRetention"/> and Failed entries older than
-    /// <see cref="OutboxOptions.FailedRetention"/> (which defaults to <c>CompletedRetention</c>), resolving the store
-    /// from its own fresh scope. Each retention is applied only when it is above <see cref="TimeSpan.Zero"/>, so
+    /// Deletes Sent entries sent longer ago than <see cref="OutboxOptions.CompletedRetention"/> (by <c>SentAt</c>) and
+    /// Failed entries whose last attempt failed longer ago than <see cref="OutboxOptions.FailedRetention"/> (by
+    /// <c>FailedAt</c>; the retention defaults to <c>CompletedRetention</c>), resolving the store from its own fresh
+    /// scope. Each retention is applied only when it is above <see cref="TimeSpan.Zero"/>, so
     /// <c>Zero</c> disables that half of the cleanup. Exposed as internal for testing.
     /// </summary>
     internal async Task CleanupCompletedAsync(CancellationToken cancellationToken)

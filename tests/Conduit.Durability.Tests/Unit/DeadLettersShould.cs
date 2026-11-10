@@ -172,6 +172,25 @@ public sealed class DeadLettersShould
     }
 
     [TestMethod]
+    public async Task StopReadingPagesWhenTheStoreHandsBackTheSameToken()
+    {
+        // Arrange — a custom store whose next page token never moves on
+        var entry = CreateEntry("Target.Command", "orders");
+        var repeatingStore = new RepeatingTokenDeadLetterStore(entry);
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IConduitTransport>("orders", this.transport);
+        await using var serviceProvider = services.BuildServiceProvider();
+        var deadLetters = new DeadLetters(repeatingStore, serviceProvider, NullLogger<DeadLetters>.Instance);
+
+        // Act
+        var results = await deadLetters.ReplayByTypeAsync("Target.Command", CancellationToken.None);
+
+        // Assert
+        results.Should().ContainSingle().Which.Success.Should().BeTrue();
+        repeatingStore.Removed.Should().BeTrue();
+    }
+
+    [TestMethod]
     public async Task DiscardSingleEntry()
     {
         // Arrange

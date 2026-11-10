@@ -100,9 +100,13 @@ public sealed class OutboxOptions
     {
         var failures = new List<string>();
 
-        // A negative interval throws in Task.Delay, and a zero one turns the loop into a busy one.
+        // The relay waits RelayInterval between sweeps: a negative one throws in Task.Delay, and a zero one turns the loop
+        // into a busy one.
         DurationLimits.RequirePositive(
             failures, "OutboxOptions.RelayInterval", this.RelayInterval, DurationLimits.LongestDuration);
+
+        // The relay compares CleanupInterval with the time since its last cleanup once per sweep: one that is not
+        // positive would run the cleanup's deletes on every sweep.
         DurationLimits.RequirePositive(
             failures, "OutboxOptions.CleanupInterval", this.CleanupInterval, DurationLimits.LongestDuration);
 

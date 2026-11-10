@@ -36,8 +36,8 @@ public sealed class DurabilityBuilder
 
     /// <summary>
     /// Adds the transactional outbox. Calling it again configures the same outbox (see the remarks on
-    /// <see cref="DurabilityBuilder"/>); <see cref="OutboxOptions.CaptureOnly"/>, once any call sets it, removes the
-    /// relay.
+    /// <see cref="DurabilityBuilder"/>). The delivery follows <see cref="OutboxOptions.CaptureOnly"/> as the last call
+    /// that sets it leaves it: <see langword="true"/> removes the relay, a later <see langword="false"/> adds it back.
     /// </summary>
     /// <exception cref="OptionsValidationException">
     /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key; an interval, a

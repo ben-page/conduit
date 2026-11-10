@@ -89,6 +89,8 @@ And these indexes, besides the primary key:
 
 `AutoCreateTable` creates them with the table and, on SQLite, PostgreSQL and SQL Server, adds any an existing table lacks. MySQL has no `CREATE INDEX IF NOT EXISTS`, so there the indexes come only with a new table.
 
+Startup creates tables and indexes but never alters a column. A `conduit_outbox` created by an earlier pre-release build must therefore be dropped before this build starts, or migrated: add `FailedAt`, and give `MessageId`, `ClaimToken`, `NextAttemptAt` and `SentAt` the bounded types above. Left as it is, the table fails when an entry is marked Failed and in every Failed retention cleanup, since `FailedAt` is missing. On SQL Server, startup also fails, because the indexes cannot be created over `NVARCHAR(MAX)` columns.
+
 ## The outbox needs a transaction-aware factory
 
 The connection factory supplied by an engine package is **non-transactional** — it opens fresh connections and cannot see your handler's ambient transaction. That is fine for the inbox, dead-letter queue, audit trail, and jobs, but the [transactional outbox](outbox.md) must write its entry in the *same* transaction as your business data. Enabling `AddOutbox()` against the built-in factory **fails fast at startup**; supply your own transaction-aware `IConduitConnectionFactory` as shown in the [outbox guide](outbox.md#providing-a-transaction).

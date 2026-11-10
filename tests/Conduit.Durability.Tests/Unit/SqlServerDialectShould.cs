@@ -1,6 +1,6 @@
 using AwesomeAssertions;
-using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
+using Conduit.Persistence;
 using Conduit.Persistence.SqlServer;
 
 namespace Conduit.Durability.Tests.Unit;

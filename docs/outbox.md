@@ -144,7 +144,8 @@ The `AddOutbox()` call registers:
 
 Calling `AddOutbox()` again, from the same `AddDurability` or another one (a second module of the same host), adds
 to the same outbox: nothing is registered twice, and each call's callback changes only the options it sets.
-`CaptureOnly`, once any call sets it, removes the relay.
+`CaptureOnly` is no exception: the last call that sets it wins, so a call that sets it to `true` removes the relay, and
+a later one that sets it back to `false` adds the relay back.
 
 ### Capture-only
 
@@ -207,7 +208,7 @@ conduit.UseMySql("Server=localhost;Database=MyApp;...");
 conduit.AddDurability(durability => durability.AddOutbox());
 ```
 
-The outbox table (`conduit_outbox`) and its indexes are created automatically on startup, before the relay's first sweep. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations ([the columns and indexes a migration needs](persistence.md#the-outbox-table)). A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL); an existing table's columns are never altered (only a missing index is added, and not on MySQL), so a host that [carries dispatch properties](#carrying-dispatch-properties) on a table created before the column existed must add it itself.
+The outbox table (`conduit_outbox`) and its indexes are created automatically on startup, before the relay's first sweep. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations ([the columns and indexes a migration needs](persistence.md#the-outbox-table)). A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL). Startup creates tables and indexes but never alters a column. A host that [carries dispatch properties](#carrying-dispatch-properties) on a table created before that column existed must add it itself. A `conduit_outbox` created by an earlier pre-release build does not work with this one. It lacks the `FailedAt` column, so marking an entry Failed and the Failed retention cleanup throw on every sweep. On SQL Server, creating the indexes over its unbounded key columns fails startup. Drop that table before this build starts, or migrate it to [the current columns and indexes](persistence.md#the-outbox-table).
 
 ## Custom stores
 

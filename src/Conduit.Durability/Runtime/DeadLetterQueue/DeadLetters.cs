@@ -133,7 +133,8 @@ public sealed class DeadLetters : IDeadLetters
         CancellationToken cancellationToken)
     {
         // Every id first, a page at a time, then the replays: a replay removes its entry, which would move the entries
-        // of the pages still to read. Distinct, since a capture made meanwhile moves an entry onto the next page.
+        // of the pages still to read. Distinct, since a capture made meanwhile moves an entry onto the next page. A
+        // store that hands back no entries, or the token it was given, has no further page to read.
         var ids = new List<Guid>();
         string? pageToken = null;
         while (true)
@@ -147,7 +148,7 @@ public sealed class DeadLetters : IDeadLetters
                 },
                 cancellationToken);
             ids.AddRange(page.Entries.Select(entry => entry.Id));
-            if (page.NextPageToken is null || page.Entries.Count == 0)
+            if (page.NextPageToken is null || page.Entries.Count == 0 || page.NextPageToken == pageToken)
             {
                 break;
             }
