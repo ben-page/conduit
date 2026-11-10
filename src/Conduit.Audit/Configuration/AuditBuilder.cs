@@ -49,8 +49,8 @@ public sealed class AuditBuilder
     }
 
     /// <summary>
-    /// How long a dispatch may go without an observation before its group is evicted as stale (sealed as failed).
-    /// Positive, and at most one day. Default 5 minutes.
+    /// How long a dispatch may go without an observation before it gets a provisional record, with no outcome; its real
+    /// record follows when it ends. Positive, and at most one day. Default 5 minutes.
     /// </summary>
     public TimeSpan StaleGroupTimeout
     {

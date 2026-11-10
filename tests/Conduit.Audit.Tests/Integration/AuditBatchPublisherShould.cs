@@ -147,6 +147,64 @@ public sealed class AuditBatchPublisherShould
 
     [TestMethod]
     [Timeout(30_000)]
+    public async Task PublishAProvisionalThenTheFinalRecordOfACommandSilentPastTheTimeout()
+    {
+        // Arrange — a command handler held past a short stale timeout, observing nothing meanwhile, as a job body does
+        await using var host = await TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<PublishedAuditBatches>();
+            builder.Services.AddSingleton<AuditCommandGate>();
+            builder.Services.AddConduit(conduit => conduit.AddAudit(audit =>
+            {
+                audit.BatchSize = 1;
+                audit.StaleGroupTimeout = TimeSpan.FromMilliseconds(50);
+            }));
+        });
+        var gate = host.GetRequiredService<AuditCommandGate>();
+        var published = host.GetRequiredService<PublishedAuditBatches>();
+        var executing = host.GetRequiredService<IMediator>().ExecuteAsync(new HeldAuditCommand("silent"));
+        await gate.WaitUntilHeldAsync();
+        await published.WaitForRecordsAsync(1);
+
+        // Act — the handler returns after its provisional record was published
+        gate.Release();
+        await executing;
+        await published.WaitForRecordsAsync(2);
+
+        // Assert
+        var records = published.Batches.SelectMany(batch => batch.Records).ToList();
+        records.Should().HaveCount(2);
+        records[0].Observations.Should().NotContain(observation => observation is DispatchFailed || observation is DispatchCompleted);
+        records[0].Observations[^1].Should().BeOfType<CustomObservation>()
+            .Which.Name.Should().Be("Conduit.Audit.StaleGroupEviction");
+        records[1].MessageId.Should().Be(records[0].MessageId);
+        records[1].Observations.Should().NotContain(observation => observation is DispatchFailed);
+        records[1].Observations[^1].Should().BeOfType<DispatchCompleted>();
+    }
+
+    [TestMethod]
+    public async Task LogTheRecordsADisposeWithoutAStopAbandons()
+    {
+        // Arrange — a provider whose publisher was never started, with one record queued
+        var spy = new SpyLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.AddProvider(spy));
+        services.AddSingleton<MessageIdCapture>();
+        services.AddConduit(conduit => conduit.AddAudit());
+        var provider = services.BuildServiceProvider();
+        await provider.GetRequiredService<IMediator>().ExecuteAsync(new AuditTestCommand("queued"));
+        provider.GetServices<IHostedService>().OfType<AuditBatchPublisher>().Should().ContainSingle();
+
+        // Act
+        await provider.DisposeAsync();
+
+        // Assert
+        spy.Entries.Should().ContainSingle(entry => entry.EventId.Id == 520)
+            .Which.Message.Should().Contain("1 audit record(s)");
+    }
+
+    [TestMethod]
+    [Timeout(30_000)]
     public async Task KeepSweepingAfterASweepThrows()
     {
         // Arrange — every sweep throws, reading a broken clock

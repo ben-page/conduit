@@ -3,13 +3,19 @@ using Conduit.Runtime;
 namespace Conduit.Audit.Runtime;
 
 /// <summary>
-/// The observations of one dispatch, until it seals. Added to on the dispatching thread and sealed on whichever thread
-/// ends it (its terminal observation, or the stale sweep), so every member that touches the observations takes the
-/// group's lock: <see cref="Seal"/> returns a consistent snapshot and marks the group sealed, and an
-/// <see cref="Add"/> after that is refused (returns false) rather than racing the copy.
+/// The observations of one dispatch, until it seals. Added to on the dispatching thread and sealed on the thread that ends
+/// it, while the stale sweep may snapshot it from another, so every member that touches the observations takes the
+/// group's lock: <see cref="Seal"/> returns a consistent snapshot and marks the group sealed, and an <see cref="Add"/>
+/// after that is refused (returns false) rather than racing the copy.
 /// </summary>
 internal sealed class DispatchGroup
 {
+    /// <summary>
+    /// The <see cref="CustomObservation.Name"/> of the marker that ends a provisional record: the sweep found the dispatch
+    /// silent for the stale timeout, and the record has no outcome.
+    /// </summary>
+    internal const string EvictionMarkerName = "Conduit.Audit.StaleGroupEviction";
+
     private readonly Lock gate = new();
     private readonly List<MessageObservation> observations = [];
     private readonly string messageId;
@@ -42,15 +48,15 @@ internal sealed class DispatchGroup
     internal DateTime CreatedAt { get; }
 
     /// <summary>
-    /// When the group last took an observation (UTC, the observer's clock): the time <see cref="SealIfInactive"/> measures
-    /// inactivity from. Written and read under the group's lock.
+    /// When the group last took an observation (UTC, the observer's clock): the time <see cref="SnapshotIfInactive"/>
+    /// measures inactivity from. Written and read under the group's lock.
     /// </summary>
     internal DateTime LastObservedAt { get; private set; }
 
-    /// <summary>The context the group was created from, which the observer remembers when the sweep evicts the group.</summary>
+    /// <summary>The context the group was created from, which keys the group once the sweep has evicted it.</summary>
     internal MessageContext Context { get; }
 
-    /// <summary>Whether the stale sweep sealed the group (<see cref="SealIfInactive"/>), rather than its terminal observation.</summary>
+    /// <summary>Whether the stale sweep has written a provisional record of the group (<see cref="SnapshotIfInactive"/>).</summary>
     internal bool IsEvicted
     {
         get
@@ -94,27 +100,28 @@ internal sealed class DispatchGroup
     }
 
     /// <summary>
-    /// Seals the group as evicted when it has taken no observation for <paramref name="staleTimeout"/> before
-    /// <paramref name="now"/>: appends a synthetic <see cref="DispatchFailed"/> marking it evicted before it emitted a
-    /// terminal observation, preserving the partial trail instead of dropping it. Checked and sealed under the lock, so
-    /// an observation racing the sweep either lands first (and the group is no longer inactive) or is refused.
+    /// Writes a provisional record of the group when it has taken no observation for <paramref name="staleTimeout"/>
+    /// before <paramref name="now"/> and has not been evicted already: appends a non-terminal
+    /// <see cref="CustomObservation"/> marker (<see cref="EvictionMarkerName"/>), sets <see cref="IsEvicted"/>, and hands
+    /// <paramref name="write"/> a snapshot ending in that marker. The group is not sealed: it keeps taking observations,
+    /// and its terminal one seals the real record. <paramref name="write"/> runs under the group's lock, so the
+    /// provisional record is written before any terminal observation can be added, and so before the real record.
     /// </summary>
-    /// <returns>The sealed record; null when the group observed within the timeout or is already sealed.</returns>
-    internal DispatchAuditRecord? SealIfInactive(DateTime now, TimeSpan staleTimeout)
+    /// <returns>True when the provisional record was written; false when the group observed within the timeout, was
+    /// evicted before, or is sealed.</returns>
+    internal bool SnapshotIfInactive(DateTime now, TimeSpan staleTimeout, Action<DispatchAuditRecord> write)
     {
         lock (this.gate)
         {
-            if (this.isSealed || now - this.LastObservedAt < staleTimeout)
+            if (this.isSealed || this.IsEvicted || now - this.LastObservedAt < staleTimeout)
             {
-                return null;
+                return false;
             }
 
-            this.observations.Add(new DispatchFailed(
-                DurationMs: 0,
-                ErrorMessage: $"Dispatch evicted as stale: no observation for {staleTimeout}.",
-                ExceptionType: "Conduit.Audit.StaleGroupEviction"));
+            this.observations.Add(new CustomObservation(EvictionMarkerName, Data: null) { Timestamp = now });
             this.IsEvicted = true;
-            return this.SealHeld();
+            write(this.Snapshot());
+            return true;
         }
     }
 
@@ -122,22 +129,22 @@ internal sealed class DispatchGroup
     /// Seals the group and returns its record; an <see cref="Add"/> after this is refused. The payload is read from the
     /// context the group was created from, at seal time: the wire dispatch observes <see cref="DispatchInvoked"/> before
     /// its switch arm deserializes and captures the message, so a copy taken at construction would be empty on that
-    /// path. Every seal path (terminal observation and stale eviction) therefore keeps the body; a dispatch that failed
-    /// before capture (unreadable JSON) seals without one. The body read is capped here, at seal, so both paths store it
-    /// within the observer's <c>MaxPayloadBytes</c> (<see cref="AuditPayloadCap"/>).
+    /// path. Every record (the real one, and a provisional one at stale eviction) therefore keeps the body; a dispatch
+    /// that failed before capture (unreadable JSON) seals without one. The body read is capped here, so every record
+    /// stores it within the observer's <c>MaxPayloadBytes</c> (<see cref="AuditPayloadCap"/>).
     /// </summary>
     internal DispatchAuditRecord Seal()
     {
         lock (this.gate)
         {
-            return this.SealHeld();
+            this.isSealed = true;
+            return this.Snapshot();
         }
     }
 
     // Called with the lock held.
-    private DispatchAuditRecord SealHeld()
+    private DispatchAuditRecord Snapshot()
     {
-        this.isSealed = true;
         var invoked = this.observations.OfType<DispatchInvoked>().FirstOrDefault();
 
         return new DispatchAuditRecord

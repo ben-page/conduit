@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Audit.Configuration;
 using Conduit.Generated;
+using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -88,6 +89,24 @@ public sealed class AuditOptionsShould
 
         // Assert
         act.Should().NotThrow();
+    }
+
+    [TestMethod]
+    [Timeout(30_000)]
+    public async Task RefuseOptionsAHostConfiguresAfterAddAudit()
+    {
+        // Arrange — the host sets IOptions<AuditOptions> itself, after AddAudit has checked its own callback
+
+        // Act
+        var start = () => TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddConduit(conduit => conduit.AddAudit());
+            builder.Services.Configure<AuditOptions>(options => options.StaleGroupTimeout = TimeSpan.Zero);
+        });
+
+        // Assert — refused as the host starts, not left to throw inside the publisher's sweep
+        (await start.Should().ThrowAsync<OptionsValidationException>())
+            .Which.Failures.Should().ContainSingle().Which.Should().Contain("AuditOptions.StaleGroupTimeout");
     }
 
     // The capture options belong to AddAudit, the retention options to AddAuditListener.

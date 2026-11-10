@@ -28,9 +28,9 @@ public sealed class AuditOptions
     public string? ServiceName { get; set; }
 
     /// <summary>
-    /// How long a dispatch group may go without an observation before it is considered stale and evicted (sealed as
-    /// failed). Measured from the group's last observation, not its first, so a long dispatch that keeps observing stays
-    /// open. Positive, and at most one day. Default 5 minutes.
+    /// How long a dispatch may go without an observation before it gets a provisional record (its observations so far,
+    /// ending in a <c>Conduit.Audit.StaleGroupEviction</c> marker, no outcome); its real record follows when it ends.
+    /// Measured from the dispatch's last observation, not its first. Positive, and at most one day. Default 5 minutes.
     /// </summary>
     public TimeSpan StaleGroupTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
@@ -72,10 +72,21 @@ public sealed class AuditOptions
     /// not positive; a <see cref="StaleGroupTimeout"/> or <see cref="PurgeInterval"/> that is not positive or is above
     /// one day; a negative <see cref="ShutdownGrace"/> or one above one day; an enabled <see cref="MaxPayloadBytes"/>
     /// below <see cref="MinimumMaxPayloadBytes"/>; and a <see cref="RetentionPeriod"/> that is not positive or is above
-    /// 3650 days. <c>AddAudit</c> and <c>AddAuditListener</c> call it once their callback has run.
+    /// 3650 days. <c>AddAudit</c> and <c>AddAuditListener</c> call it once their callback has run; the same rules run
+    /// again on the bound <c>IOptions&lt;AuditOptions&gt;</c> as the host starts (<see cref="AuditOptionsValidator"/>).
     /// </summary>
     /// <exception cref="OptionsValidationException">An option is invalid; each failure names it.</exception>
     internal void Validate()
+    {
+        var failures = this.Failures();
+        if (failures.Count > 0)
+        {
+            throw new OptionsValidationException(Options.DefaultName, typeof(AuditOptions), failures);
+        }
+    }
+
+    /// <summary>Every rule <see cref="Validate"/> applies that these options break, each naming its option; empty when none.</summary>
+    internal List<string> Failures()
     {
         var failures = new List<string>();
 
@@ -108,10 +119,7 @@ public sealed class AuditOptions
         RequirePositive(failures, nameof(this.PurgeInterval), this.PurgeInterval, LongestDuration);
         RequirePositive(failures, nameof(this.RetentionPeriod), this.RetentionPeriod, LongestRetention);
 
-        if (failures.Count > 0)
-        {
-            throw new OptionsValidationException(Options.DefaultName, typeof(AuditOptions), failures);
-        }
+        return failures;
     }
 
     private static void RequirePositive(List<string> failures, string option, int value)

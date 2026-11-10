@@ -2,8 +2,6 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Conduit.Runtime;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Audit.Runtime;
 
@@ -13,23 +11,22 @@ namespace Conduit.Audit.Runtime;
 /// (<see cref="DispatchCompleted"/> or <see cref="DispatchFailed"/>) is received.
 /// Sealed records are written to a channel for downstream processing.
 /// </summary>
-public sealed partial class AuditObserver : IConduitObserver
+public sealed class AuditObserver : IConduitObserver
 {
     private static readonly string AuditBatchTypeName = typeof(AuditBatch).FullName!;
-    private static readonly object EvictedMarker = new();
 
     private readonly ConcurrentDictionary<string, DispatchGroup> activeGroups = new();
 
-    // The contexts of dispatches the sweep evicted, held weakly: a terminal observation that arrives later is recognised
-    // for as long as its dispatch runs, and no entry outlives the dispatch's context.
-    private readonly ConditionalWeakTable<MessageContext, object> evictedContexts = new();
+    // The groups the sweep evicted, keyed weakly by their dispatch's context: every observation of a dispatch carries
+    // the context its DispatchInvoked did (MessageContext.Observe passes Current), so a dispatch still running finds its
+    // group here, and the group goes when the context does, whether or not the dispatch ever ends.
+    private readonly ConditionalWeakTable<MessageContext, DispatchGroup> evictedGroups = new();
     private readonly ChannelWriter<DispatchAuditRecord> channel;
     private readonly string serviceName;
     private readonly IReadOnlySet<string> suppressedTypes;
     private readonly IReadOnlySet<string> suppressedPayloadTypes;
     private readonly int maxPayloadBytes;
     private readonly TimeProvider timeProvider;
-    private readonly ILogger logger;
 
     /// <summary>
     /// Creates a new audit observer that writes sealed records to the specified channel.
@@ -71,8 +68,6 @@ public sealed partial class AuditObserver : IConduitObserver
     /// <param name="timeProvider">The clock a dispatch's record is stamped with (its <see cref="DispatchAuditRecord.Timestamp"/>)
     /// and each observation is timed by (the inactivity <see cref="EvictStaleGroups"/> measures); null, as the other
     /// constructors pass, is <see cref="TimeProvider.System"/>.</param>
-    /// <param name="logger">Where a terminal observation arriving after its group was evicted is noted (Debug); null, as
-    /// the other constructors pass, logs nothing.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxPayloadBytes"/> is above 0 but below
     /// <see cref="Configuration.AuditOptions.MinimumMaxPayloadBytes"/>.</exception>
     public AuditObserver(
@@ -81,8 +76,7 @@ public sealed partial class AuditObserver : IConduitObserver
         IReadOnlySet<string> suppressedTypes,
         IReadOnlySet<string> suppressedPayloadTypes,
         int maxPayloadBytes,
-        TimeProvider? timeProvider = null,
-        ILogger<AuditObserver>? logger = null)
+        TimeProvider? timeProvider = null)
     {
         AuditPayloadCap.ThrowIfInvalid(maxPayloadBytes, nameof(maxPayloadBytes));
         ArgumentNullException.ThrowIfNull(suppressedTypes);
@@ -94,7 +88,6 @@ public sealed partial class AuditObserver : IConduitObserver
         this.suppressedPayloadTypes = suppressedPayloadTypes;
         this.maxPayloadBytes = maxPayloadBytes;
         this.timeProvider = timeProvider ?? TimeProvider.System;
-        this.logger = logger ?? (ILogger)NullLogger.Instance;
     }
 
     /// <inheritdoc />
@@ -114,16 +107,14 @@ public sealed partial class AuditObserver : IConduitObserver
             return;
         }
 
-        // Only DispatchInvoked (always the first observation) opens a group. A later observation for a message ID with
-        // none is dropped: its DispatchInvoked was skipped above, or the sweep evicted its group.
+        // Only DispatchInvoked (always the first observation) opens a group. A later observation finds its group among
+        // the active ones, or among those the sweep evicted (written provisionally, still open); with neither, its
+        // DispatchInvoked was skipped above, and it is dropped.
         DispatchGroup? group = null;
-        if (observation is not DispatchInvoked && !this.activeGroups.TryGetValue(context.MessageId, out group))
+        if (observation is not DispatchInvoked
+            && !this.activeGroups.TryGetValue(context.MessageId, out group)
+            && !this.evictedGroups.TryGetValue(context, out group))
         {
-            if (IsTerminal(observation) && this.evictedContexts.TryGetValue(context, out _))
-            {
-                LogTerminalAfterEviction(this.logger, context.MessageId, observation.GetType().Name);
-            }
-
             return;
         }
 
@@ -140,70 +131,57 @@ public sealed partial class AuditObserver : IConduitObserver
             group.SuppressPayload();
         }
 
-        if (!group.Add(observation, observedAt))
+        // False only once the group has sealed: an observation after the dispatch's terminal one.
+        if (!group.Add(observation, observedAt) || observation is not (DispatchCompleted or DispatchFailed))
         {
-            // Sealed since the lookup: the sweep evicted it in between.
-            if (IsTerminal(observation) && group.IsEvicted)
-            {
-                LogTerminalAfterEviction(this.logger, context.MessageId, observation.GetType().Name);
-            }
-
             return;
         }
 
-        if (IsTerminal(observation))
-        {
-            if (this.activeGroups.TryRemove(context.MessageId, out var completed))
-            {
-                // Seal now, while the payload is readable; only the write waits. A dispatch nested in a retrying
-                // attempt is written once that attempt is kept and dropped if it is abandoned.
-                var sealedRecord = completed.Seal();
-                if (context.Attempt is { } attempt)
-                {
-                    attempt.OnKept(() => this.channel.TryWrite(sealedRecord));
-                }
-                else
-                {
-                    this.channel.TryWrite(sealedRecord);
-                }
-            }
-        }
+        // Wherever the group is, it is finished. Seal now, while the payload is readable; only the write waits.
+        this.activeGroups.TryRemove(new KeyValuePair<string, DispatchGroup>(context.MessageId, group));
+        this.evictedGroups.Remove(context);
+        this.Write(group.Seal(), context);
     }
 
     /// <summary>
-    /// Evicts dispatch groups that have taken no observation for <paramref name="staleTimeout"/> before
-    /// <paramref name="now"/>. Incomplete dispatches (no terminal observation) would otherwise leak forever in
-    /// <c>activeGroups</c>. The age is measured from a group's last observation, not its first, so a long dispatch that
-    /// keeps observing stays open. Each evicted group is sealed and flushed as an incomplete/failed record rather than
-    /// silently dropped, preserving the partial audit trail. A terminal observation that arrives for it afterwards is
-    /// dropped, the record already written standing, and logged at Debug (EventId 522).
+    /// Writes a provisional record of each dispatch that has made no observation for <paramref name="staleTimeout"/>
+    /// before <paramref name="now"/>. An incomplete dispatch (no terminal observation) would otherwise hold its group
+    /// forever, and its trail would never reach the store. The age is measured from a group's last observation, not its
+    /// first. The provisional record holds the observations so far and the payload, and ends in a non-terminal marker
+    /// (a <see cref="CustomObservation"/> named <c>Conduit.Audit.StaleGroupEviction</c>): it records no outcome. The
+    /// group leaves the active set but stays open, held weakly by its dispatch's context, so when the dispatch does end,
+    /// its real record is written with the same <see cref="DispatchAuditRecord.MessageId"/>, the later of the two. A
+    /// group is written provisionally once at most; one whose dispatch never ends goes with its context.
     /// </summary>
     /// <param name="now">The current time used to evaluate inactivity. Injected for deterministic testing.</param>
-    /// <param name="staleTimeout">The inactivity beyond which an incomplete group is considered stale.</param>
+    /// <param name="staleTimeout">The inactivity beyond which an incomplete group is written provisionally.</param>
     public void EvictStaleGroups(DateTime now, TimeSpan staleTimeout)
     {
         foreach (var entry in this.activeGroups)
         {
-            if (entry.Value.SealIfInactive(now, staleTimeout) is not { } evicted)
+            var group = entry.Value;
+            if (!group.SnapshotIfInactive(now, staleTimeout, provisional => this.Write(provisional, group.Context)))
             {
                 continue;
             }
 
-            // Remembered before the group leaves the dictionary, so a terminal observation that no longer finds the
-            // group there finds its context here.
-            this.evictedContexts.AddOrUpdate(entry.Value.Context, EvictedMarker);
+            // Moved before it leaves the active set, so an observation that no longer finds it there finds it here.
+            this.evictedGroups.AddOrUpdate(group.Context, group);
             this.activeGroups.TryRemove(entry);
-            this.channel.TryWrite(evicted);
         }
     }
 
-    private static bool IsTerminal(MessageObservation observation) => observation is DispatchCompleted or DispatchFailed;
-
-    [LoggerMessage(
-        EventId = 522,
-        EventName = "TerminalObservationAfterEviction",
-        Level = LogLevel.Debug,
-        Message = "Dispatch {MessageId} ended ({Observation}) after its audit group was evicted as stale; the record " +
-            "already written says it was evicted, and this observation is dropped")]
-    private static partial void LogTerminalAfterEviction(ILogger logger, string messageId, string observation);
+    // A dispatch nested in a retrying attempt is written once that attempt is kept and dropped if it is abandoned, its
+    // provisional record as its real one; OnKept keeps their order.
+    private void Write(DispatchAuditRecord record, MessageContext context)
+    {
+        if (context.Attempt is { } attempt)
+        {
+            attempt.OnKept(() => this.channel.TryWrite(record));
+        }
+        else
+        {
+            this.channel.TryWrite(record);
+        }
+    }
 }

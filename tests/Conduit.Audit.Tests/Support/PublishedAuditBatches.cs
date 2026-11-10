@@ -27,4 +27,19 @@ public sealed class PublishedAuditBatches
             await Task.Delay(10);
         }
     }
+
+    /// <summary>Polls until the published batches hold at least <paramref name="expected"/> records, or throws.</summary>
+    public async Task WaitForRecordsAsync(int expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (this.batches.Sum(batch => batch.Records.Count) < expected)
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException($"Expected {expected} published audit record(s).");
+            }
+
+            await Task.Delay(10);
+        }
+    }
 }

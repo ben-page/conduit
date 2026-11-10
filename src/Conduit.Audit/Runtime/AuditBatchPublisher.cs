@@ -25,7 +25,10 @@ namespace Conduit.Audit.Runtime;
 /// On stop (<see cref="StopAsync"/>) the channel's writer is completed, so the observer's later writes are refused, and
 /// the loop drains what is queued until the channel is empty, <see cref="AuditOptions.ShutdownGrace"/> passes or the
 /// host's shutdown token fires, whichever is first. The records still unpublished then are counted in one Warning
-/// (EventId 520, <c>AuditRecordsAbandoned</c>), and the stop returns without throwing. A stale-group sweep that throws
+/// (EventId 520, <c>AuditRecordsAbandoned</c>; a dispose without a stop counts and logs them too), and the stop returns
+/// without throwing. A batch counted there may still be stored: its publish runs on under
+/// <see cref="CancellationToken.None"/>. A record the observer seals after the writer completed is refused by the channel
+/// and counted nowhere. A stale-group sweep that throws
 /// is logged (EventId 521, <c>StaleGroupSweepFailed</c>) and the next sweep runs as usual. A batch's
 /// <see cref="AuditBatch.BatchTimestamp"/> and the stale-group sweep's "now" read <paramref name="timeProvider"/> (null
 /// is <see cref="TimeProvider.System"/>); the sweep's cadence and the shutdown grace are real time.
@@ -79,16 +82,25 @@ public sealed partial class AuditBatchPublisher(
         var abandonedCount = this.Abandon();
         if (abandonedCount > 0)
         {
-            LogRecordsAbandoned(logger, abandonedCount, options.Value.ShutdownGrace);
+            LogRecordsAbandoned(
+                logger,
+                abandonedCount,
+                $"the shutdown grace ({options.Value.ShutdownGrace}) or the host's shutdown deadline ended the drain first");
         }
     }
 
     /// <inheritdoc />
     public override void Dispose()
     {
-        // Disposed without a stop: end the drain loop rather than leave it waiting on a channel nobody writes to.
+        // Disposed without a stop: end the drain loop rather than leave it waiting on a channel nobody writes to. After a
+        // stop, nothing is left to count.
         writer.TryComplete();
-        this.Abandon();
+        var abandonedCount = this.Abandon();
+        if (abandonedCount > 0)
+        {
+            LogRecordsAbandoned(logger, abandonedCount, "it was disposed without being stopped");
+        }
+
         base.Dispose();
     }
 
@@ -211,16 +223,15 @@ public sealed partial class AuditBatchPublisher(
     private static partial void LogPublishFailed(ILogger logger, int recordCount, Exception exception);
 
     /// <summary>
-    /// The stop ended the drain with records unpublished: the shutdown grace passed, or the host's shutdown token fired,
-    /// first. EventId 520 is a contract: never renumber it.
+    /// The publisher stopped with records unpublished: the shutdown grace passed, or the host's shutdown token fired,
+    /// first, or it was disposed without a stop. EventId 520 is a contract: never renumber it.
     /// </summary>
     [LoggerMessage(
         EventId = 520,
         EventName = "AuditRecordsAbandoned",
         Level = LogLevel.Warning,
-        Message = "{RecordCount} audit record(s) were not published when the audit publisher stopped: the shutdown grace " +
-            "({ShutdownGrace}) or the host's shutdown deadline ended the drain first")]
-    private static partial void LogRecordsAbandoned(ILogger logger, int recordCount, TimeSpan shutdownGrace);
+        Message = "{RecordCount} audit record(s) were not published when the audit publisher stopped: {Reason}")]
+    private static partial void LogRecordsAbandoned(ILogger logger, int recordCount, string reason);
 
     /// <summary>A stale-group sweep threw; the sweep loop carries on. EventId 521 is a contract: never renumber it.</summary>
     [LoggerMessage(

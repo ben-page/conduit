@@ -5,7 +5,7 @@ using Conduit.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Audit;
 
@@ -33,6 +33,7 @@ public static class ConduitBuilderExtensions
         var auditBuilder = new AuditBuilder(builder.Services);
         configure?.Invoke(auditBuilder);
         auditBuilder.Options.Validate();
+        ValidateBoundOptionsOnStart(builder.Services);
 
         // Configure options via IOptions<AuditOptions>
         builder.Services.Configure<AuditOptions>(options =>
@@ -93,8 +94,7 @@ public static class ConduitBuilderExtensions
                 suppressedTypes,
                 suppressedPayloadTypes,
                 auditBuilder.Options.MaxPayloadBytes,
-                serviceProvider.GetRequiredService<TimeProvider>(),
-                serviceProvider.GetService<ILogger<AuditObserver>>());
+                serviceProvider.GetRequiredService<TimeProvider>());
         });
         builder.Services.AddSingleton<Conduit.Runtime.IConduitObserver>(
             serviceProvider => serviceProvider.GetRequiredService<AuditObserver>());
@@ -129,6 +129,7 @@ public static class ConduitBuilderExtensions
         var listenerBuilder = new AuditListenerBuilder(builder.Services);
         configure?.Invoke(listenerBuilder);
         listenerBuilder.Options.Validate();
+        ValidateBoundOptionsOnStart(builder.Services);
 
         // Retention/purge are owned by the listener (it registers the purge service).
         builder.Services.Configure<AuditOptions>(options =>
@@ -141,5 +142,14 @@ public static class ConduitBuilderExtensions
         builder.Services.TryAddSingleton(TimeProvider.System);
 
         return builder;
+    }
+
+    // The callback's options are checked at registration; a host can still set IOptions<AuditOptions> itself
+    // (services.Configure<AuditOptions> after AddAudit), so the bound value is checked by the same rules as the host
+    // starts, before the publisher's sweep or the purge reads it.
+    private static void ValidateBoundOptionsOnStart(IServiceCollection services)
+    {
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<AuditOptions>, AuditOptionsValidator>());
+        services.AddOptions<AuditOptions>().ValidateOnStart();
     }
 }

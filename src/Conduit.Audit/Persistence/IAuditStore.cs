@@ -14,8 +14,8 @@ public interface IAuditStore
     public Task SaveBatchAsync(IReadOnlyList<DispatchAuditRecord> records, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Retrieves an audit record by its message identifier.
-    /// Returns null if no record is found.
+    /// Retrieves the most recently stored audit record with this message identifier (a dispatch silent past the stale
+    /// timeout has a provisional record and then its real one, which this returns). Returns null if no record is found.
     /// </summary>
     public Task<DispatchAuditRecord?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
 

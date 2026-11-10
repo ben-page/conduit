@@ -58,6 +58,7 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
             SELECT {AuditTableSchema.MessageIdColumn}, {AuditTableSchema.ConversationIdColumn}, {AuditTableSchema.CausationIdColumn}, {AuditTableSchema.MessageTypeColumn}, {AuditTableSchema.MessageKindColumn}, {AuditTableSchema.ServiceNameColumn}, {AuditTableSchema.PayloadColumn}, {AuditTableSchema.PropertiesColumn}, {AuditTableSchema.TimestampColumn}, {AuditTableSchema.ObservationsColumn}
             FROM {AuditTableSchema.TableName}
             WHERE {AuditTableSchema.MessageIdColumn} = @MessageId
+            ORDER BY {AuditTableSchema.IdColumn} DESC
             """;
 
         this.deleteExpiredSql =
@@ -119,6 +120,11 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Several records can share a message ID: a dispatch silent past the stale timeout has a provisional record and
+    /// then its real one, and a central store keeps each service's record of one logical message. The one returned is
+    /// the most recently stored (highest <c>Id</c>), so a dispatch's real record wins over its provisional one.
+    /// </remarks>
     public async Task<DispatchAuditRecord?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(messageId);

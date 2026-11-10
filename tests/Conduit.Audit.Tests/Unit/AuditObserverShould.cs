@@ -3,8 +3,6 @@ using System.Threading.Channels;
 using AwesomeAssertions;
 using Conduit.Audit.Runtime;
 using Conduit.Runtime;
-using Conduit.TestUtils;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Audit.Tests.Unit;
@@ -55,7 +53,7 @@ public sealed class AuditObserverShould
     [TestMethod]
     public void KeepALongRunningDispatchAlive()
     {
-        // Arrange — a dispatch that runs past the stale timeout but keeps observing
+        // Arrange — a command past the stale timeout whose dispatch observes a retry: an observation a command makes
         var start = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
         var clock = new FakeTimeProvider(start);
         var staleTimeout = TimeSpan.FromMinutes(5);
@@ -70,7 +68,7 @@ public sealed class AuditObserverShould
         var context = MessageContext.StartDispatch();
         observer.OnObservation(new DispatchInvoked("Test.Jobs.Reindex", "Command"), context);
         clock.Advance(TimeSpan.FromMinutes(4));
-        observer.OnObservation(new HandlerStarted("ReindexHandler"), context);
+        observer.OnObservation(new RetryAttempted(1, "deadlock", "System.InvalidOperationException", 100), context);
 
         // Act — swept six minutes after it began, two after it last observed; then it completes
         clock.Advance(TimeSpan.FromMinutes(2));
@@ -79,19 +77,17 @@ public sealed class AuditObserverShould
 
         // Assert — one record, carrying the real completion
         channel.Reader.TryRead(out var record).Should().BeTrue();
-        channel.Reader.TryRead(out _).Should().BeFalse("the dispatch has one record");
-        record!.Observations.Should().NotContain(observation => observation is DispatchFailed);
+        channel.Reader.TryRead(out _).Should().BeFalse("a dispatch that kept observing has one record");
+        record!.Observations.Should().NotContain(observation => observation is DispatchFailed || observation is CustomObservation);
         record.Observations[^1].Should().BeOfType<DispatchCompleted>();
     }
 
     [TestMethod]
-    public void DropButLogACompletionThatArrivesAfterEviction()
+    public void RecordTheRealOutcomeOfADispatchSilentPastTheTimeout()
     {
-        // Arrange — a dispatch silent for longer than the stale timeout is evicted
+        // Arrange — a command observes DispatchInvoked, then nothing while its handler runs
         var start = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
         var clock = new FakeTimeProvider(start);
-        var spy = new SpyLoggerProvider();
-        using var loggerFactory = LoggerFactory.Create(logging => logging.AddProvider(spy).SetMinimumLevel(LogLevel.Debug));
         var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
         var observer = new AuditObserver(
             channel.Writer,
@@ -99,22 +95,24 @@ public sealed class AuditObserverShould
             new HashSet<string>(),
             new HashSet<string>(),
             Configuration.AuditOptions.DefaultMaxPayloadBytes,
-            clock,
-            loggerFactory.CreateLogger<AuditObserver>());
+            clock);
         var context = MessageContext.StartDispatch();
-        observer.OnObservation(new DispatchInvoked("Test.Jobs.Silent", "Command"), context);
+        observer.OnObservation(new DispatchInvoked("Test.Jobs.Reindex", "Command"), context);
         clock.Advance(TimeSpan.FromMinutes(6));
         observer.EvictStaleGroups(clock.GetUtcNow().UtcDateTime, TimeSpan.FromMinutes(5));
 
         // Act
         observer.OnObservation(new DispatchCompleted(360_000), context);
 
-        // Assert — the evicted record stands, and the late completion is only logged
-        channel.Reader.TryRead(out var record).Should().BeTrue();
-        record!.Observations[^1].Should().BeOfType<DispatchFailed>();
-        channel.Reader.TryRead(out _).Should().BeFalse("a late completion writes no second record");
-        spy.Entries.Should().ContainSingle(entry => entry.EventId.Id == 522)
-            .Which.Should().Match<SpyLogEntry>(entry => entry.Level == LogLevel.Debug && entry.Message.Contains(context.MessageId));
+        // Assert — a provisional record with no outcome, then the real one
+        channel.Reader.TryRead(out var provisional).Should().BeTrue();
+        channel.Reader.TryRead(out var final).Should().BeTrue();
+        provisional!.Observations.Should().NotContain(observation => observation is DispatchFailed || observation is DispatchCompleted);
+        provisional.Observations[^1].Should().BeOfType<CustomObservation>()
+            .Which.Name.Should().Be("Conduit.Audit.StaleGroupEviction");
+        final!.MessageId.Should().Be(provisional.MessageId);
+        final.Observations.Should().NotContain(observation => observation is DispatchFailed);
+        final.Observations[^1].Should().BeOfType<DispatchCompleted>();
     }
 
     [TestMethod]
@@ -401,8 +399,11 @@ public sealed class AuditObserverShould
             "a group with no terminal observation older than StaleGroupTimeout should be evicted");
         record!.MessageId.Should().Be(context.MessageId);
         record.MessageType.Should().Be("Test.Commands.Crashes");
-        record.Observations.Should().Contain(observation => observation is DispatchFailed,
-            "an evicted incomplete dispatch should be sealed as failed/incomplete");
+        record.Observations[^1].Should().BeOfType<CustomObservation>(
+            "an evicted incomplete dispatch gets a provisional record, ending in the eviction marker")
+            .Which.Name.Should().Be("Conduit.Audit.StaleGroupEviction");
+        record.Observations.Should().NotContain(observation => observation is DispatchFailed,
+            "eviction does not decide the dispatch's outcome");
     }
 
     [TestMethod]
@@ -496,8 +497,8 @@ public sealed class AuditObserverShould
 
         // Assert
         channel.Reader.TryRead(out var record).Should().BeTrue();
-        record!.Observations.Should().Contain(observation => observation is DispatchFailed);
-        record.Payload.Should().NotBeNull("eviction seals through the same payload read as a terminal observation");
+        record!.Observations[^1].Should().BeOfType<CustomObservation>();
+        record.Payload.Should().NotBeNull("eviction snapshots through the same payload read as a terminal observation");
         record.Payload!.Value.GetRawText().Should().Contain("captured-then-evicted");
     }
 

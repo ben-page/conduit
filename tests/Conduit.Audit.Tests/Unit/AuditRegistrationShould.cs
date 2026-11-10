@@ -48,8 +48,11 @@ public sealed class AuditRegistrationShould
         // has run, and sealed its records, before the publisher's stop drains them
         using var provider = services.BuildServiceProvider();
         var hostedServices = provider.GetServices<IHostedService>().ToList();
-        hostedServices.FindIndex(service => service is AuditBatchPublisher)
-            .Should().BeLessThan(hostedServices.FindIndex(service => service is ConduitBackgroundDispatcher));
+        var publisherIndex = hostedServices.FindIndex(service => service is AuditBatchPublisher);
+        var dispatcherIndex = hostedServices.FindIndex(service => service is ConduitBackgroundDispatcher);
+        publisherIndex.Should().BeGreaterThanOrEqualTo(0, "the publisher is a hosted service");
+        dispatcherIndex.Should().BeGreaterThanOrEqualTo(0, "the background dispatcher is a hosted service");
+        publisherIndex.Should().BeLessThan(dispatcherIndex);
     }
 
     private static void AddAuditSide(ConduitBuilder builder, bool capture)

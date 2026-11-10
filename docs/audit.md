@@ -46,7 +46,8 @@ Dispatch runs
 AuditObserver  (set by AddAudit)
   ├── groups observations by MessageId into a DispatchGroup
   ├── seals the group on DispatchCompleted / DispatchFailed
-  │     (or evicts it, sealed as failed, once it has observed nothing for StaleGroupTimeout)
+  │     (and, once it has observed nothing for StaleGroupTimeout, writes a provisional record
+  │      with no outcome first, keeping the group open for the real one)
   └── writes the sealed DispatchAuditRecord to a bounded channel
 
 AuditBatchPublisher  (background service, set by AddAudit)
@@ -185,7 +186,7 @@ By default the buffer drops the oldest record under sustained overload, trading 
 
 ### Payload size cap
 
-`MaxPayloadBytes` bounds the request body a record keeps. It is applied when the record **seals** (its terminal observation, or stale-group eviction), so it covers every capture path — in process, wire-inbound and `[AuditAs]`-typed members alike — and it measures the body's UTF-8 bytes as serialized. The body is still serialized in full before the cap applies; the cap bounds what is stored and published, not the capture cost.
+`MaxPayloadBytes` bounds the request body a record keeps. It is applied when the record **seals** (its terminal observation, or the provisional record a stale dispatch gets), so it covers every capture path — in process, wire-inbound and `[AuditAs]`-typed members alike — and it measures the body's UTF-8 bytes as serialized. The body is still serialized in full before the cap applies; the cap bounds what is stored and published, not the capture cost.
 
 - A body **at or under** the cap is stored unchanged, byte for byte.
 - A body **over** the cap whose root is a JSON object is stored shortened: the longest string values anywhere in it (objects and arrays, any depth) are cut to one common length, the largest that fits, each keeping its leading characters followed by `…`; every other member is kept as it was. A redacted placeholder (`"•••"`) is never cut. A top-level member records the cut:
@@ -201,19 +202,26 @@ The stored body is always valid JSON and never longer than the cap. A message wh
 
 ### Stale dispatch groups
 
-The observer holds a dispatch's observations until its terminal one (`DispatchCompleted` or `DispatchFailed`). A dispatch that never sends one (a handler that hangs, a flow abandoned between two observations) would hold them forever, so the batch publisher sweeps once per `StaleGroupTimeout`, or once a minute when the timeout is longer, and evicts each dispatch that has made **no observation** for `StaleGroupTimeout`. An evicted dispatch is not dropped: its record is written with the observations so far and its payload, ending in a `DispatchFailed` whose `ExceptionType` is `Conduit.Audit.StaleGroupEviction` (`"Dispatch evicted as stale: no observation for 00:05:00."`).
+The observer holds a dispatch's observations until its terminal one (`DispatchCompleted` or `DispatchFailed`). A command or query observes nothing while its handler runs (`DispatchInvoked`, then its outcome), so a long one, such as a background job's body, holds them for as long as it runs, and one that never ends (a handler that hangs, a flow abandoned between two observations) would hold them forever with nothing reaching the store. So the batch publisher sweeps once per `StaleGroupTimeout`, or once a minute when the timeout is longer, and writes a **provisional record** of each dispatch that has made no observation for `StaleGroupTimeout` (default 5 minutes):
 
-The timeout counts from the dispatch's **last** observation, not its first, so a dispatch that runs longer than `StaleGroupTimeout` but keeps observing stays open and is recorded with its real outcome. Only the dispatch's own observations count: a nested dispatch (a command its handler sends) has a record of its own and does not keep its parent open. A handler that runs silent for longer than the timeout, such as one long job step, is still evicted. Raise `StaleGroupTimeout` above the longest such silence (at most one day), or have the handler report progress on its own dispatch, which also lands in its record:
+- The provisional record holds the observations so far and the payload, and ends in a marker, a `CustomObservation` named `Conduit.Audit.StaleGroupEviction`. It records **no outcome**: neither `DispatchCompleted` nor `DispatchFailed`.
+- The dispatch stays open. When it ends, its **real record** is written as usual, with the same `MessageId`, its outcome, and every observation, the marker included where the provisional record was cut. **The later record is the authoritative one**: `IAuditStore.GetByMessageIdAsync` returns the most recently stored record of a `MessageId`, so it returns the real record once there is one.
+- A dispatch that never ends leaves only its provisional record. The observer holds it no longer than the dispatch's own `MessageContext` lives.
+- A dispatch gets one provisional record at most, however long it then runs.
+
+The timeout counts from the dispatch's last observation, not its first, so a dispatch that observes again in the meantime (a retry, an event's next listener starting) gets no provisional record until it has been silent for the whole timeout. A nested dispatch (a command its handler sends) observes on its own record, not its parent's. To keep a long, silent handler from getting a provisional record, raise `StaleGroupTimeout` above its longest run (at most one day), or have it report progress on its own dispatch, which also lands in its record:
 
 ```csharp
 MessageContext.Observe(new CustomObservation("reindex.progress", processed));
 ```
 
-When an evicted dispatch does end, its terminal observation is dropped: the record already written stands, saying it was evicted, and the observer logs the late arrival at Debug (EventId 522, `TerminalObservationAfterEviction`). Each observation is timed by the host's `TimeProvider`, and the sweep's "now" reads it too, so a test ages a group by advancing a `FakeTimeProvider`; the sweep's cadence is real time. A sweep that throws is logged at Error (EventId 521, `StaleGroupSweepFailed`), and the next one runs as usual.
+Each observation is timed by the host's `TimeProvider`, and the sweep's "now" reads it too, so a test ages a dispatch by advancing a `FakeTimeProvider`; the sweep's cadence is real time. A sweep that throws is logged at Error (EventId 521, `StaleGroupSweepFailed`), and the next one runs as usual. A dispatch nested in a retrying attempt follows the attempt (see [Records and retried attempts](#records-and-retried-attempts)): its provisional record, like its real one, is written once the attempt is kept and dropped if it is abandoned.
 
 ### Shutdown
 
-When the host stops, the batch publisher stops taking records (a record sealed from then on is not recorded) and drains what is already queued, publishing it in batches as usual. The drain runs until the queue is empty, until `ShutdownGrace` (default 5 seconds) has passed, or until the host's own shutdown deadline (`HostOptions.ShutdownTimeout`) arrives, whichever is first. The stop never cancels a batch's write part-way. If the grace or the deadline ends the drain first, the records still unpublished (those queued, and a batch whose write has not finished) are counted in one Warning, EventId 520 (`AuditRecordsAbandoned`), and the stop returns. `ShutdownGrace = TimeSpan.Zero` abandons the queue at once, counting it. The grace is real time.
+When the host stops, the batch publisher stops taking records (a record sealed from then on is not recorded) and drains what is already queued, publishing it in batches as usual. The drain runs until the queue is empty, until `ShutdownGrace` (default 5 seconds) has passed, or until the host's own shutdown deadline (`HostOptions.ShutdownTimeout`) arrives, whichever is first. The stop never cancels a batch's write part-way. If the grace or the deadline ends the drain first, the records still unpublished (those queued, and a batch whose write has not finished) are counted in one Warning, EventId 520 (`AuditRecordsAbandoned`), and the stop returns. A batch counted there may still be stored: its write keeps running after the stop returns, and lands if it finishes before the process ends. `ShutdownGrace = TimeSpan.Zero` abandons the queue at once, counting it. The grace is real time. A publisher disposed without being stopped counts and logs what it abandons the same way.
+
+A record sealed after the stop began is refused and **counted nowhere**: a provisional record the sweep writes before the stop has ended it, and every record of a dispatch made by a hosted service that stops after the publisher (below).
 
 A host stops its hosted services in the reverse of the order they were registered. `AddAudit` runs inside `AddConduit`, which registers the background dispatcher for `[FireAndForget]` work after it, so the dispatcher's queued work has run, and its records are sealed, before the publisher drains. A hosted service registered **before** `AddAudit` stops after the publisher, so a dispatch it makes while stopping is not recorded: one your host adds before calling `AddConduit`, or a transport whose `Use…` call precedes `AddAudit` in the callback. To have their last dispatches recorded, call `AddAudit` before the transports and add your own dispatching hosted services after `AddConduit`. A host that sets `HostOptions.ServicesStopConcurrently` stops them all at once, in no order.
 
@@ -232,7 +240,7 @@ conduit.AddAuditListener(listener =>
 
 ## Validated options
 
-`AddAudit` and `AddAuditListener` check the options once their callback has run, and refuse a value the runtime cannot work with by throwing an `OptionsValidationException` that names each offending option, so the mistake stops the host at startup:
+`AddAudit` and `AddAuditListener` check the options once their callback has run, and refuse a value the runtime cannot work with by throwing an `OptionsValidationException` that names each offending option, so the mistake stops the host at startup. The same rules run again on `IOptions<AuditOptions>` as the host starts, so a value the host sets itself (`services.Configure<AuditOptions>(...)` after `AddAudit`) is refused there, with the same exception:
 
 | Option | Set on | Default | Allowed |
 |---|---|---|---|
@@ -318,7 +326,7 @@ A `DispatchAuditRecord` contains:
 | `Payload` | The serialized message body — unless suppressed via `[DoNotAudit]` or `SuppressPayload<T>()`. A body over `MaxPayloadBytes` (64 KB by default) is stored shortened with a `$truncated` marker (see [Payload size cap](#payload-size-cap)). |
 | `Properties` | Contextual properties carried on the `MessageContext`. |
 | `Timestamp` | UTC timestamp of the dispatch. |
-| `Observations` | Ordered lifecycle observations (invoked, handler start/complete, retries, completed/failed). |
+| `Observations` | Ordered lifecycle observations (invoked, handler start/complete, retries, completed/failed). A provisional record ends in the `Conduit.Audit.StaleGroupEviction` marker instead of an outcome (see [Stale dispatch groups](#stale-dispatch-groups)). |
 
 ## Records and retried attempts
 
@@ -336,7 +344,7 @@ A record is sealed (its payload read and capped) at the moment the nested dispat
 
 When a service calls `AddAudit()` and has a transport registered, the `AuditBatch` events it publishes are broadcast to that transport like any other event (`AuditBatch` is a normal `IEvent`). A dedicated collector service that calls `AddAuditListener()` subscribes to `AuditBatch` on its broker transports and persists everything it receives — from every service on the broker. Any service that calls `AddAuditListener()` on that broker does the same, a role 2 service included; see [Deployment roles](#deployment-roles) for keeping one to its own batches.
 
-Because each service stamps its own records with the shared `MessageId`, the central store can reconstruct a cross-service timeline for a single logical message — e.g. the sender's transport-send and the receiver's handler-start appear as separate records sharing one `MessageId`. Query by `MessageId` via `IAuditStore.GetByMessageIdAsync`.
+Because each service stamps its own records with the shared `MessageId`, the central store can reconstruct a cross-service timeline for a single logical message — e.g. the sender's transport-send and the receiver's handler-start appear as separate records sharing one `MessageId`. `IAuditStore.GetByMessageIdAsync` returns one record of a `MessageId`, the most recently stored; to see every service's record of a message, query the `conduit_audit` table by `MessageId` directly.
 
 ## Limitations
 
