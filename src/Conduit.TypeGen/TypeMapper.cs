@@ -9,18 +9,33 @@ namespace Conduit.TypeGen;
 /// </summary>
 public static class TypeMapper
 {
+    /// <summary>
+    /// The BCL scalars, by short name. Every one is in the <c>System</c> namespace, and a lookup by <see cref="Type"/> or
+    /// by full name checks that, so a host type that shares a short name (<c>MyApp.Uri</c>) is the host's own type.
+    /// Each maps to what <c>System.Text.Json</c> writes for it: every integer type, <see cref="Half"/> and the floating
+    /// and decimal types are JSON numbers; <see cref="char"/>, <see cref="Uri"/>, <see cref="TimeSpan"/>, <see cref="Guid"/>
+    /// and the date and time types are JSON strings.
+    /// </summary>
     private static readonly Dictionary<string, string> SimpleTypeMappings = new()
     {
         ["String"] = "string",
+        ["Char"] = "string",
         ["Guid"] = "string",
-        ["Int32"] = "number",
-        ["Int64"] = "number",
-        ["Int16"] = "number",
-        ["UInt32"] = "number",
+        ["Uri"] = "string",
+        ["SByte"] = "number",
         ["Byte"] = "number",
-        ["Decimal"] = "number",
-        ["Double"] = "number",
+        ["Int16"] = "number",
+        ["UInt16"] = "number",
+        ["Int32"] = "number",
+        ["UInt32"] = "number",
+        ["Int64"] = "number",
+        ["UInt64"] = "number",
+        ["Int128"] = "number",
+        ["UInt128"] = "number",
+        ["Half"] = "number",
         ["Single"] = "number",
+        ["Double"] = "number",
+        ["Decimal"] = "number",
         ["Boolean"] = "boolean",
         ["DateTime"] = "string",
         ["DateTimeOffset"] = "string",
@@ -29,22 +44,83 @@ public static class TypeMapper
         ["TimeSpan"] = "string",
     };
 
+    /// <summary>
+    /// The generic collections <c>System.Text.Json</c> writes as a JSON array, by generic definition full name: they emit
+    /// <c>T[]</c>. Lists, sets, queues and stacks, and their immutable, frozen, concurrent and object-model forms.
+    /// </summary>
     internal static readonly HashSet<string> CollectionFullNames =
     [
-        "System.Collections.Generic.List`1",
-        "System.Collections.Generic.IList`1",
         "System.Collections.Generic.IEnumerable`1",
-        "System.Collections.Generic.IReadOnlyList`1",
         "System.Collections.Generic.ICollection`1",
         "System.Collections.Generic.IReadOnlyCollection`1",
+        "System.Collections.Generic.IList`1",
+        "System.Collections.Generic.IReadOnlyList`1",
+        "System.Collections.Generic.List`1",
+        "System.Collections.Generic.ISet`1",
+        "System.Collections.Generic.IReadOnlySet`1",
+        "System.Collections.Generic.HashSet`1",
+        "System.Collections.Generic.SortedSet`1",
+        "System.Collections.Generic.LinkedList`1",
+        "System.Collections.Generic.Queue`1",
+        "System.Collections.Generic.Stack`1",
+        "System.Collections.ObjectModel.Collection`1",
+        "System.Collections.ObjectModel.ObservableCollection`1",
+        "System.Collections.ObjectModel.ReadOnlyCollection`1",
+        "System.Collections.ObjectModel.ReadOnlyObservableCollection`1",
+        "System.Collections.Immutable.IImmutableList`1",
+        "System.Collections.Immutable.ImmutableList`1",
+        "System.Collections.Immutable.ImmutableArray`1",
+        "System.Collections.Immutable.IImmutableSet`1",
+        "System.Collections.Immutable.ImmutableHashSet`1",
+        "System.Collections.Immutable.ImmutableSortedSet`1",
+        "System.Collections.Immutable.IImmutableQueue`1",
+        "System.Collections.Immutable.ImmutableQueue`1",
+        "System.Collections.Immutable.IImmutableStack`1",
+        "System.Collections.Immutable.ImmutableStack`1",
+        "System.Collections.Frozen.FrozenSet`1",
+        "System.Collections.Concurrent.ConcurrentBag`1",
+        "System.Collections.Concurrent.ConcurrentQueue`1",
+        "System.Collections.Concurrent.ConcurrentStack`1",
+        "System.Collections.Concurrent.BlockingCollection`1",
     ];
 
+    /// <summary>
+    /// The generic dictionaries <c>System.Text.Json</c> writes as a JSON object, by generic definition full name: they emit
+    /// <c>Record&lt;string, TValue&gt;</c> (<see cref="ToRecordType"/>).
+    /// </summary>
     internal static readonly HashSet<string> DictionaryFullNames =
     [
-        "System.Collections.Generic.Dictionary`2",
         "System.Collections.Generic.IDictionary`2",
         "System.Collections.Generic.IReadOnlyDictionary`2",
+        "System.Collections.Generic.Dictionary`2",
+        "System.Collections.Generic.SortedDictionary`2",
+        "System.Collections.Generic.SortedList`2",
+        "System.Collections.ObjectModel.ReadOnlyDictionary`2",
+        "System.Collections.Immutable.IImmutableDictionary`2",
+        "System.Collections.Immutable.ImmutableDictionary`2",
+        "System.Collections.Immutable.ImmutableSortedDictionary`2",
+        "System.Collections.Frozen.FrozenDictionary`2",
+        "System.Collections.Concurrent.ConcurrentDictionary`2",
     ];
+
+    /// <summary>The C# keyword for a BCL type a dictionary key commonly has, for the comment <see cref="ToRecordType"/> writes.</summary>
+    private static readonly Dictionary<string, string> CSharpKeywords = new()
+    {
+        ["System.Boolean"] = "bool",
+        ["System.Byte"] = "byte",
+        ["System.SByte"] = "sbyte",
+        ["System.Char"] = "char",
+        ["System.Decimal"] = "decimal",
+        ["System.Double"] = "double",
+        ["System.Single"] = "float",
+        ["System.Int32"] = "int",
+        ["System.UInt32"] = "uint",
+        ["System.Int64"] = "long",
+        ["System.UInt64"] = "ulong",
+        ["System.Int16"] = "short",
+        ["System.UInt16"] = "ushort",
+        ["System.Object"] = "object",
+    };
 
     /// <summary>
     /// Maps a .NET <see cref="Type"/> to a TypeScript type string.
@@ -84,19 +160,20 @@ public static class TypeMapper
             var genericDef = type.GetGenericTypeDefinition();
             var genericFullName = genericDef.FullName ?? "";
 
-            // List<T>, IList<T>, IEnumerable<T>, IReadOnlyList<T>, ICollection<T>
+            // List<T>, HashSet<T>, ImmutableArray<T>, ... → T[]
             if (CollectionFullNames.Contains(genericFullName))
             {
                 var elementType = type.GetGenericArguments()[0];
                 return $"{ToArrayType(MapType(elementType))}";
             }
 
-            // Dictionary<string, T> → Record<string, T>
+            // Dictionary<TKey, TValue>, SortedDictionary<TKey, TValue>, ... → Record<string, TValue>
             if (DictionaryFullNames.Contains(genericFullName))
             {
                 var keyType = type.GetGenericArguments()[0];
                 var valueType = type.GetGenericArguments()[1];
-                return $"Record<{MapType(keyType)}, {MapType(valueType)}>";
+                var keyName = keyType.IsGenericType ? keyType.GetGenericTypeDefinition().FullName : keyType.FullName;
+                return ToRecordType(keyName ?? keyType.Name, MapType(valueType));
             }
 
             // Any other generic type (e.g. PagedResult<T>) → Name<Arg, ...>, arity backtick stripped.
@@ -111,19 +188,26 @@ public static class TypeMapper
             return $"{genericName}<{string.Join(", ", typeArguments)}>";
         }
 
-        // Handle enums → string literal union
+        // Handle enums → string literal union of what System.Text.Json writes for each member (ConduitRuntime.JsonOptions:
+        // the member's name, or its [JsonStringEnumMemberName]). A [Flags] enum is a string: a combination is written as
+        // "Read, Write", which no union of member names covers.
         if (type.IsEnum)
         {
+            if (JsonMarks.IsFlags(type))
+            {
+                return "string";
+            }
+
             // Use GetFields instead of Enum.GetNames — works with MetadataLoadContext
             var fields = type.GetFields(BindingFlags.Public | BindingFlags.Static);
-            var values = fields.Select(f => $"'{f.Name}'");
+            var values = fields.Select(field => ClosedSetReader.ToTsStringLiteral(JsonMarks.EnumMemberName(field)));
             return string.Join(" | ", values);
         }
 
         // Simple type mappings
-        if (SimpleTypeMappings.TryGetValue(type.Name, out var tsType))
+        if (IsSimpleType(type))
         {
-            return tsType;
+            return SimpleTypeMappings[type.Name];
         }
 
         // Object/unknown
@@ -150,9 +234,10 @@ public static class TypeMapper
     }
 
     /// <summary>
-    /// Returns true if the type name maps to a simple TypeScript type (string, number, boolean, etc.).
+    /// Returns true if the type is a BCL scalar that maps to a simple TypeScript type (string, number, boolean).
     /// </summary>
-    internal static bool IsSimpleType(string typeName) => SimpleTypeMappings.ContainsKey(typeName);
+    internal static bool IsSimpleType(Type type) =>
+        type.Namespace == "System" && SimpleTypeMappings.ContainsKey(type.Name);
 
     /// <summary>
     /// Returns true if the full name represents a collection generic type.
@@ -182,7 +267,8 @@ public static class TypeMapper
     /// <summary>
     /// Maps a fully-qualified C#-style type name (e.g. "System.Collections.Generic.IReadOnlyList&lt;Namespace.NoteDto&gt;")
     /// to a TypeScript type string. Handles generic collection types that cannot be resolved via reflection
-    /// because their full name uses C#-style angle brackets instead of CLR backtick notation.
+    /// because their full name uses C#-style angle brackets instead of CLR backtick notation, and arrays
+    /// ("Namespace.NoteDto[]", "Namespace.PagedResult&lt;Namespace.NoteDto&gt;[]").
     /// </summary>
     /// <param name="fullTypeName">The fully-qualified C#-style type name.</param>
     /// <param name="assemblies">
@@ -197,12 +283,22 @@ public static class TypeMapper
     {
         ArgumentNullException.ThrowIfNull(fullTypeName);
 
+        fullTypeName = fullTypeName.Trim();
+
+        // An array → its element's type, then [] (a byte[] is base64, as in MapType).
+        if (fullTypeName.EndsWith(']'))
+        {
+            var elementName = fullTypeName[..fullTypeName.LastIndexOf('[')];
+            return elementName == "System.Byte" ? "string" : ToArrayType(MapArg(elementName, assemblies));
+        }
+
         var angleBracketIndex = fullTypeName.IndexOf('<', StringComparison.Ordinal);
         if (angleBracketIndex < 0)
         {
-            // Not a generic type — try simple mapping on the short name
+            // Not a generic type — a BCL scalar by its short name (a bare short name, or one in the System namespace)
             var shortName = GetShortName(fullTypeName);
-            if (SimpleTypeMappings.TryGetValue(shortName, out var tsType))
+            var isBcl = shortName.Length == fullTypeName.Length || fullTypeName == $"System.{shortName}";
+            if (isBcl && SimpleTypeMappings.TryGetValue(shortName, out var tsType))
             {
                 return tsType;
             }
@@ -212,8 +308,8 @@ public static class TypeMapper
 
         // Extract outer generic type name and inner type argument(s)
         var outerFullName = fullTypeName[..angleBracketIndex];
-        var outerShortName = GetShortName(outerFullName);
-        var innerContent = fullTypeName[(angleBracketIndex + 1)..^1]; // strip < and >
+        var arguments = SplitTopLevel(fullTypeName[(angleBracketIndex + 1)..^1]); // strip < and >
+        var definitionFullName = $"{outerFullName}`{arguments.Count}";
 
         // Nullable<T> -> "T | null", mirroring MapType's reflection branch above. Without this the
         // name falls through to the generic emitter at the end of this method and yields
@@ -222,49 +318,28 @@ public static class TypeMapper
         // DECLARED response type goes through, which is why the gap only surfaces for a nullable VALUE
         // type used directly as a response (IQuery<int?>). A nullable REFERENCE type is erased at the
         // CLR level and never reaches here, which is why it went unnoticed. Found by DMS, 2026-09-09.
-        if (StripArity(outerShortName) == "Nullable")
+        if (definitionFullName == "System.Nullable`1")
         {
-            return $"{MapArg(innerContent, assemblies)} | null";
+            return $"{MapArg(arguments[0], assemblies)} | null";
         }
 
-        // Collection types → T[]
-        if (CollectionShortNames.Contains(outerShortName))
+        // Collection types → T[]. The element is tried as a C#-style name, then by reflection (the runtime-loaded
+        // search, then the scanned assemblies -- which is what turns a MetadataLoadContext enum into its union rather
+        // than its bare name), then as its short name.
+        if (CollectionFullNames.Contains(definitionFullName))
         {
-            var elementTs = MapFullTypeName(innerContent, assemblies);
-            if (elementTs is not null)
-            {
-                return ToArrayType(elementTs);
-            }
-
-            // Try resolving the element type via reflection: the runtime-loaded search first (works
-            // for types loaded via LoadFrom), then the scanned assemblies themselves (works for
-            // MetadataLoadContext types, including an enum — MapType's enum branch below turns it
-            // into a string-literal union rather than the bare name the fallback returns).
-            var elementType = TypeScriptEmitter.FindType(innerContent) ?? ResolveViaAssemblies(innerContent, assemblies);
-            if (elementType is not null)
-            {
-                return ToArrayType(MapType(elementType));
-            }
-
-            // Last resort: use the short name of the element type
-            return $"{GetShortName(innerContent)}[]";
+            return ToArrayType(MapArg(arguments[0], assemblies));
         }
 
-        // Dictionary<K, V> → Record<K, V>
-        if (DictionaryShortNames.Contains(outerShortName))
+        // Dictionary<TKey, TValue> → Record<string, TValue>
+        if (DictionaryFullNames.Contains(definitionFullName))
         {
-            var commaIndex = FindTopLevelComma(innerContent);
-            if (commaIndex >= 0)
-            {
-                var keyContent = innerContent[..commaIndex].Trim();
-                var valueContent = innerContent[(commaIndex + 1)..].Trim();
-                return $"Record<{MapArg(keyContent, assemblies)}, {MapArg(valueContent, assemblies)}>";
-            }
+            return ToRecordType(arguments[0], MapArg(arguments[1], assemblies));
         }
 
         // Any other generic (e.g. PagedResult<Item>) → OuterShort<Arg, ...>, arity-stripped.
-        var outerStripped = StripArity(outerShortName);
-        var args = SplitTopLevel(innerContent).Select(a => MapArg(a, assemblies));
+        var outerStripped = StripArity(GetShortName(outerFullName));
+        var args = arguments.Select(a => MapArg(a, assemblies));
         return $"{outerStripped}<{string.Join(", ", args)}>";
     }
 
@@ -272,6 +347,32 @@ public static class TypeMapper
     {
         var lastDot = fullTypeName.LastIndexOf('.');
         return lastDot >= 0 ? fullTypeName[(lastDot + 1)..] : fullTypeName;
+    }
+
+    /// <summary>
+    /// A dictionary's TypeScript type. A JSON object's keys are strings whatever the dictionary's key type
+    /// (<c>System.Text.Json</c> writes an <c>int</c> key as <c>"1"</c>, a <c>bool</c> as <c>"True"</c>, an enum as its
+    /// member name), and <c>Record&lt;boolean, T&gt;</c> does not compile, so the key is always <c>string</c>. A key that is
+    /// not a <see cref="string"/> is named in a comment, so the reader of the generated file still sees it:
+    /// <c>Record&lt;string /* int */, T&gt;</c>.
+    /// </summary>
+    /// <param name="keyFullName">The key type's full name (C#-style or a generic definition's), or a generic parameter's name.</param>
+    /// <param name="valueTs">The value's TypeScript type.</param>
+    private static string ToRecordType(string keyFullName, string valueTs)
+    {
+        if (keyFullName == "System.String")
+        {
+            return $"Record<string, {valueTs}>";
+        }
+
+        if (!CSharpKeywords.TryGetValue(keyFullName, out var keyName))
+        {
+            var angleBracketIndex = keyFullName.IndexOf('<', StringComparison.Ordinal);
+            keyName = StripArity(GetShortName(angleBracketIndex < 0 ? keyFullName : keyFullName[..angleBracketIndex]));
+            keyName = keyName[(keyName.LastIndexOf('+') + 1)..];
+        }
+
+        return $"Record<string /* {keyName} */, {valueTs}>";
     }
 
     /// <summary>
@@ -293,23 +394,6 @@ public static class TypeMapper
 
         return $"{elementTs}[]";
     }
-
-    private static readonly HashSet<string> CollectionShortNames =
-    [
-        "List",
-        "IList",
-        "IEnumerable",
-        "IReadOnlyList",
-        "ICollection",
-        "IReadOnlyCollection",
-    ];
-
-    private static readonly HashSet<string> DictionaryShortNames =
-    [
-        "Dictionary",
-        "IDictionary",
-        "IReadOnlyDictionary",
-    ];
 
     /// <summary>Maps one type-argument string: try the C#-style mapper, then reflection, then the short name.</summary>
     private static string MapArg(string arg, IReadOnlyList<Assembly>? assemblies)
@@ -346,8 +430,11 @@ public static class TypeMapper
     private static Type? ResolveViaAssemblies(string fullName, IReadOnlyList<Assembly>? assemblies) =>
         assemblies is null ? null : TypeCollector.ResolveType(assemblies, fullName);
 
-    /// <summary>Splits a generic argument list on top-level commas (depth 0 w.r.t. angle brackets).</summary>
-    private static List<string> SplitTopLevel(string content)
+    /// <summary>
+    /// Splits a C#-style generic argument list on top-level commas (depth 0 w.r.t. angle brackets, and array brackets:
+    /// <c>Item[,]</c> is one argument).
+    /// </summary>
+    internal static List<string> SplitTopLevel(string content)
     {
         var parts = new List<string>();
         var depth = 0;
@@ -356,10 +443,10 @@ public static class TypeMapper
         {
             switch (content[i])
             {
-                case '<':
+                case '<' or '[':
                     depth++;
                     break;
-                case '>':
+                case '>' or ']':
                     depth--;
                     break;
                 case ',' when depth == 0:
@@ -373,28 +460,5 @@ public static class TypeMapper
 
         parts.Add(content[start..].Trim());
         return parts;
-    }
-
-    private static int FindTopLevelComma(string text)
-    {
-        var depth = 0;
-        for (var i = 0; i < text.Length; i++)
-        {
-            switch (text[i])
-            {
-                case '<':
-                    depth++;
-                    break;
-                case '>':
-                    depth--;
-                    break;
-                case ',' when depth == 0:
-                    return i;
-                default:
-                    break;
-            }
-        }
-
-        return -1;
     }
 }

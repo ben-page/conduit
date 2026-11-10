@@ -13,14 +13,26 @@ public sealed record CollectedType(Type Type, string? BaseTypeName);
 /// Recursively walks the property type graph of a set of root types,
 /// collecting all complex types that need TypeScript interface generation.
 /// Skips primitives, collections, dictionaries, enums, closed sets, and framework types.
+/// A constructed generic (<c>PagedResult&lt;Order&gt;</c>) is collected as its generic definition
+/// (<c>PagedResult&lt;T&gt;</c>), once however many instantiations reach it, and its type arguments are walked
+/// like any other reached type.
 /// </summary>
 public static class TypeCollector
 {
-    private static readonly HashSet<string> FrameworkNamespacePrefixes =
+    /// <summary>
+    /// Conduit's own namespaces below the root -- the core and contracts assemblies' (the root <c>Conduit</c> itself is
+    /// matched exactly). Each covers its sub-namespaces. Any other <c>Conduit.*</c> namespace is a host's
+    /// (<c>Conduit.Sample.Notes</c>) and is walked like any other.
+    /// </summary>
+    private static readonly string[] ConduitNamespaces =
     [
-        "System",
-        "Microsoft",
-        "Conduit",
+        "Conduit.Attributes",
+        "Conduit.Configuration",
+        "Conduit.Exceptions",
+        "Conduit.Handlers",
+        "Conduit.Messages",
+        "Conduit.Middleware",
+        "Conduit.Runtime",
     ];
 
     /// <summary>
@@ -30,7 +42,10 @@ public static class TypeCollector
     /// subtype of an abstract base encountered during the walk.
     /// </summary>
     /// <param name="rootTypeFullNames">The root type full names (already have interfaces).</param>
-    /// <param name="additionalSeedTypes">Additional types to seed the walk (e.g., query result types).</param>
+    /// <param name="additionalSeedTypes">
+    /// Additional types to seed the walk (e.g., query result types). A seed is reached like a property type: an array or a
+    /// collection reaches its element, and a constructed generic its definition and arguments.
+    /// </param>
     /// <param name="assemblies">The assemblies to resolve types from.</param>
     /// <returns>Additional types that need interface generation, in dependency order.</returns>
     public static IReadOnlyList<CollectedType> CollectReferencedTypes(
@@ -60,11 +75,7 @@ public static class TypeCollector
         {
             foreach (var seedType in additionalSeedTypes)
             {
-                var fullName = seedType.FullName;
-                if (fullName != null && visited.Add(fullName) && NeedsInterface(seedType))
-                {
-                    queue.Enqueue((seedType, null));
-                }
+                EnqueueReferencedType(seedType, visited, queue);
             }
         }
 
@@ -92,30 +103,77 @@ public static class TypeCollector
         HashSet<string> visited,
         Queue<(Type Type, string? BaseTypeName)> queue)
     {
-        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-        foreach (var property in properties)
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            var propertyType = UnwrapType(property.PropertyType);
-            if (propertyType == null)
-            {
-                continue;
-            }
-
-            var fullName = propertyType.FullName;
-            if (fullName == null || visited.Contains(fullName))
-            {
-                continue;
-            }
-
-            if (!NeedsInterface(propertyType))
-            {
-                continue;
-            }
-
-            visited.Add(fullName);
-            queue.Enqueue((propertyType, null));
+            EnqueueReferencedType(property.PropertyType, visited, queue);
         }
+    }
+
+    /// <summary>
+    /// Enqueues the types <paramref name="type"/> reaches that need an interface: an array's, a nullable's or a
+    /// collection's element and a dictionary's value (TypeMapper inlines those wrappers as <c>T[]</c>,
+    /// <c>T | null</c> and <c>Record&lt;string, T&gt;</c>); any other constructed generic as its DEFINITION -- the one
+    /// declaration every instantiation shares (<c>PagedResult&lt;T&gt;</c>) -- and each of its type arguments; and
+    /// anything else as itself. A generic parameter (the <c>T</c> inside a definition's own properties) reaches nothing.
+    /// </summary>
+    private static void EnqueueReferencedType(
+        Type type,
+        HashSet<string> visited,
+        Queue<(Type Type, string? BaseTypeName)> queue)
+    {
+        if (type.IsGenericParameter)
+        {
+            return;
+        }
+
+        if (type.IsArray)
+        {
+            EnqueueReferencedType(type.GetElementType()!, visited, queue);
+            return;
+        }
+
+        if (type.IsGenericType)
+        {
+            var definition = type.GetGenericTypeDefinition();
+            var definitionFullName = definition.FullName ?? "";
+            var arguments = type.GetGenericArguments();
+
+            if (TypeMapper.IsDictionaryFullName(definitionFullName))
+            {
+                // The key is always a JSON string (TypeMapper.ToRecordType); only the value reaches a type.
+                EnqueueReferencedType(arguments[1], visited, queue);
+                return;
+            }
+
+            if (definitionFullName != "System.Nullable`1" && !TypeMapper.IsCollectionFullName(definitionFullName))
+            {
+                TryEnqueue(definition, visited, queue);
+            }
+
+            foreach (var argument in arguments)
+            {
+                EnqueueReferencedType(argument, visited, queue);
+            }
+
+            return;
+        }
+
+        TryEnqueue(type, visited, queue);
+    }
+
+    private static void TryEnqueue(
+        Type type,
+        HashSet<string> visited,
+        Queue<(Type Type, string? BaseTypeName)> queue)
+    {
+        var fullName = type.FullName;
+        if (fullName == null || visited.Contains(fullName) || !NeedsInterface(type))
+        {
+            return;
+        }
+
+        visited.Add(fullName);
+        queue.Enqueue((type, null));
     }
 
     /// <summary>
@@ -163,44 +221,6 @@ public static class TypeCollector
     }
 
     /// <summary>
-    /// Unwraps collection/nullable/array types to get the inner element type.
-    /// Returns null if the type is a primitive/simple type that doesn't need unwrapping.
-    /// </summary>
-    private static Type? UnwrapType(Type type)
-    {
-        // Arrays → element type
-        if (type.IsArray)
-        {
-            return UnwrapType(type.GetElementType()!);
-        }
-
-        // Nullable<T> → T
-        if (type.IsGenericType && type.GetGenericTypeDefinition().FullName == "System.Nullable`1")
-        {
-            return UnwrapType(type.GetGenericArguments()[0]);
-        }
-
-        if (type.IsGenericType)
-        {
-            var genericFullName = type.GetGenericTypeDefinition().FullName ?? "";
-
-            // Collections → element type
-            if (TypeMapper.IsCollectionFullName(genericFullName))
-            {
-                return UnwrapType(type.GetGenericArguments()[0]);
-            }
-
-            // Dictionaries → recurse into value type (key is always string/primitive)
-            if (TypeMapper.IsDictionaryFullName(genericFullName))
-            {
-                return UnwrapType(type.GetGenericArguments()[1]);
-            }
-        }
-
-        return type;
-    }
-
-    /// <summary>
     /// Determines if a type needs a TypeScript interface generated for it.
     /// Returns false for C# interfaces, enums, framework types, and types already
     /// handled by TypeMapper. Abstract types are allowed through — they emit a flat
@@ -220,19 +240,15 @@ public static class TypeCollector
         }
 
         // Simple types are mapped directly by TypeMapper
-        if (TypeMapper.IsSimpleType(type.Name))
+        if (TypeMapper.IsSimpleType(type))
         {
             return false;
         }
 
         // Framework types don't get interfaces
-        var ns = type.Namespace ?? "";
-        foreach (var prefix in FrameworkNamespacePrefixes)
+        if (IsFrameworkNamespace(type.Namespace ?? ""))
         {
-            if (ns.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                return false;
-            }
+            return false;
         }
 
         // A closed set is mapped to a string literal union of its values, not an interface
@@ -245,10 +261,44 @@ public static class TypeCollector
     }
 
     /// <summary>
-    /// Resolves a type by full name across multiple assemblies.
+    /// Whether <paramref name="ns"/> is a framework's, whose types never get an interface: <c>System</c>,
+    /// <c>System.*</c>, <c>Microsoft.*</c>, and Conduit's own namespaces (<see cref="ConduitNamespaces"/>, and the root
+    /// <c>Conduit</c>). Bounded by a dot: <c>SystemsInc.*</c>, <c>ConduitApp.*</c> and a host's <c>Conduit.Sample.*</c>
+    /// are walked like any other namespace.
+    /// </summary>
+    internal static bool IsFrameworkNamespace(string ns)
+    {
+        if (ns == "System"
+            || ns.StartsWith("System.", StringComparison.Ordinal)
+            || ns.StartsWith("Microsoft.", StringComparison.Ordinal)
+            || ns == "Conduit")
+        {
+            return true;
+        }
+
+        foreach (var conduitNamespace in ConduitNamespaces)
+        {
+            if (ns == conduitNamespace || ns.StartsWith(conduitNamespace + ".", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves a type by full name across multiple assemblies. A C#-style name (<c>Dictionary&lt;K, V&gt;</c>) or an
+    /// assembly-qualified one is never a metadata type name, so it resolves to <see langword="null"/> without asking an
+    /// assembly -- which would read the part after a comma as an assembly to load.
     /// </summary>
     internal static Type? ResolveType(IReadOnlyList<Assembly> assemblies, string fullName)
     {
+        if (fullName.Contains('<', StringComparison.Ordinal) || fullName.Contains(',', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
         foreach (var assembly in assemblies)
         {
             var type = assembly.GetType(fullName);

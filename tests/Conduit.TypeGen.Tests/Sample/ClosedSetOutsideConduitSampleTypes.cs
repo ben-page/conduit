@@ -1,8 +1,8 @@
 using Conduit.Attributes;
 using Conduit.Messages;
 
-// A closed set in a NON-Conduit namespace. TypeCollector skips every Conduit* namespace before it reaches its closed-set
-// check, so TestReach (in Conduit.TypeGen.Tests.Sample) can never prove "a closed set gets no interface"; this one can.
+// A closed set in a NON-Conduit namespace, so "a closed set gets no interface" is proven where TypeCollector walks a
+// host's domain types (it once skipped every Conduit* namespace, TestReach's among them; it now skips only Conduit's own).
 // Reached only through the [ClientVisible] DTO below, the way a host's domain types are.
 namespace SampleDomain.ClosedSets;
 

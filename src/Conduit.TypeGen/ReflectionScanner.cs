@@ -259,6 +259,13 @@ public static class ReflectionScanner
 
     private static string FormatFullTypeName(Type type)
     {
+        // An array: its element's C#-style name, then its rank -- PagedResult<Item>[], where FullName is the CLR's
+        // assembly-qualified PagedResult`1[[Item, ...]][]. The same shape RoslynScanner's ToDisplayString gives.
+        if (type.IsArray)
+        {
+            return $"{FormatFullTypeName(type.GetElementType()!)}[{new string(',', type.GetArrayRank() - 1)}]";
+        }
+
         if (!type.IsGenericType)
         {
             return type.FullName ?? type.Name;

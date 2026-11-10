@@ -52,6 +52,18 @@ public sealed record ShapeTag(string Label);
 [ClientVisible]
 public sealed record ListShapeTagsQuery : IQuery<ShapeTag[]>;
 
+// An array of a generic wrapper: the wrapper's definition and its argument.
+public sealed record ShapeShipment(string Carrier);
+
+[ClientVisible]
+public sealed record ListShapeShipmentPagesQuery : IQuery<PagedResult<ShapeShipment>[]>;
+
+// A dictionary result: its VALUE type is reached, and a non-string key is still a JSON string.
+public sealed record ShapeVote(int Count);
+
+[ClientVisible]
+public sealed record TallyShapeVotesQuery : IQuery<Dictionary<bool, ShapeVote>>;
+
 // --- BCL types: every integer type and Half is a JSON number; char, Uri and TimeSpan are JSON strings; set-like and
 // immutable collections are JSON arrays; a dictionary's key is always a JSON string, whatever its C# type. ---
 

@@ -70,6 +70,10 @@ public record NoteDto(Guid Id, string Text);
 
 Types referenced by `[ClientVisible]` properties and return types are discovered transitively. If `GetNotesQuery` returns `IReadOnlyList<NoteDto>`, then `NoteDto` gets a TypeScript interface automatically even without `[ClientVisible]`. The attribute is only required on root dispatchable types and standalone DTOs you want exported.
 
+Discovery reaches through arrays, collections, a dictionary's values and `T?`, and through a generic wrapper: `IQuery<PagedResult<NoteDto>>` and a `PagedResult<TagDto>` property emit one `PagedResult<T>` interface plus `NoteDto` and `TagDto`, and a wrapper used only as a result is emitted too. It skips framework types: the namespaces `System`, `System.*` and `Microsoft.*`, and Conduit's own (`Conduit`, and `Conduit.Messages`, `Conduit.Runtime`, `Conduit.Configuration`, `Conduit.Middleware`, `Conduit.Handlers`, `Conduit.Attributes`, `Conduit.Exceptions` with their sub-namespaces). A namespace that only starts with those letters is yours and is walked like any other: `ConduitApp.*`, `SystemsInc.*`, `Conduit.Sample.*`. Referenced assemblies are walked the same way: every one but `System`, `System.*`, `Microsoft.*`, `netstandard`, `mscorlib` and `WindowsBase`.
+
+Every interface takes its type's short name, so **two types that share a short name are a build error**: `MyApp.Orders.Item` and `MyApp.Catalog.Item` would be two `export interface Item` declarations, which TypeScript merges into one without a word, and the client would then accept either shape for both. TypeGen fails the build instead, naming both full type names; rename one. The same goes for a type named like an identifier the generated file always declares or imports (`DispatchResult`, `Subscription`, `ConduitClient`, `CommandMap`, `ErrorMap`, ...).
+
 Every generated key of a command or query interface is **required** on the wire: the server's wire dispatch refuses a request that omits a constructor parameter, at any depth of positional models (`ContractMismatch`, see [Error handling](../error-handling.md); the RESTful endpoints stay lenient, and neither a settable property of a non-positional model nor a struct without `[JsonConstructor]` is ever checked). A C# default value on the parameter (`int Take = 50`) is how a member becomes optional on the wire; an explicit `null` is always accepted for a nullable member.
 
 ## Enable TypeGen
@@ -221,7 +225,11 @@ and a failed start, the retry policy the restart loop is built with, and `HttpTr
 failures. Strict `tsc` checks each transport file, and also the two assembled outputs checked in under
 `tests/transport-ts/emitted/` — the default `conduit.ts` and the HTTP-only one, the only two shapes it takes (the
 configured paths change only literals). A `BaseFileEmitterShould` test pins both to the emitter, so a transport edit fails
-until the goldens are regenerated, and the golden diff is what every consumer's `conduit.ts` will show.
+until the goldens are regenerated, and the golden diff is what every consumer's `conduit.ts` will show. Beside them,
+`conduit.generated.ts` is the client TypeGen's own test types produce (the shapes real contracts take: generic
+wrappers, arrays, sets, non-string dictionary keys, the System.Text.Json attributes); `EmittedGoldenShould` pins it to
+the emitter and strict `tsc` checks it against the default `conduit.ts`, so an emitter change that writes invalid
+TypeScript fails CI.
 ManagementSystem keeps its own copy of the SignalR suite, run against its committed `conduit.ts`. These tests protect a
 consumer only for a `Conduit.TypeGen` built from this source: GtlHmi pins 1.0.1 (next paragraph).
 
@@ -275,18 +283,39 @@ C# service-to-service transports (HTTP, SignalR, brokers) send `MessageContext` 
 
 ## Type mapping
 
+Each type maps to what System.Text.Json writes for it with Conduit's wire options (`ConduitRuntime.JsonOptions`).
+
 | C# | TypeScript |
 |---|---|
-| `string`, `Guid` | `string` |
-| `int`, `long`, `float`, `double`, `decimal` | `number` |
+| `string`, `char`, `Guid`, `Uri` | `string` |
+| `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `Int128`, `UInt128`, `Half`, `float`, `double`, `decimal` | `number` (a JavaScript number holds integers exactly only up to 2^53) |
 | `bool` | `boolean` |
-| `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly` | `string` |
-| `T[]`, `List<T>`, `IReadOnlyList<T>` | `T[]` |
+| `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan` | `string` |
+| `T[]`, `List<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`, `ICollection<T>`, `HashSet<T>`, `ISet<T>`, `IReadOnlySet<T>`, `SortedSet<T>`, `Queue<T>`, `Stack<T>`, `LinkedList<T>`, `Collection<T>`, `ObservableCollection<T>`, `ReadOnlyCollection<T>`, `ImmutableArray<T>`, `ImmutableList<T>`, `ImmutableHashSet<T>`, `ImmutableSortedSet<T>`, `ImmutableQueue<T>`, `ImmutableStack<T>`, `FrozenSet<T>`, `ConcurrentBag<T>`, `ConcurrentQueue<T>`, `ConcurrentStack<T>` | `T[]` |
 | `byte[]` | `string` (base64, as System.Text.Json writes it; a `List<byte>` stays `number[]`) |
-| `Dictionary<string, T>` | `Record<string, T>` |
+| `Dictionary<string, T>`, `IDictionary<string, T>`, `IReadOnlyDictionary<string, T>`, `SortedDictionary<string, T>`, `SortedList<string, T>`, `ReadOnlyDictionary<string, T>`, `ImmutableDictionary<string, T>`, `ImmutableSortedDictionary<string, T>`, `FrozenDictionary<string, T>`, `ConcurrentDictionary<string, T>` | `Record<string, T>` |
+| any of those dictionaries with a key that is not `string` (`Dictionary<int, T>`, `Dictionary<bool, T>`, an enum key) | `Record<string /* int */, T>`: a JSON object's keys are always strings (`"1"`, `"True"`, the enum member's name), so the key is `string`, and the comment names the C# key type |
 | `T?` (nullable) | `T \| null` |
-| `enum` | string literal union (e.g. `'Active' \| 'Inactive'`) |
+| `enum` | string literal union of what the wire carries: each member's name, or its `[JsonStringEnumMemberName]` (e.g. `'Active' \| 'in-progress'`) |
+| `[Flags]` enum | `string`: a combination is written as `"Read, Write"`, which no union of member names covers |
 | a closed set (`IClosedSet<TSelf>` + `[ClosedSet("a", "b")]`) | string literal union of its values (`'a' \| 'b'`) |
+| a generic type (`PagedResult<T>`) | one `PagedResult<T>` interface, used as `PagedResult<NoteDto>` |
+| `object`, `JsonElement` | `unknown` |
+
+### System.Text.Json attributes
+
+The wire honors these, so the generated interfaces do too:
+
+| Attribute | Generated property |
+|---|---|
+| `[JsonPropertyName("order_no")]` | keyed `order_no` instead of the camelCased name; a name that is not a TypeScript identifier is quoted (`'x-trace': string`) |
+| `[JsonIgnore]` | left out |
+| `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]` (or `WhenWritingDefault`, `WhenWriting`, `WhenReading`) | optional (`note?: string \| null`), since the key is missing in one direction or for some values |
+| `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]` | unchanged |
+
+`[JsonStringEnumMemberName]` and `[Flags]` change an enum's type as the table above says. Put `[JsonPropertyName]` and
+`[JsonIgnore]` on the property, as System.Text.Json reads them: on a positional record that is
+`[property: JsonPropertyName("order_no")]`.
 
 ### Closed sets
 

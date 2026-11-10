@@ -859,15 +859,17 @@ conduit.on('MyApp.Events.NoteCreatedEvent', event => console.log(event.text));
 
 | C# | TypeScript |
 |----|-----------|
-| `string`, `Guid` | `string` |
-| `int`, `long`, `short` | `number` |
-| `decimal`, `double`, `float` | `number` |
+| `string`, `char`, `Guid`, `Uri` | `string` |
+| every integer type, `Half`, `decimal`, `double`, `float` | `number` |
 | `bool` | `boolean` |
-| `DateTime`, `DateTimeOffset` | `string` (ISO 8601) |
-| `T[]`, `List<T>`, `IList<T>`, `IEnumerable<T>` | `T[]` |
-| `Dictionary<string, T>` | `Record<string, T>` |
+| `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan` | `string` (ISO 8601) |
+| `T[]`, `List<T>`, `IEnumerable<T>`, sets, immutable and concurrent collections | `T[]` |
+| `Dictionary<string, T>` (and the other dictionaries) | `Record<string, T>`; another key type is `Record<string /* int */, T>` |
 | `T?` (nullable) | `T \| null` |
-| Enums | String literal union |
+| Enums | String literal union (`[JsonStringEnumMemberName]` honored); a `[Flags]` enum is `string` |
+
+`[JsonPropertyName]` and `[JsonIgnore]` shape the generated properties as they shape the wire. The full table is in
+[TypeScript client → Type mapping](transports/typescript-client.md#type-mapping).
 
 ## Validation Strategy
 

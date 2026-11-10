@@ -19,7 +19,7 @@ dotnet_diagnostic.CA2234.severity = none
 dotnet_diagnostic.CA2000.severity = none
 # IDE0005: Using directive is unnecessary (test files may have unused usings during iteration)
 dotnet_diagnostic.IDE0005.severity = none
-# IDE0130: Namespace does not match folder structure (ImplicitAbstractHierarchy uses a non-Conduit
-# namespace to avoid TypeCollector's framework-namespace exclusion — this is intentional)
+# IDE0130: Namespace does not match folder structure (TypeGen samples use host-like namespaces --
+# SampleDomain.*, ConduitApp.*, SystemsInc.* -- to exercise TypeCollector's walk; this is intentional)
 dotnet_diagnostic.IDE0130.severity = none
 

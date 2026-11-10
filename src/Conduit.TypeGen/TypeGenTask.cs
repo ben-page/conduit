@@ -149,13 +149,16 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
         return result;
     }
 
-    private static bool IsFrameworkAssembly(string assemblyName)
+    /// <summary>
+    /// Whether a referenced assembly is the framework's, and so not walked: <c>System</c>, <c>System.*</c>,
+    /// <c>Microsoft.*</c>, <c>netstandard</c>, <c>mscorlib</c>, <c>WindowsBase</c>. Bounded by a dot, as
+    /// <see cref="TypeCollector.IsFrameworkNamespace"/> is: a host's <c>SystemsInc.Contracts</c> is walked.
+    /// </summary>
+    internal static bool IsFrameworkAssembly(string assemblyName)
     {
-        return assemblyName.StartsWith("System", StringComparison.Ordinal)
-            || assemblyName.StartsWith("Microsoft", StringComparison.Ordinal)
-            || assemblyName.StartsWith("netstandard", StringComparison.Ordinal)
-            || assemblyName.StartsWith("mscorlib", StringComparison.Ordinal)
-            || assemblyName.StartsWith("WindowsBase", StringComparison.Ordinal);
+        return assemblyName is "System" or "netstandard" or "mscorlib" or "WindowsBase"
+            || assemblyName.StartsWith("System.", StringComparison.Ordinal)
+            || assemblyName.StartsWith("Microsoft.", StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> GetAssemblyPaths(string assemblyDir, string runtimeDir)

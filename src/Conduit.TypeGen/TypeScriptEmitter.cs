@@ -9,8 +9,11 @@ public static class TypeScriptEmitter
     /// Resolves a type by full name from the runtime type system.
     /// Finds framework types (System.Guid, etc.) that aren't in the MetadataLoadContext assembly.
     /// Does not find user application types — those must be resolved from the MetadataLoadContext directly.
+    /// A C#-style generic name (<c>Dictionary&lt;K, V&gt;</c>) is never a CLR type name, and <c>Type.GetType</c> would read
+    /// the part after its comma as an assembly name, so it is not looked up.
     /// </summary>
-    internal static Type? FindType(string fullTypeName) => Type.GetType(fullTypeName);
+    internal static Type? FindType(string fullTypeName) =>
+        fullTypeName.Contains('<', StringComparison.Ordinal) ? null : Type.GetType(fullTypeName);
 
     /// <summary>
     /// Converts a PascalCase name to camelCase, handling acronyms correctly.

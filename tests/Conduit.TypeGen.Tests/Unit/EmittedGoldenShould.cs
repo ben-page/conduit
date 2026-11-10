@@ -1,4 +1,3 @@
-using AwesomeAssertions;
 using Conduit.TypeGen.Tests.Support;
 
 namespace Conduit.TypeGen.Tests.Unit;
@@ -16,34 +15,11 @@ public class EmittedGoldenShould
     [TestMethod]
     public void MatchTheCheckedInFile()
     {
-        // Arrange
-        var outputDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var buildEngine = new FakeBuildEngine();
-        var task = new TypeGenTask
-        {
-            AssemblyPath = typeof(EmittedGoldenShould).Assembly.Location,
-            OutputDirectory = outputDir,
-            Transports = "Http;SignalR",
-            BuildEngine = buildEngine,
-        };
+        // Act
+        var actual = TypeGenRun.GenerateForThisAssembly();
 
-        try
-        {
-            // Act
-            var succeeded = task.Execute();
-
-            // Assert
-            succeeded.Should().BeTrue(string.Join(Environment.NewLine, buildEngine.Errors));
-            var actual = File.ReadAllText(Path.Combine(outputDir, GoldenFileName));
-            AssertMatchesGolden(actual);
-        }
-        finally
-        {
-            if (Directory.Exists(outputDir))
-            {
-                Directory.Delete(outputDir, true);
-            }
-        }
+        // Assert
+        AssertMatchesGolden(actual);
     }
 
     private static void AssertMatchesGolden(string actual)

@@ -113,7 +113,7 @@ public static class MergeFileEmitter
                 ? TypeCollector.ResolveType(assemblies, typeInfo.FullTypeName)
                 : null;
             var tsName = EmitInterface(sb, typeInfo.TypeName, resolvedType, typeInfo.BaseTypeName);
-            emittedTypeNames[tsName] = typeInfo.FullTypeName;
+            ReserveInterfaceName(emittedTypeNames, tsName, typeInfo.FullTypeName);
             sb.AppendLine();
         }
 
@@ -124,15 +124,14 @@ public static class MergeFileEmitter
             var rootNames = types.Select(t => t.FullTypeName).ToList();
             var resultTypes = types
                 .Where(t => t.ResultFullTypeName is not null)
-                .Select(t => ResolveResultRootType(t.ResultFullTypeName!, assemblies))
-                .OfType<Type>()
+                .SelectMany(t => ResolveResultSeedTypes(t.ResultFullTypeName!, assemblies))
                 .ToList();
 
             var referencedTypes = TypeCollector.CollectReferencedTypes(rootNames, resultTypes, assemblies);
             foreach (var collected in referencedTypes)
             {
                 var tsName = EmitInterface(sb, collected.Type.Name, collected.Type, collected.BaseTypeName);
-                emittedTypeNames[tsName] = collected.Type.FullName ?? collected.Type.Name;
+                ReserveInterfaceName(emittedTypeNames, tsName, collected.Type.FullName ?? collected.Type.Name);
                 sb.AppendLine();
             }
         }
@@ -142,89 +141,112 @@ public static class MergeFileEmitter
         var mapNames = TypeMapEmitter.EmitMaps(sb, types, assemblies);
         foreach (var mapName in mapNames)
         {
-            emittedTypeNames[mapName] = $"the {mapName} type map TypeMapEmitter just emitted";
+            ReserveFixedName(emittedTypeNames, mapName, $"the {mapName} type map TypeMapEmitter just emitted");
         }
 
         // Every other fixed name this file always declares/imports/re-exports, regardless of what types
         // were passed in -- see FixedMergeFileNames' doc comment for why this can't be derived the same way.
         foreach (var fixedName in FixedMergeFileNames)
         {
-            emittedTypeNames[fixedName] = "a fixed identifier this file always imports, declares, or re-exports";
+            ReserveFixedName(emittedTypeNames, fixedName, "a fixed identifier this file always imports, declares, or re-exports");
         }
 
         return emittedTypeNames;
     }
 
     /// <summary>
-    /// Resolves a result type name to its root complex type, recursively unwrapping
-    /// collections and dictionaries (e.g. <c>List&lt;Dict&lt;string, MyDto&gt;&gt;</c> → <c>MyDto</c>).
+    /// Records the identifier an interface just emitted took (<c>PagedResult&lt;T&gt;</c> takes <c>PagedResult</c>), and
+    /// refuses a second type taking it. Two DTOs that share a short name (<c>Orders.Item</c>, <c>Catalog.Item</c>) would
+    /// be two <c>export interface Item</c> declarations, which TypeScript merges without a word -- the client would accept
+    /// either shape for both -- so generation fails instead, naming both full type names, as it does for an error type
+    /// (<see cref="ThrowIfErrorTypeNameCollides"/>).
     /// </summary>
-    private static Type? ResolveResultRootType(string resultFullTypeName, IReadOnlyList<Assembly> assemblies)
+    private static void ReserveInterfaceName(Dictionary<string, string> emittedTypeNames, string tsName, string fullTypeName)
     {
-        var typeName = UnwrapToInnerType(resultFullTypeName);
-        return TypeCollector.ResolveType(assemblies, typeName);
+        var identifier = IdentifierOf(tsName);
+        if (emittedTypeNames.TryGetValue(identifier, out var otherFullName) && otherFullName != fullTypeName)
+        {
+            throw new InvalidOperationException(
+                $"Conduit TypeGen: '{otherFullName}' and '{fullTypeName}' would both emit 'export interface {identifier}', " +
+                "which TypeScript would merge into one. Rename one of them.");
+        }
+
+        emittedTypeNames[identifier] = fullTypeName;
+    }
+
+    /// <summary>Records a fixed identifier the file declares or imports, and refuses it when an interface already took it.</summary>
+    private static void ReserveFixedName(Dictionary<string, string> emittedTypeNames, string name, string description)
+    {
+        if (emittedTypeNames.TryGetValue(name, out var otherFullName))
+        {
+            throw new InvalidOperationException(
+                $"Conduit TypeGen: '{otherFullName}' would emit 'export interface {name}', which is {description}. Rename it.");
+        }
+
+        emittedTypeNames[name] = description;
+    }
+
+    /// <summary>The identifier an interface declaration takes: its name without type parameters.</summary>
+    private static string IdentifierOf(string tsName)
+    {
+        var angleBracket = tsName.IndexOf('<', StringComparison.Ordinal);
+        return angleBracket < 0 ? tsName : tsName[..angleBracket];
     }
 
     /// <summary>
-    /// Recursively strips generic wrappers (List, IReadOnlyList, Dictionary value types, etc.)
-    /// to find the innermost type name.
+    /// The types a result's C#-style type name reaches, for <see cref="TypeCollector"/> to start its walk from -- the
+    /// same reach as a property type's: an array's element (<c>Item[]</c> → <c>Item</c>); a nullable's or a collection's
+    /// element and a dictionary's value; any other generic as its DEFINITION and its arguments
+    /// (<c>Envelope&lt;Receipt&gt;</c> → <c>Envelope`1</c> and <c>Receipt</c>), so a wrapper used only as a result is
+    /// declared rather than stripped to its argument. A name the scanned assemblies do not declare (a BCL type) reaches
+    /// nothing.
     /// </summary>
-    private static string UnwrapToInnerType(string typeName)
+    private static List<Type> ResolveResultSeedTypes(string typeName, IReadOnlyList<Assembly> assemblies)
     {
-        while (true)
+        typeName = typeName.Trim();
+
+        if (typeName.EndsWith(']'))
         {
-            var angleBracket = typeName.IndexOf('<', StringComparison.Ordinal);
-            if (angleBracket < 0)
-            {
-                return typeName;
-            }
-
-            var outerName = typeName[..angleBracket];
-            var innerContent = typeName[(angleBracket + 1)..^1];
-
-            if (TypeMapper.IsDictionaryFullName(outerName))
-            {
-                // For dictionaries, extract the value type (after the first comma at depth 0)
-                var commaIndex = FindTopLevelComma(innerContent);
-                if (commaIndex >= 0)
-                {
-                    typeName = innerContent[(commaIndex + 1)..].TrimStart();
-                    continue;
-                }
-            }
-
-            // For collections or unknown generics, take the inner content
-            typeName = innerContent;
+            return ResolveResultSeedTypes(typeName[..typeName.LastIndexOf('[')], assemblies);
         }
+
+        var angleBracket = typeName.IndexOf('<', StringComparison.Ordinal);
+        if (angleBracket < 0)
+        {
+            return TypeCollector.ResolveType(assemblies, typeName) is { } type ? [type] : [];
+        }
+
+        var arguments = TypeMapper.SplitTopLevel(typeName[(angleBracket + 1)..^1]);
+        var definitionFullName = $"{typeName[..angleBracket]}`{arguments.Count}";
+
+        if (TypeMapper.IsDictionaryFullName(definitionFullName))
+        {
+            return ResolveResultSeedTypes(arguments[1], assemblies);
+        }
+
+        var seeds = new List<Type>();
+        if (definitionFullName != "System.Nullable`1"
+            && !TypeMapper.IsCollectionFullName(definitionFullName)
+            && TypeCollector.ResolveType(assemblies, definitionFullName) is { } definition)
+        {
+            seeds.Add(definition);
+        }
+
+        foreach (var argument in arguments)
+        {
+            seeds.AddRange(ResolveResultSeedTypes(argument, assemblies));
+        }
+
+        return seeds;
     }
 
     /// <summary>
-    /// Finds the index of the first comma at bracket depth 0.
+    /// Emits one interface: its properties keyed and typed as <c>System.Text.Json</c> writes them with
+    /// <c>ConduitRuntime.JsonOptions</c> -- a <c>[JsonPropertyName]</c> is the key (quoted when it is not an identifier),
+    /// else the camelCased name; a <c>[JsonIgnore]</c> property is left out, and one ignored only conditionally
+    /// (<c>WhenWritingNull</c>, ...) is optional.
     /// </summary>
-    private static int FindTopLevelComma(string text)
-    {
-        var depth = 0;
-        for (var i = 0; i < text.Length; i++)
-        {
-            switch (text[i])
-            {
-                case '<':
-                    depth++;
-                    break;
-                case '>':
-                    depth--;
-                    break;
-                case ',' when depth == 0:
-                    return i;
-                default:
-                    break;
-            }
-        }
-
-        return -1;
-    }
-
-    /// <returns>The TypeScript interface identifier this emitted (the generic-stripped name for a generic type).</returns>
+    /// <returns>The TypeScript interface name this emitted (<c>PagedResult&lt;T&gt;</c> for a generic type).</returns>
     private static string EmitInterface(StringBuilder sb, string typeName, Type? type, string? baseTypeName = null)
     {
         var tsName = type is not null && type.IsGenericType ? GenericTsName(type) : typeName;
@@ -244,14 +266,21 @@ public static class MergeFileEmitter
             var properties = type.GetProperties(bindingFlags);
             foreach (var property in properties)
             {
+                var ignore = JsonMarks.IgnoreOf(property);
+                if (ignore == JsonIgnoreKind.Always)
+                {
+                    continue;
+                }
+
                 var tsType = TypeMapper.MapType(property.PropertyType);
                 if (IsNullableReference(property) && !tsType.EndsWith(" | null", StringComparison.Ordinal))
                 {
                     tsType = $"{tsType} | null";
                 }
 
-                var propName = TypeScriptEmitter.ToCamelCase(property.Name);
-                sb.Append(CultureInfo.InvariantCulture, $"  {propName}: {tsType};").AppendLine();
+                var propertyKey = JsonMarks.ToTsPropertyKey(JsonMarks.PropertyName(property) ?? TypeScriptEmitter.ToCamelCase(property.Name));
+                var optional = ignore == JsonIgnoreKind.Conditional ? "?" : string.Empty;
+                sb.Append(CultureInfo.InvariantCulture, $"  {propertyKey}{optional}: {tsType};").AppendLine();
             }
         }
 
@@ -269,9 +298,8 @@ public static class MergeFileEmitter
             name = name[..tick];
         }
 
-        // The collected type may be a closed instance (e.g. PagedResult<Item>); the open
-        // generic definition's arguments are the type PARAMETERS (T, ...) we want for the
-        // declaration header.
+        // TypeCollector collects a generic as its definition, but a root resolved by name may be anything; the
+        // definition's arguments are the type PARAMETERS (T, ...) the declaration header wants.
         var definition = type.IsGenericTypeDefinition ? type : type.GetGenericTypeDefinition();
         var parameters = definition.GetGenericArguments().Select(a => a.Name);
         return $"{name}<{string.Join(", ", parameters)}>";

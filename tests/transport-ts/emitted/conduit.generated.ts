@@ -26,6 +26,12 @@ export interface ShapeArchivedEvent {
 export interface ListShapeTagsQuery {
 }
 
+export interface ListShapeShipmentPagesQuery {
+}
+
+export interface TallyShapeVotesQuery {
+}
+
 export interface TestListReachesQuery {
   page: number;
 }
@@ -87,38 +93,37 @@ export interface ShapeOrderBook {
 }
 
 export interface ShapeScalars {
-  sequence: UInt64;
-  port: UInt16;
-  offset: SByte;
-  ratio: Half;
-  huge: Int128;
-  hugeUnsigned: UInt128;
-  grade: Char;
-  homepage: Uri | null;
+  sequence: number;
+  port: number;
+  offset: number;
+  ratio: number;
+  huge: number;
+  hugeUnsigned: number;
+  grade: string;
+  homepage: string | null;
   elapsed: string;
-  tags: HashSet<string>;
-  owners: IReadOnlySet<string>;
-  codes: ISet<number>;
-  notes: Collection<string>;
-  labels: ObservableCollection<ShapeTag>;
-  frozen: ImmutableArray<string>;
-  scores: ImmutableList<number>;
-  keys: ImmutableHashSet<string>;
-  ranks: SortedDictionary<string, number>;
-  cache: ConcurrentDictionary<string, string>;
-  names: Record<number, string>;
-  votes: Record<boolean, number>;
-  swatches: Record<'Red' | 'Green', string>;
+  tags: string[];
+  owners: string[];
+  codes: number[];
+  notes: string[];
+  labels: ShapeTag[];
+  frozen: string[];
+  scores: number[];
+  keys: string[];
+  ranks: Record<string, number>;
+  cache: Record<string, string>;
+  names: Record<string /* int */, string>;
+  votes: Record<string /* bool */, number>;
+  swatches: Record<string /* ShapeColor */, string>;
 }
 
 export interface ShapeJsonMarks {
-  orderNumber: string;
-  trace: string;
-  secret: string;
-  note: string | null;
+  order_no: string;
+  'x-trace': string;
+  note?: string | null;
   revision: number;
-  status: 'InProgress' | 'Done';
-  permissions: 'None' | 'Read' | 'Write';
+  status: 'in-progress' | 'Done';
+  permissions: string;
 }
 
 export interface LedgerBook {
@@ -266,14 +271,27 @@ export interface PidBooleanControl extends PidControlBase {
   iconStyle: string;
 }
 
-export interface PagedResult<T> {
-  items: ShapeOrder[];
-  totalCount: number;
+export interface ShapeTruck {
+  plate: string;
 }
 
 export interface PagedResult<T> {
-  items: ShapeCustomer[];
+  items: T[];
   totalCount: number;
+}
+
+export interface ShapeOrder {
+  id: string;
+  total: number;
+}
+
+export interface ShapeCustomer {
+  id: string;
+  name: string;
+}
+
+export interface ShapeTag {
+  label: string;
 }
 
 export interface LedgerEntryBase {
@@ -286,28 +304,30 @@ export interface FixtureBase {
   y: number;
 }
 
-export interface ShapeCustomer {
-  id: string;
-  name: string;
+export interface ShapeShelf {
+  aisle: string;
+}
+
+export interface ShapeInvoice {
+  number: string;
+  amount: number;
+}
+
+export interface Envelope<T> {
+  payload: T;
+  issuedAt: string;
 }
 
 export interface ShapeReceipt {
   number: string;
 }
 
-export interface ShapeTag[] {
-  length: number;
-  longLength: number;
-  rank: number;
-  syncRoot: unknown;
-  isReadOnly: boolean;
-  isFixedSize: boolean;
-  isSynchronized: boolean;
+export interface ShapeShipment {
+  carrier: string;
 }
 
-export interface ShapeOrder {
-  id: string;
-  total: number;
+export interface ShapeVote {
+  count: number;
 }
 
 export interface PostedEntry extends LedgerEntryBase {
@@ -332,6 +352,8 @@ export interface QueryMap {
   'SampleDomain.Shapes.ListShapeCustomersQuery': { request: ListShapeCustomersQuery; response: PagedResult<ShapeCustomer> };
   'SampleDomain.Shapes.GetShapeReceiptQuery': { request: GetShapeReceiptQuery; response: Envelope<ShapeReceipt> };
   'SampleDomain.Shapes.ListShapeTagsQuery': { request: ListShapeTagsQuery; response: ShapeTag[] };
+  'SampleDomain.Shapes.ListShapeShipmentPagesQuery': { request: ListShapeShipmentPagesQuery; response: PagedResult<ShapeShipment>[] };
+  'SampleDomain.Shapes.TallyShapeVotesQuery': { request: TallyShapeVotesQuery; response: Record<string /* bool */, ShapeVote> };
   'Conduit.TypeGen.Tests.Sample.TestListReachesQuery': { request: TestListReachesQuery; response: ('self' | 'reports' | 'o\'clock')[] };
   'Conduit.TypeGen.Tests.Sample.TestWidestReachQuery': { request: TestWidestReachQuery; response: 'self' | 'reports' | 'o\'clock' };
   'Conduit.TypeGen.Tests.Sample.TestListActivitiesQuery': { request: TestListActivitiesQuery; response: TestPagedResult<TestActivityListItem> };
