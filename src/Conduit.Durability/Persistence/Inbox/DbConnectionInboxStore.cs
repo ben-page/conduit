@@ -10,6 +10,7 @@ namespace Conduit.Durability.Persistence.Inbox;
 public sealed class DbConnectionInboxStore : DbStoreBase, IInboxStore
 {
     private const string DeleteExpiredSql = "DELETE FROM conduit_inbox WHERE ProcessedAt < @Cutoff";
+    private const string RemoveSql = "DELETE FROM conduit_inbox WHERE MessageId = @MessageId";
 
     private readonly string createTableSql;
     private readonly string insertSql;
@@ -59,6 +60,13 @@ public sealed class DbConnectionInboxStore : DbStoreBase, IInboxStore
             cancellationToken);
         return rowsAffected > 0;
     }
+
+    /// <inheritdoc/>
+    public Task RemoveAsync(string messageId, CancellationToken cancellationToken)
+        => this.ExecuteNonQueryAsync(
+            RemoveSql,
+            command => DbParameterHelper.Add(command, "@MessageId", messageId),
+            cancellationToken);
 
     /// <inheritdoc/>
     public Task DeleteExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)

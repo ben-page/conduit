@@ -17,6 +17,14 @@ public interface IInboxStore
     /// </summary>
     public Task<bool> RecordAsync(string messageId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Removes a message's record, so the message is admitted again when it next arrives. Called when the
+    /// dispatch that recorded it failed: the broker's redelivery, or a dead-letter replay (which carries the
+    /// original MessageId), must run rather than be discarded as a duplicate. Removing an id that is not
+    /// recorded does nothing.
+    /// </summary>
+    public Task RemoveAsync(string messageId, CancellationToken cancellationToken);
+
     /// <summary>Deletes inbox entries older than the retention period.</summary>
     public Task DeleteExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken);
 

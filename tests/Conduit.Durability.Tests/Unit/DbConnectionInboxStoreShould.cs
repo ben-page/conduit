@@ -89,4 +89,21 @@ public sealed class DbConnectionInboxStoreShould : IAsyncDisposable
         var exists = await this.store.ExistsAsync("msg-fresh", CancellationToken.None);
         exists.Should().BeTrue();
     }
+
+    // A failed dispatch releases its record: the id can be recorded anew, and only that id is removed.
+    [TestMethod]
+    public async Task RemoveARecordedId()
+    {
+        // Arrange
+        await this.store.RecordAsync("msg-failed", CancellationToken.None);
+        await this.store.RecordAsync("msg-kept", CancellationToken.None);
+
+        // Act
+        await this.store.RemoveAsync("msg-failed", CancellationToken.None);
+
+        // Assert
+        (await this.store.ExistsAsync("msg-failed", CancellationToken.None)).Should().BeFalse();
+        (await this.store.ExistsAsync("msg-kept", CancellationToken.None)).Should().BeTrue();
+        (await this.store.RecordAsync("msg-failed", CancellationToken.None)).Should().BeTrue();
+    }
 }

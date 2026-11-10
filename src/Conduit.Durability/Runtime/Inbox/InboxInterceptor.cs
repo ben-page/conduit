@@ -8,8 +8,18 @@ namespace Conduit.Durability.Runtime.Inbox;
 /// Inbound gate that checks MessageId against the inbox store for deduplication.
 /// If the message has already been processed, returns false to silently discard it.
 /// </summary>
+/// <remarks>
+/// Scoped, so one instance serves one inbound dispatch: it remembers the id it recorded, and
+/// <see cref="InboxErrorInterceptor"/> releases that record, and only that one, if the dispatch fails.
+/// </remarks>
 public sealed class InboxInterceptor(IInboxStore store) : IInboundInterceptor
 {
+    /// <summary>
+    /// The MessageId this gate recorded for its dispatch, or null when it recorded none: no context, a
+    /// duplicate, or it never ran (the dispatch failed before its gates).
+    /// </summary>
+    internal string? AdmittedMessageId { get; private set; }
+
     /// <inheritdoc/>
     public async Task<bool> ShouldProcessAsync(string messageType, CancellationToken cancellationToken)
     {
@@ -29,6 +39,7 @@ public sealed class InboxInterceptor(IInboxStore store) : IInboundInterceptor
             return false;
         }
 
+        this.AdmittedMessageId = messageId;
         return true;
     }
 }

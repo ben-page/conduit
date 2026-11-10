@@ -3,6 +3,7 @@
 - [Why use an inbox?](#why-use-an-inbox)
   - [When to use it](#when-to-use-it)
 - [How it works](#how-it-works)
+  - [When a dispatch fails](#when-a-dispatch-fails)
 - [Setup](#setup)
 - [Database dialects](#database-dialects)
 - [Configuration](#configuration)
@@ -38,6 +39,9 @@ Inbound wire message arrives (transport provides MessageId)
   └── InboxInterceptor gate runs (pre-deserialization)
         ├── MessageId already in store?  → discard (gate returns false); broker ACKs, no handler run
         └── new MessageId?               → record it, then proceed to deserialize + dispatch
+              ├── dispatch succeeds      → the record stays for RetentionPeriod
+              └── dispatch fails         → (broker transports) the record is released, so the
+                                           redelivery or a dead-letter replay runs
 ```
 
 - **Dedup happens before the handler** — that's the whole point; it prevents duplicate side effects, not just duplicate results.
@@ -46,6 +50,22 @@ Inbound wire message arrives (transport provides MessageId)
 - **Local dispatch is unaffected** — the gate only runs on transport-inbound messages; in-process dispatch never hits it.
 
 A background `InboxCleanup` service periodically deletes records older than the retention window, so the table doesn't grow without bound.
+
+### When a dispatch fails
+
+The gate records a message's id before its handler runs, so the record has to come off again when the handler does not succeed. Otherwise one transient failure would lose the message: the broker transport abandons it, the broker redelivers it under the same `MessageId`, and the gate discards the redelivery as a duplicate, which the transport acknowledges, with no dead-letter entry.
+
+So on a broker transport (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ), a dispatch that fails **releases its inbox record**: a handler or listener that throws, a request answered `InternalError`, and an event this host cannot read (a body its type cannot read, or a type it does not know). `AddInbox()` registers an `IInboundErrorInterceptor`, `InboxErrorInterceptor`, which the transport calls on every such failure, whether or not a [dead letter queue](dead-letter-queue.md) is registered and whether or not it captured the message. Then:
+
+- **A broker redelivery runs.** A failed listener is abandoned when nothing captures it, and its redelivery reaches the handler as a first attempt would.
+- **A dead-letter replay runs.** A replay carries the original `MessageId` (see [Interaction with inbox](dead-letter-queue.md#interaction-with-inbox)), and it is no longer discarded inside `RetentionPeriod`.
+- **A dispatch that succeeded stays recorded** for `RetentionPeriod`, so its duplicates are still discarded.
+- **A refusal stays recorded.** A request answered with a `ConduitException` (not found, conflict, forbidden, ...) did not fail: the caller has its answer, the transport acknowledges it, and a duplicate is discarded as before.
+- **A `[FireAndForget]` command's failure stays recorded.** The transport acknowledges it without seeing it fail (the dead letter queue's [known limitation](dead-letter-queue.md#limitations)), so there is nothing redelivered or replayed for the record to block.
+
+Only the record **this dispatch** made is released. A message that fails before the gate runs (its body is not JSON, its DI scope or the mediator cannot be built, or a gate registered ahead of the inbox throws) leaves alone a record another delivery made, perhaps one whose handler succeeded; so does a duplicate the gate discarded.
+
+If the release itself fails (the database is unreachable), it is logged at Warning (EventId 330, `InboxReleaseFailed`) and the message is settled as it would have been: the redelivery or replay is then discarded until the record expires.
 
 ## Setup
 
@@ -67,7 +87,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`AddInbox()` registers the `InboxInterceptor` gate, the `IInboxStore` (`DbConnectionInboxStore`), and the `InboxCleanup` background service. The inbox is **all-or-nothing** — once enabled, every inbound wire message is deduplicated.
+`AddInbox()` registers the `InboxInterceptor` gate, the `InboxErrorInterceptor` that [releases a failed dispatch's record](#when-a-dispatch-fails), the `IInboxStore` (`DbConnectionInboxStore`), and the `InboxCleanup` background service. The inbox is **all-or-nothing** — once enabled, every inbound wire message is deduplicated.
 
 ## Database dialects
 
@@ -102,7 +122,7 @@ conduit.AddDurability(durability =>
 
 ## Semantics: at-most-once on crash
 
-The inbox records the `MessageId` **before** the handler runs. If the process crashes *after* recording but *before* the handler completes, the message is marked processed yet was never fully handled — it will not be retried. This is **at-most-once** processing.
+The inbox records the `MessageId` **before** the handler runs. A handler that fails releases the record ([above](#when-a-dispatch-fails)), but a process that crashes *after* recording and *before* the handler completes releases nothing: the message is marked processed yet was never fully handled, and its redelivery is discarded until the record expires. This is **at-most-once** processing.
 
 This is the standard inbox trade-off (MassTransit and Wolverine behave the same). Recording *after* the handler would instead allow duplicate execution on a crash. At-most-once is the safer default for side-effect-heavy handlers. If you need at-least-once semantics, rely on broker-native redelivery **without** the inbox and make your handlers idempotent another way.
 
@@ -123,6 +143,7 @@ Some brokers offer native deduplication — Azure Service Bus `RequiresDuplicate
 
 - **Requires a database.** The inbox shares the durability database. A stateless service with no database should use broker-native dedup instead.
 - **At-most-once on crash** — see [above](#semantics-at-most-once-on-crash). The record-then-handle ordering trades duplicate-execution risk for lost-on-crash risk.
+- **Only broker transports release.** The HTTP endpoint and the SignalR hub answer their caller the failure and release nothing. Their server mints every `MessageId` by default, so a retry is a new message; but a caller an edge trusts to supply its own ids (`MapConduitEndpoint(..., trustCallerContext: true)`, `AddConduitSignalR(o => o.TrustCallerContext = true)`) that retries a failed request under the same `MessageId` gets the empty success a duplicate gets.
 - **No result caching.** Duplicates are discarded, not answered. For request/response over a broker, a duplicate request produces no second reply — the caller relies on the first.
 - **Retention must outlast redelivery.** If `RetentionPeriod` is shorter than the broker's redelivery window, a late duplicate can slip through after its record is purged.
 - **All-or-nothing.** There's no per-type opt-out; enabling the inbox deduplicates every inbound wire message.

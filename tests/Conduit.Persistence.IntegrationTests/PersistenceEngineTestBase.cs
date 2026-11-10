@@ -290,6 +290,25 @@ public abstract class PersistenceEngineTestBase
         (await store.ExistsAsync("never-recorded", CancellationToken.None)).Should().BeFalse();
     }
 
+    [TestMethod]
+    public async Task RemoveARecordedId()
+    {
+        // Arrange — a failed dispatch's record beside a succeeded one's
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbConnectionInboxStore(factory, this.Dialect);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        await store.RecordAsync("failed", CancellationToken.None);
+        await store.RecordAsync("succeeded", CancellationToken.None);
+
+        // Act
+        await store.RemoveAsync("failed", CancellationToken.None);
+
+        // Assert — only that id is released, and its redelivery records it anew
+        (await store.ExistsAsync("failed", CancellationToken.None)).Should().BeFalse();
+        (await store.ExistsAsync("succeeded", CancellationToken.None)).Should().BeTrue();
+        (await store.RecordAsync("failed", CancellationToken.None)).Should().BeTrue();
+    }
+
     // 4) Dead letter queue ----------------------------------------------------------------------
 
     [TestMethod]

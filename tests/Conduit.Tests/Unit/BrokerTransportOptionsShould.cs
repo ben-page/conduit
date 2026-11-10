@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Conduit.Generated;
 using Conduit.Runtime;
+using Conduit.TestUtils;
 using Conduit.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
 

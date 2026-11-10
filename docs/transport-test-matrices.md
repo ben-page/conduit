@@ -129,7 +129,7 @@ Test class: `{Transport}DeadLetterShould`
 
 Test class: `{Transport}SelfPublishedEventShould`
 
-Universal — required of every transport, real broker only (the in-memory `FakeBrokerTransport` double in `Conduit.Tests` already covers this at the unit level; these two prove the same behavior actually holds on the wire).
+Universal — required of every transport, real broker only (the in-memory `FakeBrokerTransport` double in `Conduit.TestUtils` already covers this at the unit level; these two prove the same behavior actually holds on the wire).
 
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|

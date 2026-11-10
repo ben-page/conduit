@@ -1,5 +1,9 @@
 ﻿using System.Text.Json;
 using AwesomeAssertions;
+using Conduit.Configuration;
+using Conduit.Durability.Configuration;
+using Conduit.Durability.DeadLetterQueue;
+using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Tests.Support;
 using Conduit.Generated;
 using Conduit.Runtime;
@@ -120,4 +124,178 @@ public class InboxEndToEndShould
             MessageContext.RestoreContext(previous);
         }
     }
+
+    // The broker redelivers what a failed listener left abandoned, under the same MessageId. Were the failed
+    // attempt's record kept, the redelivery would be discarded as a duplicate and acknowledged: one transient
+    // failure, and the message lost with no dead-letter entry.
+    [TestMethod]
+    public async Task LetARedeliveryRunAfterTheFirstAttemptFailed()
+    {
+        // Arrange — the inbox alone, no dead letter queue: the first attempt fails and is abandoned
+        var connectionFactory = new StubConnectionFactory();
+        await using var _ = connectionFactory;
+        var inboxStore = new DbConnectionInboxStore(connectionFactory, new SqliteDialect());
+        await inboxStore.EnsureTableExistsAsync(CancellationToken.None);
+
+        var deliveries = new DeliveryCounter();
+        await using var host = StartBrokerHost(connectionFactory, deliveries, durability => durability.AddInbox());
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+
+        var firstAttempt = BrokerMessage(new FlakyInboxEvent(Failures: 1), "msg-redelivered", isRequest: false);
+        await transport.DeliverAsync(firstAttempt);
+        var redelivery = BrokerMessage(new FlakyInboxEvent(Failures: 1), "msg-redelivered", isRequest: false);
+
+        // Act
+        await transport.DeliverAsync(redelivery);
+
+        // Assert — the redelivery ran the listener, and that success is what the inbox now holds
+        firstAttempt.Abandoned.Should().BeTrue();
+        deliveries.Count.Should().Be(2, "the redelivery ran its listener rather than being discarded as a duplicate");
+        redelivery.Acknowledged.Should().BeTrue();
+        (await inboxStore.ExistsAsync("msg-redelivered", CancellationToken.None)).Should().BeTrue();
+    }
+
+    // A dead-letter replay carries the original MessageId. Both error interceptors see the failure: the dead letter
+    // queue stores it, the inbox releases its record, so the replay runs inside the retention period.
+    [TestMethod]
+    public async Task LetADeadLetterReplayRunAfterTheFirstAttemptFailed()
+    {
+        // Arrange — the inbox beside the dead letter queue: the failed request is captured and acknowledged
+        var connectionFactory = new StubConnectionFactory();
+        await using var _ = connectionFactory;
+        var inboxStore = new DbConnectionInboxStore(connectionFactory, new SqliteDialect());
+        await inboxStore.EnsureTableExistsAsync(CancellationToken.None);
+        var deadLetterStore = new DbDeadLetterStore(connectionFactory, new SqliteDialect());
+        await deadLetterStore.EnsureTableExistsAsync(CancellationToken.None);
+
+        var deliveries = new DeliveryCounter();
+        await using var host = StartBrokerHost(
+            connectionFactory,
+            deliveries,
+            durability => durability.AddInbox().AddDeadLetterQueue());
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+
+        await transport.DeliverAsync(BrokerMessage(new FlakyInboxCommand(Failures: 1), "msg-replayed", isRequest: true));
+        var entry = (await deadLetterStore.QueryAsync(new DeadLetterFilter(), CancellationToken.None)).Entries
+            .Should().ContainSingle().Subject;
+
+        // As RedeliverAsync sends it: the entry's body under its original ids, and no reply address
+        var replay = new FakeBrokerMessage
+        {
+            Type = entry.MessageType,
+            Body = entry.Body,
+            Properties = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["MessageId"] = entry.MessageId!,
+                ["CausationId"] = entry.CausationId!,
+                ["ConversationId"] = entry.ConversationId!,
+            },
+        };
+
+        // Act
+        await transport.DeliverAsync(replay);
+
+        // Assert — the replay ran its handler under the original id
+        entry.MessageId.Should().Be("msg-replayed");
+        deliveries.Count.Should().Be(2, "the replay ran its handler rather than being discarded as a duplicate");
+        replay.Acknowledged.Should().BeTrue();
+    }
+
+    // Gates run before the body is read, so the gate has recorded the id of an event whose body its type cannot
+    // read by the time the read fails. That failure releases it as any other does: the replay of the captured
+    // event, once the contract is fixed, runs.
+    [TestMethod]
+    public async Task ReleaseTheRecordOfAnEventItsTypeCannotRead()
+    {
+        // Arrange — the inbox alone; a field of the wrong type
+        var connectionFactory = new StubConnectionFactory();
+        await using var _ = connectionFactory;
+        var inboxStore = new DbConnectionInboxStore(connectionFactory, new SqliteDialect());
+        await inboxStore.EnsureTableExistsAsync(CancellationToken.None);
+
+        var deliveries = new DeliveryCounter();
+        await using var host = StartBrokerHost(connectionFactory, deliveries, durability => durability.AddInbox());
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var unreadable = new FakeBrokerMessage
+        {
+            Type = typeof(FlakyInboxEvent).FullName!,
+            Body = new BinaryData("""{"failures":"one"}"""),
+            Properties = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["MessageId"] = "msg-unreadable",
+                ["ConversationId"] = "msg-unreadable",
+            },
+        };
+
+        // Act
+        await transport.DeliverAsync(unreadable);
+
+        // Assert — acknowledged uncaptured (a redelivery would fail the same way), no listener ran, no record kept
+        unreadable.Acknowledged.Should().BeTrue();
+        deliveries.Count.Should().Be(0);
+        (await inboxStore.ExistsAsync("msg-unreadable", CancellationToken.None)).Should().BeFalse();
+    }
+
+    // A failure before the gate ran (here a body that is not JSON) recorded nothing, so it releases nothing: the
+    // record is the delivery's that succeeded, and removing it would let a later duplicate run the listener again.
+    [TestMethod]
+    public async Task KeepTheRecordOfASucceededDeliveryWhenADuplicateFailsBeforeDispatch()
+    {
+        // Arrange — the first delivery succeeded and is recorded
+        var connectionFactory = new StubConnectionFactory();
+        await using var _ = connectionFactory;
+        var inboxStore = new DbConnectionInboxStore(connectionFactory, new SqliteDialect());
+        await inboxStore.EnsureTableExistsAsync(CancellationToken.None);
+
+        var deliveries = new DeliveryCounter();
+        await using var host = StartBrokerHost(connectionFactory, deliveries, durability => durability.AddInbox());
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        await transport.DeliverAsync(BrokerMessage(new FlakyInboxEvent(Failures: 0), "msg-succeeded", isRequest: false));
+        var malformed = new FakeBrokerMessage
+        {
+            Type = typeof(FlakyInboxEvent).FullName!,
+            Body = new BinaryData("not json"),
+            Properties = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["MessageId"] = "msg-succeeded",
+                ["ConversationId"] = "msg-succeeded",
+            },
+        };
+
+        // Act
+        await transport.DeliverAsync(malformed);
+
+        // Assert — settled before dispatch, the succeeded delivery's record intact
+        malformed.Acknowledged.Should().BeTrue();
+        deliveries.Count.Should().Be(1);
+        (await inboxStore.ExistsAsync("msg-succeeded", CancellationToken.None)).Should().BeTrue();
+    }
+
+    private static TestWebHost StartBrokerHost(
+        StubConnectionFactory connectionFactory,
+        DeliveryCounter deliveries,
+        Action<DurabilityBuilder> configureDurability) => TestWebHost.Start(builder =>
+    {
+        builder.Services.AddSingleton(deliveries);
+        builder.Services.AddConduit(conduit =>
+        {
+            conduit.UseSqlite("Data Source=:memory:");
+            conduit.AddDurability(configureDurability);
+        });
+
+        // Override with the shared in-memory connection, so the test's stores see the host's rows
+        builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
+    });
+
+    private static FakeBrokerMessage BrokerMessage(object message, string messageId, bool isRequest) => new()
+    {
+        Type = message.GetType().FullName!,
+        Body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ConduitRuntime.JsonOptions)),
+        IsRequest = isRequest,
+        Properties = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["MessageId"] = messageId,
+            ["ConversationId"] = messageId,
+        },
+    };
 }

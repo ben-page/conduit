@@ -48,6 +48,7 @@ public sealed class StoreConnectionDisposalShould
         await store.EnsureTableExistsAsync(CancellationToken.None);
         await store.RecordAsync("msg-1", CancellationToken.None);
         await store.ExistsAsync("msg-1", CancellationToken.None);
+        await store.RemoveAsync("msg-1", CancellationToken.None);
         await store.DeleteExpiredAsync(TimeSpan.Zero, CancellationToken.None);
 
         // Assert

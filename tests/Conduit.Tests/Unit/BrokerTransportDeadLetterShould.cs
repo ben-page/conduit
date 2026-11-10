@@ -105,12 +105,67 @@ public class BrokerTransportDeadLetterShould
         message.Abandoned.Should().BeFalse();
     }
 
+    // The dead letter queue stores a failure and the inbox releases its record: every interceptor registered is
+    // offered the failure, not only the last one, and the message is still settled once.
+    [TestMethod]
+    public async Task OfferAFailureToEveryErrorInterceptor()
+    {
+        // Arrange
+        var first = new RecordingErrorInterceptor();
+        var second = new RecordingErrorInterceptor();
+        await using var host = StartHostWith(first, second);
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var message = RequestMessage(new FailingCommand("unexpected"));
+
+        // Act
+        await transport.DeliverAsync(message);
+
+        // Assert -- both offered it, one acknowledgement
+        first.Captures.Should().ContainSingle();
+        second.Captures.Should().ContainSingle();
+        transport.Lifecycle.Should().Equal("acknowledged");
+    }
+
+    // One interceptor's failure is its own: those before and after it still run, and a capture by any of them still
+    // settles the message (acknowledged, where an uncaptured listener failure is abandoned).
+    [TestMethod]
+    public async Task OfferAFailureToTheOtherErrorInterceptorsWhenOneThrows()
+    {
+        // Arrange
+        var before = new RecordingErrorInterceptor();
+        var after = new RecordingErrorInterceptor();
+        await using var host = StartHostWith(before, new ThrowingErrorInterceptor(), after);
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var envelope = TestEnvelope.For(new InlineFailureEvent("x"));
+        var message = new FakeBrokerMessage { Type = envelope.Type, Body = new BinaryData(envelope.Payload.GetRawText()) };
+
+        // Act
+        await transport.DeliverAsync(message);
+
+        // Assert -- offered to both that did not throw, acknowledged once, not abandoned
+        before.Captures.Should().ContainSingle().Which.MessageType.Should().Be(typeof(InlineFailureEvent).FullName);
+        after.Captures.Should().ContainSingle().Which.MessageType.Should().Be(typeof(InlineFailureEvent).FullName);
+        transport.Lifecycle.Should().Equal("acknowledged");
+        message.Abandoned.Should().BeFalse();
+    }
+
     private static TestWebHost StartHost(Action<ConduitBuilder>? configure = null) => TestWebHost.Start(builder =>
     {
         builder.Services.AddSingleton<RecordingErrorInterceptor>();
         builder.Services.AddSingleton<IInboundErrorInterceptor>(
             provider => provider.GetRequiredService<RecordingErrorInterceptor>());
         builder.Services.AddConduit(configure);
+    });
+
+    private static TestWebHost StartHostWith(params IInboundErrorInterceptor[] interceptors) => TestWebHost.Start(builder =>
+    {
+        foreach (var interceptor in interceptors)
+        {
+            builder.Services.AddSingleton(interceptor);
+        }
+
+        builder.Services.AddSingleton<EventSpy<string>>();
+        builder.Services.AddConduit();
     });
 
     private static FakeBrokerMessage RequestMessage(object request, Exception? acknowledgeFailure = null)

@@ -165,7 +165,15 @@ The message enters the normal inbound processing path. Any available instance of
 
 ### Interaction with inbox
 
-The inbox deduplicates by `MessageId`, and a replay carries the original one. The inbox records a message's id when it admits the message, before its handler runs, so a failure that reached the handler leaves that id recorded until `InboxOptions.RetentionPeriod` (30 minutes by default) expires it: a replay inside that window is discarded as a duplicate, and the entry is still removed. On a host with the inbox, replay after the retention period. A message captured before dispatch (an unreadable body) never reached the inbox, so its replay is not affected.
+The [inbox](inbox.md) deduplicates by `MessageId`, and a replay carries the original one. The inbox records a message's id when it admits the message, before its handler runs, and **a failed dispatch releases that record**: the transport offers every failure to the inbox as well as to the dead letter queue, so the dead letter queue stores the message and the inbox forgets it, in either order. A replay therefore runs whenever it is sent, inside `InboxOptions.RetentionPeriod` or after it, as does a broker redelivery of a failure nothing captured. A dispatch that succeeded stays recorded for `RetentionPeriod`, so a duplicate of it is still discarded. See [When a dispatch fails](inbox.md#when-a-dispatch-fails).
+
+What each capture leaves in the inbox:
+
+- **A handler or listener that threw, or a request answered `InternalError`**: the gate recorded the id, and the failure releases it.
+- **An event this host cannot read**: gates run before the body is read, so the gate had already recorded the id when the read failed. The capture releases it, as any other failure's does, and the replay (once the contract is fixed) runs.
+- **A message that failed before dispatch** (a body that is not JSON, a scope or mediator that could not be built): the gate never ran, so this delivery recorded nothing and releases nothing.
+
+If the release fails (the inbox database is unreachable; logged at Warning, `InboxReleaseFailed`), the id stays recorded, and a replay inside the retention period is discarded as a duplicate while the entry is still removed.
 
 If the original message partially succeeded before failing (handler did some work, then threw), the replayed message is a new attempt. Idempotency at the handler level is the application's responsibility — same as any retry scenario.
 
@@ -253,6 +261,6 @@ Note that the broker's own DLQ still functions as an infrastructure safety net: 
 
 - **Requires a database.** The DLQ shares the durability database. A stateless service with no database can't use it (use broker-native redelivery/DLQ at the infrastructure level instead).
 - **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response, and nothing receives it. `ReplayResult.Success` says the message was re-published, not that it was handled.
-- **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and a replay carries the original one (see [Interaction with inbox](#interaction-with-inbox)).
+- **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox does not stand in for it: the failed attempt released its record, so the replay runs (see [Interaction with inbox](#interaction-with-inbox)).
 - **Refusals are not captured.** A request answered with a `ConduitException` (404, 409, 412, ...) is final: the caller has its answer, and nothing is stored to replay. A refused `[FireAndForget]` command is just as final, although no one hears the refusal but the log.
 - **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.

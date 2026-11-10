@@ -4,7 +4,7 @@ using Conduit.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Conduit.Tests.Support;
+namespace Conduit.TestUtils;
 
 /// <summary>
 /// In-memory <see cref="BrokerTransportBase{TMessage}"/> for testing base-class behavior

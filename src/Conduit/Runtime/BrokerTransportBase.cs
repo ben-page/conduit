@@ -60,6 +60,11 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(509, "MessageReturnedOnStop"),
             "Returned message '{Type}' to the broker undispatched: the transport is stopping");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogErrorInterceptorFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(510, "ErrorInterceptorFailed"),
+            "Error interceptor {Interceptor} threw for failed message '{Type}'; the other interceptors still ran, " +
+            "and the message is abandoned or acknowledged as if it had declined");
+
     private static readonly Action<ILogger, string, string, Exception?> LogFireAndForgetCommandRefused =
         LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(511, "FireAndForgetCommandRefused"),
             "Acknowledged fire-and-forget command '{Type}', refused with {Code}: no caller waits for its answer");
@@ -842,12 +847,14 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     }
 
     /// <summary>
-    /// Attempts to capture a failed message via a registered <see cref="IInboundErrorInterceptor"/>
-    /// (e.g., the dead letter queue). Returns true if captured and acknowledged, false if no
-    /// interceptor is registered or capture failed (the caller falls back: abandon a failed dispatch,
-    /// acknowledge a message that never reached one). The acknowledgement after a capture is outside the
-    /// guard: one that throws propagates to the broker client rather than returning false, which would have
-    /// the caller settle the message a second time (and the redelivery store it twice).
+    /// Offers a failed message to every registered <see cref="IInboundErrorInterceptor"/>, in registration
+    /// order: the dead letter queue stores it, the inbox releases its record so a redelivery or a replay runs.
+    /// Each runs in its own guard, so one that throws is logged and the others still run. Returns true if any
+    /// captured it, the message then acknowledged once; false if none is registered or none captured it (the
+    /// caller falls back: abandon a failed dispatch, acknowledge a message that never reached one). The
+    /// acknowledgement after a capture is outside the guards: one that throws propagates to the broker client
+    /// rather than returning false, which would have the caller settle the message a second time (and the
+    /// redelivery store it twice).
     /// </summary>
     private async Task<bool> TryCaptureErrorAsync(
         IServiceProvider services,
@@ -856,27 +863,44 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         Exception exception,
         string? reference)
     {
+        IInboundErrorInterceptor[] interceptors;
+        BinaryData body;
         try
         {
-            var interceptor = services.GetService<IInboundErrorInterceptor>();
-            if (interceptor is null)
+            interceptors = [.. services.GetServices<IInboundErrorInterceptor>()];
+            if (interceptors.Length == 0)
             {
                 return false;
             }
 
-            var body = this.GetMessageBody(message);
-            var captured = await interceptor.TryCaptureAsync(
-                messageType, body, this.EndpointName, exception, reference, CancellationToken.None);
-            if (!captured)
-            {
-                return false;
-            }
+            body = this.GetMessageBody(message);
         }
 #pragma warning disable CA1031
-        catch (Exception interceptorException)
+        catch (Exception resolveException)
 #pragma warning restore CA1031
         {
-            LogDeadLetterStoreFailed(this.Logger, interceptorException);
+            LogDeadLetterStoreFailed(this.Logger, resolveException);
+            return false;
+        }
+
+        var captured = false;
+        foreach (var interceptor in interceptors)
+        {
+            try
+            {
+                captured |= await interceptor.TryCaptureAsync(
+                    messageType, body, this.EndpointName, exception, reference, CancellationToken.None);
+            }
+#pragma warning disable CA1031
+            catch (Exception interceptorException)
+#pragma warning restore CA1031
+            {
+                LogErrorInterceptorFailed(this.Logger, interceptor.GetType().Name, messageType, interceptorException);
+            }
+        }
+
+        if (!captured)
+        {
             return false;
         }
 

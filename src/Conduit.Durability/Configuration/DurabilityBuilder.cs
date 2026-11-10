@@ -63,14 +63,22 @@ public sealed class DurabilityBuilder
         return this;
     }
 
-    /// <summary>Adds the inbox (idempotent message processing).</summary>
+    /// <summary>
+    /// Adds the inbox (idempotent message processing). A broker dispatch that fails releases its record, so
+    /// the broker's redelivery, or a dead-letter replay, runs instead of being discarded as a duplicate.
+    /// </summary>
     public DurabilityBuilder AddInbox(Action<InboxOptions>? configure = null)
     {
         var options = new InboxOptions();
         configure?.Invoke(options);
 
         this.Services.TryAddScoped<IInboxStore, DbConnectionInboxStore>();
-        this.Services.AddScoped<IInboundInterceptor, InboxInterceptor>();
+
+        // One gate per dispatch scope, shared by the error interceptor: it releases the record that gate made.
+        this.Services.AddScoped<InboxInterceptor>();
+        this.Services.AddScoped<IInboundInterceptor>(
+            serviceProvider => serviceProvider.GetRequiredService<InboxInterceptor>());
+        this.Services.AddScoped<IInboundErrorInterceptor, InboxErrorInterceptor>();
         this.Services.AddHostedService<InboxCleanup>();
         this.Services.AddSingleton(Options.Create(options));
 

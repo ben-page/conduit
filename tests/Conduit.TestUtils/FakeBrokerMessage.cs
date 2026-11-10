@@ -1,4 +1,4 @@
-namespace Conduit.Tests.Support;
+namespace Conduit.TestUtils;
 
 /// <summary>
 /// Inbound message for <see cref="FakeBrokerTransport"/>. Mirrors what a real broker message

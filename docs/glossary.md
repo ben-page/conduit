@@ -48,7 +48,7 @@ available so a gate can read the transport-supplied `MessageId`. See
 - **Outbound** — `IOutboundInterceptor`. When registered, the generated mediator calls
   `Intercept(envelope)` *instead of* sending an outbound fire-and-forget message to the transport.
   Used by the outbox to capture sends. See [Outbox](outbox.md).
-- **Error** — `IInboundErrorInterceptor`, invoked when inbound dispatch fails (e.g. dead-letter capture).
+- **Error** — `IInboundErrorInterceptor`, invoked when inbound dispatch fails: every registered one runs (e.g. dead-letter capture, and the inbox releasing the failed message's record).
 
 ### Pipeline behavior (`IPipelineBehavior<TRequest, TResult>`)
 

@@ -1,6 +1,6 @@
 ﻿using AwesomeAssertions;
-using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Runtime.Inbox;
+using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
 
 namespace Conduit.Durability.Tests.Unit;
@@ -81,26 +81,4 @@ public class InboxInterceptorShould
             MessageContext.RestoreContext(previous);
         }
     }
-}
-
-file class InMemoryInboxStore : IInboxStore
-{
-    private readonly HashSet<string> messages = [];
-
-    public Task<bool> ExistsAsync(string messageId, CancellationToken cancellationToken)
-        => Task.FromResult(this.messages.Contains(messageId));
-
-    public Task<bool> RecordAsync(string messageId, CancellationToken cancellationToken)
-    {
-        // HashSet.Add returns true only when the element is newly added — the same
-        // newly-inserted semantics the real store reports via rows-affected.
-        var newlyAdded = this.messages.Add(messageId);
-        return Task.FromResult(newlyAdded);
-    }
-
-    public Task DeleteExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
-        => Task.CompletedTask;
-
-    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-        => Task.CompletedTask;
 }
