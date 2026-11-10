@@ -56,7 +56,32 @@ public class BrokerTransportRequestTimeoutShould
         // Act
         var send = () => transport.SendRequestAsync(envelope, caller.Token);
 
-        // Assert — the caller's own cancellation stays a cancellation
-        await send.Should().ThrowAsync<OperationCanceledException>();
+        // Assert — the caller's own cancellation stays a cancellation, carrying the caller's token
+        (await send.Should().ThrowAsync<OperationCanceledException>())
+            .Which.CancellationToken.Should().Be(caller.Token);
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task TimeOutAPublishThatIgnoresItsToken()
+    {
+        // Arrange — a broker client stuck in a call that takes no cancellation token
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        var transport = new FakeBrokerTransport(
+            new ConduitOptions(),
+            services,
+            new FakeBrokerOptions { ResponseTimeout = TimeSpan.FromMilliseconds(300) })
+        {
+            PublishRequestsIgnoreTheirToken = true,
+        };
+        transport.Start();
+        var envelope = TestEnvelope.ForRequest(new CreateItemCommand("stuck"));
+
+        // Act
+        var send = () => transport.SendRequestAsync(envelope, CancellationToken.None);
+
+        // Assert — released at the response timeout all the same, with the missing reply's exception
+        var exception = await send.Should().ThrowExactlyAsync<TimeoutException>();
+        exception.WithMessage($"No reply to '{typeof(CreateItemCommand).FullName}' from endpoint '' within 00:00:00.3000000.");
     }
 }

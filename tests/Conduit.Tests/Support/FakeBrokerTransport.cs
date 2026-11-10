@@ -15,6 +15,9 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     private readonly ConcurrentQueue<FakeBrokerMessage> publishedEvents = new();
     private readonly ConcurrentQueue<BinaryData> replies = new();
     private readonly ConcurrentQueue<string> lifecycle = new();
+
+    // What a publish that ignores its token waits on: never set
+    private readonly TaskCompletionSource ignoredPublish = new();
     private volatile bool started;
 
     public FakeBrokerTransport(
@@ -30,6 +33,12 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     /// broker confirm never comes (a broker under a memory alarm stops reading the connection).
     /// </summary>
     public bool PublishRequestsHang { get; set; }
+
+    /// <summary>
+    /// When set, a request's publish never completes and ignores its token, as a broker client stuck in a
+    /// call that takes no cancellation.
+    /// </summary>
+    public bool PublishRequestsIgnoreTheirToken { get; set; }
 
     /// <summary>Events handed to the "broker", in publish order.</summary>
     public IReadOnlyList<FakeBrokerMessage> PublishedEvents => this.publishedEvents.ToArray();
@@ -134,6 +143,11 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
         if (this.PublishRequestsHang)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        if (this.PublishRequestsIgnoreTheirToken)
+        {
+            await this.ignoredPublish.Task;
         }
 
         return new BinaryData("{}").ToMemory();

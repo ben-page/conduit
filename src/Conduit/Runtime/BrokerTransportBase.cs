@@ -269,7 +269,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <see cref="BrokerTransportOptions.ResponseTimeout"/>. A publish can wait on the broker as long as a
     /// reply can (a confirm a broker under a memory alarm never sends, a half-open connection), so the bound
     /// covers both: when it passes first, the request fails with the same <see cref="TimeoutException"/> as
-    /// a reply that never came, never a cancellation. The caller's own token still cancels it as itself.
+    /// a reply that never came, never a cancellation. The caller's own token still cancels it as itself: the
+    /// <see cref="OperationCanceledException"/> carries the caller's token, not the linked one the transport saw.
     /// </summary>
     private async Task<ReadOnlyMemory<byte>> PublishWithinResponseTimeoutAsync(
         DispatchEnvelope envelope,
@@ -287,7 +288,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             // WaitAsync releases the caller even from a publish that does not honor its token
             return await publishing.WaitAsync(bounded.Token);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
             // A publish left running may still fail: observe it, so nothing reports it unobserved
             _ = publishing.ContinueWith(
@@ -296,7 +297,13 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
 
-            if (responseTimeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            // The caller gave up: its cancellation, carrying its own token, as ReplyCorrelator's contract says
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(exception.Message, exception, cancellationToken);
+            }
+
+            if (responseTimeout.IsCancellationRequested)
             {
                 throw this.CreateReplyTimeoutException(envelope.Type);
             }
@@ -929,10 +936,17 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// Waits for the reply to the request published with <paramref name="correlationId"/>, at most
     /// <see cref="BrokerTransportOptions.ResponseTimeout"/>.
     /// </summary>
-    /// <exception cref="TimeoutException">No reply arrived within the response timeout. Never an
-    /// <see cref="OperationCanceledException"/>, so a caller's catch for its own cancellation cannot
-    /// swallow a remote that did not answer.</exception>
-    /// <exception cref="OperationCanceledException">Only for <paramref name="cancellationToken"/>, the caller's own.</exception>
+    /// <remarks>
+    /// <paramref name="cancellationToken"/> is the token <see cref="PublishRequestAsync"/> received: the
+    /// caller's linked with the response timeout, whose timer started before the publish. So the wait may end
+    /// in an <see cref="OperationCanceledException"/> on that timer; <c>SendRequestAsync</c> turns it into the
+    /// one <see cref="TimeoutException"/>. A caller therefore sees a <see cref="TimeoutException"/> for the
+    /// timeout and an <see cref="OperationCanceledException"/> carrying its own token for its own cancellation.
+    /// </remarks>
+    /// <exception cref="TimeoutException">No reply arrived within the response timeout, by the correlator's
+    /// own timer.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled, by the
+    /// caller or the response timeout.</exception>
     /// <exception cref="InvalidOperationException">The transport stopped before the reply arrived.</exception>
     protected Task<ReadOnlyMemory<byte>> AwaitReplyAsync(string correlationId, CancellationToken cancellationToken) =>
         this.replies.WaitAsync(correlationId, this.Options.ResponseTimeout, cancellationToken);
