@@ -57,6 +57,26 @@ public sealed class SqliteDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<string> BuildCreateTableIfNotExistsSql(
+        string tableName,
+        string columnDefinitions,
+        IReadOnlyList<TableIndex> indexes)
+    {
+        ArgumentNullException.ThrowIfNull(indexes);
+
+        return
+        [
+            this.BuildCreateTableIfNotExistsSql(tableName, columnDefinitions),
+            .. indexes.Select(index => string.Format(
+                CultureInfo.InvariantCulture,
+                "CREATE INDEX IF NOT EXISTS {0} ON {1} ({2})",
+                index.Name,
+                tableName,
+                string.Join(", ", index.Columns))),
+        ];
+    }
+
+    /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)
     {
         return string.Format(

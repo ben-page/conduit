@@ -143,6 +143,35 @@ public sealed class DeadLettersShould
     }
 
     [TestMethod]
+    [DataRow(0)]
+    [DataRow(DeadLetterFilter.MaxPageSize + 1)]
+    public async Task RefuseAPageSizeOutOfRange(int pageSize)
+    {
+        // Act
+        var act = () => this.deadLetters.QueryAsync(new DeadLetterFilter { PageSize = pageSize }, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [TestMethod]
+    public async Task ReplayEveryEntryOfATypeAcrossPages()
+    {
+        // Arrange — more entries of the type than one page holds
+        for (var index = 0; index <= DeadLetterFilter.MaxPageSize; index++)
+        {
+            await this.store.WriteAsync(CreateEntry("Target.Command", "orders"), CancellationToken.None);
+        }
+
+        // Act
+        var results = await this.deadLetters.ReplayByTypeAsync("Target.Command", CancellationToken.None);
+
+        // Assert
+        results.Should().HaveCount(DeadLetterFilter.MaxPageSize + 1).And.OnlyContain(result => result.Success);
+        this.store.Entries.Should().BeEmpty();
+    }
+
+    [TestMethod]
     public async Task DiscardSingleEntry()
     {
         // Arrange

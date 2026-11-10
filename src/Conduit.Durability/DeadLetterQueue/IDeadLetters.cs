@@ -7,6 +7,9 @@ namespace Conduit.Durability.DeadLetterQueue;
 public interface IDeadLetters
 {
     /// <summary>Browse dead-lettered messages with optional filtering.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="DeadLetterFilter.PageSize"/> is not positive or is above <see cref="DeadLetterFilter.MaxPageSize"/>.
+    /// </exception>
     public Task<DeadLetterPage> QueryAsync(DeadLetterFilter filter, CancellationToken cancellationToken);
 
     /// <summary>Get a single dead letter entry by ID.</summary>
@@ -18,7 +21,10 @@ public interface IDeadLetters
     /// <summary>Replay multiple messages sequentially.</summary>
     public Task<IReadOnlyList<ReplayResult>> ReplayAsync(IEnumerable<Guid> ids, CancellationToken cancellationToken);
 
-    /// <summary>Replay all dead-lettered messages of a given type.</summary>
+    /// <summary>
+    /// Replay all dead-lettered messages of a given type: every one the store holds when the call reads them, however
+    /// many pages they fill.
+    /// </summary>
     public Task<IReadOnlyList<ReplayResult>> ReplayByTypeAsync(string messageType, CancellationToken cancellationToken);
 
     /// <summary>Discard a message (remove from store without replaying).</summary>

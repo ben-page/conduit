@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence.Sqlite;
 
@@ -44,6 +45,25 @@ public class SqliteDialectShould
 
         // Assert
         sql.Should().Be("CREATE TABLE IF NOT EXISTS conduit_inbox (\n  MessageId TEXT PRIMARY KEY\n)");
+    }
+
+    [TestMethod]
+    public void FollowTheTableWithCreateIndexIfNotExists()
+    {
+        // Act
+        var statements = this.dialect.BuildCreateTableIfNotExistsSql(
+            "conduit_outbox",
+            "    Status INTEGER NOT NULL,\n    NextAttemptAt TEXT NOT NULL,\n    ClaimToken TEXT",
+            [
+                new TableIndex("ix_conduit_outbox_status_next_attempt", ["Status", "NextAttemptAt"]),
+                new TableIndex("ix_conduit_outbox_claim", ["ClaimToken"]),
+            ]);
+
+        // Assert — each index is created on its own, so an existing table gains a missing one.
+        statements.Should().Equal(
+            "CREATE TABLE IF NOT EXISTS conduit_outbox (\n    Status INTEGER NOT NULL,\n    NextAttemptAt TEXT NOT NULL,\n    ClaimToken TEXT\n)",
+            "CREATE INDEX IF NOT EXISTS ix_conduit_outbox_status_next_attempt ON conduit_outbox (Status, NextAttemptAt)",
+            "CREATE INDEX IF NOT EXISTS ix_conduit_outbox_claim ON conduit_outbox (ClaimToken)");
     }
 
     // Insert-or-ignore

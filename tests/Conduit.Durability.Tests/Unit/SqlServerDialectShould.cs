@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence.SqlServer;
 
@@ -43,6 +44,26 @@ public class SqlServerDialectShould
 
         // Assert
         sql.Should().Be("IF OBJECT_ID(N'conduit_inbox', N'U') IS NULL\nCREATE TABLE conduit_inbox (\n  MessageId NVARCHAR(450) PRIMARY KEY\n)");
+    }
+
+    [TestMethod]
+    public void FollowTheTableWithIndexesGuardedBySysIndexesChecks()
+    {
+        // Act
+        var statements = this.dialect.BuildCreateTableIfNotExistsSql(
+            "conduit_outbox",
+            "    Status TINYINT NOT NULL,\n    NextAttemptAt NVARCHAR(450) NOT NULL,\n    ClaimToken NVARCHAR(450)",
+            [
+                new TableIndex("ix_conduit_outbox_status_next_attempt", ["Status", "NextAttemptAt"]),
+                new TableIndex("ix_conduit_outbox_claim", ["ClaimToken"]),
+            ]);
+
+        // Assert — SQL Server has no CREATE INDEX IF NOT EXISTS; each index is guarded on its own, so an existing
+        // table gains a missing one.
+        statements.Should().Equal(
+            "IF OBJECT_ID(N'conduit_outbox', N'U') IS NULL\nCREATE TABLE conduit_outbox (\n    Status TINYINT NOT NULL,\n    NextAttemptAt NVARCHAR(450) NOT NULL,\n    ClaimToken NVARCHAR(450)\n)",
+            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_conduit_outbox_status_next_attempt' AND object_id = OBJECT_ID(N'conduit_outbox'))\nCREATE INDEX ix_conduit_outbox_status_next_attempt ON conduit_outbox (Status, NextAttemptAt)",
+            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_conduit_outbox_claim' AND object_id = OBJECT_ID(N'conduit_outbox'))\nCREATE INDEX ix_conduit_outbox_claim ON conduit_outbox (ClaimToken)");
     }
 
     // Insert-or-ignore

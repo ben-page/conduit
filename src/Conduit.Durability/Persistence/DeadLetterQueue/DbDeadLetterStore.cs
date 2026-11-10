@@ -111,6 +111,10 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
     {
         ArgumentNullException.ThrowIfNull(filter);
 
+        // SQL Server refuses a FETCH of no rows, and a page is never the whole table.
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(filter.PageSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(filter.PageSize, DeadLetterFilter.MaxPageSize);
+
         var offset = 0;
         if (filter.PageToken is not null && int.TryParse(filter.PageToken, CultureInfo.InvariantCulture, out var parsedOffset))
         {

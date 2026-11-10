@@ -67,8 +67,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         WHERE Id = @Id AND Status = 3 AND ClaimToken = @ClaimToken
         """;
 
+    // FailedAt is when the last attempt failed: the Failed retention counts from it.
     private const string MarkFailedSql = """
-        UPDATE conduit_outbox SET Status = 2
+        UPDATE conduit_outbox SET Status = 2, FailedAt = @FailedAt
         WHERE Id = @Id AND Status = 3 AND ClaimToken = @ClaimToken
         """;
 
@@ -77,26 +78,42 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         WHERE Status = 2 AND (@MessageType IS NULL OR Type = @MessageType)
         """;
 
-    // A retried entry starts over: Pending, its whole retry budget back, due now.
+    // A retried entry starts over: Pending, its whole retry budget back, due now, and no longer failed.
     private const string RetryFailedByIdSql = """
         UPDATE conduit_outbox
-        SET Status = 0, RetryCount = 0, NextAttemptAt = @NextAttemptAt, ClaimToken = NULL, ClaimedAt = NULL
+        SET Status = 0, RetryCount = 0, NextAttemptAt = @NextAttemptAt, ClaimToken = NULL, ClaimedAt = NULL, FailedAt = NULL
         WHERE Id = @Id AND Status = 2
         """;
 
     private const string RetryFailedByTypeSql = """
         UPDATE conduit_outbox
-        SET Status = 0, RetryCount = 0, NextAttemptAt = @NextAttemptAt, ClaimToken = NULL, ClaimedAt = NULL
+        SET Status = 0, RetryCount = 0, NextAttemptAt = @NextAttemptAt, ClaimToken = NULL, ClaimedAt = NULL, FailedAt = NULL
         WHERE Type = @MessageType AND Status = 2
         """;
 
+    // Retention counts from the outcome, not from the entry's creation: an entry written a week before the broker
+    // came back, and sent only then, keeps its full retention.
     private const string DeleteCompletedSql =
-        "DELETE FROM conduit_outbox WHERE Status = 1 AND CreatedAt <= @RetentionCutoff";
+        "DELETE FROM conduit_outbox WHERE Status = 1 AND SentAt <= @RetentionCutoff";
 
     private const string DeleteFailedSql =
-        "DELETE FROM conduit_outbox WHERE Status = 2 AND CreatedAt <= @RetentionCutoff";
+        "DELETE FROM conduit_outbox WHERE Status = 2 AND FailedAt <= @RetentionCutoff";
 
-    private readonly string createTableSql;
+    // The indexes the store's queries use. The pending claim ranges over NextAttemptAt <= now within Status = Pending,
+    // and within Status = Claiming for a stale claim (ClaimedAt is a residual there, as the grace predicate on
+    // CreatedAt is in both: a row's NextAttemptAt is never before its CreatedAt). The Failed listing, the retries by
+    // type and the Failed retention delete use the same index's Status prefix, Failed rows being few. Both claims
+    // read their rows back by ClaimToken, the flush claims by MessageId, and the Sent retention delete ranges over
+    // SentAt within Status = Sent, the bulk of the table.
+    private static readonly TableIndex[] Indexes =
+    [
+        new("ix_conduit_outbox_status_next_attempt", ["Status", "NextAttemptAt"]),
+        new("ix_conduit_outbox_claim", ["ClaimToken"]),
+        new("ix_conduit_outbox_message_id", ["MessageId"]),
+        new("ix_conduit_outbox_status_sent", ["Status", "SentAt"]),
+    ];
+
+    private readonly IReadOnlyList<string> createTableSql;
     private readonly string claimPendingSql;
     private readonly string claimByMessageIdsSql;
     private readonly string queryFailedPageSql;
@@ -241,12 +258,21 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
     /// <inheritdoc/>
     public Task<bool> MarkFailedAsync(long entryId, string claimToken, CancellationToken cancellationToken)
-        => this.ResolveAsync(MarkFailedSql, entryId, claimToken, bindValues: null, cancellationToken);
+        => this.ResolveAsync(
+            MarkFailedSql,
+            entryId,
+            claimToken,
+            command => DbParameterHelper.Add(command, "@FailedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)),
+            cancellationToken);
 
     /// <inheritdoc/>
     public async Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(filter);
+
+        // SQL Server refuses a FETCH of no rows, and a page is never the whole table.
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(filter.PageSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(filter.PageSize, FailedOutboxFilter.MaxPageSize);
 
         var offset = 0;
         if (filter.PageToken is not null && int.TryParse(filter.PageToken, CultureInfo.InvariantCulture, out var parsedOffset))
@@ -347,8 +373,14 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     }
 
     /// <inheritdoc/>
-    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
+    public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
+    {
+        // The table, then its indexes (where the engine creates them separately), in order.
+        foreach (var statement in this.createTableSql)
+        {
+            await this.ExecuteNonQueryAsync(statement, configureParameters: null, cancellationToken);
+        }
+    }
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(
@@ -412,26 +444,30 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             cancellationToken);
     }
 
-    private static string BuildCreateTableSql(ISqlDialect dialect)
+    // An indexed column is KeyTextType: on SQL Server and MySQL the general text and timestamp types are unbounded
+    // and cannot be index keys. That includes the two indexed timestamps, NextAttemptAt and SentAt, whose ISO 8601
+    // text fits the bounded type.
+    private static IReadOnlyList<string> BuildCreateTableSql(ISqlDialect dialect)
     {
         var columns = $"""
                 Id {dialect.BigIntAutoIncrementPrimaryKey},
-                MessageId {dialect.TextType} NOT NULL,
+                MessageId {dialect.KeyTextType} NOT NULL,
                 ConversationId {dialect.TextType} NOT NULL,
                 CausationId {dialect.NullableTextType},
                 Type {dialect.TextType} NOT NULL,
                 Payload {dialect.TextType} NOT NULL,
                 Status {dialect.SmallIntType} NOT NULL DEFAULT 0,
                 CreatedAt {dialect.TimestampType} NOT NULL,
-                SentAt {dialect.NullableTimestampType},
+                SentAt {dialect.KeyTextType},
+                FailedAt {dialect.NullableTimestampType},
                 RetryCount {dialect.IntegerType} NOT NULL DEFAULT 0,
-                NextAttemptAt {dialect.TimestampType} NOT NULL,
+                NextAttemptAt {dialect.KeyTextType} NOT NULL,
                 ClaimedAt {dialect.NullableTimestampType},
-                ClaimToken {dialect.NullableTextType},
+                ClaimToken {dialect.KeyTextType},
                 Properties {dialect.NullableTextType}
             """;
 
-        return dialect.BuildCreateTableIfNotExistsSql("conduit_outbox", columns);
+        return dialect.BuildCreateTableIfNotExistsSql("conduit_outbox", columns, Indexes);
     }
 
     // Bound with an explicit string type: a null filter must still carry one, since Npgsql cannot infer the type of

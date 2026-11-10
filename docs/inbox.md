@@ -112,11 +112,17 @@ conduit.AddDurability(durability =>
 {
     durability.AddInbox(inbox =>
     {
-        inbox.RetentionPeriod = TimeSpan.FromMinutes(30);  // how long processed IDs are kept (default: 30m)
-        inbox.CleanupInterval = TimeSpan.FromMinutes(5);   // how often expired IDs are purged (default: 5m)
+        inbox.RetentionPeriod = TimeSpan.FromMinutes(30);  // how long processed IDs are kept (default: 30m; at most 3650 days)
+        inbox.CleanupInterval = TimeSpan.FromMinutes(5);   // how often expired IDs are purged (default: 5m; at most 1 day)
     });
 });
 ```
+
+`AddInbox` refuses a `RetentionPeriod` or a `CleanupInterval` that is not positive, or is above its limit, with an
+`OptionsValidationException` naming each failure: a record kept for no time deduplicates nothing, and a zero cleanup
+interval would purge in a busy loop. Calling `AddInbox` again (from a second `AddDurability`, say) configures the same
+inbox and never registers a second gate, which would take the first gate's record for a duplicate and discard every
+message.
 
 `RetentionPeriod` must comfortably exceed your broker's maximum redelivery window. If a duplicate can arrive later than the retention period (e.g. a long SQS visibility timeout, or a message parked for hours), raise it — otherwise the original record may be purged before the duplicate shows up, and the duplicate will be processed.
 

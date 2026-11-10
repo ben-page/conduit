@@ -44,7 +44,13 @@ public sealed class DeadLetters : IDeadLetters
 
     /// <inheritdoc/>
     public Task<DeadLetterPage> QueryAsync(DeadLetterFilter filter, CancellationToken cancellationToken)
-        => this.store.QueryAsync(filter, cancellationToken);
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(filter.PageSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(filter.PageSize, DeadLetterFilter.MaxPageSize);
+
+        return this.store.QueryAsync(filter, cancellationToken);
+    }
 
     /// <inheritdoc/>
     public Task<DeadLetterEntry?> GetAsync(Guid id, CancellationToken cancellationToken)
@@ -126,11 +132,30 @@ public sealed class DeadLetters : IDeadLetters
         string messageType,
         CancellationToken cancellationToken)
     {
-        var page = await this.store.QueryAsync(
-            new DeadLetterFilter { MessageType = messageType, PageSize = int.MaxValue },
-            cancellationToken);
+        // Every id first, a page at a time, then the replays: a replay removes its entry, which would move the entries
+        // of the pages still to read. Distinct, since a capture made meanwhile moves an entry onto the next page.
+        var ids = new List<Guid>();
+        string? pageToken = null;
+        while (true)
+        {
+            var page = await this.store.QueryAsync(
+                new DeadLetterFilter
+                {
+                    MessageType = messageType,
+                    PageSize = DeadLetterFilter.MaxPageSize,
+                    PageToken = pageToken,
+                },
+                cancellationToken);
+            ids.AddRange(page.Entries.Select(entry => entry.Id));
+            if (page.NextPageToken is null || page.Entries.Count == 0)
+            {
+                break;
+            }
 
-        return await this.ReplayAsync(page.Entries.Select(e => e.Id), cancellationToken);
+            pageToken = page.NextPageToken;
+        }
+
+        return await this.ReplayAsync(ids.Distinct(), cancellationToken);
     }
 
     /// <inheritdoc/>

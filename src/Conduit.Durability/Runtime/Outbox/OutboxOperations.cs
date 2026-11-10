@@ -22,6 +22,8 @@ public sealed class OutboxOperations : IOutbox
     public Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(filter);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(filter.PageSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(filter.PageSize, FailedOutboxFilter.MaxPageSize);
 
         return this.store.QueryFailedAsync(filter, cancellationToken);
     }

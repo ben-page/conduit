@@ -101,6 +101,24 @@ public sealed class OutboxShould : IAsyncDisposable
     }
 
     [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    [DataRow(FailedOutboxFilter.MaxPageSize + 1)]
+    public async Task RefuseAPageSizeOutOfRange(int pageSize)
+    {
+        // Arrange — SQL Server refuses a FETCH of no rows, and a page is not a way to read the whole table
+        var filter = new FailedOutboxFilter { PageSize = pageSize };
+
+        // Act
+        var throughTheOutbox = () => this.outbox.QueryFailedAsync(filter, CancellationToken.None);
+        var throughTheStore = () => this.store.QueryFailedAsync(filter, CancellationToken.None);
+
+        // Assert
+        await throughTheOutbox.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await throughTheStore.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [TestMethod]
     public async Task FindTheFailedEntriesPageByPage()
     {
         // Arrange — three failed entries beside a pending one

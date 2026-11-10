@@ -12,6 +12,9 @@ namespace Conduit.Durability.Runtime.Outbox;
 public interface IOutbox
 {
     /// <summary>Lists failed entries, oldest first, optionally of one message type.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="FailedOutboxFilter.PageSize"/> is not positive or is above <see cref="FailedOutboxFilter.MaxPageSize"/>.
+    /// </exception>
     public Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken);
 
     /// <summary>Hands a failed entry back to the relay: pending, its retry count reset, due at once.</summary>

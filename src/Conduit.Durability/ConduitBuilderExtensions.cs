@@ -13,7 +13,8 @@ public static class ConduitBuilderExtensions
 {
     /// <summary>
     /// Adds durable messaging (outbox and/or inbox) to the Conduit configuration.
-    /// Database is configured once via the builder and shared by all features.
+    /// Database is configured once via the builder and shared by all features. Calling it again adds to the same
+    /// features: nothing is registered twice (see <see cref="DurabilityBuilder"/>).
     /// </summary>
     public static ConduitBuilder AddDurability(
         this ConduitBuilder builder,
@@ -22,19 +23,23 @@ public static class ConduitBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
+        // The unified table initializer creates the tables of every registered store (outbox, inbox, dead letter
+        // queue) on startup. It is registered ahead of every feature's hosted service: the host starts hosted
+        // services one at a time in registration order (unless HostOptions.ServicesStartConcurrently is set), and
+        // the initializer's StartAsync returns only once its checks and its DDL are done, so the relay and the
+        // cleanup never query a table that does not exist yet, nor start before a misconfiguration fails startup.
+        builder.Services.AddHostedService<DurabilityTableInitializer>();
+
         var durabilityBuilder = new DurabilityBuilder(builder.Services);
         configure(durabilityBuilder);
 
-        // Register the outbox pipeline behavior if outbox was added
+        // Register the outbox pipeline behavior if outbox was added, once however many AddDurability calls add it
         // (OutboxRegistration registers the behavior type, but ConduitBuilder owns pipeline ordering)
-        if (builder.Services.Any(sd => sd.ServiceType == typeof(OutboxCapture)))
+        if (builder.Services.Any(sd => sd.ServiceType == typeof(OutboxCapture))
+            && !builder.Options.PipelineTypes.Contains(typeof(OutboxBehavior<,>)))
         {
             builder.AddPipeline(typeof(OutboxBehavior<,>));
         }
-
-        // Register the unified table initializer — runs on startup and creates tables
-        // for all registered durability stores (outbox, inbox, dead letter queue)
-        builder.Services.AddHostedService<DurabilityTableInitializer>();
 
         return builder;
     }

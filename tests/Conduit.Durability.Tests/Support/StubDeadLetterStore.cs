@@ -1,3 +1,4 @@
+using System.Globalization;
 using Conduit.Durability.DeadLetterQueue;
 
 namespace Conduit.Durability.Tests.Support;
@@ -22,6 +23,10 @@ internal sealed class StubDeadLetterStore : IDeadLetterStore
 
     public Task<DeadLetterPage> QueryAsync(DeadLetterFilter filter, CancellationToken cancellationToken)
     {
+        // As the real store does: a page is never the whole table.
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(filter.PageSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(filter.PageSize, DeadLetterFilter.MaxPageSize);
+
         var filtered = this.entries.AsEnumerable();
         if (filter.MessageType is not null)
         {
@@ -29,10 +34,13 @@ internal sealed class StubDeadLetterStore : IDeadLetterStore
         }
 
         var list = filtered.ToList();
+        var offset = filter.PageToken is null ? 0 : int.Parse(filter.PageToken, CultureInfo.InvariantCulture);
+        var page = list.Skip(offset).Take(filter.PageSize).ToList();
+        var nextOffset = offset + page.Count;
         return Task.FromResult(new DeadLetterPage
         {
-            Entries = list,
-            NextPageToken = null,
+            Entries = page,
+            NextPageToken = nextOffset < list.Count ? nextOffset.ToString(CultureInfo.InvariantCulture) : null,
             TotalCount = list.Count,
         });
     }

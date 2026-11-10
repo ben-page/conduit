@@ -21,6 +21,8 @@ public sealed class SqlServerCarriedIsolationEngineShould : PersistenceEngineTes
 
     protected override ISqlDialect Dialect { get; } = new SqlServerDialect();
 
+    protected override string OutboxIndexNamesSql => SqlServerContainer.OutboxIndexNamesSql;
+
     // CA2100: the database name is a server-generated GUID, never user input — trusted test infra.
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
         Justification = "Database name is a GUID generated in-test, not user input.")]

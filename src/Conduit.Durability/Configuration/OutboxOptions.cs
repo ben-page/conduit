@@ -8,16 +8,18 @@ namespace Conduit.Durability.Configuration;
 /// </summary>
 public sealed class OutboxOptions
 {
-    /// <summary>The longest <see cref="MaxBackoff"/> and <see cref="ClaimTimeout"/> may be: one day.</summary>
-    internal static readonly TimeSpan LongestDuration = TimeSpan.FromDays(1);
-
-    /// <summary>How often the relay polls for pending entries. Default: 5 seconds.</summary>
+    /// <summary>How often the relay polls for pending entries. Positive, and at most one day. Default: 5 seconds.</summary>
     public TimeSpan RelayInterval { get; set; } = TimeSpan.FromSeconds(5);
-    /// <summary>Entries newer than this are ignored by the relay. Default: 10 seconds.</summary>
+    /// <summary>
+    /// Entries newer than this are ignored by the relay. Not negative, and at most one day. Default: 10 seconds.
+    /// </summary>
     public TimeSpan GracePeriod { get; set; } = TimeSpan.FromSeconds(10);
-    /// <summary>Maximum entries claimed per relay sweep. Default: 100.</summary>
+    /// <summary>Maximum entries claimed per relay sweep. Positive. Default: 100.</summary>
     public int BatchSize { get; set; } = 100;
-    /// <summary>Maximum relay attempts before marking failed. Default: 10.</summary>
+    /// <summary>
+    /// Maximum delivery attempts before the entry is marked failed, the first one included. At least 2: with one,
+    /// every failure would be final. Default: 10.
+    /// </summary>
     public int MaxRetries { get; set; } = 10;
 
     /// <summary>
@@ -45,17 +47,18 @@ public sealed class OutboxOptions
     /// <summary>Whether to auto-create the outbox table on startup. Default: true.</summary>
     public bool AutoCreateTable { get; set; } = true;
 
-    /// <summary>Sent entries older than this are deleted by the relay's periodic cleanup.
-    /// <see cref="TimeSpan.Zero"/> disables it. Default: 7 days.</summary>
+    /// <summary>Sent entries sent longer ago than this are deleted by the relay's periodic cleanup.
+    /// <see cref="TimeSpan.Zero"/> disables it, keeping them forever. Not negative, and at most 3650 days.
+    /// Default: 7 days.</summary>
     public TimeSpan CompletedRetention { get; set; } = TimeSpan.FromDays(7);
 
-    /// <summary>Failed entries (retries exhausted) older than this are deleted by the relay's periodic cleanup.
-    /// <see langword="null"/> (the default) follows <see cref="CompletedRetention"/>, which is how Failed rows were
-    /// treated before this option existed. <see cref="TimeSpan.Zero"/> keeps them forever: a Failed row is the only
-    /// copy of a side effect that never ran.</summary>
+    /// <summary>Failed entries (retries exhausted) whose last attempt failed longer ago than this are deleted by the
+    /// relay's periodic cleanup. <see langword="null"/> (the default) follows <see cref="CompletedRetention"/>.
+    /// <see cref="TimeSpan.Zero"/> keeps them forever: a Failed row is the only copy of a side effect that never ran.
+    /// Not negative, and at most 3650 days.</summary>
     public TimeSpan? FailedRetention { get; set; }
 
-    /// <summary>How often the relay runs retention cleanup. Default: 1 hour.</summary>
+    /// <summary>How often the relay runs retention cleanup. Positive, and at most one day. Default: 1 hour.</summary>
     public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>
@@ -84,14 +87,56 @@ public sealed class OutboxOptions
         new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type, a negative
-    /// <see cref="InitialBackoff"/>, a <see cref="MaxBackoff"/> below it or above <see cref="LongestDuration"/>, and a
-    /// <see cref="ClaimTimeout"/> that is not positive or is above <see cref="LongestDuration"/>.
+    /// Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type; a
+    /// <see cref="RelayInterval"/>, <see cref="CleanupInterval"/> or <see cref="ClaimTimeout"/> that is not positive
+    /// or is above <see cref="DurationLimits.LongestDuration"/>; a negative <see cref="GracePeriod"/> or one above it;
+    /// a <see cref="BatchSize"/> that is not positive and a <see cref="MaxRetries"/> below 2; a negative
+    /// <see cref="InitialBackoff"/>, and a <see cref="MaxBackoff"/> below it or above
+    /// <see cref="DurationLimits.LongestDuration"/>; and a negative <see cref="CompletedRetention"/> or
+    /// <see cref="FailedRetention"/>, or one above <see cref="DurationLimits.LongestRetention"/>.
     /// </summary>
     /// <exception cref="OptionsValidationException">An option is invalid; each failure names it.</exception>
     internal void Validate()
     {
         var failures = new List<string>();
+
+        // A negative interval throws in Task.Delay, and a zero one turns the loop into a busy one.
+        DurationLimits.RequirePositive(
+            failures, "OutboxOptions.RelayInterval", this.RelayInterval, DurationLimits.LongestDuration);
+        DurationLimits.RequirePositive(
+            failures, "OutboxOptions.CleanupInterval", this.CleanupInterval, DurationLimits.LongestDuration);
+
+        // The claim subtracts the grace period from now.
+        DurationLimits.RequireNotNegative(
+            failures, "OutboxOptions.GracePeriod", this.GracePeriod, DurationLimits.LongestDuration);
+
+        // A sweep that claims nothing never delivers anything.
+        if (this.BatchSize <= 0)
+        {
+            failures.Add($"OutboxOptions.BatchSize is {this.BatchSize}; it must be positive.");
+        }
+
+        // The first failed attempt counts toward the limit, so a limit of one makes every failure final.
+        if (this.MaxRetries < 2)
+        {
+            failures.Add(
+                $"OutboxOptions.MaxRetries is {this.MaxRetries}; it must be at least 2, since the first attempt counts.");
+        }
+
+        // The cleanup subtracts a retention from now. TimeSpan.Zero, not TimeSpan.MaxValue, is what keeps rows forever.
+        const string keepForever = " TimeSpan.Zero keeps the entries forever.";
+        DurationLimits.RequireNotNegative(
+            failures,
+            "OutboxOptions.CompletedRetention",
+            this.CompletedRetention,
+            DurationLimits.LongestRetention,
+            keepForever);
+        if (this.FailedRetention is { } failedRetention)
+        {
+            DurationLimits.RequireNotNegative(
+                failures, "OutboxOptions.FailedRetention", failedRetention, DurationLimits.LongestRetention, keepForever);
+        }
+
         if (this.InitialBackoff < TimeSpan.Zero)
         {
             failures.Add($"OutboxOptions.InitialBackoff is {this.InitialBackoff}; it cannot be negative.");
@@ -104,21 +149,16 @@ public sealed class OutboxOptions
         }
 
         // A failed send adds the backoff to now, which throws near TimeSpan.MaxValue.
-        if (this.MaxBackoff > LongestDuration)
+        if (this.MaxBackoff > DurationLimits.LongestDuration)
         {
-            failures.Add($"OutboxOptions.MaxBackoff is {this.MaxBackoff}; it can be at most {LongestDuration}.");
+            failures.Add(
+                $"OutboxOptions.MaxBackoff is {this.MaxBackoff}; it can be at most {DurationLimits.LongestDuration}.");
         }
 
         // A claim that is stale at once would let any relay take over an entry another is still delivering; the claim
         // subtracts the timeout from now, which throws near TimeSpan.MaxValue.
-        if (this.ClaimTimeout <= TimeSpan.Zero)
-        {
-            failures.Add($"OutboxOptions.ClaimTimeout is {this.ClaimTimeout}; it must be positive.");
-        }
-        else if (this.ClaimTimeout > LongestDuration)
-        {
-            failures.Add($"OutboxOptions.ClaimTimeout is {this.ClaimTimeout}; it can be at most {LongestDuration}.");
-        }
+        DurationLimits.RequirePositive(
+            failures, "OutboxOptions.ClaimTimeout", this.ClaimTimeout, DurationLimits.LongestDuration);
 
         foreach (var (key, type) in this.PersistedProperties)
         {

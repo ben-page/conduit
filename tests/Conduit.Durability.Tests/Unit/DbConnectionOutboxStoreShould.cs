@@ -44,6 +44,45 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task CreateTheIndexesItsQueriesUse()
+    {
+        // Arrange — table and indexes already created in SetUp; a second ensure must leave them as they are.
+        await this.store.EnsureTableExistsAsync(CancellationToken.None);
+
+        // Act
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = """
+            SELECT list.name, info.name
+            FROM pragma_index_list('conduit_outbox') AS list, pragma_index_info(list.name) AS info
+            WHERE list.origin = 'c'
+            ORDER BY list.name, info.seqno
+            """;
+        var columnsByIndex = new SortedDictionary<string, List<string>>(StringComparer.Ordinal);
+        using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                var index = reader.GetString(0);
+                if (!columnsByIndex.TryGetValue(index, out var columns))
+                {
+                    columns = [];
+                    columnsByIndex[index] = columns;
+                }
+
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        // Assert — the pending claim (and the stale-claim and Failed lookups, by its Status prefix), the read-back
+        // by claim token, the flush's claim by message id, and the Sent retention cleanup.
+        columnsByIndex.Select(pair => $"{pair.Key} ({string.Join(", ", pair.Value)})").Should().Equal(
+            "ix_conduit_outbox_claim (ClaimToken)",
+            "ix_conduit_outbox_message_id (MessageId)",
+            "ix_conduit_outbox_status_next_attempt (Status, NextAttemptAt)",
+            "ix_conduit_outbox_status_sent (Status, SentAt)");
+    }
+
+    [TestMethod]
     public async Task SaveAndClaimEntries()
     {
         // Arrange
@@ -533,8 +572,9 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
 
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         await this.store.MarkSentAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
+        await this.SetSentAtAsync(claimed[0].Id, DateTime.UtcNow.AddDays(-8));
 
-        // Act — delete entries older than 7 days
+        // Act — delete entries sent more than 7 days ago
         await this.store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
 
         // Assert — row is gone
@@ -569,6 +609,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
 
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         await this.store.MarkFailedAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
+        await this.SetFailedAtAsync(claimed[0].Id, DateTime.UtcNow.AddDays(-8));
 
         var connection = this.connectionFactory.Connection;
 
@@ -581,7 +622,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         var survived = await command.ExecuteScalarAsync();
         survived.Should().Be(1L);
 
-        // Act — delete Failed entries older than 7 days
+        // Act — delete Failed entries whose last attempt failed more than 7 days ago
         await this.store.DeleteFailedAsync(TimeSpan.FromDays(7), CancellationToken.None);
 
         // Assert — now it is gone
@@ -589,7 +630,58 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         gone.Should().Be(0L);
     }
 
-    private async Task SaveEntryAsync(string messageId)
+    [TestMethod]
+    public async Task KeepASentEntryForItsRetentionFromWhenItWasSent()
+    {
+        // Arrange — written eight days ago, sent only now (the broker was down for a week)
+        await this.SaveEntryAsync("msg-late-sent", DateTime.UtcNow.AddDays(-8));
+        var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        await this.store.MarkSentAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
+
+        // Act
+        await this.store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+
+        // Assert
+        (await this.CountAsync("msg-late-sent")).Should().Be(1L, "it was sent less than seven days ago");
+    }
+
+    [TestMethod]
+    public async Task KeepAFailedEntryForItsRetentionFromItsLastAttempt()
+    {
+        // Arrange — written eight days ago, its last attempt failed only now
+        await this.SaveEntryAsync("msg-late-failed", DateTime.UtcNow.AddDays(-8));
+        var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        await this.store.MarkFailedAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
+
+        // Act
+        await this.store.DeleteFailedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+
+        // Assert
+        (await this.CountAsync("msg-late-failed")).Should().Be(1L, "its last attempt failed less than seven days ago");
+    }
+
+    [TestMethod]
+    public async Task RecordWhenAnEntryFailed_AndForgetItWhenTheEntryIsRetried()
+    {
+        // Arrange
+        await this.SaveEntryAsync("msg-failed");
+        var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        var before = DateTime.UtcNow;
+
+        // Act
+        await this.store.MarkFailedAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
+        var failedAt = await this.ReadFailedAtAsync(claimed[0].Id);
+        await this.store.RetryFailedAsync(claimed[0].Id, CancellationToken.None);
+        var failedAtAfterRetry = await this.ReadFailedAtAsync(claimed[0].Id);
+
+        // Assert
+        failedAt.Should().NotBeNull();
+        DateTime.Parse(failedAt!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+            .Should().BeOnOrAfter(before).And.BeOnOrBefore(DateTime.UtcNow);
+        failedAtAfterRetry.Should().BeNull("a retried entry is pending again");
+    }
+
+    private async Task SaveEntryAsync(string messageId, DateTime? createdAt = null)
     {
         await this.connectionFactory.BeginTransactionAsync();
         await this.store.SaveAsync(
@@ -600,12 +692,46 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
                     ConversationId = "conv-1",
                     Type = "Orders.Commands.CreateOrder",
                     Payload = "{}",
-                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                    CreatedAt = createdAt ?? DateTime.UtcNow.AddMinutes(-1),
                 },
             ],
             this.connectionFactory.GetCurrentTransaction()!,
             CancellationToken.None);
         await this.connectionFactory.CommitAsync();
+    }
+
+    private async Task SetSentAtAsync(long id, DateTime sentAt)
+    {
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET SentAt = @SentAt WHERE Id = @Id";
+        command.Parameters.AddWithValue("@SentAt", sentAt.ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("@Id", id);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task SetFailedAtAsync(long id, DateTime failedAt)
+    {
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET FailedAt = @FailedAt WHERE Id = @Id";
+        command.Parameters.AddWithValue("@FailedAt", failedAt.ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("@Id", id);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<string?> ReadFailedAtAsync(long id)
+    {
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "SELECT FailedAt FROM conduit_outbox WHERE Id = @Id";
+        command.Parameters.AddWithValue("@Id", id);
+        return await command.ExecuteScalarAsync() as string;
+    }
+
+    private async Task<long> CountAsync(string messageId)
+    {
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM conduit_outbox WHERE MessageId = @MessageId";
+        command.Parameters.AddWithValue("@MessageId", messageId);
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 
     private async Task SetClaimedAtAsync(long id, DateTime claimedAt)

@@ -146,6 +146,19 @@ public sealed class DbDeadLetterStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    [DataRow(DeadLetterFilter.MaxPageSize + 1)]
+    public async Task RefuseAPageSizeOutOfRange(int pageSize)
+    {
+        // Act — SQL Server refuses a FETCH of no rows, and a page is not a way to read the whole table
+        var act = () => this.store.QueryAsync(new DeadLetterFilter { PageSize = pageSize }, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [TestMethod]
     public async Task QueryByExceptionType()
     {
         // Arrange

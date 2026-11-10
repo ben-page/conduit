@@ -32,8 +32,9 @@ public interface IOutboxStore
     /// </summary>
     public Task<bool> IncrementRetryAsync(long entryId, string claimToken, TimeSpan retryDelay, CancellationToken cancellationToken);
     /// <summary>
-    /// Marks an entry as permanently failed. Applies only while the claim <paramref name="claimToken"/> names still
-    /// holds the entry, and returns whether it did, as <see cref="MarkSentAsync"/> does.
+    /// Marks an entry as permanently failed, recording when (its last attempt, which <see cref="DeleteFailedAsync"/>
+    /// counts from). Applies only while the claim <paramref name="claimToken"/> names still holds the entry, and
+    /// returns whether it did, as <see cref="MarkSentAsync"/> does.
     /// </summary>
     public Task<bool> MarkFailedAsync(long entryId, string claimToken, CancellationToken cancellationToken);
     /// <summary>Lists failed entries, oldest first, filtered and paged by <paramref name="filter"/>.</summary>
@@ -48,9 +49,12 @@ public interface IOutboxStore
     /// Returns the number of entries reset.
     /// </summary>
     public Task<int> RetryFailedAsync(string messageType, CancellationToken cancellationToken);
-    /// <summary>Deletes sent entries older than the retention cutoff.</summary>
+    /// <summary>Deletes the sent entries sent more than <paramref name="retentionPeriod"/> ago.</summary>
     public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken);
-    /// <summary>Deletes failed (retries-exhausted) entries older than the retention cutoff.</summary>
+    /// <summary>
+    /// Deletes the failed (retries-exhausted) entries whose last attempt failed more than
+    /// <paramref name="retentionPeriod"/> ago.
+    /// </summary>
     public Task DeleteFailedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken);
     /// <summary>Creates the outbox table if it does not exist.</summary>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken);

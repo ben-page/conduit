@@ -68,6 +68,28 @@ public sealed class SqlServerDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<string> BuildCreateTableIfNotExistsSql(
+        string tableName,
+        string columnDefinitions,
+        IReadOnlyList<TableIndex> indexes)
+    {
+        ArgumentNullException.ThrowIfNull(indexes);
+
+        // SQL Server has no CREATE INDEX IF NOT EXISTS either; guard each with a sys.indexes check.
+        return
+        [
+            this.BuildCreateTableIfNotExistsSql(tableName, columnDefinitions),
+            .. indexes.Select(index => string.Format(
+                CultureInfo.InvariantCulture,
+                "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{0}' AND object_id = OBJECT_ID(N'{1}'))\n" +
+                "CREATE INDEX {0} ON {1} ({2})",
+                index.Name,
+                tableName,
+                string.Join(", ", index.Columns))),
+        ];
+    }
+
+    /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)
     {
         return string.Format(

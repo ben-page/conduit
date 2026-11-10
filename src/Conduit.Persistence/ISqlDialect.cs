@@ -39,11 +39,13 @@ public interface ISqlDialect
     public string NullableTextType { get; }
 
     /// <summary>
-    /// Type name for a non-null text column that participates in a primary key or index. Engines with
-    /// unbounded large-text types (SQL Server <c>NVARCHAR(MAX)</c>, MySQL <c>LONGTEXT</c>) cannot index
-    /// them, so this is a bounded variant (e.g. <c>NVARCHAR(450)</c>, <c>VARCHAR(255)</c>) sized for
-    /// identifier values (message ids, GUIDs). Engines whose general text type is already indexable
-    /// (SQLite/PostgreSQL <c>TEXT</c>) reuse it.
+    /// Type name for a text column that participates in a primary key or index (nullable unless the column
+    /// adds <c>NOT NULL</c>). Engines with unbounded large-text types (SQL Server <c>NVARCHAR(MAX)</c>, MySQL
+    /// <c>LONGTEXT</c>) cannot index them, so this is a bounded variant (e.g. <c>NVARCHAR(450)</c>,
+    /// <c>VARCHAR(255)</c>) sized for identifier values (message ids, GUIDs) and for the ISO 8601 text the
+    /// stores write timestamps as, when a timestamp is indexed (<see cref="TimestampType"/> is the general
+    /// text type on those engines). Engines whose general text type is already indexable (SQLite/PostgreSQL
+    /// <c>TEXT</c>) reuse it.
     /// </summary>
     public string KeyTextType { get; }
 
@@ -73,6 +75,26 @@ public interface ISqlDialect
     /// </param>
     /// <returns>The complete create-if-absent statement.</returns>
     public string BuildCreateTableIfNotExistsSql(string tableName, string columnDefinitions);
+
+    /// <summary>
+    /// Builds the statements that create a table and its indexes, each only if it does not already exist, to be
+    /// run in order. SQLite and PostgreSQL follow the table with one <c>CREATE INDEX IF NOT EXISTS</c> per index;
+    /// SQL Server, which has no such clause, guards each <c>CREATE INDEX</c> with a <c>sys.indexes</c> check. All
+    /// three therefore add a missing index to an existing table. MySQL has no <c>IF NOT EXISTS</c> for an index either,
+    /// and cannot guard a statement outside a stored program, so it declares the indexes inside its one
+    /// <c>CREATE TABLE IF NOT EXISTS</c>: a table that already exists is left as it is.
+    /// </summary>
+    /// <param name="tableName">The table to create.</param>
+    /// <param name="columnDefinitions">
+    /// The comma-separated column/constraint definitions, as for
+    /// <see cref="BuildCreateTableIfNotExistsSql(string, string)"/>.
+    /// </param>
+    /// <param name="indexes">The table's indexes; none gives the create-table statement alone.</param>
+    /// <returns>The statements, in the order they must run.</returns>
+    public IReadOnlyList<string> BuildCreateTableIfNotExistsSql(
+        string tableName,
+        string columnDefinitions,
+        IReadOnlyList<TableIndex> indexes);
 
     // Query idiom helpers ------------------------------------------------------------------------
 

@@ -142,6 +142,10 @@ The `AddOutbox()` call registers:
 - `IOutbox` (scoped) — see [Retrying failed entries](#retrying-failed-entries)
 - `DbConnectionOutboxStore` with the chosen dialect
 
+Calling `AddOutbox()` again, from the same `AddDurability` or another one (a second module of the same host), adds
+to the same outbox: nothing is registered twice, and each call's callback changes only the options it sets.
+`CaptureOnly`, once any call sets it, removes the relay.
+
 ### Capture-only
 
 Set `options.CaptureOnly = true` for a process that shares its outbox table with another process whose relay owns delivery. A second relay could claim a row whose listener lives only in the other process and mark it sent with nobody having handled it. A capture-only outbox registers `OutboxCapture` (as `IOutboundInterceptor`) and `OutboxBehavior<,>`, so rows are still written on the caller's transaction, but it registers **no** `OutboxRelay` and its `IOutboxFlusher` is the no-op `CaptureOnlyOutboxFlusher`: nothing is delivered, flushed, or cleaned up by this process. Messages published with no ambient transaction are not captured and still deliver locally, exactly as without an outbox.
@@ -186,7 +190,7 @@ Each `Use*` method registers the appropriate SQL dialect and connection factory.
 | `conduit.UsePostgres(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 | `conduit.UseMySql(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 
-The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`. A third, `NextAttemptAt`, holds when a row is next due: a new row's is its `CreatedAt`, and each failed send moves it out by the [backoff](#backoff). The relay's claim takes a row only once its `NextAttemptAt` has passed, as well as its `CreatedAt` being older than the grace period.
+The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`. A third, `NextAttemptAt`, holds when a row is next due: a new row's is its `CreatedAt`, and each failed send moves it out by the [backoff](#backoff). The relay's claim takes a row only once its `NextAttemptAt` has passed, as well as its `CreatedAt` being older than the grace period. The table is created with an index for each claim and for the retention cleanup (see [The outbox table](persistence.md#the-outbox-table)).
 
 These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, audit trail, and jobs). Each engine ships in its own `Conduit.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
 
@@ -203,7 +207,7 @@ conduit.UseMySql("Server=localhost;Database=MyApp;...");
 conduit.AddDurability(durability => durability.AddOutbox());
 ```
 
-The outbox table (`conduit_outbox`) is created automatically on startup. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations. A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL); an existing table is never altered, so a host that [carries dispatch properties](#carrying-dispatch-properties) on a table created before the column existed must add it itself.
+The outbox table (`conduit_outbox`) and its indexes are created automatically on startup, before the relay's first sweep. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations ([the columns and indexes a migration needs](persistence.md#the-outbox-table)). A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL); an existing table's columns are never altered (only a missing index is added, and not on MySQL), so a host that [carries dispatch properties](#carrying-dispatch-properties) on a table created before the column existed must add it itself.
 
 ## Custom stores
 
@@ -217,6 +221,9 @@ public class CosmosOutboxStore : IOutboxStore
     // DeleteCompletedAsync, DeleteFailedAsync, EnsureTableExistsAsync
 }
 ```
+
+`DeleteCompletedAsync` counts an entry's retention from when it was sent, and `DeleteFailedAsync` from when its last
+attempt failed (see [Retention](#retention)).
 
 A store owns the [claim guard](#claim-timeout): `ClaimPendingAsync` returns each entry with its claim's token
 (`OutboxEntry.ClaimToken`), as `ClaimByMessageIdsAsync` does (`ClaimedOutboxEntry.ClaimToken`), and
@@ -238,17 +245,17 @@ conduit.AddDurability(durability =>
 {
     durability.AddOutbox(outbox =>
     {
-        outbox.RelayInterval = TimeSpan.FromSeconds(5);        // polling interval (default: 5s)
-        outbox.GracePeriod = TimeSpan.FromSeconds(10);         // ignore entries newer than this (default: 10s)
+        outbox.RelayInterval = TimeSpan.FromSeconds(5);        // polling interval (default: 5s; at most 1 day)
+        outbox.GracePeriod = TimeSpan.FromSeconds(10);         // ignore entries newer than this (default: 10s; at most 1 day)
         outbox.BatchSize = 100;                                // entries per sweep (default: 100)
-        outbox.MaxRetries = 10;                                // before marking failed (default: 10)
+        outbox.MaxRetries = 10;                                // attempts before marking failed, the first included (default: 10; at least 2)
         outbox.InitialBackoff = TimeSpan.FromSeconds(5);       // wait after a first failed send (default: 5s)
         outbox.MaxBackoff = TimeSpan.FromMinutes(5);           // longest wait between attempts (default: 5m; at most 1 day)
         outbox.ClaimTimeout = TimeSpan.FromMinutes(5);         // a claim older than this may be taken over (default: 5m; at most 1 day)
         outbox.AutoCreateTable = true;                         // create table on startup (default: true)
-        outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries older than this (default: 7d); Zero disables
-        outbox.FailedRetention = null;                          // delete Failed entries older than this (default: null = follow CompletedRetention); Zero keeps them forever
-        outbox.CleanupInterval = TimeSpan.FromHours(1);         // how often cleanup runs (default: 1h)
+        outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries sent longer ago than this (default: 7d); Zero disables
+        outbox.FailedRetention = null;                          // delete Failed entries that failed longer ago than this (default: null = follow CompletedRetention); Zero keeps them forever
+        outbox.CleanupInterval = TimeSpan.FromHours(1);         // how often cleanup runs (default: 1h; at most 1 day)
         outbox.PersistedProperties["UserId"] = typeof(int);     // dispatch properties an entry carries (default: none)
     });
 });
@@ -257,6 +264,12 @@ conduit.AddDurability(durability =>
 The grace period prevents the relay from racing with the handler. After the transaction commits, the entry is in the database — but the relay ignores entries newer than the grace period, giving the handler time to complete any post-commit work.
 
 These options are set in code. Durability reads nothing from `IConfiguration` (see [What configuration does not cover](configuration-reference.md#what-configuration-does-not-cover)).
+
+`AddOutbox` checks them when it is called and refuses, with an `OptionsValidationException` naming each failure, a
+`RelayInterval`, `CleanupInterval` or `ClaimTimeout` that is not positive or is above one day; a negative
+`GracePeriod`, or one above one day; a `BatchSize` that is not positive; a `MaxRetries` below 2 (the first attempt
+counts, so 1 would make every failure final); the backoff bounds below; and a negative retention, or one above 3650
+days. `TimeSpan.Zero`, not `TimeSpan.MaxValue`, keeps entries forever.
 
 ### Backoff
 
@@ -294,12 +307,15 @@ Keep `ClaimTimeout` well above the longest delivery: an entry's local listeners 
 ### Retention
 
 The relay periodically deletes its own history every `CleanupInterval`, checked on the same sweep
-loop that processes pending entries. `Sent` entries older than `CompletedRetention` are removed;
-`Failed` entries (retries exhausted) older than `FailedRetention` are removed. `FailedRetention`
-defaults to `null`, which follows `CompletedRetention`. Each retention applies only when it is above
-`TimeSpan.Zero`: `CompletedRetention = TimeSpan.Zero` stops Sent cleanup (and, with the default
-`FailedRetention`, Failed cleanup too), so entries accumulate indefinitely, which you may prefer if
-you query the outbox table for audit or observability purposes. `FailedRetention = TimeSpan.Zero`
+loop that processes pending entries. `Sent` entries sent longer ago than `CompletedRetention` are
+removed; `Failed` entries (retries exhausted) whose last attempt failed longer ago than
+`FailedRetention` are removed. Each counts from the entry's outcome (`SentAt`, `FailedAt`), not from
+when it was written, so an entry that waited out a week-long broker outage still keeps its full
+retention once it is sent. `FailedRetention` defaults to `null`, which follows `CompletedRetention`.
+Each retention applies only when it is above `TimeSpan.Zero`: `CompletedRetention = TimeSpan.Zero`
+stops Sent cleanup (and, with the default `FailedRetention`, Failed cleanup too), so entries
+accumulate indefinitely, which you may prefer if you query the outbox table for audit or
+observability purposes. `FailedRetention = TimeSpan.Zero`
 keeps Failed rows forever while Sent rows are still cleaned: a Failed row is the only copy of a side
 effect that never ran. Cleanup resolves the store from its own fresh DI scope, same as a sweep.
 
@@ -349,12 +365,15 @@ bool retried = await outbox.RetryFailedAsync(page.Entries[0].Id, cancellationTok
 int retriedCount = await outbox.RetryFailedAsync("Orders.Events.OrderPlaced", cancellationToken);
 ```
 
+`PageSize` is 1 to `FailedOutboxFilter.MaxPageSize` (1000); any other throws `ArgumentOutOfRangeException`.
+
 Retrying makes the entry `Pending` again with its retry count reset to 0 and its `NextAttemptAt` set to now:
 the relay delivers it on its next sweep, local listeners first and then the transport, exactly like a new
 entry, with a fresh `MaxRetries` budget and backoff. It keeps its `MessageId`, so a downstream
 [inbox](inbox.md) that recorded an earlier attempt which did reach it discards the repeat. Only a
 Failed entry is retried: `RetryFailedAsync(id)` returns `false` for an id that is pending, sent or unknown,
-so it can never send a delivered message again, and the by-type overload returns how many it reset.
+so it can never send a delivered message again, and the by-type overload returns how many it reset. A retry clears
+the entry's `FailedAt`; if it fails again, its `FailedRetention` counts from the new failure.
 
 `IOutbox` is registered in [capture-only](#capture-only) mode too: retrying is a row update, so a capture-only
 host can hand an entry back to the relay of the process that owns delivery.

@@ -21,6 +21,9 @@ public sealed class PostgresEngineShould : PersistenceEngineTestBase
 
     protected override ISqlDialect Dialect { get; } = new PostgresDialect();
 
+    protected override string OutboxIndexNamesSql =>
+        "SELECT indexname FROM pg_indexes WHERE tablename = 'conduit_outbox' AND indexname <> 'conduit_outbox_pkey'";
+
     public static async Task InitializeContainer()
     {
         try

@@ -48,7 +48,7 @@ The driver ships inside the engine package, so there is **no generic connection-
 
 ## Tables
 
-Each feature creates its tables on startup if they are absent:
+Each feature creates its tables on startup if they are absent, before any of its background services (the outbox relay, the inbox cleanup) makes its first pass:
 
 | Feature | Tables |
 |---|---|
@@ -62,7 +62,7 @@ Three of the five can opt out if you manage schema through migrations — `AddOu
 
 ### The outbox table
 
-A migration that creates `conduit_outbox` itself needs these columns (timestamps are ISO-8601 text, as everywhere):
+A migration that creates `conduit_outbox` itself needs these columns (timestamps are ISO-8601 text, as everywhere). A column an index covers needs a type the engine can index: on SQL Server and MySQL, whose general text type (`NVARCHAR(MAX)`, `LONGTEXT`) cannot be an index key, `MessageId`, `ClaimToken`, `NextAttemptAt` and `SentAt` are `NVARCHAR(450)` on SQL Server and `VARCHAR(255)` on MySQL.
 
 | Column | Holds |
 |---|---|
@@ -70,12 +70,24 @@ A migration that creates `conduit_outbox` itself needs these columns (timestamps
 | `MessageId`, `ConversationId`, `CausationId` | The entry's message context (`CausationId` nullable) |
 | `Type`, `Payload` | The message's full type name and its JSON body |
 | `Status` | `0` Pending, `1` Sent, `2` Failed, `3` Claiming |
-| `CreatedAt` | When the entry was written; the grace period and the retention cleanup count from it |
-| `SentAt` | When it was sent (nullable) |
+| `CreatedAt` | When the entry was written; the grace period counts from it |
+| `SentAt` | When it was sent (nullable); the Sent [retention](outbox.md#retention) counts from it |
+| `FailedAt` | When its last attempt failed (nullable): set when it is marked Failed, cleared by a [retry](outbox.md#retrying-failed-entries); the Failed retention counts from it |
 | `RetryCount` | How many of its attempts failed and were retried |
 | `NextAttemptAt` | When it is next due: its `CreatedAt` when written, moved out by each failed send's [backoff](outbox.md#backoff), reset to now by a [retry](outbox.md#retrying-failed-entries) |
 | `ClaimedAt`, `ClaimToken` | The claim of the worker delivering it (nullable) |
 | `Properties` | The [dispatch properties](outbox.md#carrying-dispatch-properties) it carries (nullable; read and written only by a host that lists some) |
+
+And these indexes, besides the primary key:
+
+| Index | Columns | Serves |
+|---|---|---|
+| `ix_conduit_outbox_status_next_attempt` | `Status`, `NextAttemptAt` | The relay's claim: pending entries that are due, and claims gone stale. Its `Status` prefix also finds the Failed entries, for listing, retrying and the Failed retention |
+| `ix_conduit_outbox_claim` | `ClaimToken` | Reading back the rows a claim just took |
+| `ix_conduit_outbox_message_id` | `MessageId` | The [immediate send](outbox.md#immediate-send)'s claim by message id |
+| `ix_conduit_outbox_status_sent` | `Status`, `SentAt` | The Sent retention, over the bulk of the table |
+
+`AutoCreateTable` creates them with the table and, on SQLite, PostgreSQL and SQL Server, adds any an existing table lacks. MySQL has no `CREATE INDEX IF NOT EXISTS`, so there the indexes come only with a new table.
 
 ## The outbox needs a transaction-aware factory
 

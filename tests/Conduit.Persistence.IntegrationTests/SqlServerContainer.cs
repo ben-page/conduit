@@ -15,6 +15,10 @@ internal static class SqlServerContainer
 
     internal static bool IsAvailable { get; private set; }
 
+    /// <summary>The catalog query for the names of the indexes on <c>conduit_outbox</c>, its primary key left out.</summary>
+    internal static string OutboxIndexNamesSql =>
+        "SELECT name FROM sys.indexes WHERE object_id = OBJECT_ID(N'conduit_outbox') AND is_primary_key = 0 AND name IS NOT NULL";
+
     internal static async Task InitializeAsync()
     {
         try

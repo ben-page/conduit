@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence.MySql;
 
@@ -43,6 +44,23 @@ public class MySqlDialectShould
 
         // Assert
         sql.Should().Be("CREATE TABLE IF NOT EXISTS conduit_inbox (\n  MessageId VARCHAR(255) PRIMARY KEY\n)");
+    }
+
+    [TestMethod]
+    public void DeclareTheIndexesInsideTheCreateTable()
+    {
+        // Act
+        var statements = this.dialect.BuildCreateTableIfNotExistsSql(
+            "conduit_outbox",
+            "    Status TINYINT NOT NULL,\n    NextAttemptAt VARCHAR(255) NOT NULL,\n    ClaimToken VARCHAR(255)",
+            [
+                new TableIndex("ix_conduit_outbox_status_next_attempt", ["Status", "NextAttemptAt"]),
+                new TableIndex("ix_conduit_outbox_claim", ["ClaimToken"]),
+            ]);
+
+        // Assert — MySQL has no CREATE INDEX IF NOT EXISTS, so the indexes come with the table, in one statement.
+        statements.Should().Equal(
+            "CREATE TABLE IF NOT EXISTS conduit_outbox (\n    Status TINYINT NOT NULL,\n    NextAttemptAt VARCHAR(255) NOT NULL,\n    ClaimToken VARCHAR(255),\n    INDEX ix_conduit_outbox_status_next_attempt (Status, NextAttemptAt),\n    INDEX ix_conduit_outbox_claim (ClaimToken)\n)");
     }
 
     // Insert-or-ignore

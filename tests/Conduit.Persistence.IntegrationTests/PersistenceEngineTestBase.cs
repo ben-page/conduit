@@ -67,6 +67,12 @@ public abstract class PersistenceEngineTestBase
     /// </summary>
     protected abstract Task<IConduitConnectionFactory> CreateIsolatedFactoryAsync();
 
+    /// <summary>
+    /// A query of the engine's catalog for the names of the indexes on <c>conduit_outbox</c>, one row each, its
+    /// primary key left out.
+    /// </summary>
+    protected abstract string OutboxIndexNamesSql { get; }
+
     [TestInitialize]
     public void TestInitialize()
     {
@@ -101,6 +107,41 @@ public abstract class PersistenceEngineTestBase
 
         // Assert
         await act.Should().NotThrowAsync();
+    }
+
+    [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Security",
+        "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "The catalog query is a constant of the engine's test class, not user input.")]
+    public async Task CreateTheOutboxIndexes()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbConnectionOutboxStore(factory, this.Dialect);
+
+        // Act — twice: a second startup finds the table and every index already there
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        // Assert
+        var indexNames = new List<string>();
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = this.OutboxIndexNamesSql;
+        await using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
+        {
+            while (await reader.ReadAsync(CancellationToken.None))
+            {
+                indexNames.Add(reader.GetString(0));
+            }
+        }
+
+        indexNames.Should().BeEquivalentTo(
+            "ix_conduit_outbox_status_next_attempt",
+            "ix_conduit_outbox_claim",
+            "ix_conduit_outbox_message_id",
+            "ix_conduit_outbox_status_sent");
     }
 
     // 2) Outbox round-trip + atomic claim -------------------------------------------------------
@@ -370,6 +411,46 @@ public abstract class PersistenceEngineTestBase
         reclaimed.Select(e => e.MessageId).Should().BeEquivalentTo("placed-1", "shipped", "placed-2", "pending");
         reclaimed.Should().AllSatisfy(e => e.RetryCount.Should().Be(0));
         (await outbox.QueryFailedAsync(new FailedOutboxFilter(), CancellationToken.None)).Entries.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task DeleteSentAndFailedEntriesByWhenTheyWereResolved()
+    {
+        // Arrange — four entries written eight days ago, two sent and two failed; one of each resolved eight days
+        // ago, the other just now
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbConnectionOutboxStore(factory, this.Dialect);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var createdAt = DateTime.UtcNow.AddDays(-8);
+        await SaveEntriesAsync(factory, this.Dialect, new[]
+        {
+            NewEntry("sent-long-ago", createdAt),
+            NewEntry("sent-now", createdAt),
+            NewEntry("failed-long-ago", createdAt),
+            NewEntry("failed-now", createdAt),
+        });
+        var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        foreach (var entry in claimed)
+        {
+            if (entry.MessageId.StartsWith("sent", StringComparison.Ordinal))
+            {
+                await store.MarkSentAsync(entry.Id, entry.ClaimToken!, CancellationToken.None);
+            }
+            else
+            {
+                await store.MarkFailedAsync(entry.Id, entry.ClaimToken!, CancellationToken.None);
+            }
+        }
+
+        await SetSentAtAsync(factory, claimed.Single(e => e.MessageId == "sent-long-ago").Id, createdAt);
+        await SetFailedAtAsync(factory, claimed.Single(e => e.MessageId == "failed-long-ago").Id, createdAt);
+
+        // Act
+        await store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+        await store.DeleteFailedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+
+        // Assert
+        (await ReadOutboxMessageIdsAsync(factory)).Should().BeEquivalentTo("sent-now", "failed-now");
     }
 
     // 3) Inbox dedup ----------------------------------------------------------------------------
@@ -1209,6 +1290,41 @@ public abstract class PersistenceEngineTestBase
         DbParameterHelper.Add(command, "@NextAttemptAt", nextAttemptAt.ToString("O", CultureInfo.InvariantCulture));
         DbParameterHelper.Add(command, "@Id", id);
         await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static async Task SetSentAtAsync(IConduitConnectionFactory factory, long id, DateTime sentAt)
+    {
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET SentAt = @SentAt WHERE Id = @Id";
+        DbParameterHelper.Add(command, "@SentAt", sentAt.ToString("O", CultureInfo.InvariantCulture));
+        DbParameterHelper.Add(command, "@Id", id);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static async Task SetFailedAtAsync(IConduitConnectionFactory factory, long id, DateTime failedAt)
+    {
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET FailedAt = @FailedAt WHERE Id = @Id";
+        DbParameterHelper.Add(command, "@FailedAt", failedAt.ToString("O", CultureInfo.InvariantCulture));
+        DbParameterHelper.Add(command, "@Id", id);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static async Task<List<string>> ReadOutboxMessageIdsAsync(IConduitConnectionFactory factory)
+    {
+        var messageIds = new List<string>();
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT MessageId FROM conduit_outbox";
+        await using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+        while (await reader.ReadAsync(CancellationToken.None))
+        {
+            messageIds.Add(reader.GetString(0));
+        }
+
+        return messageIds;
     }
 
     private static async Task<(OutboxEntryStatus Status, int RetryCount, string? ClaimToken)> ReadOutboxRowAsync(

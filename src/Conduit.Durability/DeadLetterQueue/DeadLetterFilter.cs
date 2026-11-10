@@ -6,6 +6,9 @@ namespace Conduit.Durability.DeadLetterQueue;
 /// </summary>
 public sealed class DeadLetterFilter
 {
+    /// <summary>The largest <see cref="PageSize"/> a query accepts: 1000.</summary>
+    public const int MaxPageSize = 1000;
+
     /// <summary>Filter by message type (exact match).</summary>
     public string? MessageType { get; init; }
 
@@ -18,7 +21,10 @@ public sealed class DeadLetterFilter
     /// <summary>Only entries dead-lettered at or before this time.</summary>
     public DateTimeOffset? Until { get; init; }
 
-    /// <summary>Maximum number of entries per page. Default 25.</summary>
+    /// <summary>
+    /// Maximum number of entries per page: from 1 to <see cref="MaxPageSize"/>, or the query throws
+    /// <see cref="ArgumentOutOfRangeException"/>. Default 25.
+    /// </summary>
     public int PageSize { get; init; } = 25;
 
     /// <summary>Opaque cursor for pagination. Null for the first page.</summary>

@@ -65,6 +65,26 @@ public sealed class MySqlDialect : ISqlDialect
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<string> BuildCreateTableIfNotExistsSql(
+        string tableName,
+        string columnDefinitions,
+        IReadOnlyList<TableIndex> indexes)
+    {
+        ArgumentNullException.ThrowIfNull(indexes);
+
+        // MySQL has no CREATE INDEX IF NOT EXISTS, and a guard needs a stored program or a prepared statement
+        // built in a user variable (which MySqlConnector refuses by default), so the indexes are declared inside
+        // the CREATE TABLE IF NOT EXISTS: they come with a new table, and an existing one is left as it is.
+        var indexDefinitions = string.Concat(indexes.Select(index => string.Format(
+            CultureInfo.InvariantCulture,
+            ",\n    INDEX {0} ({1})",
+            index.Name,
+            string.Join(", ", index.Columns))));
+
+        return [this.BuildCreateTableIfNotExistsSql(tableName, columnDefinitions + indexDefinitions)];
+    }
+
+    /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)
     {
         return string.Format(

@@ -205,7 +205,7 @@ if (page.NextPageToken is not null)
 }
 ```
 
-`DeadLetterFilter` supports `MessageType`, `ExceptionType`, `Since`, `Until`, `PageSize` (default 25), and `PageToken`. All filters are applied in SQL.
+`DeadLetterFilter` supports `MessageType`, `ExceptionType`, `Since`, `Until`, `PageSize` (default 25; 1 to `DeadLetterFilter.MaxPageSize`, 1000, or the query throws `ArgumentOutOfRangeException`), and `PageToken`. All filters are applied in SQL. `ReplayByTypeAsync` reads every page of its type before it replays the first entry.
 
 ## Metadata
 

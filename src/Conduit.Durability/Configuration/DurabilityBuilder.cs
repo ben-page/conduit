@@ -8,6 +8,7 @@ using Conduit.Durability.Runtime.Outbox;
 using Conduit.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace Conduit.Durability.Configuration;
@@ -18,6 +19,12 @@ namespace Conduit.Durability.Configuration;
 /// (e.g. <c>conduit.UseSqlite(...)</c>) and shared by all features via DI
 /// (<c>IConduitConnectionFactory</c> + <c>ISqlDialect</c>).
 /// </summary>
+/// <remarks>
+/// Each feature is added once, however often it is asked for: a second <c>AddOutbox</c>, <c>AddInbox</c> or
+/// <c>AddDeadLetterQueue</c> (from this builder or another <c>AddDurability</c> call, say a second module of the same
+/// host) registers nothing twice, and its callback configures the options the first call registered, so each call
+/// changes only what it sets.
+/// </remarks>
 public sealed class DurabilityBuilder
 {
     internal IServiceCollection Services { get; }
@@ -27,16 +34,19 @@ public sealed class DurabilityBuilder
         this.Services = services;
     }
 
-    /// <summary>Adds the transactional outbox.</summary>
+    /// <summary>
+    /// Adds the transactional outbox. Calling it again configures the same outbox (see the remarks on
+    /// <see cref="DurabilityBuilder"/>); <see cref="OutboxOptions.CaptureOnly"/>, once any call sets it, removes the
+    /// relay.
+    /// </summary>
     /// <exception cref="OptionsValidationException">
-    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key,
-    /// <see cref="OutboxOptions.InitialBackoff"/> is negative or above <see cref="OutboxOptions.MaxBackoff"/>,
-    /// <see cref="OutboxOptions.MaxBackoff"/> is above one day, or <see cref="OutboxOptions.ClaimTimeout"/> is not
-    /// positive or is above one day.
+    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key; an interval, a
+    /// wait, a timeout or a retention is out of its range (see <see cref="OutboxOptions"/>'s members);
+    /// <see cref="OutboxOptions.BatchSize"/> is not positive or <see cref="OutboxOptions.MaxRetries"/> is below 2.
     /// </exception>
     public DurabilityBuilder AddOutbox(Action<OutboxOptions>? configure = null)
     {
-        var options = new OutboxOptions();
+        var options = this.RegisteredOptions<OutboxOptions>();
         configure?.Invoke(options);
         options.Validate();
 
@@ -45,63 +55,107 @@ public sealed class DurabilityBuilder
         // Retrying a failed entry is a row update, so a capture-only host can hand one back to the relay that owns it.
         this.Services.TryAddScoped<IOutbox, OutboxOperations>();
 
-        this.Services.AddScoped<OutboxCapture>();
-        this.Services.AddScoped<IOutboundInterceptor>(
-            serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
+        // The forwarding registrations name their implementation type, so a second call recognizes them.
+        this.Services.TryAddScoped<OutboxCapture>();
+        this.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IOutboundInterceptor, OutboxCapture>(
+            serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>()));
 
         // Writing (unlike delivery) happens in capture-only mode too: rows go on the caller's transaction.
-        this.Services.AddScoped<IOutboxPendingWriter, OutboxPendingWriter>();
+        this.Services.TryAddScoped<IOutboxPendingWriter, OutboxPendingWriter>();
+        // Replaced, not tried: the flusher and the relay follow the options as this call leaves them, so a call that
+        // sets CaptureOnly undoes the delivery an earlier call registered.
         if (options.CaptureOnly)
         {
             // Another process's relay owns delivery (OutboxOptions.CaptureOnly's remarks).
-            this.Services.AddSingleton<IOutboxFlusher, CaptureOnlyOutboxFlusher>();
+            this.Services.Replace(ServiceDescriptor.Singleton<IOutboxFlusher, CaptureOnlyOutboxFlusher>());
+            this.RemoveHostedService<OutboxRelay>();
         }
         else
         {
-            this.Services.AddScoped<IOutboxFlusher>(
-                serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>());
+            this.Services.Replace(ServiceDescriptor.Scoped<IOutboxFlusher, OutboxCapture>(
+                serviceProvider => serviceProvider.GetRequiredService<OutboxCapture>()));
             this.Services.AddHostedService<OutboxRelay>();
         }
 
         this.Services.TryAddTransient(typeof(OutboxBehavior<,>));
-
-        this.Services.AddSingleton(Options.Create(options));
         return this;
     }
 
     /// <summary>
     /// Adds the inbox (idempotent message processing). A broker dispatch that fails releases its record, so
-    /// the broker's redelivery, or a dead-letter replay, runs instead of being discarded as a duplicate.
+    /// the broker's redelivery, or a dead-letter replay, runs instead of being discarded as a duplicate. Calling it
+    /// again configures the same inbox (see the remarks on <see cref="DurabilityBuilder"/>): one gate, whose record
+    /// a second gate in the same dispatch would take for a duplicate.
     /// </summary>
+    /// <exception cref="OptionsValidationException">
+    /// <see cref="InboxOptions.RetentionPeriod"/> is not positive or is above 3650 days, or
+    /// <see cref="InboxOptions.CleanupInterval"/> is not positive or is above one day.
+    /// </exception>
     public DurabilityBuilder AddInbox(Action<InboxOptions>? configure = null)
     {
-        var options = new InboxOptions();
+        var options = this.RegisteredOptions<InboxOptions>();
         configure?.Invoke(options);
+        options.Validate();
 
         this.Services.TryAddScoped<IInboxStore, DbConnectionInboxStore>();
 
         // One gate per dispatch scope, shared by the error interceptor: it releases the record that gate made.
-        this.Services.AddScoped<InboxInterceptor>();
-        this.Services.AddScoped<IInboundInterceptor>(
-            serviceProvider => serviceProvider.GetRequiredService<InboxInterceptor>());
-        this.Services.AddScoped<IInboundErrorInterceptor, InboxErrorInterceptor>();
+        this.Services.TryAddScoped<InboxInterceptor>();
+        this.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IInboundInterceptor, InboxInterceptor>(
+            serviceProvider => serviceProvider.GetRequiredService<InboxInterceptor>()));
+        this.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IInboundErrorInterceptor, InboxErrorInterceptor>());
         this.Services.AddHostedService<InboxCleanup>();
-        this.Services.AddSingleton(Options.Create(options));
 
         return this;
     }
 
-    /// <summary>Adds the dead letter queue (capture failed messages, browse, replay).</summary>
+    /// <summary>
+    /// Adds the dead letter queue (capture failed messages, browse, replay). Calling it again configures the same
+    /// queue (see the remarks on <see cref="DurabilityBuilder"/>).
+    /// </summary>
     public DurabilityBuilder AddDeadLetterQueue(Action<DeadLetterQueueOptions>? configure = null)
     {
-        var options = new DeadLetterQueueOptions();
+        var options = this.RegisteredOptions<DeadLetterQueueOptions>();
         configure?.Invoke(options);
 
         this.Services.TryAddScoped<IDeadLetterStore, DbDeadLetterStore>();
         this.Services.TryAddScoped<IDeadLetters, Runtime.DeadLetterQueue.DeadLetters>();
-        this.Services.AddScoped<IInboundErrorInterceptor, DeadLetterErrorInterceptor>();
-        this.Services.AddSingleton(Options.Create(options));
+        this.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IInboundErrorInterceptor, DeadLetterErrorInterceptor>());
 
         return this;
+    }
+
+    // The options instance an earlier call registered, so a later call's callback adds to it; registered here on the
+    // first call.
+    private TOptions RegisteredOptions<TOptions>()
+        where TOptions : class, new()
+    {
+        var registered = this.Services
+            .Where(descriptor => descriptor.ServiceType == typeof(IOptions<TOptions>) && !descriptor.IsKeyedService)
+            .Select(descriptor => descriptor.ImplementationInstance)
+            .OfType<IOptions<TOptions>>()
+            .FirstOrDefault();
+        if (registered is not null)
+        {
+            return registered.Value;
+        }
+
+        var options = new TOptions();
+        this.Services.AddSingleton(Options.Create(options));
+        return options;
+    }
+
+    private void RemoveHostedService<THostedService>()
+        where THostedService : IHostedService
+    {
+        var descriptor = this.Services.FirstOrDefault(candidate =>
+            candidate.ServiceType == typeof(IHostedService)
+            && !candidate.IsKeyedService
+            && candidate.ImplementationType == typeof(THostedService));
+        if (descriptor is not null)
+        {
+            this.Services.Remove(descriptor);
+        }
     }
 }

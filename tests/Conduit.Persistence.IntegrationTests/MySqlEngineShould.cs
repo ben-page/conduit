@@ -21,6 +21,11 @@ public sealed class MySqlEngineShould : PersistenceEngineTestBase
 
     protected override ISqlDialect Dialect { get; } = new MySqlDialect();
 
+    protected override string OutboxIndexNamesSql => """
+        SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'conduit_outbox' AND INDEX_NAME <> 'PRIMARY'
+        """;
+
     protected override bool MissingRowUpdateLocksTheGap => true;
 
     public static async Task InitializeContainer()
