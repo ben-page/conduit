@@ -312,8 +312,9 @@ delivers it again and its listener or handler runs again.
   default), then moves it to the entity's dead-letter subqueue.
 
 So a listener or a `[FireAndForget]` handler with side effects that can fail part-way should be idempotent, or
-the host should use the [inbox](../inbox.md) (see its [at-most-once semantics](../inbox.md#semantics-at-most-once-on-crash))
-or Conduit's [dead-letter queue](../dead-letter-queue.md), which captures the failure the first time instead.
+the host should configure Conduit's [dead-letter queue](../dead-letter-queue.md), so the first failure is captured
+and the broker does not redeliver it. The [inbox](../inbox.md) does not stop these repeats: it discards a
+redelivery only of a dispatch that succeeded, and releases a failed one so it runs again.
 
 A refused `[FireAndForget]` command is logged once at Warning (`FireAndForgetCommandRefused`), naming its type
 and the refusal's code, since nothing else will report it. A dead-letter replay of a command or query arrives
