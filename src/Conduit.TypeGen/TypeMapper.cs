@@ -317,7 +317,7 @@ public static class TypeMapper
         // typecheck. The reflection path has always handled this; the string path is what a handler's
         // DECLARED response type goes through, which is why the gap only surfaces for a nullable VALUE
         // type used directly as a response (IQuery<int?>). A nullable REFERENCE type is erased at the
-        // CLR level and never reaches here, which is why it went unnoticed. Found by DMS, 2026-09-09.
+        // CLR level and never reaches here, which is why it went unnoticed.
         if (definitionFullName == "System.Nullable`1")
         {
             return $"{MapArg(arguments[0], assemblies)} | null";

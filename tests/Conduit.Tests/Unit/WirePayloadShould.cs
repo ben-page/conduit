@@ -9,7 +9,7 @@ namespace Conduit.Tests.Unit;
 /// <summary>
 /// A wire payload the contract cannot read is the CALLER's fault: it answers 400, never InternalError. And the
 /// contract spells an enum by NAME -- an integer ordinal, in range or not, is refused, so an out-of-range value can
-/// never reach a foreign-key column as a 500 (DMS open:conduit-enum-ordinals-reach-lookup-fks).
+/// never reach a foreign-key column (an enum mirrored as a lookup table) as a 500.
 /// </summary>
 [TestClass]
 public sealed class WirePayloadShould

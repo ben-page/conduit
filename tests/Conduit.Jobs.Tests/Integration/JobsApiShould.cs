@@ -409,23 +409,23 @@ public class JobsApiShould
     {
         // Arrange — for a projection, scope depth IS queue depth: every key that changed while a
         // rebuild runs parks a scope until it finishes
-        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        var spy = new LocationSummarySpy { BlockUntilReleased = true };
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await JobsTestHost.StartAsync(
-            jobs => jobs.On<PunchChanged>("rebuild")
-                .CoalesceBy(punch => punch.LocationId)
-                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+            jobs => jobs.On<BadgeScanned>("rebuild")
+                .CoalesceBy(scan => scan.LocationId)
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
                 .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
             timeProvider: new FakeTimeProvider(Start),
             connectionString: database.ConnectionString,
-            workstationSpy: spy);
+            locationSummarySpy: spy);
         var mediator = host.GetRequiredService<IMediator>();
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
         await spy.WaitForCountAsync(1);
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(7)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(7)));
         await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
         // Act

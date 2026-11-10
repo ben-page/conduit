@@ -8,7 +8,7 @@ import type { ConduitTransport, DispatchResult, Subscription } from './base';
  *
  * Unbounded on purpose. SignalR's stock withAutomaticReconnect() schedule is [0, 2 s, 10 s, 30 s],
  * and then it stops for good. That suits a desktop tab and bricks an unattended screen: a wall-mounted
- * kiosk that loses its network for a minute has nobody standing there to reload it.
+ * display that loses its network for a minute has nobody standing there to reload it.
  */
 export const DEFAULT_RETRY_POLICY: IRetryPolicy = {
   nextRetryDelayInMilliseconds(retryContext: RetryContext): number {

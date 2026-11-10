@@ -239,7 +239,7 @@ public sealed partial class OutboxRelay(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to send outbox entry {EntryId} (type: {Type}, retry: {RetryCount})")]
     private static partial void LogSendFailed(ILogger logger, long entryId, string type, int retryCount, Exception exception);
 
-    // EventId 320 is a contract: deploy alerting keys on it (DMS deploy/README.md). Never renumber it.
+    // EventId 320 is a contract: a host's alerting may key on it. Never renumber it.
     [LoggerMessage(EventId = 320, EventName = "OutboxRetriesExhausted", Level = LogLevel.Error,
         Message = "Outbox entry {EntryId} (type: {Type}, message: {MessageId}) exhausted retries, marking as failed")]
     private static partial void LogRetriesExhausted(ILogger logger, long entryId, string type, string messageId, Exception? exception);

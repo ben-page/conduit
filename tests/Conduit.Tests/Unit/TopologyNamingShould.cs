@@ -33,14 +33,14 @@ public class TopologyNamingShould
         {
             SystemName = "conduit",
             TopologyMode = TopologyMode.Developer,
-            TopologyPrefix = "bpage",
+            TopologyPrefix = "alice",
         };
 
         // Act
         var name = TopologyNaming.CreateSharedResourceName(options, maxLength: 260);
 
         // Assert
-        name.Should().Be("bpage-conduit");
+        name.Should().Be("alice-conduit");
     }
 
     [TestMethod]
@@ -96,14 +96,14 @@ public class TopologyNamingShould
             SystemName = "conduit",
             ApplicationName = "orders",
             TopologyMode = TopologyMode.Developer,
-            TopologyPrefix = "bpage",
+            TopologyPrefix = "alice",
         };
 
         // Act
         var name = TopologyNaming.CreateAppResourceName(options, maxLength: 260);
 
         // Assert
-        name.Should().Be("bpage-conduit-orders");
+        name.Should().Be("alice-conduit-orders");
     }
 
     [TestMethod]
@@ -153,14 +153,14 @@ public class TopologyNamingShould
         {
             SystemName = "conduit",
             TopologyMode = TopologyMode.Developer,
-            TopologyPrefix = "bpage",
+            TopologyPrefix = "alice",
         };
 
         // Act
         var name = TopologyNaming.CreateSharedResourceName(options, "Orders.Commands.CreateOrder", maxLength: 260);
 
         // Assert
-        name.Should().Be("bpage-conduit-CreateOrder-Commands-Orders");
+        name.Should().Be("alice-conduit-CreateOrder-Commands-Orders");
     }
 
     [TestMethod]
@@ -185,14 +185,14 @@ public class TopologyNamingShould
             SystemName = "conduit",
             ApplicationName = "orders",
             TopologyMode = TopologyMode.Developer,
-            TopologyPrefix = "bpage",
+            TopologyPrefix = "alice",
         };
 
         // Act
         var name = TopologyNaming.CreateAppResourceName(options, "Orders.Events.OrderShipped", maxLength: 260);
 
         // Assert
-        name.Should().Be("bpage-conduit-orders-OrderShipped-Events-Orders");
+        name.Should().Be("alice-conduit-orders-OrderShipped-Events-Orders");
     }
 
     [TestMethod]

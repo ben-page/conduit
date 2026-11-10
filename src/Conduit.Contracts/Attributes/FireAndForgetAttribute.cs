@@ -9,7 +9,7 @@ namespace Conduit.Attributes;
 /// <list type="bullet">
 /// <item>Only valid on <c>ICommand</c> (void) and <c>IEvent</c>.</item>
 /// <item>Not valid on <c>ICommand&lt;TResult&gt;</c> or <c>IQuery&lt;TResult&gt;</c>
-/// — these require a response. The source generator emits CONDUIT002 if misapplied.</item>
+/// — these require a response. The source generator emits CONDUIT003 if misapplied.</item>
 /// <item>Pipeline behaviors run in the caller's context before enqueueing.</item>
 /// <item>Handler exceptions are logged, not propagated to the caller.</item>
 /// <item>Over a transport, uses <c>SendEventAsync</c> (no reply infrastructure).</item>

@@ -74,12 +74,12 @@ public class ConduitExceptionShould
     {
         // Arrange & Act
         var ex = new DetailedTestException(
-            new ErrorCode("PunchContradicted", 400),
+            new ErrorCode("ShiftOverlaps", 400),
             "refused",
             [new DispatchErrorDetail(null, "16:10")]);
 
         // Assert
-        ex.Code.Value.Should().Be("PunchContradicted");
+        ex.Code.Value.Should().Be("ShiftOverlaps");
         ex.Code.HttpStatusCode.Should().Be(400);
         ex.Details.Should().ContainSingle().Which.Should().Be(new DispatchErrorDetail(null, "16:10"));
     }

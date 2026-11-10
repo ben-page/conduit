@@ -17,19 +17,19 @@ public class StoredPayloadShould
     [TestMethod]
     public async Task RunAJobWhosePayloadIsMissingAMember()
     {
-        // Arrange -- a stored run written before RecomputeWorkstation gained "from"
-        var spy = new WorkstationSpy();
+        // Arrange -- a stored run written before RebuildLocationSummary gained "from"
+        var spy = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await JobsTestHost.StartAsync(
-            jobs => jobs.On<PunchChanged>("rebuild")
-                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From)),
+            jobs => jobs.On<BadgeScanned>("rebuild")
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From)),
             timeProvider: new FakeTimeProvider(new DateTimeOffset(2026, 8, 26, 1, 59, 0, TimeSpan.Zero)),
             connectionString: database.ConnectionString,
-            workstationSpy: spy);
+            locationSummarySpy: spy);
         var run = new JobRun
         {
             JobKey = "rebuild@legacy",
-            MessageType = typeof(RecomputeWorkstation).FullName!,
+            MessageType = typeof(RebuildLocationSummary).FullName!,
             Payload = """{"locationId":"loc-1"}""",
         };
 

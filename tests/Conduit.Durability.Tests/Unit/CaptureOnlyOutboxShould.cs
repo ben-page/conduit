@@ -11,8 +11,8 @@ namespace Conduit.Durability.Tests.Unit;
 /// <summary>
 /// A capture-only outbox writes rows on the caller's transaction and never delivers them: no relay, no
 /// post-commit flush. For a host sharing an outbox table with another host whose relay owns delivery
-/// (DMS's identity host, ruling 26): a second relay could claim a row whose listener lives only in the
-/// other process and deliver it to nobody.
+/// (for example a separate identity host beside the application that relays): a second relay could claim
+/// a row whose listener lives only in the other process and deliver it to nobody.
 /// </summary>
 [TestClass]
 public sealed class CaptureOnlyOutboxShould

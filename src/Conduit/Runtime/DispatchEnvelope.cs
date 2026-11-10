@@ -9,7 +9,8 @@ namespace Conduit.Runtime;
 public sealed record DispatchEnvelope
 {
     /// <summary>
-    /// The fully-qualified or short type name of the request.
+    /// The message's full type name (<c>Type.FullName</c>, e.g. <c>Orders.Commands.CreateOrder</c>).
+    /// A short name matches nothing: dispatch compares the full name exactly.
     /// </summary>
     public string Type { get; init; }
 

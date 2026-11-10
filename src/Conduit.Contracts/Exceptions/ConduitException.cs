@@ -39,9 +39,9 @@ public abstract class ConduitException : Exception
     /// </summary>
     /// <remarks>
     /// <b>The REST transport does not forward these.</b> <c>ConduitRestHandlers.ToProblem</c> builds a
-    /// <c>ProblemDetails</c> from the status and message only, and the global
-    /// exception-handler path in a host (DMS's <c>ConduitExceptionHandler</c>) deliberately sends the
-    /// status alone. Details reach a client only through the dispatch envelope
+    /// <c>ProblemDetails</c> from the status and message only, and a host's own global exception
+    /// handler (one that maps a thrown refusal to its status) typically sends the status alone.
+    /// Details reach a client only through the dispatch envelope
     /// (<c>/api/conduit/dispatch</c> and the SignalR hub), which is the path a SPA mediator uses.
     /// </remarks>
     public IReadOnlyList<DispatchErrorDetail>? Details { get; }

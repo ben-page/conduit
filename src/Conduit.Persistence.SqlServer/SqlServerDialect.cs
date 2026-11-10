@@ -162,7 +162,7 @@ public sealed class SqlServerDialect : ISqlDialect
     //  - READPAST is accepted only under READ COMMITTED or REPEATABLE READ; any other level raises SQL error 650.
     //  - A pooled session keeps the level its last transaction set (measured on SQL Server 2022 with
     //    Microsoft.Data.SqlClient 7.1.1: SqlServerPooledSessionShould), and a host's own Snapshot
-    //    transactions (DMS-6190) leave one behind.
+    //    transactions leave one behind.
     //  - After a claim the session still reads the level it carried (SqlServerClaimIsolationShould), so the
     //    connection goes back to the pool at that level. The likely reason (inferred, not measured): SqlClient
     //    sends a parameterized command through sp_executesql, and a SET inside it reverts on return.
@@ -198,7 +198,7 @@ public sealed class SqlServerDialect : ISqlDialect
     //  - READPAST is accepted only under READ COMMITTED or REPEATABLE READ; any other level raises SQL error 650.
     //  - A pooled session keeps the level its last transaction set (measured on SQL Server 2022 with
     //    Microsoft.Data.SqlClient 7.1.1: SqlServerPooledSessionShould), and a host's own Snapshot
-    //    transactions (DMS-6190) leave one behind.
+    //    transactions leave one behind.
     //  - After a claim the session still reads the level it carried (SqlServerClaimIsolationShould), so the
     //    connection goes back to the pool at that level. The likely reason (inferred, not measured): SqlClient
     //    sends a parameterized command through sp_executesql, and a SET inside it reverts on return.

@@ -11,7 +11,7 @@ namespace Conduit.Persistence.IntegrationTests;
 /// <summary>
 /// Characterizes SQL Server (and Microsoft.Data.SqlClient's pool), not Conduit, as measured on SQL Server 2022
 /// with Microsoft.Data.SqlClient 7.1.1: a pooled session keeps the isolation level its last transaction set, and
-/// a <c>READPAST</c> claim cannot run at some of those levels (SQL error 650). This is why <c>SqlServerDialect</c>'s claims pin their own level (DMS-6190). If it ever
+/// a <c>READPAST</c> claim cannot run at some of those levels (SQL error 650). This is why <c>SqlServerDialect</c>'s claims pin their own level. If it ever
 /// fails, the pin is redundant but harmless: delete this test and keep the pin.
 /// </summary>
 [TestClass]

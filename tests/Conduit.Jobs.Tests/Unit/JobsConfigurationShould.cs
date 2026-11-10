@@ -292,9 +292,9 @@ public class JobsConfigurationShould
         // Arrange — there is no safe default merge: last-write-wins narrows the scope, which is the
         // silent staleness the merge contract exists to forbid
         static void Configure(JobsBuilder jobs)
-            => jobs.On<PunchChanged>("rebuild")
-                .CoalesceBy(punch => punch.LocationId)
-                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From));
+            => jobs.On<BadgeScanned>("rebuild")
+                .CoalesceBy(scan => scan.LocationId)
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From));
 
         // Act
         var act = () => AddJobsForTest(Configure);
@@ -311,9 +311,9 @@ public class JobsConfigurationShould
         var builder = new ConduitBuilder(services);
 
         // Act
-        builder.AddJobs(jobs => jobs.On<PunchChanged>("rebuild")
-            .CoalesceBy(punch => punch.LocationId)
-            .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+        builder.AddJobs(jobs => jobs.On<BadgeScanned>("rebuild")
+            .CoalesceBy(scan => scan.LocationId)
+            .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
             .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming));
 
         // Assert
@@ -324,9 +324,9 @@ public class JobsConfigurationShould
 
         var trigger = registry.Triggers.Should().ContainSingle().Subject;
         trigger.Name.Should().Be("rebuild");
-        trigger.CommandType.Should().Be<RecomputeWorkstation>();
+        trigger.CommandType.Should().Be<RebuildLocationSummary>();
         trigger.CoalesceKey.Should().NotBeNull();
-        trigger.CoalesceKey!(new PunchChanged("loc-7", default)).Should().Be("loc-7");
+        trigger.CoalesceKey!(new BadgeScanned("loc-7", default)).Should().Be("loc-7");
         trigger.Merge.Should().NotBeNull();
     }
 
@@ -336,9 +336,9 @@ public class JobsConfigurationShould
         // Arrange — a key formatted per-host culture would stop two hosts agreeing on one scope
         var services = new ServiceCollection();
         var builder = new ConduitBuilder(services);
-        builder.AddJobs(jobs => jobs.On<NumericPunch>("rebuild")
-            .CoalesceBy(punch => punch.Sequence)
-            .Run(punch => new RecordedJob(punch.Sequence.ToString(CultureInfo.InvariantCulture)))
+        builder.AddJobs(jobs => jobs.On<NumericScan>("rebuild")
+            .CoalesceBy(scan => scan.Sequence)
+            .Run(scan => new RecordedJob(scan.Sequence.ToString(CultureInfo.InvariantCulture)))
             .Merge((pending, incoming) => incoming));
 
         var registry = services
@@ -346,7 +346,7 @@ public class JobsConfigurationShould
             .ImplementationInstance as ScheduleRegistry;
 
         // Act
-        var key = registry!.Triggers[0].CoalesceKey!(new NumericPunch(1234.5m));
+        var key = registry!.Triggers[0].CoalesceKey!(new NumericScan(1234.5m));
 
         // Assert
         key.Should().Be("1234.5");
@@ -358,9 +358,9 @@ public class JobsConfigurationShould
         // Arrange
         var services = new ServiceCollection();
         var builder = new ConduitBuilder(services);
-        builder.AddJobs(jobs => jobs.On<PunchChanged>("rebuild")
-            .CoalesceBy(punch => punch.LocationId)
-            .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+        builder.AddJobs(jobs => jobs.On<BadgeScanned>("rebuild")
+            .CoalesceBy(scan => scan.LocationId)
+            .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
             .Merge((pending, incoming) => incoming));
 
         var registry = services
@@ -368,7 +368,7 @@ public class JobsConfigurationShould
             .ImplementationInstance as ScheduleRegistry;
 
         // Act — an empty key would collapse every scope for the trigger into one
-        var act = () => registry!.Triggers[0].CoalesceKey!(new PunchChanged("   ", default));
+        var act = () => registry!.Triggers[0].CoalesceKey!(new BadgeScanned("   ", default));
 
         // Assert
         act.Should().Throw<InvalidOperationException>().WithMessage("*coalesce key*");

@@ -52,10 +52,10 @@ public class AsbReplyShould
     [DataRow(300L, 1_000L, DisplayName = "300 ms: twice is under Service Bus's 1 s minimum, so 1 s")]
     [DataRow(500L, 1_000L, DisplayName = "500 ms: twice is exactly the 1 s minimum")]
     [DataRow(60_000L, 120_000L, DisplayName = "60 s: twice, 120 s")]
-    public async Task ExpireAfterTwiceTheResponseTimeoutAndNoSoonerThanASecond(long responseTimeoutMs, long expectedMs)
+    public async Task ExpireAfterTwiceTheResponseTimeoutAndNoSoonerThanASecond(long responseTimeoutMilliseconds, long expectedMilliseconds)
     {
         // Arrange
-        var options = CreateOptions(TimeSpan.FromMilliseconds(responseTimeoutMs));
+        var options = CreateOptions(TimeSpan.FromMilliseconds(responseTimeoutMilliseconds));
         await using var serviceProvider = new ServiceCollection().BuildServiceProvider();
         await using var transport = CreateTransport(options, serviceProvider);
 
@@ -64,7 +64,7 @@ public class AsbReplyShould
         var replyQueueOptions = CreateReplyQueueOptions(options);
 
         // Assert
-        var expected = TimeSpan.FromMilliseconds(expectedMs);
+        var expected = TimeSpan.FromMilliseconds(expectedMilliseconds);
         reply.TimeToLive.Should().Be(expected);
         replyQueueOptions.DefaultMessageTimeToLive.Should().Be(expected);
     }

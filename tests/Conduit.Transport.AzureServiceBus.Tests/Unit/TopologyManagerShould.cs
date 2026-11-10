@@ -170,7 +170,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
 
         // Act
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 260);
@@ -178,9 +178,9 @@ public class TopologyManagerShould
         var replyQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 260);
 
         // Assert
-        topicName.Should().Be("bpage-conduit");
-        appQueueName.Should().Be("bpage-conduit-orders");
-        replyQueueName.Should().Be("bpage-conduit-orders-replies");
+        topicName.Should().Be("alice-conduit");
+        appQueueName.Should().Be("alice-conduit-orders");
+        replyQueueName.Should().Be("alice-conduit-orders-replies");
     }
 
     [TestMethod]
@@ -346,7 +346,7 @@ public class TopologyManagerShould
         // Arrange
         var conduitOptions = CreateConduitOptions(
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act — ComputeEphemeralTtl returns 4 hours for developer mode
@@ -478,7 +478,7 @@ public class TopologyManagerShould
         // Arrange — developer mode sets AutoDeleteOnIdle on topics and queues
         var conduitOptions = CreateConduitOptions(
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
         var manager = CreateManager(conduitOptions: conduitOptions);
 
         // Act

@@ -17,7 +17,7 @@ namespace Conduit.Persistence.IntegrationTests;
 /// SQL error 650 at Snapshot and Serializable (measured in <see cref="SqlServerPooledSessionShould"/> on
 /// SQL Server 2022 with Microsoft.Data.SqlClient 7.1.1), and a
 /// host's own transactions at those levels leave a pooled session behind, so the outbox relay, the outbox
-/// flush and the jobs sweep each pin READ COMMITTED themselves (DMS-6190). Read Uncommitted is not a claim row:
+/// flush and the jobs sweep each pin READ COMMITTED themselves. Read Uncommitted is not a claim row:
 /// the claim already succeeds there, so only the session-level test covers it.
 /// </summary>
 [TestClass]

@@ -72,7 +72,7 @@ public class ErrorCodeShould
     [TestMethod]
     public void MapPreconditionFailedWireCodeTo412()
     {
-        // Arrange & Act & Assert — the dispatch endpoint and a DMS batch both resolve the status from the
+        // Arrange & Act & Assert — the dispatch endpoint and a host's batch endpoint both resolve the status from the
         // wire STRING, and an unknown string maps to 400. A stale version must come out as 412.
         ErrorCode.ToHttpStatusCode("PreconditionFailed").Should().Be(412);
     }

@@ -27,8 +27,8 @@
   `IClosedSet<itself>` (`Conduit.Messages`) maps to `'a' | …` — its declared wire VALUES, single-quoted and escaped
   (`ToTsStringLiteral`), never its member names — and gets no interface. Both are matched by full NAME
   (MetadataLoadContext). The values come from the attribute because a MetadataLoadContext cannot run the static
-  initializers that create the members (`FieldInfo.GetValue` throws there — measured on DMS's `PermissionScope`,
-  2026-10-09). The attribute on a type that does not implement the interface, or with no values, is a hard generation
+  initializers that create the members (`FieldInfo.GetValue` throws there — measured on a closed set loaded under
+  a MetadataLoadContext). The attribute on a type that does not implement the interface, or with no values, is a hard generation
   error (`InvalidOperationException`). The reverse — the interface without the attribute — and an attribute list that
   differs from `All` are caught at RUNTIME, by `ClosedSetJsonConverterFactory` on the type's first serialization:
   TypeGen cannot see `All`. A closed set is reached like any property type and needs no `[ClientVisible]`. Enum output
@@ -67,8 +67,8 @@
   `transport-ts`), assembly in `TransportSourceShould`/`BaseFileEmitterShould`. The assembled output (default and
   HTTP-only) is pinned by the goldens in `tests/transport-ts/emitted/` (`conduit.ts`, `conduit.http-only.ts`) and type-checked there, so **a transport edit
   fails that test until the goldens are regenerated — the golden diff is what every consumer's `conduit.ts` will
-  show.** **An edit to these files changes every consumer's committed `conduit.ts` on its next build** (ManagementSystem
-  and ELoc load this DLL by path) — land it as an emitter change. `Transport/tsconfig.json` only points an editor at
+  show.** **An edit to these files changes every consumer's committed `conduit.ts` on its next build** (a consumer
+  that loads this DLL by path picks it up with no package bump) — land it as an emitter change. `Transport/tsconfig.json` only points an editor at
   `tests/transport-ts`'s config; never `npm i` under `src/`.
 - `conduit.generated.ts` contains: type interfaces (root `[ClientVisible]` types + transitively-discovered types), `CommandMap`/`QueryMap`/`EventMap` (keys are `FullTypeName`), `ConduitClient` class, re-exports
 - **The emitted client is type-checked** — `tests/transport-ts/emitted/conduit.generated.ts` is what TypeGenTask writes

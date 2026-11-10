@@ -128,7 +128,7 @@ public sealed partial class WireRequestFailureShould
     [TestMethod]
     public async Task LogTheSameReferenceItAnswersWith()
     {
-        // Support gets the reference from the user and greps for it -- DMS logs without scopes, so the id must be IN the line.
+        // Support gets the reference from the user and greps for it -- a host may log without scopes, so the id must be IN the line.
         var logger = new CapturingLogger();
         var result = await ConduitRuntime.HandleWireRequest(
             "Test.Refusal",

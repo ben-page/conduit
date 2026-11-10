@@ -1,6 +1,5 @@
-// Ported from ManagementSystem's src/ManagementSystem.Web/Client/src/app/core/conduit/signalr-transport.spec.ts
-// (0fd5a045ab), which keeps its own copy against its committed conduit.ts. Only the transport import changed: this
-// suite runs the shipped source, src/Conduit.TypeGen/Transport/signalr.ts.
+// The SignalR transport's behaviour, run against the shipped source, src/Conduit.TypeGen/Transport/signalr.ts,
+// which TypeGen embeds into every consumer's conduit.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HubConnectionBuilder, HubConnectionState, type IRetryPolicy } from '@microsoft/signalr';
 import {
@@ -96,7 +95,7 @@ describe('SignalRTransport — a connection that died is started again (B1)', ()
     vi.useRealTimers();
   });
 
-  // THE regression (open:conduit-transport-wedge). connect() memoized a resolved start forever, so once the
+  // THE regression (the wedged transport). connect() memoized a resolved start forever, so once the
   // connection closed for good every later dispatch threw "Cannot send data…" until the page reloaded.
   it('starts a connection again after it closed for good, instead of wedging every dispatch', async () => {
     const connection = new FakeHubConnection();
@@ -148,7 +147,7 @@ describe('DEFAULT_RETRY_POLICY', () => {
     expect([0, 1, 2, 3, 4].map(delayAfter)).toEqual([0, 2000, 5000, 10000, 30000]);
   });
 
-  // SignalR stops reconnecting for good the first time a policy returns null. An unattended kiosk must not.
+  // SignalR stops reconnecting for good the first time a policy returns null. An unattended screen must not.
   it('never gives up, however long the outage', () => {
     expect([5, 50, 5000].map(delayAfter)).toEqual([30000, 30000, 30000]);
   });
@@ -226,7 +225,7 @@ describe('SignalRTransport.onStateChange', () => {
     expect(seen).not.toContain('disconnected');
   });
 
-  // Ruling 1 (2026-09-11): logout, re-login and device re-attest all stop the socket on purpose. That close is
+  // Logout, re-login and device re-attest all stop the socket on purpose. That close is
   // never a loss, so it must never be reported as 'disconnected'.
   it('reports an intentional stop as stopped, never as disconnected', async () => {
     const connection = new FakeHubConnection();
@@ -276,7 +275,7 @@ describe('SignalRTransport — a close nobody asked for is retried, with backoff
     vi.useRealTimers();
   });
 
-  // The ruling this suite exists for: a kiosk must come back on its own, without a badge scan.
+  // What this suite exists for: an unattended screen must come back on its own, without anyone signing in again.
   it('starts again after a server close, with nobody touching the screen', async () => {
     const connection = new FakeHubConnection();
     const transport = new SignalRTransport(connection as never);

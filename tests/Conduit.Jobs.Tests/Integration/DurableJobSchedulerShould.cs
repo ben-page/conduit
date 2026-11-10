@@ -91,25 +91,25 @@ public class DurableJobSchedulerShould
     {
         // Arrange
         var timeProvider = new FakeTimeProvider(Start);
-        using var workstations = new WorkstationSpy();
+        using var summaries = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await JobsTestHost.StartAsync(
-            jobs => jobs.On<PunchChanged>("rebuild")
+            jobs => jobs.On<BadgeScanned>("rebuild")
                 .After(TimeSpan.FromSeconds(30))
-                .CoalesceBy(punch => punch.LocationId)
-                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+                .CoalesceBy(scan => scan.LocationId)
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
                 .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
             timeProvider: timeProvider,
             connectionString: database.ConnectionString,
-            workstationSpy: workstations);
-        await host.GetRequiredService<IMediator>().PublishAsync(new PunchChanged("loc-1", Start));
+            locationSummarySpy: summaries);
+        await host.GetRequiredService<IMediator>().PublishAsync(new BadgeScanned("loc-1", Start));
         await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
         // Act — the clock reaches the scope's due time, and no further
         await AdvanceInStepsAsync(timeProvider, TimeSpan.FromSeconds(30));
 
         // Assert
-        await workstations.WaitForCountAsync(1);
+        await summaries.WaitForCountAsync(1);
     }
 
     /// <summary>

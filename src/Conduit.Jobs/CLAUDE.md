@@ -584,7 +584,7 @@ that does not exist.
 `JobsTestHost` (awaits readiness before returning), `SharedSqliteDatabase` (several hosts, one
 database, as replicas of one application), `JobsDatabaseProbe` (ledger assertions), `JobSpy`,
 `RecordedJobHandler` (honours the spy's duration and failure script on the injected `TimeProvider`),
-`WorkstationSpy` (the coalescing tests' spy — `BlockUntilReleased` is what holds a run in flight
+`LocationSummarySpy` (the coalescing tests' spy — `BlockUntilReleased` is what holds a run in flight
 while a burst accumulates behind it) and `FakeClock.AdvanceUntilAsync` (loops re-arm
 asynchronously, so one large jump is not enough).
 

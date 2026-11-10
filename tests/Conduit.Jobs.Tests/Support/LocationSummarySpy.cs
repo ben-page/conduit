@@ -6,13 +6,13 @@ namespace Conduit.Jobs.Tests.Support;
 /// Records the scope each rebuild ran with. Separate from <see cref="JobSpy"/> because the coalescing
 /// tests assert on the merged payload a run received, not merely on how many ran.
 /// </summary>
-public sealed class WorkstationSpy : IDisposable
+public sealed class LocationSummarySpy : IDisposable
 {
-    private readonly ConcurrentQueue<RecomputeWorkstation> rebuilds = new();
+    private readonly ConcurrentQueue<RebuildLocationSummary> rebuilds = new();
     private readonly SemaphoreSlim gate = new(0);
 
     /// <summary>Every rebuild that began, in order.</summary>
-    public IReadOnlyList<RecomputeWorkstation> Rebuilds => [.. this.rebuilds];
+    public IReadOnlyList<RebuildLocationSummary> Rebuilds => [.. this.rebuilds];
 
     /// <summary>How many rebuilds began.</summary>
     public int Count => this.rebuilds.Count;
@@ -21,7 +21,7 @@ public sealed class WorkstationSpy : IDisposable
     public bool BlockUntilReleased { get; set; }
 
     /// <summary>Records a rebuild and, when blocking, waits for its release.</summary>
-    public async Task RecordAsync(RecomputeWorkstation command, CancellationToken cancellationToken)
+    public async Task RecordAsync(RebuildLocationSummary command, CancellationToken cancellationToken)
     {
         this.rebuilds.Enqueue(command);
 

@@ -7,8 +7,8 @@ namespace Conduit.TypeGen;
 /// Reads a closed set (<c>Conduit.Messages.IClosedSet&lt;TSelf&gt;</c> + <c>[ClosedSet(...)]</c>) from metadata. Both
 /// are matched by full NAME, never <c>typeof</c>, because TypeGen reflects under a <see cref="MetadataLoadContext"/>,
 /// where a <c>typeof</c> comparison is always false. The values come from the attribute because a MetadataLoadContext
-/// cannot run the static initializers that create the members (<c>FieldInfo.GetValue</c> throws there -- measured on
-/// DMS's <c>PermissionScope</c>, 2026-10-09).
+/// cannot run the static initializers that create the members (<c>FieldInfo.GetValue</c> throws there -- measured on a
+/// closed set loaded under a MetadataLoadContext).
 /// </summary>
 internal static class ClosedSetReader
 {

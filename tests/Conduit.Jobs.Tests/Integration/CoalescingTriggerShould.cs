@@ -21,15 +21,15 @@ public class CoalescingTriggerShould
     public async Task MergeABurstIntoOneScopeThatWidensTheWindow()
     {
         // Arrange — a delayed trigger, so nothing picks the scope up while the burst arrives
-        var spy = new WorkstationSpy();
+        var spy = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartDelayedHostAsync(database, new FakeTimeProvider(Start), spy);
         var mediator = host.GetRequiredService<IMediator>();
 
-        // Act — three punches at one workstation, arriving newest window first
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(10)));
+        // Act — three scans at one location, arriving newest window first
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(10)));
 
         // Assert — one scope, and the merge kept the EARLIEST window: widen, never narrow
         var scope = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
@@ -37,7 +37,7 @@ public class CoalescingTriggerShould
         scope.Version.Should().Be(2, "three events are one insert and two merges");
         scope.DueAt.Should().Be(Start.AddMinutes(30), "merging is leading-edge and never moves the due time");
 
-        var merged = JsonSerializer.Deserialize<RecomputeWorkstation>(
+        var merged = JsonSerializer.Deserialize<RebuildLocationSummary>(
             scope.Payload, ConduitRuntime.JsonOptions);
         merged!.From.Should().Be(Start.AddHours(8), "the merge keeps the earliest window: widen, never narrow");
 
@@ -49,14 +49,14 @@ public class CoalescingTriggerShould
     public async Task KeepScopesForDifferentKeysApart()
     {
         // Arrange
-        var spy = new WorkstationSpy();
+        var spy = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartDelayedHostAsync(database, new FakeTimeProvider(Start), spy);
         var mediator = host.GetRequiredService<IMediator>();
 
         // Act
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
-        await mediator.PublishAsync(new PunchChanged("loc-2", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-2", Start.AddHours(9)));
 
         // Assert — coalescing merges work that IS the same, and must not merge work that is not
         var store = JobsDatabaseProbe.StoreFor(database);
@@ -72,20 +72,20 @@ public class CoalescingTriggerShould
         // the publishing host's listeners, so each host merges its own event into the shared scope.
         var timeProvider = new FakeTimeProvider(Start);
         await using var database = SharedSqliteDatabase.Create();
-        await using var first = await StartDelayedHostAsync(database, timeProvider, new WorkstationSpy());
-        await using var second = await StartDelayedHostAsync(database, timeProvider, new WorkstationSpy());
+        await using var first = await StartDelayedHostAsync(database, timeProvider, new LocationSummarySpy());
+        await using var second = await StartDelayedHostAsync(database, timeProvider, new LocationSummarySpy());
 
         // Act — both hosts race on one coalesce key
         await Task.WhenAll(
-            first.GetRequiredService<IMediator>().PublishAsync(new PunchChanged("loc-1", Start.AddHours(9))),
-            second.GetRequiredService<IMediator>().PublishAsync(new PunchChanged("loc-1", Start.AddHours(8))));
+            first.GetRequiredService<IMediator>().PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9))),
+            second.GetRequiredService<IMediator>().PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8))));
 
         // Assert — a lost update here would NARROW the window, which loses work rather than merely
         // duplicating it. The survivor must be the merge of both, never either input alone.
         var scope = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
         scope.Version.Should().Be(1, "one host inserted and the other merged");
 
-        JsonSerializer.Deserialize<RecomputeWorkstation>(scope.Payload, ConduitRuntime.JsonOptions)!
+        JsonSerializer.Deserialize<RebuildLocationSummary>(scope.Payload, ConduitRuntime.JsonOptions)!
             .From.Should().Be(Start.AddHours(8), "whichever host won the insert, the earlier window survives");
     }
 
@@ -93,13 +93,13 @@ public class CoalescingTriggerShould
     public async Task RunAnImmediateCoalescingTriggerOnTheReceivingHost()
     {
         // Arrange
-        var spy = new WorkstationSpy();
+        var spy = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartImmediateHostAsync(database, new FakeTimeProvider(Start), spy);
 
         // Act
         await host.GetRequiredService<IMediator>()
-            .PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+            .PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
 
         // Assert — latency matters: the host that received the event runs it, without waiting a sweep
         await spy.WaitForCountAsync(1);
@@ -110,24 +110,24 @@ public class CoalescingTriggerShould
     public async Task ParkASecondScopeForEventsArrivingDuringARun()
     {
         // Arrange — the first rebuild blocks, so the burst behind it has somewhere to accumulate
-        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        var spy = new LocationSummarySpy { BlockUntilReleased = true };
         var timeProvider = new FakeTimeProvider(Start);
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartImmediateHostAsync(database, timeProvider, spy);
         var mediator = host.GetRequiredService<IMediator>();
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
         await spy.WaitForCountAsync(1);
 
-        // Act — three more punches while the first rebuild is in flight
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(7)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(11)));
+        // Act — three more scans while the first rebuild is in flight
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(7)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(11)));
 
         // Assert — a claimed run's scope is fixed, so the three form ONE new scope, not three runs
         var scope = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
         scope.Version.Should().Be(2);
-        JsonSerializer.Deserialize<RecomputeWorkstation>(scope.Payload, ConduitRuntime.JsonOptions)!
+        JsonSerializer.Deserialize<RebuildLocationSummary>(scope.Payload, ConduitRuntime.JsonOptions)!
             .From.Should().Be(Start.AddHours(7));
 
         spy.Count.Should().Be(1, "the second run starts only once the first releases");
@@ -158,7 +158,7 @@ public class CoalescingTriggerShould
         {
             JobKey = "rebuild@loc-1",
             ScheduleName = "rebuild",
-            MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
+            MessageType = "Conduit.Jobs.Tests.Support.RebuildLocationSummary",
             Payload = """{"locationId":"loc-1"}""",
             RunAt = Start,
             Status = JobRunStatus.Pending,
@@ -190,7 +190,7 @@ public class CoalescingTriggerShould
             {
                 JobKey = "rebuild@loc-1",
                 ScheduleName = "rebuild",
-                MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
+                MessageType = "Conduit.Jobs.Tests.Support.RebuildLocationSummary",
                 Payload = """{"locationId":"loc-1","from":"2026-08-25T10:59:00+00:00"}""",
                 RunAt = Start,
             },
@@ -203,12 +203,12 @@ public class CoalescingTriggerShould
 
         // Blocked, so the assertion below observes the new run in flight rather than racing its own
         // completion — CompleteAsync deletes the row on success, which would make "gone" ambiguous.
-        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        var spy = new LocationSummarySpy { BlockUntilReleased = true };
         await using var host = await StartImmediateHostAsync(database, new FakeTimeProvider(Start), spy);
 
         // Act — a different unit of work arrives for the same coalesce key
         await host.GetRequiredService<IMediator>()
-            .PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+            .PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
 
         // Assert — the exhausted occurrence must not stall a scope that is different work
         await spy.WaitForCountAsync(1);
@@ -235,13 +235,13 @@ public class CoalescingTriggerShould
     {
         // Arrange
         var timeProvider = new FakeTimeProvider(Start);
-        var spy = new WorkstationSpy();
+        var spy = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartDelayedHostAsync(database, timeProvider, spy);
         var mediator = host.GetRequiredService<IMediator>();
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8)));
         await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
         // Act — the sweep, not the publishing host, is what eventually runs it
@@ -259,17 +259,17 @@ public class CoalescingTriggerShould
         // Arrange — leading edge. Trailing edge would let a steady stream starve the run forever,
         // and the merge already widens the scope so the run still covers everything.
         var timeProvider = new FakeTimeProvider(Start);
-        var spy = new WorkstationSpy();
+        var spy = new LocationSummarySpy();
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartDelayedHostAsync(database, timeProvider, spy);
         var mediator = host.GetRequiredService<IMediator>();
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
         var opened = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
         // Act
         timeProvider.Advance(TimeSpan.FromMinutes(10));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8)));
 
         // Assert
         var merged = await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
@@ -284,16 +284,16 @@ public class CoalescingTriggerShould
         // while the first still holds the coalesce key, so the sweep is what eventually starts it:
         // one in flight and one accumulating, never one run per event.
         var timeProvider = new FakeTimeProvider(Start);
-        var spy = new WorkstationSpy { BlockUntilReleased = true };
+        var spy = new LocationSummarySpy { BlockUntilReleased = true };
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartImmediateHostAsync(database, timeProvider, spy);
         var mediator = host.GetRequiredService<IMediator>();
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(9)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(9)));
         await spy.WaitForCountAsync(1);
 
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(8)));
-        await mediator.PublishAsync(new PunchChanged("loc-1", Start.AddHours(7)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(8)));
+        await mediator.PublishAsync(new BadgeScanned("loc-1", Start.AddHours(7)));
         await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
         // Act
@@ -327,7 +327,7 @@ public class CoalescingTriggerShould
                 ScopeKey = "rebuild@loc-1",
                 ScopeId = Guid.NewGuid().ToString("N"),
                 TriggerName = "rebuild",
-                MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
+                MessageType = "Conduit.Jobs.Tests.Support.RebuildLocationSummary",
                 Payload = """{"locationId":"loc-1","from":"2026-08-26T10:59:00+00:00"}""",
                 DueAt = Start.AddHours(1),
                 Version = 0,
@@ -335,7 +335,7 @@ public class CoalescingTriggerShould
             CancellationToken.None);
 
         await using var host = await StartDelayedHostAsync(
-            database, new FakeTimeProvider(Start), new WorkstationSpy());
+            database, new FakeTimeProvider(Start), new LocationSummarySpy());
 
         var coalescer = new ScopeCoalescer(
             new ContendedJobStore(real),
@@ -346,7 +346,7 @@ public class CoalescingTriggerShould
         // Act
         var merge = async () => await coalescer.MergeAsync(
             CoalescingTrigger(),
-            new PunchChanged("loc-1", Start.AddHours(8)),
+            new BadgeScanned("loc-1", Start.AddHours(8)),
             Start,
             CancellationToken.None);
 
@@ -363,42 +363,42 @@ public class CoalescingTriggerShould
     private static JobTrigger CoalescingTrigger()
         => new(
             "rebuild",
-            typeof(PunchChanged),
+            typeof(BadgeScanned),
             delay: TimeSpan.FromMinutes(30),
             maxRuntime: null,
-            createCommand: instance => ToCommand((PunchChanged)instance),
-            coalesceKey: instance => ((PunchChanged)instance).LocationId,
-            commandType: typeof(RecomputeWorkstation))
+            createCommand: instance => ToCommand((BadgeScanned)instance),
+            coalesceKey: instance => ((BadgeScanned)instance).LocationId,
+            commandType: typeof(RebuildLocationSummary))
         {
             Merge = (pending, incoming) =>
-                ((RecomputeWorkstation)pending).From <= ((RecomputeWorkstation)incoming).From
+                ((RebuildLocationSummary)pending).From <= ((RebuildLocationSummary)incoming).From
                     ? pending
                     : incoming,
         };
 
-    private static RecomputeWorkstation ToCommand(PunchChanged punch)
-        => new(punch.LocationId, punch.From);
+    private static RebuildLocationSummary ToCommand(BadgeScanned scan)
+        => new(scan.LocationId, scan.From);
 
     private static Task<TestHost> StartDelayedHostAsync(
-        SharedSqliteDatabase database, FakeTimeProvider timeProvider, WorkstationSpy spy)
+        SharedSqliteDatabase database, FakeTimeProvider timeProvider, LocationSummarySpy spy)
         => JobsTestHost.StartAsync(
-            jobs => jobs.On<PunchChanged>("rebuild")
+            jobs => jobs.On<BadgeScanned>("rebuild")
                 .After(TimeSpan.FromMinutes(30))
-                .CoalesceBy(punch => punch.LocationId)
-                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+                .CoalesceBy(scan => scan.LocationId)
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
                 .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
             timeProvider: timeProvider,
             connectionString: database.ConnectionString,
-            workstationSpy: spy);
+            locationSummarySpy: spy);
 
     private static Task<TestHost> StartImmediateHostAsync(
-        SharedSqliteDatabase database, FakeTimeProvider timeProvider, WorkstationSpy spy)
+        SharedSqliteDatabase database, FakeTimeProvider timeProvider, LocationSummarySpy spy)
         => JobsTestHost.StartAsync(
-            jobs => jobs.On<PunchChanged>("rebuild")
-                .CoalesceBy(punch => punch.LocationId)
-                .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+            jobs => jobs.On<BadgeScanned>("rebuild")
+                .CoalesceBy(scan => scan.LocationId)
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
                 .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
             timeProvider: timeProvider,
             connectionString: database.ConnectionString,
-            workstationSpy: spy);
+            locationSummarySpy: spy);
 }

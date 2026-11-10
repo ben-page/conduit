@@ -1343,7 +1343,7 @@ public abstract class PersistenceEngineTestBase
         ScopeKey = scopeKey,
         ScopeId = scopeId,
         TriggerName = "rebuild",
-        MessageType = "Tests.RecomputeWorkstation",
+        MessageType = "Tests.RebuildLocationSummary",
         Payload = "{}",
         DueAt = dueAt,
         Version = 0,

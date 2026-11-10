@@ -10,7 +10,7 @@ namespace Conduit.Persistence.IntegrationTests;
 /// Runs the full persistence integration matrix on SQL Server sessions that carry Snapshot, the level a host's
 /// own transactions leave behind on a pooled session. Every Conduit SQL Server statement holds at the Snapshot
 /// level a pooled session may carry; a statement that depends on the session's level fails here, not in a
-/// host (DMS-6190). Serializable (for example a <c>TransactionScope</c> host's default) is covered for the
+/// host. Serializable (for example a <c>TransactionScope</c> host's default) is covered for the
 /// claims only, by <see cref="SqlServerClaimIsolationShould"/>. It reuses the container
 /// <see cref="SqlServerContainer"/> holds.
 /// </summary>
