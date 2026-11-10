@@ -230,6 +230,38 @@ public class TypeShapesShould
             .And.NotContain("audit");
     }
 
+    // System.Text.Json writes a [JsonPolymorphic] type's discriminator first, under the name given verbatim (no naming
+    // policy), so the base carries the union of its discriminators and each derived type narrows it to its own.
+    [TestMethod]
+    public void EmitAJsonPolymorphicDiscriminatorOnTheBaseAndEachDerivedType()
+    {
+        // Act
+        var generated = Generated.Value;
+
+        // Assert
+        InterfaceBlock(generated, "export interface ShapeFigure {").Should()
+            .Contain("  kind?: 'circle' | 'square';",
+                "the derived types' discriminators, though the C# Kind is [JsonIgnore]d; optional, since a blob has none")
+            .And.Contain("  label: string;");
+        InterfaceBlock(generated, "export interface ShapeCircle extends ShapeFigure {").Should().Contain("  kind: 'circle';");
+        InterfaceBlock(generated, "export interface ShapeSquare extends ShapeFigure {").Should().Contain("  kind: 'square';");
+        InterfaceBlock(generated, "export interface ShapeBlob extends ShapeFigure {").Should().NotContain("kind",
+            "a derived type registered without a discriminator is written with none");
+    }
+
+    [TestMethod]
+    public void EmitTheDefaultDiscriminatorAndAnIntegerDiscriminatorAsANumber()
+    {
+        // Act
+        var generated = Generated.Value;
+
+        // Assert
+        InterfaceBlock(generated, "export interface ShapeStep {").Should().Contain("  $type: 1 | 2;",
+            "STJ's default name, an identifier as it stands; required, since the base is abstract and every derived type has one");
+        InterfaceBlock(generated, "export interface ShapeFirstStep extends ShapeStep {").Should().Contain("  $type: 1;");
+        InterfaceBlock(generated, "export interface ShapeLastStep extends ShapeStep {").Should().Contain("  $type: 2;");
+    }
+
     [TestMethod]
     public void EmitAJsonStringEnumMemberNameAsTheLiteral() =>
         InterfaceBlock(Generated.Value, "export interface ShapeJsonMarks {").Should().Contain("  status: 'in-progress' | 'Done';");

@@ -18,6 +18,10 @@ The first public preview. The entries below are the changes since the earlier, u
 
 ### Added
 
+- TypeGen emits a `[JsonPolymorphic]` type's discriminator, which System.Text.Json writes though no property declares
+  it: the base carries the union of its derived types' discriminators (`kind: 'circle' | 'square'`), optional when an
+  instance can arrive without one, and each derived type its own (`kind: 'circle'`). Before, a discriminator whose C#
+  property is `[JsonIgnore]`d, as STJ requires, was missing from the generated interface.
 - `IInboundFailureObserver` (`Conduit.Runtime`): the HTTP wire endpoint and the SignalR hub tell every registered
   observer of a dispatch that failed unexpectedly (an `InternalError` answer, a listener's failure, a failure outside
   the listeners) before they answer it. Never a refusal.

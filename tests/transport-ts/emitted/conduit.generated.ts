@@ -92,6 +92,11 @@ export interface ShapeOrderBook {
   customers: PagedResult<ShapeCustomer>;
 }
 
+export interface ShapeDrawing {
+  figures: ShapeFigure[];
+  steps: ShapeStep[];
+}
+
 export interface ShapeScalars {
   sequence: number;
   port: number;
@@ -291,6 +296,15 @@ export interface ShapeCustomer {
   name: string;
 }
 
+export interface ShapeFigure {
+  kind?: 'circle' | 'square';
+  label: string;
+}
+
+export interface ShapeStep {
+  $type: 1 | 2;
+}
+
 export interface ShapeTag {
   label: string;
 }
@@ -333,6 +347,30 @@ export interface ShapeShipment {
 
 export interface ShapeVote {
   count: number;
+}
+
+export interface ShapeCircle extends ShapeFigure {
+  kind: 'circle';
+  radius: number;
+}
+
+export interface ShapeSquare extends ShapeFigure {
+  kind: 'square';
+  side: number;
+}
+
+export interface ShapeBlob extends ShapeFigure {
+  points: number;
+}
+
+export interface ShapeFirstStep extends ShapeStep {
+  $type: 1;
+  start: string;
+}
+
+export interface ShapeLastStep extends ShapeStep {
+  $type: 2;
+  end: string;
 }
 
 export interface PostedEntry extends LedgerEntryBase {

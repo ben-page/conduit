@@ -46,7 +46,13 @@
   full name from `CustomAttributeData`: `[JsonPropertyName]` is the key (`ToTsPropertyKey` quotes a non-identifier,
   `'x-trace'`), `[JsonIgnore]` (Condition `Always`, the default) omits the property, a conditional one
   (`WhenWritingNull`/`WhenWritingDefault`/`WhenWriting`/`WhenReading`) makes it optional (`note?:`), `Never` changes
-  nothing; `[JsonStringEnumMemberName]` and `[Flags]` as above. Applied by `MergeFileEmitter.EmitInterface`, and
+  nothing; `[JsonStringEnumMemberName]` and `[Flags]` as above; `[JsonPolymorphic]`/`[JsonDerivedType]` on a type
+  (`PolymorphismOf`; either alone makes it polymorphic, as for STJ) put the discriminator first
+  (`MergeFileEmitter.DiscriminatorLine`): the base's key as the union of its derived types' literals, optional unless
+  the base is abstract and every derived type has a discriminator, and each derived type's key narrowed to its own, so
+  `extends` holds. The key is the given name verbatim (STJ applies no naming policy to it), `$type` by default; it is
+  usually a C# property that must be `[JsonIgnore]`d, so only the attributes say it is on the wire (GtlHmi's
+  `PidControlBase.controlType`). Applied by `MergeFileEmitter.EmitInterface`, and
   `TypeCollector.EnqueuePropertyTypes` does not walk an always-ignored property (never on the wire: a navigation or
   service property's type must not get an interface, nor collide by short name); a conditional one is walked. Not
   applied to error types: their data keys come from `ConduitException.GetClientData`, which camelCases property names

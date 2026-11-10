@@ -244,7 +244,8 @@ public static class MergeFileEmitter
     /// Emits one interface: its properties keyed and typed as <c>System.Text.Json</c> writes them with
     /// <c>ConduitRuntime.JsonOptions</c> -- a <c>[JsonPropertyName]</c> is the key (quoted when it is not an identifier),
     /// else the camelCased name; a <c>[JsonIgnore]</c> property is left out, and one ignored only conditionally
-    /// (<c>WhenWritingNull</c>, ...) is optional.
+    /// (<c>WhenWritingNull</c>, ...) is optional. A <c>[JsonPolymorphic]</c> type's discriminator comes first, as
+    /// <c>System.Text.Json</c> writes it (<see cref="DiscriminatorLine"/>).
     /// </summary>
     /// <returns>The TypeScript interface name this emitted (<c>PagedResult&lt;T&gt;</c> for a generic type).</returns>
     private static string EmitInterface(StringBuilder sb, string typeName, Type? type, string? baseTypeName = null)
@@ -259,6 +260,11 @@ public static class MergeFileEmitter
 
         if (type != null)
         {
+            if (DiscriminatorLine(type) is { } discriminator)
+            {
+                sb.Append(CultureInfo.InvariantCulture, $"  {discriminator}").AppendLine();
+            }
+
             var bindingFlags = string.IsNullOrEmpty(baseTypeName)
                 ? BindingFlags.Public | BindingFlags.Instance
                 : BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
@@ -286,6 +292,35 @@ public static class MergeFileEmitter
 
         sb.AppendLine("}");
         return tsName;
+    }
+
+    /// <summary>
+    /// The discriminator member <paramref name="type"/> carries on the wire, or <see langword="null"/>: on a polymorphic
+    /// base, its key typed as the union of its derived types' discriminators (<c>kind: 'circle' | 'square';</c>), optional
+    /// when an instance can arrive without it (the base is not abstract, or a derived type has no discriminator); on a type
+    /// a polymorphic ancestor registers with a discriminator, the same key narrowed to its own (<c>kind: 'circle';</c>),
+    /// which the base's union accepts, so <c>extends</c> holds. The key is often a C# property that must be
+    /// <c>[JsonIgnore]</c>d (it would conflict with the metadata), so only the attributes say it is there.
+    /// </summary>
+    private static string? DiscriminatorLine(Type type)
+    {
+        if (JsonMarks.PolymorphismOf(type) is { Discriminators.Count: > 0 } own)
+        {
+            var literals = own.Discriminators.Select(d => d.Literal).Distinct(StringComparer.Ordinal);
+            var optional = !type.IsAbstract || own.HasUndiscriminatedDerivedType ? "?" : string.Empty;
+            return $"{JsonMarks.ToTsPropertyKey(own.PropertyName)}{optional}: {string.Join(" | ", literals)};";
+        }
+
+        for (var ancestor = type.BaseType; ancestor is not null; ancestor = ancestor.BaseType)
+        {
+            if (JsonMarks.PolymorphismOf(ancestor) is { } inherited
+                && inherited.Discriminators.FirstOrDefault(d => d.DerivedFullName == type.FullName) is { Literal: { } literal })
+            {
+                return $"{JsonMarks.ToTsPropertyKey(inherited.PropertyName)}: {literal};";
+            }
+        }
+
+        return null;
     }
 
     /// <summary>TS name for a generic type definition: <c>PagedResult`1</c> → <c>PagedResult&lt;T&gt;</c>.</summary>

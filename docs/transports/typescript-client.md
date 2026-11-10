@@ -325,6 +325,7 @@ The wire honors these, so the generated interfaces do too:
 | `[JsonIgnore]` | left out, and the type behind it is not discovered through it |
 | `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]` (or `WhenWritingDefault`, `WhenWriting`, `WhenReading`) | optional (`note?: string \| null`), since the key is missing in one direction or for some values |
 | `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]` | unchanged |
+| `[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]` with `[JsonDerivedType(typeof(Circle), "circle")]`, ... on a type | the base carries the discriminator as the union of its derived types' (`kind: 'circle' \| 'square'`), each derived type its own (`kind: 'circle'`). The key is the name given, verbatim (`$type` by default); an integer discriminator is a number. The base's key is optional when an instance can arrive without it: the base is not abstract, or a derived type is registered with no discriminator |
 
 `[JsonStringEnumMemberName]` and `[Flags]` change an enum's type as the table above says. Put `[JsonPropertyName]` and
 `[JsonIgnore]` on the property, as System.Text.Json reads them: on a positional record that is

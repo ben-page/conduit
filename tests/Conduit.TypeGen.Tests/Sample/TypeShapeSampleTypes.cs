@@ -28,6 +28,42 @@ public sealed record ShapeOrderBook(string Owner, PagedResult<ShapeOrder> Orders
 [ClientVisible]
 public sealed record ListShapeCustomersQuery(int Page) : IQuery<PagedResult<ShapeCustomer>>;
 
+// --- [JsonPolymorphic]: System.Text.Json writes the discriminator itself, so the base and each derived type carry it. ---
+
+// A named discriminator, string-valued. The C# property of the same name is [JsonIgnore]d, as STJ requires (a property
+// named like the discriminator conflicts with its metadata), so only the attributes say the key is on the wire.
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(ShapeCircle), "circle")]
+[JsonDerivedType(typeof(ShapeSquare), "square")]
+[JsonDerivedType(typeof(ShapeBlob))]
+public abstract record ShapeFigure
+{
+    [JsonIgnore]
+    public string Kind { get; init; } = string.Empty;
+
+    public string Label { get; init; } = string.Empty;
+}
+
+public sealed record ShapeCircle(double Radius) : ShapeFigure;
+
+public sealed record ShapeSquare(double Side) : ShapeFigure;
+
+// Registered without a discriminator: STJ writes it with no "kind", so it carries no literal of its own.
+public sealed record ShapeBlob(int Points) : ShapeFigure;
+
+// The default discriminator name ("$type") and integer discriminators.
+[JsonPolymorphic]
+[JsonDerivedType(typeof(ShapeFirstStep), 1)]
+[JsonDerivedType(typeof(ShapeLastStep), 2)]
+public abstract record ShapeStep;
+
+public sealed record ShapeFirstStep(string Start) : ShapeStep;
+
+public sealed record ShapeLastStep(string End) : ShapeStep;
+
+[ClientVisible]
+public sealed record ShapeDrawing(IReadOnlyList<ShapeFigure> Figures, IReadOnlyList<ShapeStep> Steps);
+
 // --- A generic wrapper reached only as a result: emitted as its definition, not stripped to its argument. ---
 
 public sealed record Envelope<T>(T Payload, DateTimeOffset IssuedAt);
