@@ -17,7 +17,7 @@
 - [Browsing and filtering](#browsing-and-filtering)
 - [Metadata](#metadata)
 - [Replay by transport](#replay-by-transport)
-- [Why database-backed only (for now)](#why-database-backed-only-for-now)
+- [The broker's own dead-letter queue](#the-brokers-own-dead-letter-queue)
 - [Limitations](#limitations)
 
 ## Why use a dead letter queue?
@@ -44,7 +44,7 @@ You may not need it when:
 
 ## How it works
 
-The dead letter queue has four operations: **capture**, **browse**, **replay**, and **discard**. It is backed by a database (the same database the outbox and inbox use). See [Why database-backed only](#why-database-backed-only-for-now) for the reasoning.
+The dead letter queue has four operations: **capture**, **browse**, **replay**, and **discard**. It is backed by a database (the same database the outbox and inbox use), not by a broker's own dead-letter queue (see [The broker's own dead-letter queue](#the-brokers-own-dead-letter-queue)).
 
 ### Capture
 
@@ -60,12 +60,12 @@ What counts is what could not be handled, never what was refused. The last colum
 |---|---|---|
 | The message fails **before dispatch**: its body is not JSON, or its DI scope or the mediator cannot be built | Yes | Acknowledged, logged at Error: it never reached a handler, and a redelivery would fail the same way, forever |
 | An **event this host cannot read**: valid JSON its type cannot read (a wrong-typed field, a JSON `null`), or a type it does not know (`BadRequestException`, `ContractMismatchException`) | Yes | Acknowledged, logged at Warning as a refused event, for the same reason |
-| An event listener throws | Yes | Abandoned: RabbitMQ rejects it to the system's [dead-letter exchange](transports/rabbitmq.md#failed-messages); Amazon SQS delivers it again a visibility timeout later, and moves it to the queue's [dead-letter queue](transports/amazon-sqs.md#failed-messages) after `MaxReceiveCount` deliveries; the other brokers redeliver it per their own configuration |
+| An event listener throws | Yes | Abandoned: RabbitMQ rejects it to the system's [dead-letter exchange](transports/rabbitmq.md#failure-handling); Amazon SQS delivers it again a visibility timeout later, and moves it to the queue's [dead-letter queue](transports/amazon-sqs.md#failure-handling) after `MaxReceiveCount` deliveries; the other brokers redeliver it per their own configuration |
 | An event's dispatch fails **outside its listeners**: a pipeline behavior throws, a listener cannot be resolved, or a gate (the inbox whose database is down) throws an exception that is not a `ConduitException` | Yes, the original exception with the support reference it was logged under in `Reference` | Abandoned, as when a listener throws (an HTTP or SignalR publisher is answered `InternalError` instead) |
 | A request's handler fails **unexpectedly** (the caller is answered `InternalError`) | Yes, with the answer's support reference in `Reference` | Acknowledged: the caller already has its error reply |
 | A request is **refused**: the handler (or a gate, or a translator) throws a `ConduitException` — `NotFoundException` (404), `ConflictException` (409), `PreconditionFailedException` (412), `ForbiddenException`, `BadRequestException`, ... | No: a refusal is the handler's answer, already delivered to the caller, and a replay would be refused again | Acknowledged |
 | An event is **refused by a gate**: the type filter's `ForbiddenException`, or another gate's refusal that is not a bad request | No: a replay would be refused again | Acknowledged |
-| A `[FireAndForget]` command's handler fails **unexpectedly** (its result is `InternalError`): no caller is waiting to hear it | Yes, with its support reference in `Reference` | Abandoned, as an event whose listener throws is, so its handler runs again until the broker dead-letters it: RabbitMQ rejects it once to the [dead-letter exchange](transports/rabbitmq.md#failed-messages); ActiveMQ redelivers it up to `max-delivery-attempts` (10) with no delay; Azure Service Bus redelivers it at once up to the entity's maximum delivery count (10); Amazon SQS delivers it again a visibility timeout apart up to `MaxReceiveCount` (5). A handler with side effects should be idempotent, or the host should configure this dead-letter queue, so the first failure is captured and the broker does not redeliver it. The [inbox](inbox.md) does not stop the repeats: it discards a redelivery only of a dispatch that succeeded, and releases a failed one so it runs again |
+| A `[FireAndForget]` command's handler fails **unexpectedly** (its result is `InternalError`): no caller is waiting to hear it | Yes, with its support reference in `Reference` | Abandoned, as an event whose listener throws is, so its handler runs again until the broker dead-letters it: RabbitMQ rejects it once to the [dead-letter exchange](transports/rabbitmq.md#failure-handling); ActiveMQ redelivers it up to `max-delivery-attempts` (10) with no delay; Azure Service Bus redelivers it at once up to the entity's maximum delivery count (10); Amazon SQS delivers it again a visibility timeout apart up to `MaxReceiveCount` (5). A handler with side effects should be idempotent, or the host should configure this dead-letter queue, so the first failure is captured and the broker does not redeliver it. The [inbox](inbox.md) does not stop the repeats: it discards a redelivery only of a dispatch that succeeded, and releases a failed one so it runs again |
 | A `[FireAndForget]` command is a **bad request**: valid JSON its type cannot read (`ContractMismatchException`, `BadRequestException`), or any other `BadRequestException` refusal, a failed validation among them | Yes | Acknowledged: a redelivery would fail the same way |
 | A `[FireAndForget]` command is **refused** otherwise: the handler (or a gate, or a translator) throws a `ConduitException` — the type filter's `ForbiddenException`, `NotFoundException`, `ConflictException`, ... | No: a replay would be refused again | Acknowledged, logged once at Warning (`FireAndForgetCommandRefused`, naming the type and the code), since no caller is waiting for the refusal |
 
@@ -106,14 +106,14 @@ The dead letter table (`conduit_dead_letters`) is created automatically on start
 
 ### Database dialects
 
-The dialect is the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, audit trail, and jobs alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
+The dialect is the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, audit trail, and jobs alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.NET.Persistence.*` package that supplies the ADO.NET driver:
 
 | Engine package | Method |
 |---|---|
-| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
-| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
-| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
-| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
+| `Conduit.NET.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
+| `Conduit.NET.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
+| `Conduit.NET.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
+| `Conduit.NET.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
 
 The engine package carries the provider reference, so no generic connection-type parameter is needed.
 
@@ -229,14 +229,14 @@ Every dead-lettered message carries:
 | `MessageId` | Original MessageContext.MessageId |
 | `CausationId` | Original MessageContext.CausationId |
 | `ConversationId` | Original MessageContext.ConversationId |
-| `AttemptCount` | Number of times this message has been dead-lettered |
+| `AttemptCount` | Always 1. A replay that fails again is captured as a new entry, with an `Id` of its own and the same `MessageId` |
 | `DeadLetteredAt` | When the message was captured, by the host's `TimeProvider` ([the clock](persistence.md#the-clock)); read back in UTC |
 
 ## Replay by transport
 
 Replay re-publishes through the source transport's `RedeliverAsync`, which targets the service's inbound queue directly so any available instance picks the message up.
 
-Every broker `RedeliverAsync` deliberately skips the base class's outbound header assembly: its metadata is the original correlation ids only, mapped onto the broker's native properties as any publish maps them, so a replayed message carries **no** `conduit-source-app` stamp. This is load-bearing: stamping the replaying host's `ApplicationName` would make the [self-published event filter](transports/index.md#self-published-events) drop the replayed event the moment it arrived back, silently voiding the replay. Do not "unify" replay onto the normal send path without addressing that.
+A broker replay carries the original correlation ids and nothing else in the broker's native properties, so it has no publishing-application stamp: the [self-published event filter](transports/index.md#self-published-events) never drops a replayed event, even when the host that replays it is the one that published it.
 
 | Transport | Redeliver mechanism |
 |---|---|
@@ -244,24 +244,16 @@ Every broker `RedeliverAsync` deliberately skips the base class's outbound heade
 | **RabbitMQ** | Publishes to the app queue via the default exchange (routing key = queue name). |
 | **Amazon SQS** | `SendMessage` directly to the app queue URL. |
 | **ActiveMQ Artemis** | Sends by fully qualified name (`address::queue`) to the queue the app takes the type from: a command's shared (or pool) queue on the anycast address, an event's app (or pool) queue on the multicast address. Every queue filters to its own types, so the queue matters. |
-| **HTTP** | POST to the dispatch/publish endpoint, with the current context's ids, not the original ones. |
-| **SignalR** | Invokes the hub's `Dispatch`/`Publish` method, with the current context's ids, not the original ones. |
+| **HTTP** | POSTs an event to the remote host's `/publish` endpoint and anything else to its `/dispatch` endpoint, with the current context's ids, not the original ones. An `HttpTransport` built by hand without the host's type registry sends everything to `/dispatch`. |
+| **SignalR** | Client mode invokes the remote hub's `Publish` (an event) or `Dispatch` (anything else), with the current context's ids, not the original ones. Server mode cannot redeliver: `RedeliverAsync` throws `NotSupportedException`. |
 
 Only broker transports capture dead letters, so a dead-letter replay always goes through one of the first four; the HTTP and SignalR rows describe `RedeliverAsync` called directly.
 
-## Why database-backed only (for now)
+## The broker's own dead-letter queue
 
-The DLQ has a single backing store: the Conduit database. We evaluated also wrapping each broker's *native* dead letter facility (ASB `/$DeadLetterQueue`, RabbitMQ dead-letter exchanges, SQS redrive, ActiveMQ DLA) as an alternative store, and decided against it **for now**. The deciding factors:
+Conduit's dead letter queue stores entries in the database only. It does not browse, replay or write to a broker's own dead-letter facility (Azure Service Bus's `$DeadLetterQueue`, a RabbitMQ dead-letter exchange, an SQS redrive queue, an ActiveMQ dead-letter address): one database store works with every transport and gives the same query, filter, count and replay everywhere.
 
-- **Non-uniform, fragile browsing.** Non-destructive browse needs a different mechanism per broker — ASB `PeekMessagesAsync` (clean), RabbitMQ via the Management HTTP API or `basic.get` + `nack(requeue)`, SQS via `ReceiveMessage` with `VisibilityTimeout=0`, ActiveMQ via a management `browse`. Several only offer approximate pagination.
-- **Best-effort filtering.** Only a SQL store can apply arbitrary filters server-side. Broker-native browsing filters client-side over peeked pages.
-- **No reliable counts.** Most brokers can't return a total count without consuming the queue.
-- **Racy removal/replay.** Pulling one specific message out of a broker DLQ (receive-by-handle/sequence + ack) isn't transactional and races with concurrent browsers.
-- **It duplicates the database store unevenly.** The database store already works with every transport (including HTTP and SignalR) and gives full query, filter, count, and replay. Broker-native would add per-transport topology and three operations (write/query/remove) × four brokers for a strictly worse, inconsistent browse experience.
-
-This isn't a permanent exclusion — broker-native capture could be added later as an additive per-transport option if a strong use case appears (e.g. avoiding a database dependency entirely). Today the cost/inconsistency isn't worth it.
-
-Note that the broker's own DLQ still functions as an infrastructure safety net: if you don't enable Conduit's DLQ, failed messages are abandoned and the broker redelivers (and dead-letters) per its own configuration — Conduit just doesn't browse or replay through it. RabbitMQ has no redelivery limit on a classic queue, so its transport dead-letters an abandoned message at once, to the `{system}-dead-letter` exchange and queue it declares (see [Failed messages](transports/rabbitmq.md#failed-messages)). SQS dead-letters only through a queue's redrive policy, so its transport gives every queue it consumes a dead-letter queue, `{queue}-dlq`, and a redrive policy to it (see [Failed messages](transports/amazon-sqs.md#failed-messages)).
+The broker's own dead-letter queue still works as an infrastructure safety net: if you don't enable Conduit's DLQ, failed messages are abandoned and the broker redelivers (and dead-letters) per its own configuration — Conduit just doesn't browse or replay through it. RabbitMQ has no redelivery limit on a classic queue, so its transport dead-letters an abandoned message at once, to the `{system}-dead-letter` exchange and queue it declares (see [Failed messages](transports/rabbitmq.md#failure-handling)). SQS dead-letters only through a queue's redrive policy, so its transport gives every queue it consumes a dead-letter queue, `{queue}-dlq`, and a redrive policy to it (see [Failed messages](transports/amazon-sqs.md#failure-handling)).
 
 ## Limitations
 

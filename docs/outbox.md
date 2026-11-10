@@ -15,7 +15,7 @@
 - [What gets captured](#what-gets-captured)
 - [The Immediate escape hatch](#the-immediate-escape-hatch)
 - [Publishing after the pipeline](#publishing-after-the-pipeline)
-- [Immediate send](#immediate-send)
+- [Post-commit flush](#post-commit-flush)
 - [Limitations](#limitations)
 
 ## Why use an outbox?
@@ -86,7 +86,7 @@ Handler executes (in managed transaction)
   ├── Business data written to DB
   ├── Handler calls PublishAsync(event) or a routed [FireAndForget] command
   │     → IOutboundInterceptor.Intercept(envelope) offered first (skipped entirely for
-  │       Immediate messages — see "The Immediate escape hatch")
+  │       [FireAndForget(Immediate = true)] messages — see "The Immediate escape hatch")
   │       - ambient transaction present → captured (true): local dispatch
   │         (events only — routed commands have no local step to skip) AND
   │         the transport send are both skipped here; the outbox delivers
@@ -99,7 +99,7 @@ Handler executes (in managed transaction)
   └── Transaction commits (business data + outbox entries, atomic)
 
 The delivery IOutboxFlusher.FlushAsync schedules on the background dispatcher (optional —
-"Immediate send" below; the caller never waits for it) and OutboxRelay (background service —
+"Post-commit flush" below; the caller never waits for it) and OutboxRelay (background service —
 safety net) apply one per-entry delivery contract:
   ├── Local listeners first, from a fresh DI scope (redelivery-safe — see below)
   ├── Then the transport send
@@ -116,11 +116,11 @@ local-then-transport delivery contract in detail.
 
 ## Setup
 
-Add the `Conduit.Durability` package and configure inside `AddConduit`. The persistence engine is registered once on the `ConduitBuilder` (shared with the inbox, DLQ, audit trail, and jobs), then `AddOutbox()` enables the outbox on it:
+Add the `Conduit.NET.Durability` package and configure inside `AddConduit`. The persistence engine is registered once on the `ConduitBuilder` (shared with the inbox, DLQ, audit trail, and jobs), then `AddOutbox()` enables the outbox on it:
 
 ```xml
-<PackageReference Include="Conduit.Durability" />
-<PackageReference Include="Conduit.Persistence.Sqlite" />
+<PackageReference Include="Conduit.NET.Durability" />
+<PackageReference Include="Conduit.NET.Persistence.Sqlite" />
 ```
 
 ```csharp
@@ -182,27 +182,27 @@ builder.Services.AddScoped<IConduitConnectionFactory, AppDurabilityConnectionFac
 
 ## Database dialects
 
-Each `Use*` method registers the appropriate SQL dialect and connection factory. Claiming is **atomic**: a single `UPDATE` transitions pending rows to a `Claiming` status tagged with a per-worker token, so a row can be claimed (and dispatched) by exactly one worker — the relay and the immediate-send flush can never double-send. A claim that is not resolved within `ClaimTimeout` (default 5 minutes; e.g. a crashed worker) becomes re-claimable, and a worker writes an entry's outcome only while its own claim still holds it (see [Claim timeout](#claim-timeout)). The per-engine locking applied inside the claim:
+Each `Use*` method registers the appropriate SQL dialect and connection factory. Claiming is **atomic**: a single `UPDATE` transitions pending rows to a `Claiming` status tagged with a per-worker token, so a row can be claimed (and dispatched) by exactly one worker — the relay and the post-commit flush can never double-send. A claim that is not resolved within `ClaimTimeout` (default 5 minutes; e.g. a crashed worker) becomes re-claimable, and a worker writes an entry's outcome only while its own claim still holds it (see [Claim timeout](#claim-timeout)). The per-engine locking applied inside the claim:
 
 | Method | Database | Claiming mechanism |
 |---|---|---|
 | `conduit.UseSqlite(connectionString)` | SQLite | Single-writer (atomic `UPDATE` + read-back by token) |
-| `conduit.UseSqlServer(connectionString)` | SQL Server | `WITH (ROWLOCK, UPDLOCK, READPAST)` in the claim subquery, after `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` in the same batch: `READPAST` refuses Snapshot and Serializable (SQL 650), and a pooled session keeps the level its last transaction set (measured on SQL Server 2022 with Microsoft.Data.SqlClient 7.1.1, `SqlServerPooledSessionShould`) |
+| `conduit.UseSqlServer(connectionString)` | SQL Server | `WITH (ROWLOCK, UPDLOCK, READPAST)` in the claim subquery, after `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` in the same batch: `READPAST` refuses Snapshot and Serializable (SQL error 650), and a pooled session keeps the isolation level its last transaction set |
 | `conduit.UsePostgres(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 | `conduit.UseMySql(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 
 The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`. A third, `NextAttemptAt`, holds when a row is next due: a new row's is its `CreatedAt`, and each failed send moves it out by the [backoff](#backoff). The relay's claim takes a row only once its `NextAttemptAt` has passed, as well as its `CreatedAt` being older than the grace period. The table is created with an index for each claim and for the retention cleanup (see [The outbox table](persistence.md#the-outbox-table)).
 
-These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, audit trail, and jobs). Each engine ships in its own `Conduit.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
+These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, audit trail, and jobs). Each engine ships in its own `Conduit.NET.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
 
 ```csharp
-// SQL Server (Conduit.Persistence.SqlServer package)
+// SQL Server (Conduit.NET.Persistence.SqlServer package)
 conduit.UseSqlServer("Server=.;Database=MyApp;...");
 
-// PostgreSQL (Conduit.Persistence.Postgres package)
+// PostgreSQL (Conduit.NET.Persistence.Postgres package)
 conduit.UsePostgres("Host=localhost;Database=MyApp;...");
 
-// MySQL (Conduit.Persistence.MySql package)
+// MySQL (Conduit.NET.Persistence.MySql package)
 conduit.UseMySql("Server=localhost;Database=MyApp;...");
 
 conduit.AddDurability(durability => durability.AddOutbox());
@@ -279,7 +279,7 @@ entry waits `InitialBackoff` after its first failed attempt, and each failure af
 to `MaxBackoff`. With the defaults that is 5 s, 10 s, 20 s, 40 s, 80 s, 160 s, then 5 minutes for each
 attempt after, so the ten attempts `MaxRetries` allows span about twenty minutes: long enough to ride out a
 broker restart, where retrying every sweep would mark everything Failed within a minute. A failed
-[immediate send](#immediate-send) counts as the first failed attempt and waits `InitialBackoff` too.
+[post-commit flush](#post-commit-flush) counts as the first failed attempt and waits `InitialBackoff` too.
 
 The wait is stored on the row (`NextAttemptAt`), so it holds across a relay restart and between relays on
 different hosts, whose clocks it assumes agree, as the grace period already does. The relay claims only on
@@ -425,48 +425,38 @@ Never eligible for capture, at any point — these all expect a reply, so dispat
 | Commands with results (`ICommand<TResult>`) | Caller awaits the response |
 | Queries (`IQuery<TResult>`) | Caller awaits the response |
 | Non-`[FireAndForget]` void commands (`ICommand`) | Uses request/response to confirm handler execution |
-| Local (unrouted) `[FireAndForget]` void commands | No transport is involved — nothing to capture; always dispatched via `ConduitBackgroundDispatcher`, per [dispatch flows](dispatch-flows.md#fire-and-forget-void-commands) |
+| Local (unrouted) `[FireAndForget]` void commands | No transport is involved — nothing to capture; always dispatched via `ConduitBackgroundDispatcher`, per [dispatch internals](dispatch-flows.md#fire-and-forget-void-commands) |
 
 ### Flush and relay delivery: local-then-transport
 
-For every entry a captured envelope produced, the delivery `IOutboxFlusher.FlushAsync` schedules
-and `OutboxRelay` apply the identical per-entry delivery contract:
+For every entry a captured envelope produced, the post-commit flush and `OutboxRelay` deliver the
+same way:
 
-1. Resolve `ILocalEnvelopeDispatcher` from a **fresh DI scope** — one scope per entry, mirroring
-   fire-and-forget's own fresh-scope semantics (the scope that captured the envelope is long gone
-   by the time flush or the relay runs). The scope lives until the entry's outcome is written, after
-   step 4 (or after the release that follows a failure), and is then disposed asynchronously: a scoped
-   service that implements only `IAsyncDisposable` (some database contexts and pooled clients do) is
-   disposed like any other.
-2. If the entry's type is one whose local listeners the outbox owns (`DeliversLocally(type)` —
-   `true` only for captured, non-Immediate `[FireAndForget]` events), run its local listener chain
-   (with pipeline behaviors) against that fresh scope.
-3. Unless the type is `[LocalOnly]` (`IsLocalOnly(type)`), send the envelope via the appropriate
-   transport, exactly as it would have been sent at publish time. An event (`IsEvent(type)`) is
-   broadcast with `SendEventAsync` to every registered transport and never routed, whatever route
-   its namespace happens to have. A routed `[FireAndForget]` void command (`IsFireAndForget(type)`)
-   goes to its endpoint with `SendEventAsync`, as the publish-time path sends it: no reply is
-   awaited, so it neither holds the relay until the transport's response timeout nor counts a
-   delivered message as failed.
-4. Mark the entry `Sent`, if this worker's claim still holds it (see [Claim timeout](#claim-timeout)).
-   This is the point of no return. Nothing after it can retry the entry: a scope disposal that throws
-   is logged as a Warning with `EventId` **322** (`OutboxScopeDisposeFailed`, naming the entry), and an
-   observer that fails to record the outcome as one with `EventId` **323** (`OutboxObservationFailed`).
-   On a failed delivery the scope is disposed the same way after the release, so the failure the relay
-   or the flush logs is the listener's or the transport's, never the disposal's.
+1. **A fresh DI scope per entry.** The scope that captured the envelope is long gone by the time the
+   flush or the relay runs, so each entry gets its own, as a fire-and-forget handler does. It lives
+   until the entry's outcome is written and is then disposed asynchronously, so a scoped service that
+   implements only `IAsyncDisposable` (some database contexts and pooled clients do) is disposed like
+   any other.
+2. **Local listeners, for a captured `[FireAndForget]` event only.** Its listeners run in that scope,
+   with their pipeline behaviors. A plain event's listeners already ran inline, inside the handler's
+   own transaction, at publish time, so they are not run again: only its transport envelope is
+   delivered here.
+3. **The transport send**, unless the type is `[LocalOnly]`, exactly as it would have been sent at
+   publish time. An event is broadcast with `SendEventAsync` to every registered transport and never
+   routed, whatever route its namespace happens to have. A routed `[FireAndForget]` void command goes
+   to its endpoint with `SendEventAsync`, so no reply is awaited: it neither holds the relay until the
+   transport's response timeout nor counts a delivered message as failed.
+4. **Mark the entry `Sent`**, if this worker's claim still holds it (see [Claim timeout](#claim-timeout)).
+   Nothing after this can retry the entry: a scope disposal that throws is logged as a Warning with
+   `EventId` **322** (`OutboxScopeDisposeFailed`, naming the entry), and an observer that fails to
+   record the outcome as one with `EventId` **323** (`OutboxObservationFailed`). On a failed delivery
+   the scope is disposed the same way after the release, so the failure the relay or the flush logs is
+   the listener's or the transport's, never the disposal's.
 
-Plain events never reach step 2 for their *local* listeners — `DeliversLocally` is `false` for
-them, because they already ran inline, inside the handler's own transaction, at publish time.
-Re-running them on flush/relay would double-deliver. Only their transport envelope (when captured)
-is subject to this contract.
-
-Step 3's transport send for an event goes through the same `BrokerTransportBase` path as any other
-publish, so it carries the same publishing-application stamp and is subject to the same
-[self-published event filter](transports/index.md#self-published-events) on receipt. That matters
-here specifically because step 2 can also run local listeners (for a captured `[FireAndForget]`
-event) before step 3 broadcasts — without the filter, a broker routing that broadcast back to this
-application would run the same listeners a second time, exactly as it would for a plain event
-published outside the outbox.
+On a broker transport, step 3 stamps an event with the publishing application, as every broker
+publish is stamped, so the [self-published event filter](transports/index.md#self-published-events)
+drops the copy the broker routes back to this application: a captured `[FireAndForget]` event's listeners, which step 2 already
+ran here, do not run a second time.
 
 **Step 2 is a dispatch of its own.** It runs in a child of the entry's message context, so inside a
 local listener `MessageContext.Current.MessageId` is a fresh id for that delivery attempt,
@@ -528,17 +518,9 @@ durability.AddOutbox(outbox =>
   table, so with an existing table — or `AutoCreateTable = false` — add it by migration (on SQL Server,
   `ALTER TABLE conduit_outbox ADD Properties NVARCHAR(MAX) NULL`).
 
-**Degraded mode without the source generator.** `ILocalEnvelopeDispatcher` is implemented by the
-generated mediator and resolved with `GetService` (not `GetRequiredService`). A host that never
-ran `Conduit.SourceGen` — so no generated mediator is registered — resolves `null` there; flush and
-the relay then skip step 2 unconditionally and always attempt the transport send. The outbox
-degrades to transport-only delivery rather than failing.
-
 ## The Immediate escape hatch
 
-Not to be confused with **[Immediate send](#immediate-send)** below (`IOutboxFlusher.FlushAsync`,
-an optimization that shortens *outbox* latency, unrelated to this). This section is about
-`[FireAndForget(Immediate = true)]` — a flag on the attribute itself that opts a specific event or
+`[FireAndForget(Immediate = true)]` is a flag on the attribute itself that opts a specific event or
 routed void command **out of outbox capture entirely**. It is never offered to
 `IOutboundInterceptor.Intercept`, transaction or no transaction:
 
@@ -619,9 +601,9 @@ transaction. Envelopes your behavior captures after `next()` are outside every p
 faults before `WritePendingAsync`, they stay unwritten in the scope — don't dispatch another command
 in that scope after a failure.
 
-## Immediate send
+## Post-commit flush
 
-By default, outbox messages wait for the relay's next poll cycle before reaching the broker. The immediate send optimization bypasses this delay: `FlushAsync` schedules delivery from the in-memory buffer on the background dispatcher right after the transaction commits, instead of waiting for the relay's next poll — using the relay only as a safety net for failures. `FlushAsync` itself returns as soon as delivery is scheduled; it does not wait for delivery to complete, so the caller is never held up by listener or transport latency.
+By default, outbox messages wait for the relay's next poll cycle before reaching the broker. The post-commit flush bypasses this delay: `FlushAsync` schedules delivery from the in-memory buffer on the background dispatcher right after the transaction commits, instead of waiting for the relay's next poll — using the relay only as a safety net for failures. `FlushAsync` itself returns as soon as delivery is scheduled; it does not wait for delivery to complete, so the caller is never held up by listener or transport latency.
 
 ### Usage
 
@@ -693,6 +675,6 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 **No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions) or handle ordering at the consumer.
 
-**Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker at a time, on every supported engine including SQLite. The relay and the immediate-send `FlushAsync` likewise never double-send the same entry, unless a delivery outlasts [`ClaimTimeout`](#claim-timeout).
+**Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker at a time, on every supported engine including SQLite. The relay and the post-commit `FlushAsync` likewise never double-send the same entry, unless a delivery outlasts [`ClaimTimeout`](#claim-timeout).
 
-**Immediate send is best-effort, and asynchronous.** `FlushAsync` schedules delivery on the background dispatcher and returns immediately — it does not wait for delivery, so a caller cannot assume listeners or transports have run by the time `FlushAsync` returns. The relay is still the safety net: if the process crashes between commit and the scheduled delivery running, or delivery itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when immediate send is configured.
+**The post-commit flush is best-effort, and asynchronous.** `FlushAsync` schedules delivery on the background dispatcher and returns immediately — it does not wait for delivery, so a caller cannot assume listeners or transports have run by the time `FlushAsync` returns. The relay is still the safety net: if the process crashes between commit and the scheduled delivery running, or delivery itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when the flush is called.

@@ -1,8 +1,7 @@
 # Diagnostics
 
 The Conduit source generator (`Conduit.SourceGen`) emits compile-time diagnostics while it scans
-the compilation for `ICommand` / `IQuery` / `IEvent` types and their handlers. The descriptors live
-in `src/Conduit.SourceGen/DiagnosticDescriptors.cs`.
+the compilation for `ICommand` / `IQuery` / `IEvent` types and their handlers.
 
 A message is a class (a `record` or a `class`). A `struct` implementing one of the interfaces is not
 discovered — Conduit's attributes are class-only — so nothing is generated for it, its handler or its
@@ -62,6 +61,17 @@ remote namespace. See [Transports → \[RemoteContracts\]](transports/index.md#r
 type declared in this project, a `#pragma` around it works too (see
 [Where a diagnostic points](#where-a-diagnostic-points)).
 
+**A handler marked `[NotAutoRegistered]` does not count.** The generator skips a class carrying
+`[NotAutoRegistered]` (`Conduit.Attributes`) entirely: it is not registered, and it is not a handler
+as far as the generator knows. A command or query whose only handler carries it gets CONDUIT001,
+and the warning is accurate: the generated mediator has no local dispatch for the message, so
+`ExecuteAsync`/`FetchAsync` throw `InvalidOperationException` (`No local handler for … and no route
+matched.`) and a wire request for it is refused as an unknown type, even when the class is
+registered in DI by hand. Do not suppress the warning to get past it; remove the attribute. The
+attribute is for an **event listener** that a feature registers itself, as `AddAuditListener` does
+the audit trail's: a listener is resolved from DI when its event is published, so one registered by
+hand runs.
+
 ## CONDUIT002 — Multiple handlers found
 
 > Multiple handlers found for `{type}`, only one handler per command/query is allowed
@@ -71,14 +81,7 @@ Commands and queries must have exactly one handler. This is an **error** (build 
 The error points at the message, with each handler as an additional location (at the first handler
 when the message comes from a referenced assembly).
 
-**Resolve** by removing the duplicate handler. If one handler is registered by hand rather than by
-the generator (e.g. a feature's `Add*` extension wires it, as the audit subsystem does
-`LocalAuditListener`), mark it with `[NotAutoRegistered]`
-(`Conduit.Attributes.NotAutoRegisteredAttribute`). The generator then skips the type entirely: it is
-not registered, and it is not counted, so it no longer conflicts. It does not count as a handler for
-CONDUIT001 either — a command whose **only** handler is `[NotAutoRegistered]` gets CONDUIT001, since
-the generator cannot see the registration that makes it handled. Suppress that one with a `#pragma`
-around the command or `[assembly: RemoteContracts]`.
+**Resolve** by removing the duplicate handler, so each command and query has one.
 
 ## CONDUIT003 — Invalid `[FireAndForget]` usage
 
@@ -122,39 +125,23 @@ audited), so keep one there too.
 
 > '{type}' misapplies [AuditAs]: {reasons}; [AuditAs] goes on a JsonElement or JsonElement? member and names a sibling string property holding the message type name
 
-`[AuditAs(nameof(Type))]` tells the audit serializer that a raw-JSON member holds a serialized message whose wire
-type name is in a sibling property, so capture can read it as that message and redact it by its own marks (see
-[Audit](audit.md)). That needs the member to be a `JsonElement` or `JsonElement?` and the named sibling to be a
-`string` property of the type or a base. Each reason names the member and what is wrong: it is not a `JsonElement`,
-or the name is not a property of the type, or the property is not a `string`.
+`[AuditAs(nameof(Type))]` marks a raw-JSON member that holds a serialized message whose wire type name is in a
+sibling property, so the audit trail captures it as that message, redacted by its own marks (see [Audit](audit.md)).
+That needs the member to be a `JsonElement` or `JsonElement?` and the named sibling to be a `string` property of the
+type or a base. Each reason names the member and what is wrong.
 
-The generator checks the members of every command, query and event, **base chain** included (property attributes
-and constructor-parameter attributes alike) — and of every **type a message carries** that is declared in the
-compilation being built **or in a referenced assembly that is or references `Conduit.Contracts`** (a contracts
-library the generator does not run on, as message discovery reaches it): the types of a message's properties and of
-its public constructors' parameters, through
-nullables, arrays and generic type arguments (`IReadOnlyList<BatchItem>`, `BatchItem[]`, `Dictionary<string,
-List<BatchItem>>`), transitively, so an envelope's item record is checked like the envelope. A generic type is
-walked and checked once, as its definition (`Wrapper<T>`, however many constructions are carried), after the type
-arguments at each use site are reached; so a recursively expanding generic (`Tree<T>` carrying `Tree<Tree<T>>`)
-terminates, and a member typed by a type parameter is checked as declared (a `T` is not a `JsonElement`). Each type
-is reported once, under its own name, however many messages reach it (two same-named types from two assemblies are
-reported separately); a cycle (a type that carries itself, or A carries B carries A) is walked once. A carried type that is itself a message is reported as a message, not twice.
-Every member is walked, marked or not: a misapplied `[AuditAs]` is reported even below a `[DoNotAudit]` member.
+**What is checked.** Every member of every command, query and event, base types included, and of every type a
+message carries in a property or a public constructor parameter: through nullables, arrays, collections and generic
+type arguments, transitively, so a batch envelope's item record is checked like the envelope. A carried type is
+checked when it is declared in the project being built, or in a referenced assembly that references
+`Conduit.Contracts`. A member typed as an interface, `object` or a type parameter is not followed. On a type the
+generator does not check, a misapplied `[AuditAs]` is no build error: the audit payload carries the placeholder
+`"•••"` for the member, never its raw JSON.
 
-A misapplied member of a carried type from a referenced assembly is reported like one on a referenced message:
-without a source location, naming the type and member. Every project that runs the generator over that library
-reports it.
-
-**Bounds.** An assembly that does not reference `Conduit.Contracts` (the BCL, most packages) cannot carry Conduit's
-`[AuditAs]` and is not walked. One that does **is** walked, a third-party or another team's contracts package
-included: a misapplied `[AuditAs]` on a type it declares, carried by your message, fails your build with no source
-location, and you cannot fix it there. The escape hatch is the severity override in `.editorconfig`
-(`dotnet_diagnostic.CONDUIT006.severity = warning`, or `none`); it applies to the whole diagnostic, so it also
-downgrades your own misuses until the package is fixed. A member typed as an interface, `object` or a type parameter carries a
-runtime shape the generator cannot see, and is not walked. On an unchecked type, a misapplied
-`[AuditAs]` is not a build error; the serializer writes the member as the `•••` placeholder (never its raw JSON,
-and without failing the dispatch). CONDUIT005 keeps the message-only scope.
+**A carried type from a package.** A misapplied `[AuditAs]` on a type that a referenced contracts package declares
+fails your build, without a source location, and you cannot fix it there. Downgrade the diagnostic in
+`.editorconfig` (`dotnet_diagnostic.CONDUIT006.severity = warning`, or `none`) until the package is fixed; the
+setting applies to your own misuses too.
 
 **Resolve** by moving `[AuditAs]` to the `JsonElement` member that holds the serialized message, and pointing it at
 the `string` property holding that message's type name, with `nameof`.
@@ -192,5 +179,5 @@ in the second copy — often the same contracts library referenced twice under t
 
 ---
 
-See also: [Dispatch Flows](dispatch-flows.md) · [Modular Monolith](modular-monolith.md) ·
-the source generator's [`CLAUDE.md`](../src/Conduit.SourceGen/CLAUDE.md).
+See also: [Modular Monolith](modular-monolith.md) · [Core Concepts](core-concepts.md) ·
+[Audit](audit.md).

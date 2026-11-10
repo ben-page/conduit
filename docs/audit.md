@@ -115,10 +115,10 @@ Or replace `LocalAuditListener` with an `IEventListener<AuditBatch>` of your own
 
 ## Setup
 
-Add the `Conduit.Audit` package and configure inside `AddConduit`:
+Add the `Conduit.NET.Audit` package and configure inside `AddConduit`:
 
 ```xml
-<PackageReference Include="Conduit.Audit" />
+<PackageReference Include="Conduit.NET.Audit" />
 ```
 
 ```csharp
@@ -137,23 +137,23 @@ builder.Services.AddConduit(conduit =>
 
 ## Database engines
 
-Audit shares the persistence engine with the durability subsystem — there is one engine registration on the `ConduitBuilder`, not on the audit listener. Register the engine with the matching `Conduit.Persistence.*` package's `UseXxx` extension; audit and durability both resolve it from DI:
+Audit shares the persistence engine with the durability subsystem — there is one engine registration on the `ConduitBuilder`, not on the audit listener. Register the engine with the matching `Conduit.NET.Persistence.*` package's `UseXxx` extension; audit and durability both resolve it from DI:
 
 | Engine package | Method |
 |---|---|
-| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
-| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
-| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
-| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
+| `Conduit.NET.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
+| `Conduit.NET.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
+| `Conduit.NET.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
+| `Conduit.NET.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
 
 ```csharp
-// SQL Server (Conduit.Persistence.SqlServer package)
+// SQL Server (Conduit.NET.Persistence.SqlServer package)
 conduit.UseSqlServer("Server=.;Database=Audit;...");
 
-// PostgreSQL (Conduit.Persistence.Postgres package)
+// PostgreSQL (Conduit.NET.Persistence.Postgres package)
 conduit.UsePostgres("Host=localhost;Database=Audit;...");
 
-// MySQL (Conduit.Persistence.MySql package)
+// MySQL (Conduit.NET.Persistence.MySql package)
 conduit.UseMySql("Server=localhost;Database=Audit;...");
 ```
 
@@ -198,7 +198,7 @@ By default the buffer drops the oldest record under sustained overload, trading 
   `bytes` is the original body's UTF-8 length and `cap` the cap it was cut to.
 - When the root is not an object, or cutting strings cannot bring the body under the cap (a large array of numbers, say), the stored body is the marker alone: `{ "$truncated": { "bytes": N, "cap": C } }`.
 
-The stored body is always valid JSON and never longer than the cap. A message whose root has its own `$truncated` member collides with the marker: under the cap it is stored as is and reads like a marker, and over the cap it is replaced by the marker (its value is not kept). The shortening runs when the record seals, inside the observer's terminal-observation callback, on the dispatching thread — about 15 ms per MB of body over the cap; a body at or under the cap costs only a length check. A shortened body is re-written by the serializer, so its escaping can differ from the original's (it is not a byte prefix of it). `0` or less turns the cap off; an enabled cap below 1 KB (`AuditOptions.MinimumMaxPayloadBytes`) is refused when `AddAudit` runs, so the marker always fits. Bodies that should never be kept at all still belong to `SuppressPayload<T>()`, `Suppress<T>()` and `[DoNotAudit]` — the cap only bounds what remains.
+The stored body is always valid JSON and never longer than the cap. A message whose root has its own `$truncated` member collides with the marker: under the cap it is stored as is and reads like a marker, and over the cap it is replaced by the marker (its value is not kept). The shortening runs when the record seals, on the dispatching thread, so a body over the cap costs that dispatch the time it takes; a body at or under the cap costs only a length check. A shortened body is re-written by the serializer, so its escaping can differ from the original's (it is not a byte prefix of it). `0` or less turns the cap off; an enabled cap below 1 KB (`AuditOptions.MinimumMaxPayloadBytes`) is refused when `AddAudit` runs, so the marker always fits. Bodies that should never be kept at all still belong to `SuppressPayload<T>()`, `Suppress<T>()` and `[DoNotAudit]` — the cap only bounds what remains.
 
 ### Stale dispatch groups
 
@@ -306,7 +306,7 @@ The audit payload then carries the inner message read into its type (with `JsonO
 | JSON `null` (or an unset `JsonElement`) | `null` |
 | JSON under a null name, a name no registry lists (including a non-message type such as `System.String`), a name two different types registered, or JSON the named type fails to read or write (unreadable JSON, a throwing constructor or converter) | the placeholder `"•••"` |
 
-A misapplied `[AuditAs]` — the member is not a `JsonElement`, or the name is not a `string` property — is a build error (CONDUIT006) on a message and on every type a message carries, in the compilation or in a referenced assembly that references `Conduit.Contracts` (see [Diagnostics](diagnostics.md#conduit006--misapplied-auditas) for the walk and its bounds). On a type the generator does not check — one reached only through an interface or `object` member — the serializer writes such a member as the placeholder rather than failing the dispatch. The sibling is the most-derived declaration of that name, so a `new`-hidden property resolves to the derived one. `[DoNotAudit]` or `[AuditRedacted]` on the same member takes precedence over `[AuditAs]`. The marks act only on a type serialized as a JSON object contract: a type with its own `[JsonConverter]` is written by that converter, and none of its members' marks, `[AuditAs]` included, apply — keep such a type out of the payload. `AddAudit` hands its suppressed types to the serializer through a lookup that is process-wide, as `AuditJsonOptions` is: a type any host in the process suppresses is left out of every host's `[AuditAs]` capture (it can only redact more). The same lookup keeps capture from serializing a suppressed type at all (`ConduitRuntime.CapturesAuditPayload`), in process and over the wire, so a suppressed type cannot fail its dispatch through capture.
+A misapplied `[AuditAs]` — the member is not a `JsonElement`, or the name is not a `string` property — is a build error (CONDUIT006) on a message and on every type a message carries, in the compilation or in a referenced assembly that references `Conduit.Contracts` (see [Diagnostics](diagnostics.md#conduit006--misapplied-auditas) for the walk and its bounds). On a type the generator does not check — one reached only through an interface or `object` member — the serializer writes such a member as the placeholder rather than failing the dispatch. The sibling is the most-derived declaration of that name, so a `new`-hidden property resolves to the derived one. `[DoNotAudit]` or `[AuditRedacted]` on the same member takes precedence over `[AuditAs]`. The marks act only on a type serialized as a JSON object contract: a type with its own `[JsonConverter]` is written by that converter, and none of its members' marks, `[AuditAs]` included, apply — keep such a type out of the payload. `AddAudit` hands its suppressed types to the serializer through a lookup that is process-wide, as `AuditJsonOptions` is: a type any host in the process suppresses is left out of every host's `[AuditAs]` capture (it can only redact more). The same lookup keeps capture from serializing a suppressed type at all, in process and over the wire, so a suppressed type cannot fail its dispatch through capture.
 
 The marks shape the captured body only: wire serialization is unchanged, so a marked member still travels on the wire. They are inherited: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. A raw-JSON member — `JsonElement`, `JsonElement?`, `JsonNode`, `JsonDocument` or `object`, or a `[JsonExtensionData]` bag — is captured **verbatim**, with any `[DoNotAudit]`/`[AuditRedacted]` value inside it in clear, **unless** it is marked `[AuditAs]` (typed at capture), `[DoNotAudit]` (left out) or `[AuditRedacted]` (the placeholder). A message carrying an unmarked raw-JSON member that may hold a secret must be kept out of the payload (`SuppressPayload<T>()`, `Suppress<T>()` or a type-level `[DoNotAudit]`).
 
@@ -325,7 +325,7 @@ A `DispatchAuditRecord` contains:
 | `ServiceName` | The emitting service (from `AddAudit().ServiceName`). |
 | `Payload` | The serialized message body — unless suppressed via `[DoNotAudit]` or `SuppressPayload<T>()`. A body over `MaxPayloadBytes` (64 KB by default) is stored shortened with a `$truncated` marker (see [Payload size cap](#payload-size-cap)). |
 | `Properties` | Contextual properties carried on the `MessageContext`. |
-| `Timestamp` | UTC timestamp of the dispatch. |
+| `Timestamp` | When the dispatch made its first observation, in UTC, by the host's `TimeProvider`. |
 | `Observations` | Ordered lifecycle observations (invoked, handler start/complete, retries, completed/failed). A provisional record ends in the `Conduit.Audit.StaleGroupEviction` marker instead of an outcome (see [Stale dispatch groups](#stale-dispatch-groups)). |
 
 ## Records and retried attempts

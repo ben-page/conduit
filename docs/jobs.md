@@ -8,8 +8,8 @@
   - [Coalescing a burst into the work it represents](#coalescing-a-burst-into-the-work-it-represents)
 - [Durability is inferred, not declared](#durability-is-inferred-not-declared)
 - [How a scheduled job runs](#how-a-scheduled-job-runs)
-  - [Why occurrences are computed in memory](#why-occurrences-are-computed-in-memory)
-  - [Why the runs table is deleted on success](#why-the-runs-table-is-deleted-on-success)
+  - [When the database is consulted](#when-the-database-is-consulted)
+  - [Success deletes the run, the cursor remembers it](#success-deletes-the-run-the-cursor-remembers-it)
   - [Claim renewal](#claim-renewal)
 - [How an event-triggered job runs](#how-an-event-triggered-job-runs)
 - [Failure handling: two layers, in order](#failure-handling-two-layers-in-order)
@@ -128,11 +128,9 @@ would each run every interval at a time of their own. The epoch was a Thursday, 
 `Every(TimeSpan.FromDays(7))` runs every Thursday at 00:00 UTC, not weekly from a deploy; use
 `Cron(...)` for a weekly job on another day or at another time.
 
-Cron is parsed by [Cronos](https://github.com/HangfireIO/Cronos), chosen for DST correctness. On a
-spring-forward, a daily job whose local time does not exist that day runs once at the instant the
-clock jumps, rather than being silently dropped; on a fall-back, a job in the repeated local hour
-runs once rather than twice. Both are asserted by tests, because both are what a naive parser gets
-wrong twice a year.
+Cron is parsed by [Cronos](https://github.com/HangfireIO/Cronos). On a spring-forward, a daily job
+whose local time does not exist that day runs once at the instant the clock jumps, rather than being
+silently dropped; on a fall-back, a job in the repeated local hour runs once rather than twice.
 
 ### On-demand schedules
 
@@ -194,9 +192,8 @@ jobs.On<CartAbandoned>("analytics").Run(cart => new RecordAbandonment(cart.CartI
 ```
 
 Event triggers are **always durable** and require a persistence engine — configuring one without an
-engine fails at startup. There is no non-durable variant because an ordinary `IEventListener<T>`
-already is one, at zero cost; a second non-durable path through the jobs engine would duplicate it
-and earn nothing.
+engine fails at startup. Without one, an ordinary `IEventListener<T>` is the non-durable way to react
+to an event.
 
 A trigger's event needs no listener of its own for a broker transport to deliver it: `AddJobs`
 activates the event in the type registry (`ConduitTypeRegistry.ActivateEvent`), so the host
@@ -204,13 +201,14 @@ subscribes it as it does an event one of its listeners handles.
 
 ### Coalescing a burst into the work it represents
 
-Ten punch corrections at one workstation mean **one** rebuild, not ten. A trigger can say so:
-`CoalesceBy` declares what makes two units of work the same, and `Merge` declares how they combine.
+Ten corrections to one production line's output log mean **one** rebuild of that line's shift
+report, not ten. A trigger can say so: `CoalesceBy` declares what makes two units of work the same,
+and `Merge` declares how they combine.
 
 ```csharp
-jobs.On<PunchChanged>("workstation-rebuild")
-    .CoalesceBy(punch => punch.LocationId)
-    .Run(punch => new RecomputeWorkstation(punch.LocationId, punch.From))
+jobs.On<OutputEntryCorrected>("shift-report-rebuild")
+    .CoalesceBy(entry => entry.LineId)
+    .Run(entry => new RebuildShiftReport(entry.LineId, entry.From))
     .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming);
 ```
 
@@ -233,9 +231,8 @@ not, and will over-count:
 ```
 
 Coalesced work accumulates in `conduit_job_scopes`, one row per distinct key, and becomes a run only
-when the work starts. So the ledger holds **one row per real execution**, which is the point: without
-this, ten events produce ten runs, nine of them no-ops that drag the reported average down and make a
-struggling projection look fast.
+when the work starts. So the ledger, and the run history, hold **one row per real execution**, rather
+than ten runs for ten events, nine of them doing nothing.
 
 **A key's work yields at most two rows at a time: one run in flight, one scope accumulating behind
 it.** That is a guarantee rather than a typical case, and the run key is what enforces it — a scope's
@@ -297,7 +294,7 @@ outbox, inbox, dead-letter queue and audit trail use, and configured the same wa
 | Scheduled jobs | Fire **exactly once across the cluster** | Fire **on every host** |
 | Event triggers | Available | Rejected at startup |
 | Misfire policy | Honoured | Rejected at startup |
-| `RunAtStart()` | One run per host start; the overlap lock applies unless `AllowOverlap()` is declared, when the run is written through its start-instant key alone; the cursor is untouched | One run per host start, on that host |
+| `RunAtStart()` | One run per host start, under the [overlap](#overlap) rule ([Run at start](#run-at-start)) | One run per host start, on that host |
 | Pause, trigger-now, cancel | Cluster-wide, survive a restart | This host only, lost on restart |
 | Run history | Every outcome, in `conduit_job_run_history` | Not recorded |
 
@@ -324,12 +321,13 @@ With an engine configured, one occurrence of one schedule goes like this:
 For three replicas that is three insert-or-ignores (two no-ops), three claim attempts (two returning
 nothing), one delete and one cursor update. For a daily job, single-digit statements per day.
 
-### Why occurrences are computed in memory
+### When the database is consulted
 
 Schedules are code-declared, so every host has the same cron expression, or the same interval
-aligned to the same epoch, and reaches the same answer without asking anyone. The database is therefore never consulted about **when** a job is due — only
-about **who runs this one**. There is no poll loop looking for work that has come due, and
-steady-state traffic is proportional to occurrences rather than to the passage of time.
+aligned to the same epoch, and computes the same occurrences without asking anyone. The database is
+never consulted about **when** a job is due, only about **who runs this one**: there is no poll loop
+looking for work that has come due, and steady-state traffic is proportional to occurrences rather
+than to the passage of time.
 
 A sweep does exist, but it is not a poll for due-ness: it exists to pick up runs whose timing is not
 derivable from a declaration — a retry waiting out its backoff, a delayed event trigger, a manual
@@ -341,28 +339,23 @@ or schedule a retry). The wake is in-process: work written on another host wakes
 and work written on a [host that runs no jobs](#a-host-that-runs-no-jobs) waits for a runner's next
 pass.
 
-### Why the runs table is deleted on success
+### Success deletes the run, the cursor remembers it
 
-Deleting on success rather than marking complete is what keeps the ledger's size proportional to
-work in flight rather than to job volume. The table holds in-flight and terminal runs — plus, for a
-short window, completed event-trigger runs (below) — never history —
-every terminal outcome is written to [run history](#run-history) first, in the same transaction as
-the ledger transition, so nothing is lost when the ledger row is later deleted.
+A successful run's row is deleted rather than marked complete, so the ledger's size follows the work
+in flight, not the job volume. The table holds in-flight and terminal runs — plus, for a short
+window, completed event-trigger runs (below) — never history: every terminal outcome is written to
+[run history](#run-history) first, in the same transaction as the ledger transition, so nothing is
+lost when the ledger row is later deleted.
 
-That creates one problem, which the second table solves. A deleted row cannot answer "did we already
-run 02:00 today?", and insert-or-ignore on the run key only prevents duplicates while the row
-exists. The **cursor** in `conduit_job_schedules` closes the gap: an occurrence is materialized only
-if it is strictly after `LastCompletedOccurrence`. That is why completion deletes the row and
-advances the cursor in a single transaction — a crash between the two would leave an occurrence that
-has run and looks like it has not. The check happens at materialization, not only when a host starts:
-a replica whose timer fires late — clock skew, a long GC pause — after another has already run the
-occurrence to the end finds no row to collide with, only the cursor. It reads the cursor under the
-schedule's row lock, which completion also takes before it deletes the row, so the two cannot
-interleave. An `AllowOverlap()` schedule reads it without the lock, with the schedule row it reads
-before its insert. A late replica then runs the occurrence again only if another replica's completion
-of it commits between those two statements — any earlier and the insert collapses into the row, any
-later and the read sees the cursor. The cursor only ever moves forward, so overlapping runs that
-finish out of order cannot move it back behind an occurrence that has already run.
+A deleted row cannot answer "did we already run 02:00 today?", so the **cursor** in
+`conduit_job_schedules` does: an occurrence is materialized only if it is strictly after
+`LastCompletedOccurrence`. Completion deletes the row and advances the cursor in one transaction, so a
+crash cannot leave an occurrence that has run and looks as if it has not. A replica whose timer fires
+late (clock skew, a long GC pause), after another replica has already run the occurrence to the end,
+finds the cursor past it and skips it. The cursor only ever moves forward, so overlapping runs that
+finish out of order cannot move it back. One narrow exception: an `AllowOverlap()` schedule reads the
+cursor without the schedule's row lock, so a late replica runs the occurrence again if another
+replica's completion of it commits in the instant between that read and its own insert.
 
 An event trigger has no cursor to fall back on, so a non-coalescing trigger run is the one success
 that is **not** deleted. Its row is kept with status `Completed` for `CompletedRetention` (default
@@ -375,10 +368,9 @@ deleted on success: its key is the coalesce key, which the next scope needs.
 
 ### Claim renewal
 
-`JobsOptions.ClaimTimeout` cannot simply be inherited from the outbox. The outbox's five minutes
-suits a send measured in milliseconds; for a job it is a correctness bug. A rollup that legitimately
-runs for ten minutes would have its claim treated as abandoned at minute five, be re-claimed by
-another host, and **run twice**.
+A job can run far longer than any reasonable claim timeout. A rollup that legitimately runs for ten
+minutes would, under a five-minute timeout, have its claim treated as abandoned at minute five, be
+re-claimed by another host, and **run twice**.
 
 So a host holding a claim renews it on a heartbeat (`HeartbeatInterval`, default 30s) for as long as
 it is genuinely running the job. Only a *dead* host's claim goes stale, after `ClaimTimeout`
@@ -574,10 +566,7 @@ outstanding the schedule's occurrences are skipped. The check and the insert are
 the scheduler and for trigger-now alike, on every host: each holds the schedule's
 `conduit_job_schedules` row lock (a no-op `UPDATE`) from its check until its insert commits, so no
 interleaving of the two — on one host or several — leaves two runs outstanding. That needs every host
-on a version with the lock, and every host declaring the schedule the same way. While a rolling upgrade
-mixes versions on SQL Server at locking READ COMMITTED, an older host's completion can also deadlock
-with a newer host's materialization: either a finished run executes once more after `ClaimTimeout`,
-or one occurrence is skipped. It lasts only as long as the rollout.
+to declare the schedule the same way.
 
 `AllowOverlap()` opts out, for occurrences and manual runs both.
 
@@ -585,8 +574,7 @@ or one occurrence is skipped. It lasts only as long as the rollout.
 
 Cancellation is **cooperative and best-effort**. `CancelAsync` returning does not mean the work
 stopped: a handler that never checks its `CancellationToken` runs to completion. And cancelled is
-not "did not run" — whatever the handler completed before the token fired stays done. Both are worth
-stating plainly, because the word implies otherwise.
+not "did not run" — whatever the handler completed before the token fired stays done.
 
 ```csharp
 var outcome = await jobs.CancelAsync("nightly-rollup@2026-08-25T02:00:00.0000000Z", cancellationToken);
@@ -598,8 +586,7 @@ var outcome = await jobs.CancelAsync("nightly-rollup@2026-08-25T02:00:00.0000000
 | `NotFound` | No run with that key exists. |
 | `AlreadyComplete` | The run had already reached a terminal state. |
 
-`CancelAsync` returns this rather than `Task` so the caller has to confront the ambiguity instead of
-reading "nothing to cancel" as success.
+Only `Requested` means the request took; `NotFound` and `AlreadyComplete` mean there was nothing to cancel.
 
 A run cancelled **before it starts** — still pending, or waiting out a retry's backoff — is marked
 `Cancelled` by the host that claims it, without its command being dispatched; its history row says
@@ -782,9 +769,6 @@ No engine means no tables. Each host runs one timer loop per timed schedule, wai
   durable API behaves the same in a test host, or by its schedule's name; the run key wins when the
   text is both.
 
-This is the usual precedent: Quartz's `RAMJobStore` is explicitly single-node and clustering needs
-the ADO.NET store; Hangfire likewise requires a storage backend.
-
 ## A host that runs no jobs
 
 Some processes need `IJobs` without being a place jobs run — a second host that shares the
@@ -852,8 +836,8 @@ kept for `CompletedRetention`; never history.
 | `CancellationRequested` | Set by `CancelAsync`, observed by the running host's heartbeat |
 | `StartedAt` | When the attempt began — drives `MaxRuntime` |
 
-The unique index on `JobKey` is load-bearing, not an optimisation: idempotent materialization
-conflicts on it.
+A table created by a migration must keep `JobKey` unique: materializing a run is an insert that
+collapses into the existing row on it.
 
 `Occurrence` is separate from `RunAt` because a retry moves `RunAt` to the backoff time while the
 cursor must still advance to the occurrence.
@@ -870,20 +854,9 @@ is declared.
 | `DueAt` | When the work becomes due. Written once — merging is leading-edge and never moves it |
 | `Version` | Bumped by every merge; the optimistic guard on the read-modify-write |
 
-`ScopeKey` is a single column rather than a composite `(TriggerName, CoalesceKey)` key because the
-shared insert-or-ignore builder takes one conflict column, and two engines bake it into their SQL as
-a single identifier.
-
-`Version` is the compare-and-set that stops one host's merge clobbering another's — a lost merge
-would *narrow* the scope, losing work rather than duplicating it — and it is what makes the delete at
-pickup conditional, so a merge landing between writing the run and deleting the scope survives as the
-next scope instead of vanishing. `ScopeId` is there because `Version` restarts at 0 every time a
-scope row is deleted and reopened: a compare-and-set on the version alone could match the row that
-*replaced* its target and narrow it, which is the exact failure the guard exists to prevent.
-
-The run a scope becomes is keyed on the scope key itself, with no version suffix. That is what makes
-the two-row guarantee hold: `JobKey` is unique, so the coalesce key doubles as a mutex and a refused
-insert means the key is already outstanding.
+`ScopeId` and `Version` together guard each merge (a compare-and-set), so two hosts merging into one
+scope cannot lose either's work, and a merge that lands while the scope is being picked up survives
+as the next scope.
 
 **`conduit_job_run_history`** — every terminal outcome a run has ever reached. Unlike the other three
 tables, nothing ever deletes a row here except the retention purge — not a coalescing pickup, not a
@@ -902,10 +875,8 @@ successful completion, not anything else.
 | `AttemptCount` | How many attempts had already failed when the final one began (0 for a first-try success) |
 | `LastError` | The failure message, for `Failed` |
 
-`JobKey` is deliberately not unique here: a coalescing key superseded and retried five times over a
-bad afternoon leaves five rows, one per attempt at the underlying work, which is the whole point —
-the ledger enforces "at most one row per key", history has no such constraint because superseding
-never reaches it.
+`JobKey` is not unique here: a coalescing key whose runs went terminal five times leaves five rows,
+one per run.
 
 ## Configuration reference
 

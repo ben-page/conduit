@@ -7,7 +7,7 @@ Conduit's durable features — the [outbox](outbox.md), [inbox](inbox.md), [dead
 Add the engine package for your database and call its `Use*` method inside `AddConduit`. The engine is registered on the `ConduitBuilder` and shared by all durable features — you do not configure a database per feature.
 
 ```xml
-<PackageReference Include="Conduit.Persistence.Sqlite" />
+<PackageReference Include="Conduit.NET.Persistence.Sqlite" />
 ```
 
 ```csharp
@@ -39,10 +39,10 @@ Registration order matters for [background jobs](jobs.md) alone. `AddJobs` inspe
 
 | Package | `Use*` method | ADO.NET driver |
 |---|---|---|
-| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` | Microsoft.Data.Sqlite (bundled) |
-| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` | Npgsql |
-| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` | Microsoft.Data.SqlClient |
-| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` | MySQL 8.0+ via MySqlConnector |
+| `Conduit.NET.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` | Microsoft.Data.Sqlite (bundled) |
+| `Conduit.NET.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` | Npgsql |
+| `Conduit.NET.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` | Microsoft.Data.SqlClient |
+| `Conduit.NET.Persistence.MySql` | `conduit.UseMySql(connectionString)` | MySQL 8.0+ via MySqlConnector |
 
 The driver ships inside the engine package, so there is **no generic connection-type parameter** — write `conduit.UsePostgres("Host=...")`, not `UsePostgres<NpgsqlConnection>(...)`.
 
@@ -97,7 +97,7 @@ And these indexes, besides the primary key:
 |---|---|---|
 | `ix_conduit_outbox_status_next_attempt` | `Status`, `NextAttemptAt` | The relay's claim: pending entries that are due, and claims gone stale. Its `Status` prefix also finds the Failed entries, for listing, retrying and the Failed retention |
 | `ix_conduit_outbox_claim` | `ClaimToken` | Reading back the rows a claim just took |
-| `ix_conduit_outbox_message_id` | `MessageId` | The [immediate send](outbox.md#immediate-send)'s claim by message id |
+| `ix_conduit_outbox_message_id` | `MessageId` | The [post-commit flush](outbox.md#post-commit-flush)'s claim by message id |
 | `ix_conduit_outbox_status_sent` | `Status`, `SentAt` | The Sent retention, over the bulk of the table |
 
 `AutoCreateTable` creates them with the table and, on SQLite, PostgreSQL and SQL Server, adds any an existing table lacks. MySQL has no `CREATE INDEX IF NOT EXISTS`, so there the indexes come only with a new table.
@@ -128,4 +128,4 @@ Durability, audit, and jobs share the single engine registered via `Use*`. Point
 
 ## Under the hood
 
-The shared abstraction (`IConduitConnectionFactory`, `ISqlDialect`, the disposal-correct `DbStoreBase`, and the table-init / periodic-cleanup hosted-service bases) lives in `Conduit.Persistence`; each engine package implements the full `ISqlDialect` surface for its database, including `IsAlreadyExists`, which recognizes the engine's refusal of a concurrent create. Timestamps are stored as UTC ISO-8601 text for engine-agnostic round-tripping. An engine package's connection factory disposes a connection that fails to open before it rethrows. See [`src/Conduit.Persistence/CLAUDE.md`](../src/Conduit.Persistence/CLAUDE.md) for the internals and the per-engine claim/locking strategies.
+The shared abstraction (`IConduitConnectionFactory`, `ISqlDialect`, the disposal-correct `DbStoreBase`, and the table-init / periodic-cleanup hosted-service bases) lives in `Conduit.Persistence`; each engine package implements the full `ISqlDialect` surface for its database, including `IsAlreadyExists`, which recognizes the engine's refusal of a concurrent create. Timestamps are stored as UTC ISO-8601 text for engine-agnostic round-tripping. An engine package's connection factory disposes a connection that fails to open before it rethrows. The per-engine claim locking is in the [outbox guide](outbox.md#database-dialects).

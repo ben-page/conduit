@@ -3,6 +3,7 @@
 - [Why use an inbox?](#why-use-an-inbox)
   - [When to use it](#when-to-use-it)
 - [How it works](#how-it-works)
+  - [A message without an id](#a-message-without-an-id)
   - [When a dispatch fails](#when-a-dispatch-fails)
 - [Setup](#setup)
 - [Database dialects](#database-dialects)
@@ -32,7 +33,7 @@ You may not need it when:
 
 ## How it works
 
-The inbox is an `IInboundInterceptor` — a **gate** that runs on the inbound wire path *before* the message payload is deserialized, so a duplicate costs almost nothing. It keys off `MessageContext.MessageId` (a GUID present on every message) and consults the inbox store:
+The inbox is an `IInboundInterceptor` — a **gate** that runs on the inbound wire path *before* the message payload is deserialized, so a duplicate costs almost nothing. It keys off the dispatch's `MessageContext.MessageId`, which the transport sets before the gate runs (see [A message without an id](#a-message-without-an-id)), and consults the inbox store:
 
 ```
 Inbound wire message arrives (transport provides MessageId)
@@ -46,8 +47,15 @@ Inbound wire message arrives (transport provides MessageId)
 
 - **Dedup happens before the handler** — that's the whole point; it prevents duplicate side effects, not just duplicate results.
 - **All inbound wire messages are deduplicated** — commands, queries, and events alike.
-- **Duplicates are silently discarded.** There is no result caching — a duplicate is dropped, not answered with the original response. (This matches MassTransit and Wolverine.) An edge that answers every request — HTTP `/dispatch`, the SignalR hub's `Dispatch` — answers a discarded one with an empty success (`DispatchResult.Ok(null)`).
+- **Duplicates are silently discarded.** There is no result caching — a duplicate is dropped, not answered with the original response. (This matches MassTransit and Wolverine.) A duplicate **request** is still answered, with an empty success (`DispatchResult.Ok(null)`), wherever requests are answered: HTTP `/dispatch`, the SignalR hub's `Dispatch`, and a broker transport's reply to a request. A caller cannot tell it from a handler that returned `null`.
 - **Local dispatch is unaffected** — the gate only runs on transport-inbound messages; in-process dispatch never hits it.
+
+### A message without an id
+
+Every transport starts the dispatch's context before the gates run: from the ids the message carries (a broker message's, or a caller's on an HTTP or SignalR edge that [trusts its callers](security.md)), or with a fresh `MessageId` otherwise. So:
+
+- **A broker message that arrives without a message id** (from a producer that is not Conduit, say) gets a fresh one on each delivery, and its redeliveries are not recognized as duplicates.
+- **A request handed to `HandleWireRequestAsync` outside any dispatch** (host code calling the wire entry point itself, with no `MessageContext`) passes the gate unrecorded. So does every request a `PreflightWireRequestAsync` checks: the preflight records nothing.
 
 A background `InboxCleanup` service periodically deletes records older than the retention window, so the table doesn't grow without bound.
 
@@ -55,13 +63,13 @@ A background `InboxCleanup` service periodically deletes records older than the 
 
 The gate records a message's id before its handler runs, so the record has to come off again when the handler does not succeed. Otherwise one transient failure would lose the message: the broker transport abandons it, the broker redelivers it under the same `MessageId`, and the gate discards the redelivery as a duplicate, which the transport acknowledges, with no dead-letter entry.
 
-So on a broker transport (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ), a dispatch that fails **releases its inbox record**: a handler or listener that throws, a request answered `InternalError`, and an event this host cannot read (a body its type cannot read, or a type it does not know). `AddInbox()` registers an `IInboundErrorInterceptor`, `InboxErrorInterceptor`, which the transport calls on every such failure, whether or not a [dead letter queue](dead-letter-queue.md) is registered and whether or not it captured the message. Then:
+So on a broker transport (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ), a dispatch that fails **releases its inbox record**: a handler or listener that throws, a request or a `[FireAndForget]` command answered `InternalError`, and an event or a `[FireAndForget]` command this host cannot read (a body its type cannot read, or a type it does not know). `AddInbox()` registers an `IInboundErrorInterceptor`, `InboxErrorInterceptor`, which the transport calls on every such failure. The inbox does not need a [dead letter queue](dead-letter-queue.md): the release happens whether or not one is registered, and whether or not it captured the message. Then:
 
 - **A broker redelivery runs.** A failed listener is abandoned when nothing captures it, and its redelivery reaches the handler as a first attempt would.
 - **A dead-letter replay runs.** A replay carries the original `MessageId` (see [Interaction with inbox](dead-letter-queue.md#interaction-with-inbox)), and it is no longer discarded inside `RetentionPeriod`.
 - **A dispatch that succeeded stays recorded** for `RetentionPeriod`, so its duplicates are still discarded.
-- **A refusal stays recorded.** A request answered with a `ConduitException` (not found, conflict, forbidden, ...) did not fail: the caller has its answer, the transport acknowledges it, and a duplicate is discarded as before.
-- **A `[FireAndForget]` command's failure stays recorded.** The transport acknowledges it without seeing it fail (the dead letter queue's [known limitation](dead-letter-queue.md#limitations)), so there is nothing redelivered or replayed for the record to block.
+- **A refusal stays recorded.** A request answered with a `ConduitException` (not found, conflict, forbidden, ...) did not fail: the caller has its answer, the transport acknowledges it, and a duplicate is discarded as before. So does an event a gate refuses, and a `[FireAndForget]` command refused other than as a bad request: both are acknowledged, and a redelivery would be refused again.
+- **A `[FireAndForget]` command that fails unexpectedly is released**, as a listener failure is: unless the dead letter queue captures it, the transport abandons it, and the broker's redelivery runs the handler again.
 
 Only the record **this dispatch** made is released. A message that fails before the gate runs (its body is not JSON, its DI scope or the mediator cannot be built, or a gate registered ahead of the inbox throws) leaves alone a record another delivery made, perhaps one whose handler succeeded; so does a duplicate the gate discarded.
 
@@ -72,8 +80,8 @@ If the release itself fails (the database is unreachable), it is logged at Warni
 The inbox is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, DLQ, audit trail, and jobs), then call `AddInbox()` (alongside `AddOutbox()` / `AddDeadLetterQueue()` if you use them):
 
 ```xml
-<PackageReference Include="Conduit.Durability" />
-<PackageReference Include="Conduit.Persistence.Sqlite" />
+<PackageReference Include="Conduit.NET.Durability" />
+<PackageReference Include="Conduit.NET.Persistence.Sqlite" />
 ```
 
 ```csharp
@@ -91,14 +99,14 @@ builder.Services.AddConduit(conduit =>
 
 ## Database dialects
 
-The inbox uses the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, audit trail, and jobs alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.Persistence.*` package that supplies the ADO.NET driver:
+The inbox uses the shared `ISqlDialect` (one per engine, used by the outbox, inbox, DLQ, audit trail, and jobs alike), selected by the engine registered on the `ConduitBuilder`. Each engine ships in its own `Conduit.NET.Persistence.*` package that supplies the ADO.NET driver:
 
 | Engine package | Method |
 |---|---|
-| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
-| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
-| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
-| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
+| `Conduit.NET.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
+| `Conduit.NET.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
+| `Conduit.NET.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
+| `Conduit.NET.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
 
 The engine package carries the provider reference, so no generic connection-type parameter is needed.
 
@@ -150,6 +158,6 @@ Some brokers offer native deduplication — Azure Service Bus `RequiresDuplicate
 - **Requires a database.** The inbox shares the durability database. A stateless service with no database should use broker-native dedup instead.
 - **At-most-once on crash** — see [above](#semantics-at-most-once-on-crash). The record-then-handle ordering trades duplicate-execution risk for lost-on-crash risk.
 - **Only broker transports release.** The HTTP endpoint and the SignalR hub answer their caller the failure and release nothing. Their server mints every `MessageId` by default, so a retry is a new message; but a caller an edge trusts to supply its own ids (`MapConduitEndpoint(..., trustCallerContext: true)`, `AddConduitSignalR(o => o.TrustCallerContext = true)`) that retries a failed request under the same `MessageId` gets the empty success a duplicate gets.
-- **No result caching.** Duplicates are discarded, not answered. For request/response over a broker, a duplicate request produces no second reply — the caller relies on the first.
+- **No result caching.** A duplicate is not answered with the original result. A duplicate request over any transport, a broker included, gets an empty success instead.
 - **Retention must outlast redelivery.** If `RetentionPeriod` is shorter than the broker's redelivery window, a late duplicate can slip through after its record is purged.
 - **All-or-nothing.** There's no per-type opt-out; enabling the inbox deduplicates every inbound wire message.

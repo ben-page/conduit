@@ -1,9 +1,12 @@
-# Dispatch Flows
+# Dispatch Internals
 
-End-to-end traces of how a message moves through Conduit, using the real type and
+End-to-end traces of how a message moves through Conduit's internals, using the real type and
 method names from the source-generated mediator (`ConduitMediator`) and the runtime
-helpers in `Conduit.Runtime`. These are the canonical reference for understanding the
-dispatch pipeline without reading every line of the generator and runtime.
+helpers in `Conduit.Runtime`. This page is for contributors, and for readers who want to see the
+machinery: nothing here is needed to use Conduit, and the internal names it shows (the generated
+methods, the `ConduitRuntime` helpers, `BrokerTransportBase`'s steps) can change between releases.
+For what an application writes and can rely on, read [Core Concepts](core-concepts.md),
+[Pipeline Behaviors](pipeline-behaviors.md) and [Transports](transports/index.md).
 
 Three flows are covered:
 
@@ -49,9 +52,9 @@ IMediator.ExecuteAsync(command)
   3. MessageContext.RestoreContext(previous)       -- in finally
 ```
 
-Key facts verified against the code:
+Key facts:
 
-- **Routing decision** is `ConduitRuntime.ResolveRoute` (`ConduitRuntime.cs`). It scans
+- **Routing decision** is `ConduitRuntime.ResolveRoute`. It scans
   `options.Routes` in order and takes the first match: an exact route (`RouteType<T>()`) when the
   name equals `route.Pattern`, a namespace route (`RouteNamespace<T>()`) when it equals the pattern
   or starts with `route.Pattern + "."`. A match with a missing endpoint throws
@@ -59,13 +62,16 @@ Key facts verified against the code:
 - **Routed dispatch** for commands with a result and queries uses `transport.SendRequestAsync`.
   Non-fire-and-forget void commands also use `SendRequestAsync` (to confirm handler execution);
   `[FireAndForget]` void commands use `SendEventAsync` (no reply). See
-  [fire-and-forget](#fire-and-forget-void-commands) below.
+  [fire-and-forget](#fire-and-forget-void-commands) below. `IConduitTransport` has three methods:
+  `SendRequestAsync` (request/response), `SendEventAsync` (no reply: an event's broadcast, a routed
+  `[FireAndForget]` command) and `RedeliverAsync` (a dead-letter replay, sent straight to the
+  service's inbound queue with the message's original ids).
 - **Pipeline ordering** is owned by Conduit, not DI. `ResolvePipelines` constructs closed
   generics from `options.PipelineTypes` in registration order. `ExecuteWithBehaviors` wraps
   them so the **first registered behavior is the outermost** (it iterates from the last index
   inward when building the `next` chain).
 - **The attempt boundary** is `ConduitRuntime.DispatchAttemptsAsync`. The generated `Execute`, `Fetch` and
-  `ExecuteVoidWire` hand it the old body (`ExecuteAttempt`, `FetchAttempt`, `ExecuteVoidWireAttempt`) as a
+  `ExecuteVoidWire` hand it their attempt body (`ExecuteAttempt`, `FetchAttempt`, `ExecuteVoidWireAttempt`) as a
   delegate over an `IServiceProvider`. With no `IDispatchRetryPolicy` registered, with a policy that does not
   cover the type, or for a dispatch made from the running attempt's own scope, it runs the delegate once on
   `serviceProvider` itself, so the dispatch behaves as if the body were inline. Otherwise it runs each attempt in
@@ -232,9 +238,10 @@ foreach (IInboundInterceptor interceptor in interceptors):
   `HandleWireEvent` logs it at Warning and rethrows it for the transport to answer the publisher.
   (It rejects by throwing, not by returning false.)
 
-**Context handling at this layer (recently fixed):** the transport has already called
+**Context handling at this layer:** the transport has already called
 `StartDispatchFromTransport`, so `MessageContext.Current` is non-null when `HandleWireRequest`
-runs. `ConduitRuntime` therefore **only mints a fresh context when `previousContext is null`**:
+runs. `ConduitRuntime` therefore **only mints a fresh context when `previousContext is null`**
+(a caller that called in without one), after the gates:
 
 ```csharp
 if (previousContext is null)
@@ -243,8 +250,9 @@ if (previousContext is null)
 }
 ```
 
-This is the fix that lets the wire-supplied `MessageId` / `CausationId` propagate to the handler
-instead of being re-minted (overwritten) on every inbound message.
+So the wire-supplied `MessageId` / `CausationId` reach the handler rather than being re-minted
+for every inbound message. A gate that runs with no context (a host calling
+`HandleWireRequestAsync` outside any dispatch) sees `MessageContext.Current` as `null`.
 
 **Layer 2 — `IPipelineBehavior<TRequest, TResult>` (post-deserialization).** After
 `createEnvelope()` yields the envelope, each generated switch arm deserializes the payload into the typed
@@ -258,7 +266,7 @@ A host can run these checks for a request without running its handler:
 `IInboundCheckBehavior`s. See [Pipeline Behaviors → Inbound checks](pipeline-behaviors.md#inbound-checks-and-the-wire-preflight).
 
 **Layer 3 — handler.** The resolved `ICommandHandler` / `IQueryHandler` / `IEventListener` runs
-at the center of the chain, inside the DI scope created in step 3.
+at the center of the chain, inside the DI scope created in step 4.
 
 ### Reply path (request/response)
 
@@ -277,8 +285,9 @@ if (not captured): AcknowledgeAsync(message)    -- exactly one settlement either
 
 On the outbound side, `BrokerTransportBase.SendRequestAsync` calls `PublishRequestAsync`, awaits
 the reply from the reply queue, deserializes it to `DispatchResult<JsonElement?>`, and unwraps it
-via `ConduitRuntime.UnwrapReply` (which throws `InvalidOperationException` if the reply carries an
-error).
+via `ConduitRuntime.UnwrapReply`, which throws `RemoteDispatchException` if the reply carries an
+error: its `Code` is the remote error's code with the status the remote server declared, and its
+`Reference` is the remote support reference, if any.
 
 ### Event wire path
 
@@ -286,8 +295,10 @@ error).
 `ConduitRuntime.HandleWireEvent`. Wire-inbound events dispatch to local listeners only (via the
 private `PublishLocalAsync`) — they are **never re-broadcast** to transports, preventing echo
 loops. `HandleWireEvent` lets `EventListenerException` **propagate** so the transport can
-retry / dead-letter, and a refusal (`ConduitException`) for the transport to answer; any other exception is logged
-with a support reference and thrown as `EventDispatchException`, which the transport settles as a listener failure.
+retry / dead-letter. A refusal (a `ConduitException` from a gate, or an unknown type) propagates
+too, logged at Warning, for the transport to answer or settle, and so does a cancellation of the
+caller's token. Any other exception is logged with a support reference and thrown as
+`EventDispatchException`, which the transport settles as a listener failure.
 
 ### Outbound F&F capture (`IOutboundInterceptor`)
 
@@ -302,19 +313,6 @@ messages skip this check entirely, unconditionally. See
 and the full capture-eligibility matrix.
 
 ---
-
-## Source map
-
-| Concern | File |
-|---|---|
-| Route resolution, pipeline resolution/execution, wire entry points | `src/Conduit/Runtime/ConduitRuntime.cs` |
-| Correlation context (`StartDispatch`, `StartDispatchFromTransport`) | `src/Conduit/Runtime/MessageContext.cs` |
-| Routed-vs-broadcast envelope send | `src/Conduit/Runtime/TransportDispatcher.cs` |
-| Broker inbound orchestration + reply path | `src/Conduit/Runtime/BrokerTransportBase.cs` |
-| Background F&F execution | `src/Conduit/Runtime/ConduitBackgroundDispatcher.cs` |
-| Generated `ConduitMediator` body | `src/Conduit.SourceGen/MediatorEmitter.cs` |
-| Generated `ConduitDispatch.Execute` (handler + pipeline wiring, attempt boundary) | `src/Conduit.SourceGen/DispatchEmitter.cs` |
-| Attempt loop, scopes, delay, retry counter | `src/Conduit/Runtime/DispatchRetryRunner.cs`, `DispatchAttempt.cs` |
 
 See also: [Core Concepts](core-concepts.md), [Pipeline Behaviors](pipeline-behaviors.md),
 [Glossary](glossary.md).

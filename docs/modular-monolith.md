@@ -20,8 +20,8 @@ authorization, transactions, audit, and so on).
 
 ## The rule: one analyzer in the composition root
 
-Reference the `Conduit.SourceGen` (and `Conduit.Analysis`) analyzers from **exactly one**
-assembly: the composition root that references every module's handler assembly. That is
+Reference the `Conduit.NET.SourceGen` package from **exactly one** assembly: the composition root
+that references every module's handler assembly. That is
 usually the host (`Web`/`Api`) project, or a dedicated thin `Bootstrap` assembly that
 references all the module `*.Application` projects.
 
@@ -35,20 +35,37 @@ module's handlers.
 
 ```text
 Web (composition root)
- ├─ <PackageReference Include="Conduit.SourceGen" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
- ├─ <PackageReference Include="Conduit.Analysis"  OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
- ├─ ProjectReference -> Orders.Application   (handlers, NO analyzer)
- ├─ ProjectReference -> Sales.Application    (handlers, NO analyzer)
- └─ ProjectReference -> Hr.Application        (handlers, NO analyzer)
+ ├─ PackageReference  Conduit.NET            1.0.0-preview.1
+ ├─ PackageReference  Conduit.NET.SourceGen  1.0.0-preview.1   (the one generator)
+ ├─ ProjectReference  Orders.Application   (handlers: references Conduit.NET, not Conduit.NET.SourceGen)
+ ├─ ProjectReference  Sales.Application    (handlers: references Conduit.NET, not Conduit.NET.SourceGen)
+ └─ ProjectReference  Hr.Application       (handlers: references Conduit.NET, not Conduit.NET.SourceGen)
+
+Orders.Contracts, Sales.Contracts, ...      (messages only: reference Conduit.NET.Contracts)
 ```
 
-The module assemblies (`Orders.Application`, etc.) reference only the `Conduit` runtime
-package for the `ICommand`/`IQuery`/`IEvent` and `ICommandHandler`/`IQueryHandler`/`IEventListener`
-types. They do **not** reference the analyzers. The host's generated registration is what
-gets called at startup:
+```xml
+<!-- Web.csproj, the composition root -->
+<PackageReference Include="Conduit.NET" Version="1.0.0-preview.1" />
+<PackageReference Include="Conduit.NET.SourceGen" Version="1.0.0-preview.1" />
+
+<!-- Orders.Application.csproj, a module with handlers -->
+<PackageReference Include="Conduit.NET" Version="1.0.0-preview.1" />
+
+<!-- Orders.Contracts.csproj, a library that only declares messages -->
+<PackageReference Include="Conduit.NET.Contracts" Version="1.0.0-preview.1" />
+```
+
+A module assembly references the `Conduit.NET` runtime package, which holds the handler interfaces
+(`ICommandHandler`, `IQueryHandler`, `IEventListener`). An assembly that only declares messages
+(`ICommand`, `IQuery`, `IEvent`, the attributes and the exceptions) can reference `Conduit.NET.Contracts`
+instead, which has no package dependencies, so a domain or contracts library pulls in nothing else.
+Neither references `Conduit.NET.SourceGen`: it is a development dependency, so it does not flow to the
+projects that reference them either. The host's generated registration is what gets called at
+startup:
 
 ```csharp
-using Conduit.Generated; // the host's own generated namespace
+using Conduit.Generated; // AddConduit() is generated into this namespace in the host
 builder.Services.AddConduit();
 ```
 

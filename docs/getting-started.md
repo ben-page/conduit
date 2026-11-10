@@ -5,6 +5,8 @@
 - [Define a command and handler](#define-a-command-and-handler)
 - [Wire up and dispatch](#wire-up-and-dispatch)
 - [What the source generator produced](#what-the-source-generator-produced)
+- [Namespaces](#namespaces)
+- [Next](#next)
 
 ## Overview
 
@@ -20,14 +22,17 @@ Install Conduit and dispatch your first command in a single ASP.NET Core project
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Conduit" />
-    <PackageReference Include="Conduit.SourceGen" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <PackageReference Include="Conduit.Analysis" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Conduit.NET" Version="1.0.0-preview.1" />
+    <PackageReference Include="Conduit.NET.SourceGen" Version="1.0.0-preview.1" />
   </ItemGroup>
 </Project>
 ```
 
-`Conduit.SourceGen` and `Conduit.Analysis` must be referenced as analyzers. The source generator runs at compile time to discover your message types and emit dispatch infrastructure.
+`Conduit.NET` is the runtime. `Conduit.NET.SourceGen` is the source generator: it runs at compile time, discovers your message types and handlers, and emits the dispatch code. It is a development dependency, so NuGet adds it as an analyzer with nothing to configure, and nothing of it ships with your app. Reference it from the host project only, the one that calls `AddConduit()` (see [Modular Monolith](modular-monolith.md) for a solution with several projects).
+
+A library that only declares messages, such as a contracts assembly shared with another service, references the `Conduit.NET.Contracts` package instead. It holds the message interfaces, attributes and exceptions and has no package dependencies of its own. `Conduit.NET` depends on it, so the host gets it too.
+
+Every package id starts `Conduit.NET`; the assemblies and namespaces are `Conduit`, `Conduit.Messages` and so on.
 
 ## Define a command and handler
 
@@ -81,9 +86,22 @@ At compile time, the source generator emitted:
 - A `ConduitMediator` that dispatches `CreateTodoCommand` directly to `CreateTodoHandler` via a compiled type switch. No reflection, no `Dictionary<Type, ...>` lookups.
 - An `AddConduit()` extension method that registers everything in DI.
 
-The generated code is visible in your IDE under Analyzers > Conduit.SourceGen.
+The generated code is visible in your IDE under Analyzers > Conduit.SourceGen (the generator's assembly name).
 
-You now have in-process dispatch. The next sections show how to extend this to the browser and other services.
+## Namespaces
+
+| Namespace | Package | Holds |
+|---|---|---|
+| `Conduit` | `Conduit.NET` | `IMediator`, the interface application code dispatches through |
+| `Conduit.Messages` | `Conduit.NET.Contracts` | `ICommand`, `ICommand<TResult>`, `IQuery<TResult>`, `IEvent` |
+| `Conduit.Handlers` | `Conduit.NET` | `ICommandHandler<TCommand>`, `ICommandHandler<TCommand, TResult>`, `IQueryHandler<TQuery, TResult>`, `IEventListener<TEvent>` |
+| `Conduit.Attributes` | `Conduit.NET.Contracts` | `[FireAndForget]`, `[LocalOnly]`, `[ClientVisible]`, `[RemoteContracts]`, the audit attributes |
+| `Conduit.Exceptions` | `Conduit.NET.Contracts` | `NotFoundException`, `ConflictException` and the other refusals a handler throws ([Error Handling](error-handling.md)) |
+| `Conduit.Generated` | generated into your project | `AddConduit()` and the generated mediator |
+
+## Next
+
+You now have in-process dispatch. [Core Concepts](core-concepts.md) covers commands, queries, events and the mediator in full. [Transports](transports/index.md) takes the same messages to a browser and to other services.
 
 ---
 

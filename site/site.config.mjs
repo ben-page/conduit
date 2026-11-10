@@ -43,7 +43,6 @@ export const sidebar = [
             { label: 'Pipeline Behaviors', slug: 'pipeline-behaviors' },
             { label: 'Error Handling', slug: 'error-handling' },
             { label: 'Modular Monolith', slug: 'modular-monolith' },
-            { label: 'Dispatch Flows', slug: 'dispatch-flows' },
         ],
     },
     {
@@ -80,6 +79,7 @@ export const sidebar = [
             { label: 'Configuration Reference', slug: 'configuration-reference' },
             { label: 'Diagnostics', slug: 'diagnostics' },
             { label: 'Glossary', slug: 'glossary' },
+            { label: 'Dispatch Internals', slug: 'dispatch-flows' },
             { label: 'FAQ', slug: 'faq' },
         ],
     },

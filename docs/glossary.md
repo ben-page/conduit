@@ -35,20 +35,24 @@ and lifetime, generated consistently across transports by the `TopologyNaming` s
 
 ### Gate (`IInboundInterceptor`)
 
-The **pre-deserialization** middleware layer for wire-inbound messages. Receives only the
-`string messageType` and returns `bool` to allow (`true`) or reject (`false`) processing before the
-payload is deserialized. Used by `InboxInterceptor` (dedup — returns `false` to discard) and
-`TypeFilterInterceptor` (access control — **throws** to reject). `MessageContext.Current` is
-available so a gate can read the transport-supplied `MessageId`. See
-[dispatch flows](dispatch-flows.md#3-wire-inbound-message).
+The **pre-deserialization** middleware layer for wire-inbound messages, requests and events alike.
+Receives only the `string messageType` and returns `bool`: `true` lets the message through, `false`
+discards it silently (a request is answered with an empty success). A gate that throws a
+`ConduitException` refuses the message, and the refusal is answered to the caller. Used by
+`InboxInterceptor` (dedup — returns `false` to discard a duplicate) and the type filter (access
+control — throws `ForbiddenException` to refuse). `MessageContext.Current` is set by every transport
+before the gates run, so a gate can read the transport-supplied `MessageId`. See
+[dispatch internals](dispatch-flows.md#3-wire-inbound-message).
 
 ### Interceptor (inbound / outbound / error)
 
 - **Inbound** — `IInboundInterceptor`, the gate above.
-- **Outbound** — `IOutboundInterceptor`. When registered, the generated mediator calls
-  `Intercept(envelope)` *instead of* sending an outbound fire-and-forget message to the transport.
-  Used by the outbox to capture sends. See [Outbox](outbox.md).
-- **Error** — `IInboundErrorInterceptor`, invoked when inbound dispatch fails: every registered one runs (e.g. dead-letter capture, and the inbox releasing the failed message's record).
+- **Outbound** — `IOutboundInterceptor`. When registered, the generated mediator offers it each
+  message it could defer (an event, a routed `[FireAndForget]` command) with `Intercept(envelope)`
+  before sending it. `true` means the interceptor captured it and the mediator skips the send;
+  `false` means it declined, and the send proceeds as if no interceptor were registered. Used by the
+  outbox, which captures only inside a database transaction. See [Outbox](outbox.md).
+- **Error** — `IInboundErrorInterceptor`, invoked when a broker transport's inbound dispatch fails: every registered one runs (e.g. dead-letter capture, and the inbox releasing the failed message's record).
 
 ### Pipeline behavior (`IPipelineBehavior<TRequest, TResult>`)
 
@@ -66,8 +70,10 @@ body is the plain serialized message, with the discriminator in transport-native
 
 ### Transport (`IConduitTransport`)
 
-A bidirectional message mover with `SendRequestAsync` (request/response) and `SendEventAsync`
-(fire-and-forget events), both envelope-based. Each transport package contains **both sides**:
+A bidirectional message mover with three envelope-based methods: `SendRequestAsync`
+(request/response), `SendEventAsync` (no reply: an event's broadcast, a routed `[FireAndForget]`
+command) and `RedeliverAsync` (a dead-letter replay, sent straight to the service's inbound queue).
+Each transport package contains **both sides**:
 
 - **Outbound** — the client that sends (e.g. `HttpTransport`, `SignalRTransport`, the broker
   transport's publish path).
@@ -116,7 +122,7 @@ answering null. See [Error handling → A refusal in the reader's language](erro
 A `BackgroundService` with an unbounded `Channel<T>` that executes fire-and-forget work items
 sequentially. Local `[FireAndForget]` void commands and `[FireAndForget]` event listeners are
 enqueued here via `Enqueue(...)`; pipeline behaviors are resolved in the caller context before
-enqueuing. See [dispatch flows](dispatch-flows.md#fire-and-forget-void-commands).
+enqueuing. See [dispatch internals](dispatch-flows.md#fire-and-forget-void-commands).
 
 ### ProducerOnly
 
@@ -152,7 +158,7 @@ transport-native properties: HTTP `X-Conduit-Type` header, a SignalR hub method 
 `CausationId` to the parent's `MessageId`; a head dispatch self-causates so `CausationId == MessageId`).
 `StartDispatchFromTransport(messageId, causationId, conversationId)` rebuilds the context from inbound
 wire values so correlation propagates across services — if the wire omits `causationId`, it defaults to
-`messageId` (self-causation). See [dispatch flows](dispatch-flows.md).
+`messageId` (self-causation). See [dispatch internals](dispatch-flows.md).
 
 ### Self-published event filter
 
@@ -171,56 +177,21 @@ A queue (broker transports) the sender owns for receiving request/response repli
 **bypass** the topic/exchange and are delivered point-to-point to the reply queue. Reply queues are
 created by `EnsureOutboundTopologyAsync` even in `ProducerOnly` mode.
 
-### Job
+### Jobs vocabulary
 
-Background work declared via `conduit.AddJobs(...)`, either on a recurring **schedule** or as a
-reaction to an event (an **event trigger**). A job body is an ordinary command, so it inherits
-routing, pipeline behaviors, resilience and audit — any command but a `[FireAndForget]` one, whose
-handler would run after the job was recorded complete. See [Background Jobs](jobs.md).
+[Background Jobs](jobs.md) defines these in full.
 
-### Schedule
-
-A code-declared recurring job: a cron expression or a fixed interval, plus what to dispatch. Its
-name is its database key and must be unique. Because it is declared in code, every host computes
-the same occurrences without coordinating.
-
-### Occurrence
-
-One moment a schedule is due, computed in memory from the declaration. Distinct from a **run**: an
-occurrence is a point in time; a run is the ledger row for executing it.
-
-### Run
-
-A row in `conduit_job_runs` representing one execution of an occurrence or an event trigger, keyed
-`{schedule}@{occurrenceUtcIso}` or `{trigger}@{DeliveredMessageId}` (`MessageContext.DeliveredMessageId`, the id of the event being delivered). The table holds work, not history —
-a successful run's row is deleted, and history is [Audit](audit.md).
-
-### Claim
-
-The atomic UPDATE that elects exactly one host to run a due job, reusing the outbox's claim SQL with
-the run's due time as the eligibility column. A claim is **renewed** by a heartbeat while the job is
-genuinely running, so only a dead host's claim goes stale and becomes re-claimable — without
-renewal, a long job and a dead host are the same observation.
-
-### Cursor
-
-`conduit_job_schedules.LastCompletedOccurrence`: the most recent occurrence that reached a terminal
-outcome. Because a successful run's row is deleted, the cursor — not the row — is what stops a
-completed occurrence being re-materialized and re-run.
-
-### Misfire
-
-What happens to occurrences that fell between the cursor and now, i.e. were missed while the
-application was down. `MisfirePolicy.Skip` (default) advances past all of them; `RunImmediately`
-runs exactly one catch-up. Neither backfills.
-
-### Overlap
-
-Whether a new run of a schedule may start while another is still outstanding — running, or awaiting
-a retry. By default an occurrence is skipped and a manual `TriggerNowAsync` is refused
-(`JobOverlapException`); `AllowOverlap()` opts in.
+- **Job** — background work declared with `conduit.AddJobs(...)` whose body is an ordinary command.
+- **Schedule** — a code-declared job run on a timetable (cron or interval) or on demand; its name is unique.
+- **Event trigger** — a job run when an event is published, built from the event.
+- **Occurrence** — one moment a schedule is due, computed in memory from its declaration.
+- **Run** — one execution of an occurrence or a trigger: a row in `conduit_job_runs`.
+- **Claim** — the atomic update that elects one host to run a due run, renewed by a heartbeat while it runs.
+- **Cursor** — a schedule's last completed occurrence, which stops a finished occurrence running again.
+- **Misfire** — occurrences missed while the application was down: skipped, or one caught up.
+- **Overlap** — whether a schedule's run may start while another is outstanding (refused by default).
 
 ---
 
-See also: [Core Concepts](core-concepts.md) · [Dispatch Flows](dispatch-flows.md) ·
+See also: [Core Concepts](core-concepts.md) · [Dispatch Internals](dispatch-flows.md) ·
 [Diagnostics](diagnostics.md) · [Configuration Reference](configuration-reference.md).

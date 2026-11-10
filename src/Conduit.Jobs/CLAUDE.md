@@ -557,6 +557,18 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
 - **The coalescing path is not keyed on the event's `DeliveredMessageId`**, so unlike a plain trigger it gets
   no redelivery dedup from the unique run key. That is why the merge function has to be idempotent as
   well as widening, and why the user guide says so.
+- **Rationale the user guide used to carry**, kept here so it is not re-litigated:
+  - Cron is parsed by Cronos because it is DST-correct: a daily job whose local time does not exist on a spring-forward
+    day runs once at the jump, and one in the repeated fall-back hour runs once, not twice. Both are asserted by
+    tests, since both are what a naive parser gets wrong twice a year.
+  - There is no non-durable event trigger: an ordinary `IEventListener<T>` already is one, at zero cost, so a second
+    non-durable path through the jobs engine would duplicate it and earn nothing.
+  - `JobsOptions.ClaimTimeout` is not the outbox's: five minutes suits a send measured in milliseconds, but a job
+    running ten minutes would have its claim taken over at minute five and run twice. Hence renewal on a heartbeat.
+  - `CancelAsync` returns `CancellationOutcome`, not `Task`, so a caller has to confront the ambiguity instead of
+    reading "nothing to cancel" as success.
+  - The no-database mode firing on every host follows precedent: Quartz's `RAMJobStore` is single-node and clustering
+    needs its ADO.NET store; Hangfire requires a storage backend.
 
 ## Source generator dependency
 

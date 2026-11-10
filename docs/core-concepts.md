@@ -5,6 +5,7 @@
 - [Queries](#queries)
 - [Events](#events)
 - [Dispatching](#dispatching)
+  - [Dispatch options](#dispatch-options)
 - [Validate()](#validate)
 - [Ownership model](#ownership-model)
 
@@ -26,27 +27,30 @@ public record DeleteTodo(Guid Id) : ICommand;
 public record CreateTodo(string Title, string Body) : ICommand<Guid>;
 ```
 
-Each command has exactly one handler. The handler interface matches the command's return type:
+Each command has exactly one handler. The handler interface matches the command's return type. In these
+samples, `TodoStore` stands in for your own data access:
 
 ```csharp
 using Conduit.Handlers;
 
-public class DeleteTodoHandler : ICommandHandler<DeleteTodo>
+public class DeleteTodoHandler(TodoStore store) : ICommandHandler<DeleteTodo>
 {
     public Task HandleAsync(DeleteTodo command, CancellationToken cancellationToken)
-    {
-        // Delete the todo
-    }
+        => store.DeleteAsync(command.Id, cancellationToken);
 }
 
-public class CreateTodoHandler : ICommandHandler<CreateTodo, Guid>
+public class CreateTodoHandler(TodoStore store) : ICommandHandler<CreateTodo, Guid>
 {
-    public Task<Guid> HandleAsync(CreateTodo command, CancellationToken cancellationToken)
+    public async Task<Guid> HandleAsync(CreateTodo command, CancellationToken cancellationToken)
     {
-        // Create the todo, return its ID
+        var id = Guid.NewGuid();
+        await store.AddAsync(new TodoDto(id, command.Title, command.Body), cancellationToken);
+        return id;
     }
 }
 ```
+
+Handlers are resolved from DI for each dispatch, so they take their dependencies through the constructor.
 
 The source generator enforces one-handler-per-command. Multiple handlers produce a `CONDUIT002` compile error. A command with no handler produces a `CONDUIT001` warning.
 
@@ -65,16 +69,19 @@ public record ListTodos(int Page, int PageSize) : IQuery<PagedResult<TodoDto>>;
 Handlers implement `IQueryHandler<TQuery, TResult>`:
 
 ```csharp
+using Conduit.Exceptions;
 using Conduit.Handlers;
 
-public class GetTodoByIdHandler : IQueryHandler<GetTodoById, TodoDto>
+public class GetTodoByIdHandler(TodoStore store) : IQueryHandler<GetTodoById, TodoDto>
 {
-    public Task<TodoDto> HandleAsync(GetTodoById query, CancellationToken cancellationToken)
-    {
-        // Fetch and return the todo
-    }
+    public async Task<TodoDto> HandleAsync(GetTodoById query, CancellationToken cancellationToken)
+        => await store.FindAsync(query.Id, cancellationToken)
+            ?? throw new NotFoundException($"Todo {query.Id} was not found");
 }
 ```
+
+A handler refuses a request by throwing one of Conduit's exceptions, here `NotFoundException`: the caller gets
+the refusal and its message, with status 404 over HTTP ([Error Handling](error-handling.md)).
 
 The same one-handler rule applies.
 
@@ -93,55 +100,47 @@ Listeners implement `IEventListener<TEvent>`:
 ```csharp
 using Conduit.Handlers;
 
-public class SendCompletionNotification : IEventListener<TodoCompleted>
+public class SendCompletionNotification(INotificationSender notifications) : IEventListener<TodoCompleted>
 {
     public Task HandleAsync(TodoCompleted @event, CancellationToken cancellationToken)
-    {
-        // Send a push notification
-    }
+        => notifications.SendAsync($"'{@event.Title}' is done", cancellationToken);
 }
 
-public class UpdateCompletionStats : IEventListener<TodoCompleted>
+public class UpdateCompletionStats(TodoStats stats) : IEventListener<TodoCompleted>
 {
     public Task HandleAsync(TodoCompleted @event, CancellationToken cancellationToken)
     {
-        // Increment completion counters
+        stats.RecordCompletion(@event.Id);
+        return Task.CompletedTask;
     }
 }
 ```
 
-An event with zero listeners is valid. It has no effect locally but may still broadcast to transports.
-
-When the [transactional outbox](outbox.md) is enabled, events published during handler execution are captured and persisted to the outbox table atomically with business data, rather than sent directly to transports.
+An event with zero listeners is valid. It has no effect locally, but unless it is `[LocalOnly]`, `PublishAsync`
+also broadcasts it to the host's transports, so other services can listen to it ([Transports](transports/index.md)).
 
 ### Where an application's own listeners run
 
-When an application publishes an event, its local listeners run **inline on the publishing
-instance**, not load-balanced across replicas. With a broker configured, the broker also routes the
-application's own copy back to it; that copy is dropped on receipt, because the listeners already
-ran. So an application observes its own event exactly once, on whichever instance published it. A
-dropped copy is recorded as a `SelfPublishedEventSkipped` observation, so "why didn't my listener
-run" has an answer in the [audit trail](audit.md) rather than in silence. See
-[Transports → Self-published events](transports/index.md#self-published-events) for how the drop
-works.
-
-A heavy listener therefore stays on the publishing instance. If you want that work distributed,
-publish a command routed to a worker endpoint instead of relying on the event listener.
+An application's own listeners run inline on the instance that publishes the event, never load-balanced across
+its replicas. To spread heavy work across instances, publish a command routed to a worker endpoint instead. See
+[Transports](transports/index.md) for how a broker delivery of the application's own event is handled.
 
 ## Dispatching
 
 Inject `IMediator` and use the method that matches the message type:
 
 ```csharp
+using Conduit;
+
 public class TodoService(IMediator mediator)
 {
-    public async Task CompleteAndNotify(Guid id, CancellationToken cancellationToken)
+    public async Task CompleteAsync(Guid id, CancellationToken cancellationToken)
     {
-        // Commands use ExecuteAsync
-        await mediator.ExecuteAsync(new DeleteTodo(id), cancellationToken);
-
         // Queries use FetchAsync
         TodoDto todo = await mediator.FetchAsync(new GetTodoById(id), cancellationToken);
+
+        // Commands use ExecuteAsync
+        await mediator.ExecuteAsync(new DeleteTodo(id), cancellationToken);
 
         // Events use PublishAsync
         await mediator.PublishAsync(new TodoCompleted(id, todo.Title), cancellationToken);
@@ -151,13 +150,40 @@ public class TodoService(IMediator mediator)
 
 The method names are intentionally distinct. `ExecuteAsync` performs an action, `FetchAsync` reads data, `PublishAsync` broadcasts. There is no ambiguous `Send` method.
 
+`IMediator` is registered as transient and holds no state, so it can be injected anywhere, a singleton such as a
+`BackgroundService` included.
+
 A message is dispatched by its exact type — by the full type name the wire carries, whether it is sent in process or over a transport. A record that derives from another message is a message of its own: it goes to its own handler, and a listener of the base event does not receive it. It does inherit its base's `[LocalOnly]` and `[FireAndForget]`. A message type cannot be generic ([CONDUIT007](diagnostics.md#conduit007--generic-message-types-are-not-supported)), and two assemblies cannot each declare one with the same full type name ([CONDUIT008](diagnostics.md#conduit008--message-type-declared-in-more-than-one-assembly)).
+
+### Dispatch options
+
+Each dispatch method (both forms of `ExecuteAsync`, `FetchAsync` and `PublishAsync`) has an overload that takes an
+`Action<DispatchOptions>?` before the cancellation token.
+`DispatchOptions.Tag(key, value)` attaches a property to that one dispatch:
+
+```csharp
+await mediator.ExecuteAsync(
+    new DeleteTodo(id),
+    options => options.Tag("Reason", "Duplicate").Tag("RequestedBy", userId),
+    cancellationToken);
+```
+
+- The properties become the dispatch's `MessageContext.Current.Properties`, where a pipeline behavior or the
+  handler reads them. The [audit trail](audit.md) records them with the dispatch.
+- Every dispatch made inside it inherits them. A callback that tags anything replaces the inherited properties
+  rather than adding to them; a `null` callback, or one that tags nothing, keeps them.
+- Names are case-insensitive.
+- They stay in this process. A transport does not send them to the endpoint a command is routed to, and the
+  outbox keeps only the ones it is told to ([Carrying dispatch properties](outbox.md#carrying-dispatch-properties)).
 
 ## Validate()
 
 `ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` innermost — after every behavior, immediately before the handler — so a behavior that refuses never runs the caller's input.
 
 ```csharp
+using Conduit.Exceptions;
+using Conduit.Messages;
+
 public record TransferFunds(
     Guid FromAccountId,
     Guid ToAccountId,
@@ -166,37 +192,49 @@ public record TransferFunds(
     public void Validate()
     {
         if (FromAccountId == Guid.Empty)
-            throw new ArgumentException("Source account is required", nameof(FromAccountId));
+        {
+            throw new BadRequestException("Source account is required");
+        }
 
         if (ToAccountId == Guid.Empty)
-            throw new ArgumentException("Destination account is required", nameof(ToAccountId));
+        {
+            throw new BadRequestException("Destination account is required");
+        }
 
         if (FromAccountId == ToAccountId)
-            throw new ArgumentException("Cannot transfer to the same account");
+        {
+            throw new BadRequestException("Cannot transfer to the same account");
+        }
 
         if (Amount <= 0)
-            throw new ArgumentException("Transfer amount must be positive", nameof(Amount));
+        {
+            throw new BadRequestException("Transfer amount must be positive");
+        }
     }
 }
 ```
 
-These checks are structural. A transfer of zero dollars or to `Guid.Empty` is nonsensical regardless of what accounts exist.
+These checks are structural. A transfer of zero dollars or to `Guid.Empty` is nonsensical regardless of what accounts exist. Throw `BadRequestException`, so a caller over a transport is answered 400 with the message: any exception that is not a `ConduitException` is answered as an unexpected failure, 500 with `"An unexpected error occurred."` ([Error Handling](error-handling.md)).
 
 Validation that depends on application state belongs in the handler:
 
 ```csharp
-public class TransferFundsHandler : ICommandHandler<TransferFunds>
+using Conduit.Exceptions;
+using Conduit.Handlers;
+
+public class TransferFundsHandler(AccountStore accounts) : ICommandHandler<TransferFunds>
 {
     public async Task HandleAsync(TransferFunds command, CancellationToken cancellationToken)
     {
-        var account = await repository.GetAsync(command.FromAccountId, cancellationToken)
+        var account = await accounts.FindAsync(command.FromAccountId, cancellationToken)
             ?? throw new NotFoundException($"Account {command.FromAccountId} not found");
 
         if (account.Balance < command.Amount)
-            throw new ConflictException(
-                $"Balance {account.Balance} is less than {command.Amount}");
+        {
+            throw new ConflictException($"Balance {account.Balance} is less than {command.Amount}");
+        }
 
-        // Perform the transfer
+        await accounts.TransferAsync(command.FromAccountId, command.ToAccountId, command.Amount, cancellationToken);
     }
 }
 ```

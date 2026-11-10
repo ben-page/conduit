@@ -7,6 +7,8 @@
 - [Per-type filtering](#per-type-filtering)
 - [Inbound checks and the wire preflight](#inbound-checks-and-the-wire-preflight)
 - [Behaviors and retried dispatches](#behaviors-and-retried-dispatches)
+- [OpenTelemetry](#opentelemetry)
+- [Resilience (Polly)](#resilience-polly)
 
 ## Overview
 
@@ -175,11 +177,11 @@ All instrumentation is zero-cost when no OTel listener is attached.
 
 ## Resilience (Polly)
 
-The `Conduit.Resilience` package integrates Polly v8 resilience pipelines with Conduit's dispatch pipeline. Retry, circuit breaker, timeout, and other strategies wrap command/query/event dispatch via `IPipelineBehavior`.
+The `Conduit.NET.Resilience` package integrates Polly v8 resilience pipelines with Conduit's dispatch pipeline. Retry, circuit breaker, timeout, and other strategies wrap command/query/event dispatch via `IPipelineBehavior`.
 
 ### Setup
 
-Install `Conduit.Resilience` and configure in `AddConduit`:
+Install the `Conduit.NET.Resilience` package and configure in `AddConduit`:
 
 ```csharp
 builder.Services.AddConduit(conduit =>
@@ -233,7 +235,7 @@ A pipeline is built once per key and shared by every message that resolves to it
 
 The pipeline wraps an event's dispatch as well, around all of its local listeners at once. A failure thrown by a listener's `HandleAsync` does not reach it: every listener the container built runs, and their failures are thrown together as an `EventListenerException` after the pipeline has returned, so Polly never retries a listener that threw. Two kinds of failure do reach it. A listener whose construction throws (its constructor, or a dependency the container builds for it) fails while the event's listeners are resolved, before they run, and Polly can retry that like any other failure. And a failure thrown by a behavior inside the resilience behavior is retried, which runs every listener again, including those that already succeeded. Listener failures are collected across attempts: the final `EventListenerException` carries every attempt's, so a listener that failed on the first run is reported even when it succeeded on the retry.
 
-The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors. Because the generated `Validate()` runs innermost, validation failures (400 `ConduitException`s) now reach the resilience behavior: `ConduitPredicates.AllErrors<T>()` or Polly's default `ShouldHandle` would retry them and count them toward a circuit breaker. Use `ConduitPredicates.TransientErrors<T>()`, or exclude 4xx `ConduitException`s in a custom predicate.
+The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors. Because the generated `Validate()` runs innermost, validation failures (400 `ConduitException`s) reach the resilience behavior: `ConduitPredicates.AllErrors<T>()` or Polly's default `ShouldHandle` would retry them and count them toward a circuit breaker. Use `ConduitPredicates.TransientErrors<T>()`, or exclude 4xx `ConduitException`s in a custom predicate.
 
 ### MessageContext Enrichment
 
@@ -245,4 +247,4 @@ The observation comes from Polly's retry telemetry, which `AddResilience` hooks 
 
 ---
 
-Previous: [RabbitMQ](transports/rabbitmq.md) | [Home](../README.md) | Next: [Dispatch Retry](dispatch-retry.md)
+Previous: [TypeScript Client](transports/typescript-client.md) | [Home](../README.md) | Next: [Dispatch Retry](dispatch-retry.md)
