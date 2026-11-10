@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.IO.Hashing;
+using System.Text;
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Runtime;
@@ -221,6 +224,69 @@ public class TopologyNamingShould
 
         // Assert
         name1.Should().NotBe(name2);
+    }
+
+    [TestMethod]
+    public void KeepLongSiblingNamesDistinct()
+    {
+        // Arrange — two applications whose names agree on everything a 50-character limit keeps,
+        // subscribed to one message type: only a hash of the whole name tells their queues apart
+        var alpha = new ConduitOptions { SystemName = "conduit", ApplicationName = "fulfilment-warehouse-dispatcher-service-alpha" };
+        var bravo = new ConduitOptions { SystemName = "conduit", ApplicationName = "fulfilment-warehouse-dispatcher-service-bravo" };
+        const string messageType = "Orders.Events.OrderShipped";
+
+        // Act
+        var alphaName = TopologyNaming.CreateAppResourceName(alpha, messageType, maxLength: 50);
+        var bravoName = TopologyNaming.CreateAppResourceName(bravo, messageType, maxLength: 50);
+
+        // Assert — the kept 41 characters are shared, the hash of the full name is not
+        alphaName.Should().NotBe(bravoName);
+        alphaName[..41].Should().Be(bravoName[..41]);
+        var fullName = "conduit-fulfilment-warehouse-dispatcher-service-alpha-OrderShipped-Events-Orders";
+        var fullNameHash = XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(fullName))
+            .ToString("x16", CultureInfo.InvariantCulture)[..8];
+        alphaName.Should().Be($"{fullName[..41]}-{fullNameHash}");
+    }
+
+    [TestMethod]
+    public void SanitizeNestedTypesAndWindowsUserNames()
+    {
+        // Arrange — a Windows account as the developer prefix, a dotted application name and a
+        // nested message type: '\', '.' and '+' are each outside [A-Za-z0-9_-]
+        var options = new ConduitOptions
+        {
+            SystemName = "conduit",
+            ApplicationName = "Billing.Api",
+            TopologyMode = TopologyMode.Developer,
+            TopologyPrefix = @"CORP\jdoe",
+        };
+
+        // Act
+        var sharedName = TopologyNaming.CreateSharedResourceName(options, "Orders.Commands.Outer+Inner", maxLength: 260);
+        var appName = TopologyNaming.CreateAppResourceName(options, maxLength: 260);
+
+        // Assert
+        sharedName.Should().Be("CORP-jdoe-conduit-Outer-Inner-Commands-Orders");
+        appName.Should().Be("CORP-jdoe-conduit-Billing-Api");
+    }
+
+    [TestMethod]
+    [DataRow("replies")]
+    [DataRow("REPLIES")]
+    [DataRow("Dead-Letter")]
+    [DataRow("dead letter")]
+    public void RejectReservedPoolNames(string poolName)
+    {
+        // Arrange — a pool's queue is named like the reply queue or the dead-letter queue the
+        // transport creates beside it ('dead letter' sanitizes to 'dead-letter')
+        var options = new FakeBrokerOptions();
+
+        // Act
+        var act = () => options.AddPool(poolName, pool => pool.Concurrency = 2);
+
+        // Assert
+        act.Should().Throw<ArgumentException>().WithParameterName("name");
+        options.Pools.Should().BeEmpty();
     }
 
     [TestMethod]

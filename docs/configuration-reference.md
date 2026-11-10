@@ -222,6 +222,11 @@ follows the precedence rule above (a code-set value on an existing pool override
 one), and `Name` must be present and unique within `Pools` or `ConduitConfigurationBinder` throws,
 naming the offending configuration path.
 
+Two names are **reserved**: `replies` and `dead-letter`, in any case and however written before the
+name is sanitized for the broker (`dead letter` is `dead-letter`). A pool's queue is named after the
+pool, and either name would give it the name of a transport's own reply or dead-letter queue, so
+`AddPool` throws `ArgumentException` and configuration `InvalidOperationException`.
+
 ### Unmatched endpoint sections
 
 A `Conduit:Endpoints:{name}` section whose name matches no `AddEndpoint` call in this process is

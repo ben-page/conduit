@@ -91,6 +91,14 @@ public static class ConduitConfigurationBinder
                     $"Receiver pool at '{poolSection.Path}' has no Name. Every pool must set a unique Name.");
             }
 
+            // The binder fills Pools directly, never through AddPool, so its reservation is checked here too
+            if (BrokerTransportOptions.IsReservedPoolName(name))
+            {
+                throw new InvalidOperationException(
+                    $"Receiver pool name '{name}' at '{poolSection.Path}' is reserved: its queue would be named " +
+                    "like a transport's own reply or dead-letter queue.");
+            }
+
             if (!seenNames.Add(name))
             {
                 throw new InvalidOperationException(

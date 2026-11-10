@@ -144,6 +144,23 @@ public class TransportOptionsBindingShould
     }
 
     [TestMethod]
+    public void RejectAReservedPoolName()
+    {
+        // Arrange — configuration fills Pools without going through AddPool
+        var section = Section(new Dictionary<string, string?>
+        {
+            ["E:Pools:0:Name"] = "Replies",
+        });
+        var options = new TestBrokerOptions();
+
+        // Act
+        var act = () => ConduitConfigurationBinder.BindTransportOptions(options, section);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*Replies*reserved*");
+    }
+
+    [TestMethod]
     public void DoNothingWhenTheSectionIsAbsent()
     {
         // Arrange

@@ -173,7 +173,7 @@ These tests verify naming logic and configuration without requiring a live broke
 | TM-1.4 | `UseAppResourceNameForReplyQueue` | Reply resource uses `TopologyNaming.CreateAppResourceName(options, "replies", maxLen)` |
 | TM-1.5 | `UseSharedResourceNameForCommandQueues` | Command/query queue names use `TopologyNaming.CreateSharedResourceName(options, type, maxLen)` — shared across apps (unicast) |
 | TM-1.6 | `UseAppResourceNameForEventQueues` | Event queue names use `TopologyNaming.CreateAppResourceName(options, type, maxLen)` — per-app (multicast) |
-| TM-1.7 | `TruncateLongNamesWithHash` | Names exceeding maxLength are truncated with XxHash32 suffix |
+| TM-1.7 | `TruncateLongNamesWithHash` | Names exceeding maxLength keep `maxLength - 9` characters, then `-` and 8 hex characters of an xxHash64 of the whole name (the exact format is pinned once, in `TopologyNamingShould.KeepLongSiblingNamesDistinct`) |
 | TM-1.8 | `IncludeTopologyPrefixInNames` | Developer/Test prefix appears in all resource names |
 
 ### Category TM-2: Unicast vs Multicast Routing

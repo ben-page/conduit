@@ -338,7 +338,7 @@ Inbound filtering is handled by `TypeFilterInterceptor` (rejects disallowed type
 - `CreateSharedResourceName(options, maxLength)` — names for resources shared across apps (topic/exchange, unicast subscriptions). Format: `{prefix}-{systemName}` or just `{systemName}` in Production mode.
 - `CreateAppResourceName(options, maxLength)` — names scoped to a specific app (queues, multicast subscriptions). Format: `{prefix}-{systemName}-{appName}` or `{systemName}-{appName}` in Production mode.
 
-Both families accept an optional `suffix` parameter for sub-resources (e.g. `"replies"`, pool names, type names). Type name suffixes containing dots are reversed and hyphenated (e.g. `Orders.Commands.CreateOrder` becomes `CreateOrder-Commands-Orders`). Names exceeding `maxLength` are truncated with an xxHash32 suffix to preserve uniqueness.
+Both families accept an optional `suffix` parameter for sub-resources (e.g. `"replies"`, pool names, type names). Type name suffixes containing dots are reversed and hyphenated (e.g. `Orders.Commands.CreateOrder` becomes `CreateOrder-Commands-Orders`). The composed name is then sanitized to `[A-Za-z0-9_-]`, every other character becoming `-` (a Windows `DOMAIN\user` prefix, a dotted application name, a nested type's `+`). A name exceeding `maxLength` keeps its first `maxLength - 9` characters, then `-` and 8 hex characters of an xxHash64 of the whole sanitized name, so two names that differ only past the cut stay distinct. Pool names `replies` and `dead-letter` are reserved (`AddPool` throws `ArgumentException`, configuration `InvalidOperationException`): a pool's queue would take the name of the transport's own reply or dead-letter queue.
 
 ### Topology Modes
 

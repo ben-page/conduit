@@ -7,10 +7,21 @@ namespace Conduit.Runtime;
 
 /// <summary>
 /// Generates consistent resource names for broker transport topology.
-/// Handles prefix/system-name composition, suffix sanitization, and hash-based truncation.
+/// Handles prefix/system-name composition, sanitizing to the characters every broker accepts, and
+/// hash-based truncation.
 /// </summary>
+/// <remarks>
+/// Every name is composed, then sanitized (<c>[A-Za-z0-9_-]</c> only, anything else becomes <c>-</c>: a
+/// Windows <c>DOMAIN\user</c> prefix, a dotted application name, a nested type's <c>+</c>), then truncated
+/// when longer than the broker allows: the first <c>maxLength - 9</c> characters, <c>-</c>, and 8 hex
+/// characters of an xxHash64 of the whole sanitized name, so two names that differ only past the cut stay
+/// apart. The names are part of a deployment's topology: changing how they are built renames queues.
+/// </remarks>
 public static class TopologyNaming
 {
+    // "-" plus 8 hex characters
+    private const int HashSuffixLength = 9;
+
     /// <summary>
     /// Creates a shared resource name from the system name and optional topology prefix.
     /// Shared names are identical across all application instances (used for unicast resources).
@@ -20,8 +31,7 @@ public static class TopologyNaming
     public static string CreateSharedResourceName(ConduitOptions options, int maxLength)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var name = BuildBase(options.TopologyPrefix, options.SystemName);
-        return Truncate(name, name, maxLength);
+        return Finish(BuildBase(options.TopologyPrefix, options.SystemName), maxLength);
     }
 
     /// <summary>
@@ -36,16 +46,8 @@ public static class TopologyNaming
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(suffix);
 
-        if (suffix.Contains('.', StringComparison.Ordinal))
-        {
-            var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
-            var sanitized = SanitizeSuffix(suffix);
-            var name = $"{baseName}-{sanitized}";
-            return Truncate(name, suffix, maxLength);
-        }
-
-        var fullName = $"{BuildBase(options.TopologyPrefix, options.SystemName)}-{suffix}";
-        return Truncate(fullName, fullName, maxLength);
+        var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
+        return Finish($"{baseName}-{ReverseSegments(suffix)}", maxLength);
     }
 
     /// <summary>
@@ -71,9 +73,9 @@ public static class TopologyNaming
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ApplicationName, nameof(options.ApplicationName));
+
         var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
-        var name = $"{baseName}-{options.ApplicationName}";
-        return Truncate(name, name, maxLength);
+        return Finish($"{baseName}-{options.ApplicationName}", maxLength);
     }
 
     /// <summary>
@@ -90,16 +92,7 @@ public static class TopologyNaming
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ApplicationName, nameof(options.ApplicationName));
 
         var baseName = BuildBase(options.TopologyPrefix, options.SystemName);
-
-        if (suffix.Contains('.', StringComparison.Ordinal))
-        {
-            var sanitized = SanitizeSuffix(suffix);
-            var name = $"{baseName}-{options.ApplicationName}-{sanitized}";
-            return Truncate(name, suffix, maxLength);
-        }
-
-        var plainName = $"{baseName}-{options.ApplicationName}-{suffix}";
-        return Truncate(plainName, plainName, maxLength);
+        return Finish($"{baseName}-{options.ApplicationName}-{ReverseSegments(suffix)}", maxLength);
     }
 
     /// <summary>
@@ -114,10 +107,26 @@ public static class TopologyNaming
         return CreateAppResourceName(options, fullTypeName, maxLength);
     }
 
+    /// <summary>
+    /// Replaces every character outside <c>[A-Za-z0-9_-]</c>, the set every broker accepts in a resource
+    /// name, with <c>-</c>, one for one.
+    /// </summary>
+    internal static string Sanitize(string name) =>
+        string.Create(name.Length, name, static (sanitized, source) =>
+        {
+            for (var index = 0; index < source.Length; index++)
+            {
+                var character = source[index];
+                sanitized[index] = char.IsAsciiLetterOrDigit(character) || character is '_' or '-'
+                    ? character
+                    : '-';
+            }
+        });
+
     private static string BuildBase(string? prefix, string systemName) =>
         prefix is not null ? $"{prefix}-{systemName}" : systemName;
 
-    private static string SanitizeSuffix(string suffix)
+    private static string ReverseSegments(string suffix)
     {
         if (!suffix.Contains('.', StringComparison.Ordinal))
         {
@@ -129,17 +138,18 @@ public static class TopologyNaming
         return string.Join('-', segments);
     }
 
-    private static string Truncate(string name, string hashInput, int maxLength)
+    private static string Finish(string name, int maxLength)
     {
-        if (name.Length <= maxLength)
+        var sanitized = Sanitize(name);
+        if (sanitized.Length <= maxLength)
         {
-            return name;
+            return sanitized;
         }
 
-        const int hashSuffixLength = 9;
-        var hash = XxHash32.HashToUInt32(Encoding.UTF8.GetBytes(hashInput));
-        var hashHex = hash.ToString("x8", CultureInfo.InvariantCulture);
-        var truncated = name[..(maxLength - hashSuffixLength)];
-        return $"{truncated}-{hashHex}";
+        // The hash covers the whole name, so siblings that share everything the cut keeps (two long
+        // application names, one message type) still differ
+        var hash = XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(sanitized));
+        var hashHex = hash.ToString("x16", CultureInfo.InvariantCulture)[..(HashSuffixLength - 1)];
+        return $"{sanitized[..(maxLength - HashSuffixLength)]}-{hashHex}";
     }
 }
