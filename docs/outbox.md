@@ -208,7 +208,7 @@ conduit.UseMySql("Server=localhost;Database=MyApp;...");
 conduit.AddDurability(durability => durability.AddOutbox());
 ```
 
-The outbox table (`conduit_outbox`) and its indexes are created automatically on startup, before the relay's first sweep. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations ([the columns and indexes a migration needs](persistence.md#the-outbox-table)). A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL). Startup creates tables and indexes but never alters a column. A host that [carries dispatch properties](#carrying-dispatch-properties) on a table created before that column existed must add it itself. A `conduit_outbox` created by an earlier pre-release build does not work with this one. It lacks the `FailedAt` column, so marking an entry Failed and the Failed retention cleanup throw on every sweep. On SQL Server, creating the indexes over its unbounded key columns fails startup. Drop that table before this build starts, or migrate it to [the current columns and indexes](persistence.md#the-outbox-table).
+The outbox table (`conduit_outbox`) and its indexes are created automatically on startup, before the relay's first sweep. Disable with `AddOutbox(o => o.AutoCreateTable = false)` if you manage schemas through migrations ([the columns and indexes a migration needs](persistence.md#the-outbox-table)). A new table includes the nullable `Properties` column (`NVARCHAR(MAX)` on SQL Server, `TEXT` on SQLite and PostgreSQL, `LONGTEXT` on MySQL). Startup creates tables and indexes but never alters a column. A host that [carries dispatch properties](#carrying-dispatch-properties) on a table created without that column must add it itself.
 
 ## Custom stores
 
@@ -500,7 +500,7 @@ durability.AddOutbox(outbox =>
   each restored as its declared type, so step 2's listeners — and their nested dispatches, which
   inherit the bag — see them. A relay redelivery after a failed flush runs under exactly the bag the
   flush did. An entry with a `NULL` column (one written before the host opted in) is delivered with an
-  empty bag, as before. A stored key the host no longer lists, or whose value no longer reads as its
+  empty bag. A stored key the host no longer lists, or whose value no longer reads as its
   declared type, is dropped rather than failing the delivery, and a column that is not a JSON object
   (truncated, or edited by hand) restores as an empty bag.
 - **List only keys the server sets.** A restored value is trusted by every listener and nested

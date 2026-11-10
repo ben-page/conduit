@@ -92,7 +92,7 @@ public class AuthorizationBehavior<TRequest, TResult>(ICurrentUser user) : IPipe
 
 Check `typeof(TRequest)`, cast to an interface, look for attributes. If the behavior does not apply, call `next()` and pass through.
 
-A behavior does not call the message's `Validate()`. The generated dispatch calls it innermost — after every behavior, immediately before the handler — so a behavior that refuses (like the one above) never runs the caller's input, and every message is still validated before its handler runs.
+A behavior does not call the message's `Validate()`: dispatch runs it after every behavior, so a behavior that refuses, like the one above, refuses before the input is validated ([Validate()](core-concepts.md#validate)).
 
 ## Inbound checks and the wire preflight
 
@@ -129,7 +129,7 @@ The marker is a promise that the behavior only judges whether the request may ru
 3. The read: the contract is found by name among the registry's commands and queries and read from the payload with `DeserializeWire`, exactly as the wire reads it.
 4. Every pipeline behavior that is an `IInboundCheckBehavior`, in the pipeline's order, closed over the contract's own result type as dispatch closes them, around a step that does nothing.
 
-**What it never runs:** the handler, any pipeline behavior that is not an inbound check, and the contract's own `Validate()` (dispatch runs it innermost, after every behavior). A name the registry does not list as a command or query is answered as the wire answers an unknown type: a `BadRequest` refusal ([Error Handling](error-handling.md#unhandled-exceptions)).
+**What it never runs:** the handler, any pipeline behavior that is not an inbound check, and the contract's own `Validate()` (dispatch runs it after every behavior: [Validate()](core-concepts.md#validate)). A name the registry does not list as a command or query is answered as the wire answers an unknown type: a `BadRequest` refusal ([Error Handling](error-handling.md#unhandled-exceptions)).
 
 **It records nothing.** The gates run under no `MessageContext`, as for a wire request no transport identified, so an inbox gate records nothing. The checks run in a fresh context with no observer attached, so nothing is audited. The caller's context is current again when it returns. It starts no transaction and no retry attempt.
 
@@ -235,7 +235,7 @@ A pipeline is built once per key and shared by every message that resolves to it
 
 The pipeline wraps an event's dispatch as well, around all of its local listeners at once. A failure thrown by a listener's `HandleAsync` does not reach it: every listener the container built runs, and their failures are thrown together as an `EventListenerException` after the pipeline has returned, so Polly never retries a listener that threw. Two kinds of failure do reach it. A listener whose construction throws (its constructor, or a dependency the container builds for it) fails while the event's listeners are resolved, before they run, and Polly can retry that like any other failure. And a failure thrown by a behavior inside the resilience behavior is retried, which runs every listener again, including those that already succeeded. Listener failures are collected across attempts: the final `EventListenerException` carries every attempt's, so a listener that failed on the first run is reported even when it succeeded on the retry.
 
-The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors. Because the generated `Validate()` runs innermost, validation failures (400 `ConduitException`s) reach the resilience behavior: `ConduitPredicates.AllErrors<T>()` or Polly's default `ShouldHandle` would retry them and count them toward a circuit breaker. Use `ConduitPredicates.TransientErrors<T>()`, or exclude 4xx `ConduitException`s in a custom predicate.
+The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors. Because [`Validate()`](core-concepts.md#validate) runs inside every behavior, validation failures (400 `ConduitException`s) reach the resilience behavior: `ConduitPredicates.AllErrors<T>()` or Polly's default `ShouldHandle` would retry them and count them toward a circuit breaker. Use `ConduitPredicates.TransientErrors<T>()`, or exclude 4xx `ConduitException`s in a custom predicate.
 
 ### MessageContext Enrichment
 

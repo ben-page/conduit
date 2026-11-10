@@ -1,8 +1,41 @@
 # Conduit — Mediator Library Design
 
-> **Historical document — original design spec.** This is the pre-implementation design that captures Conduit's *original* intent and rationale. It has drifted from the shipped library: it omits projects that now exist (`Conduit.Durability`, `Conduit.Audit`, `Conduit.Resilience`, the broker transports), frames Rebus-style messaging as "future" (broker transports are now first-class), and describes an Angular frontend (the real browser sample is Vite + TypeScript). It is retained for context and is **not** maintained as current reference.
+> **The original design document, kept for the record.** It was written before most of Conduit was built and is not
+> maintained; it is not part of the documentation site. The [guides](../../README.md#reading-order) describe the
+> library as it ships. These sections describe things that were never built, or were built differently:
 >
-> For the shipped reality, see the root [`CLAUDE.md`](../CLAUDE.md) (architecture, design decisions, project index), the per-project `CLAUDE.md` files under `src/`, and the guides in [`docs/`](.).
+> - **Overview, Goals, Non-Goals, Event Model, Future Considerations.** The frontend is any TypeScript app (the
+>   browser sample is Vite), not Angular. Rebus was never integrated or planned: the broker transports (Azure Service
+>   Bus, RabbitMQ, Amazon SQS, ActiveMQ) are built in, and no NATS or Redis transport is planned.
+> - **Project Structure.** It omits `Conduit.Contracts`, `Conduit.Durability`, `Conduit.Audit`, `Conduit.Jobs`,
+>   `Conduit.Resilience` and the `Conduit.Persistence` packages.
+> - **Behavior Registration and Ordering, Pipeline Weaving.** There is no `AddBehavior<T>()`: behaviors are registered
+>   with `conduit.AddPipeline(typeof(MyBehavior<,>))` and resolved at dispatch time by `ConduitRuntime.ResolvePipelines`,
+>   not woven into the generated code.
+> - **Event Pipeline Behavior.** There is no `IEventPipelineBehavior<TEvent>` and no `AddEventBehavior<T>()`:
+>   `IPipelineBehavior<TRequest, TResult>` wraps events as well.
+> - **Discoverability Attributes, Fallback Behavior.** `[DispatchableNamespace]`, `[Dispatchable]` and
+>   `[NotDispatchable]` were never built. Every `ICommand`, `IQuery` and `IEvent` type is discovered, and TypeGen writes
+>   one `conduit.generated.ts` for the `[ClientVisible]` types, with no per-namespace files.
+> - **DI Registration.** There is no `AddConduitHandlers()`: the generated `AddConduit(...)` registers the handlers and
+>   listeners.
+> - **Compile-Time Diagnostics, Authentication and Authorization.** CONDUIT004 reports a handler in a referenced
+>   assembly that the generating assembly cannot see; there is no diagnostic for a missing `[Authorize]` or
+>   `[AllowAnonymous]`, no `DefaultAuthPolicy` or `AuthPolicy`, and Conduit does not read ASP.NET Core's authorization
+>   attributes. Access control is the type filter and your own pipeline behaviors ([Security](../security.md)).
+> - **Error Model, Validation Strategy.** `ErrorCode` also has `Forbidden`, `PreconditionFailed` and
+>   `ContractMismatch`; a `Validate()` refusal throws `BadRequestException` (there is no `ValidationException`).
+> - **HTTP Integration.** `/publish` answers the same status-coded `DispatchResult` envelope as `/dispatch`, not a bare
+>   200 OK.
+> - **Topology Naming.** `TopologyNaming` is in `Conduit.Runtime`, not `Conduit.Configuration`.
+> - **Amazon SQS and ActiveMQ registration.** Every endpoint gets its own keyed options and transport; no transport
+>   package registers a shared singleton.
+> - **Transactional Outbox (`Conduit.Outbox`).** There is no `Conduit.Outbox` package: the outbox ships in
+>   `Conduit.Durability`, is registered with `conduit.AddDurability(durability => durability.AddOutbox())` after a
+>   database engine (`conduit.UseSqlite(...)` and the like), and its SQL comes from `Conduit.Persistence`'s
+>   `ISqlDialect`, not an `IOutboxDialect` ([Outbox](../outbox.md)).
+> - **Testing.** The transport test matrix lives in the [contributing guide](../contributing/transport-test-matrices.md),
+>   and its counts have changed.
 
 ## Overview
 
@@ -870,7 +903,7 @@ conduit.on('MyApp.Events.NoteCreatedEvent', event => console.log(event.text));
 | Enums | String literal union (`[JsonStringEnumMemberName]` honored); a `[Flags]` enum is `string` |
 
 `[JsonPropertyName]` and `[JsonIgnore]` shape the generated properties as they shape the wire. The full table is in
-[TypeScript client → Type mapping](transports/typescript-client.md#type-mapping).
+[TypeScript client → Type mapping](../transports/typescript-client.md#type-mapping).
 
 ## Validation Strategy
 
@@ -951,7 +984,7 @@ The publisher doesn't know or care who's listening or which transports are confi
 - `[TestInitialize]` guards with `Assert.Inconclusive` when broker unavailable
 - All hosts must use `await using` — sole disposal mechanism (no host tracking)
 
-**Transport test matrices** documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
+**Transport test matrices** documented in `docs/contributing/transport-test-matrices.md` — defines the required tests for every broker transport (28 behavior tests + 16 universal topology tests + transport-specific tests). New transports MUST implement the full matrix.
 
 ### Handler Override
 
@@ -1206,7 +1239,7 @@ public class AuthorizationBehavior<TRequest, TResult>(
 
 ## Future Considerations
 
-The `BrokerTransportBase<TMessage>` pattern makes adding new broker transports straightforward — implement ~15 abstract methods for broker-specific primitives. The transport test matrix (`docs/transport-test-matrices.md`) defines the full test suite required for any new transport.
+The `BrokerTransportBase<TMessage>` pattern makes adding new broker transports straightforward — implement ~15 abstract methods for broker-specific primitives. The transport test matrix (`docs/contributing/transport-test-matrices.md`) defines the full test suite required for any new transport.
 
 Potential future transports (not planned):
 - `Conduit.Transport.Rebus` — Rebus adapter wrapping its bus abstraction as `IConduitTransport`

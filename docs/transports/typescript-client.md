@@ -205,7 +205,7 @@ sooner) and recovers from an outage of any length without a page reload:
   is not cached.
 - **A close nobody asked for restarts itself.** `withAutomaticReconnect` only retries a connection that dropped, or
   one the server closed *with* `allowReconnect`. A server close without it, a first start that fails, and a retry
-  policy that gave up each schedule a restart on the same retry policy, so a kiosk left unattended through a graceful
+  policy that gave up each schedule a restart on the same retry policy, so a screen left unattended through a graceful
   server shutdown recovers exactly like one left unattended through a crash. The attempt count resets only after a
   connection has stayed up 30 seconds, so a server that accepts and immediately closes a connection is retried on the
   schedule, not in a tight loop.

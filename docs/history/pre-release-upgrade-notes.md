@@ -51,3 +51,14 @@ upgrade the packages:
   both ways to supply it: *"RabbitMQ transport for endpoint 'orders' has no connection string. Set
   'Conduit:Endpoints:orders:ConnectionString' in configuration or pass it to UseRabbitMQ()."*
   It is still thrown from the `AddConduit` call, so a misconfigured host still fails at startup.
+- **Tables an internal build created need changing.** Startup creates tables and indexes but never alters a column.
+  A `conduit_outbox` created by an internal build lacks `FailedAt` and has unbounded key columns: drop it before the
+  new build starts, or add `FailedAt` and give `MessageId`, `ClaimToken`, `NextAttemptAt` and `SentAt` the bounded
+  types in [the outbox table](../persistence.md#the-outbox-table). Left as it is, marking an entry Failed and every
+  Failed retention cleanup throw, and on SQL Server startup fails, because the indexes cannot be created over
+  `NVARCHAR(MAX)` columns. A `conduit_dead_letters` created by an internal build lacks `ReplayClaimToken` and
+  `ReplayClaimedAt`, so every replay fails until the table is dropped or the two columns are added
+  ([the dead-letter table](../persistence.md#the-dead-letter-table)).
+- **A durable RabbitMQ queue an internal build declared without `x-dead-letter-exchange`** makes the broker refuse the
+  new declaration (`PRECONDITION_FAILED`, 406), and the transport fails to start: delete the queue, or re-declare it
+  with the arguments in [RabbitMQ → Topology](../transports/rabbitmq.md#topology).

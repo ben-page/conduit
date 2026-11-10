@@ -102,7 +102,7 @@ services.AddConduit(conduit =>
 });
 ```
 
-The dead letter table (`conduit_dead_letters`) is created automatically on startup. Disable with `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)` if you manage schemas through migrations. A table an earlier pre-release build created lacks the two columns replay claims an entry with; see [The dead-letter table](persistence.md#the-dead-letter-table).
+The dead letter table (`conduit_dead_letters`) is created automatically on startup. Disable with `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)` if you manage schemas through migrations; [The dead-letter table](persistence.md#the-dead-letter-table) lists its columns.
 
 ### Database dialects
 

@@ -49,9 +49,10 @@ change touches locally.
 
 ### The transport test matrix
 
-[`docs/transport-test-matrices.md`](docs/transport-test-matrices.md) defines the tests every broker transport must
-have: behavior tests, the universal topology tests, transport-specific tests, and container-free per-endpoint
-registration and configuration-binding tests. A new transport must implement the full matrix.
+[`docs/contributing/transport-test-matrices.md`](docs/contributing/transport-test-matrices.md) defines the tests
+every broker transport must have: behavior tests, the universal topology tests, transport-specific tests, and
+container-free per-endpoint registration and configuration-binding tests. A new transport must implement the full
+matrix.
 
 ## Documentation
 

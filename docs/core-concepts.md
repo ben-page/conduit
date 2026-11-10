@@ -123,7 +123,7 @@ also broadcasts it to the host's transports, so other services can listen to it 
 
 An application's own listeners run inline on the instance that publishes the event, never load-balanced across
 its replicas. To spread heavy work across instances, publish a command routed to a worker endpoint instead. See
-[Transports](transports/index.md) for how a broker delivery of the application's own event is handled.
+[Transports → Self-published events](transports/index.md#self-published-events) for how a broker delivery of the application's own event is handled.
 
 ## Dispatching
 
@@ -178,7 +178,7 @@ await mediator.ExecuteAsync(
 
 ## Validate()
 
-`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` innermost — after every behavior, immediately before the handler — so a behavior that refuses never runs the caller's input.
+`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` innermost — after every behavior, immediately before the handler — so a behavior that refuses never runs the caller's input. Every message is validated before its handler runs, whether it was dispatched in process or arrived over the wire. A local `[FireAndForget]` command is validated on the caller's thread before it is queued, so an invalid one is refused to its caller and never queued.
 
 ```csharp
 using Conduit.Exceptions;

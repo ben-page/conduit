@@ -6,8 +6,8 @@ theme, published to GitHub Pages by `.github/workflows/docs.yml` on every push t
 The content is not here. It is the Markdown in the repository's `docs/`, which stays the source and reads the same on
 GitHub. Before every `dev` and `build` run, `scripts/prepare-docs.mjs` copies it into `src/content/docs/`
 (git-ignored), taking each page's title from its first heading, dropping the hand-written "Previous | Home | Next"
-footer, and rewriting relative links for the site. `docs/why-conduit.md` becomes the landing page. `docs/design.md`,
-`docs/transport-test-matrices.md` and `docs/superpowers/` are left out. Edit the files in `docs/`, never the copies.
+footer, and rewriting relative links for the site. `docs/why-conduit.md` becomes the landing page. `docs/contributing/`,
+`docs/history/` and `docs/superpowers/` are left out. Edit the files in `docs/`, never the copies.
 
 ## Run it locally
 

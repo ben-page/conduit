@@ -244,7 +244,7 @@ A [long name](#name-length) is cut and hashed after its first 67 characters (71 
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | Yes | None: SNS and SQS have no auto-delete (see below) |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | Yes | None (see below) |
 
-Developer mode gives each developer isolated topics and queues (e.g. `alice-conduit` instead of `conduit`). Test mode creates isolated resources for integration tests.
+With the code below, the topic is `alice-conduit` instead of `conduit`; what the modes are for is in [Transports → Developer and Test modes](index.md#developer-and-test-modes).
 
 SNS and SQS have no auto-delete, so ephemeral resources accumulate, dead-letter queues included, and so does the reply queue of an instance that ended without stopping (a crash, a kill). `AmazonSqsTopologyReaper.ReapByPrefixAsync(options, prefix)` deletes queues and topics whose names start with a prefix; deleting a topic removes its subscriptions with it. Conduit's own test suites call it once per test project, and it is available to applications for the same purpose.
 
@@ -308,7 +308,7 @@ Messages use JSON serialization (`ConduitRuntime.JsonOptions`) with metadata in 
 | `traceparent`, `tracestate` | W3C trace context, when the publish runs inside a trace |
 | `conduit-source-app` | The publishing application's `ApplicationName`, used by the [self-published event filter](index.md#self-published-events) (omitted when `ApplicationName` is unset) |
 
-The three correlation identifiers use short names rather than the canonical `conduit-message-id` style the other transports carry. That is a hard constraint, not a style choice: **SNS and SQS cap a message at 10 attributes**, and a request publish already uses 9 of them. Renaming the three correlation ids keeps the message under the ceiling where carrying both forms would not, leaving exactly one attribute spare.
+The three correlation identifiers use short names rather than the canonical `conduit-message-id` style the other transports carry. That is a hard constraint, not a style choice: **SNS and SQS cap a message at 10 attributes**, and a request publish already uses 9 of them. Carrying only the short names keeps the message under the ceiling where both forms would not, leaving exactly one attribute spare.
 
 Keep that ceiling in mind if you were hoping to add your own attributes to Conduit messages: there is almost no room.
 

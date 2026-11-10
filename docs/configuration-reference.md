@@ -303,25 +303,10 @@ or a test.
 
 ## Topology modes
 
-`TopologyMode` names a broker's resources and decides how long they live. HTTP and SignalR create no broker
-resources.
-
-| Mode | Prefix by default | Lifetime |
-|---|---|---|
-| `Production` | none | Durable; nothing is deleted. |
-| `Developer` | `Environment.UserName` | Ephemeral, where the broker can delete a resource itself. |
-| `Test` | `test-` and 8 random hex characters | As Developer, sooner. |
-
-| Transport | Developer | Test |
-|---|---|---|
-| RabbitMQ | Non-durable and auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes; except the system dead-letter queue, which is never auto-delete (non-durable, so it lives until the broker restarts) | As Developer, and the dead-letter queue expires once unused for 5 minutes |
-| Azure Service Bus | Each topic, queue and subscription is deleted after 4 hours idle (`AutoDeleteOnIdle`) | After 5 minutes idle |
-| ActiveMQ | A queue is deleted 4 hours after its last consumer left; the two addresses stay | 5 minutes; the addresses stay |
-| Amazon SQS | Nothing is deleted: SNS and SQS have no auto-delete | Nothing is deleted |
-
-On Amazon SQS, `AmazonSqsTopologyReaper.ReapByPrefixAsync(options, prefix)` deletes the topics and queues whose names
-start with a prefix, as Conduit's own tests do once per test project. See each transport's guide, and
-[Transports → Ephemeral resource cleanup](transports/index.md#ephemeral-resource-cleanup).
+`TopologyMode` names a broker's resources and decides how long they live: `Production` (durable, no prefix),
+`Developer` (prefixed with the user name, ephemeral where the broker can delete a resource itself) or `Test` (a random
+prefix per run, deleted sooner). What each mode does on each broker, and the Amazon SQS reaper, are in
+[Transports → Developer and Test modes](transports/index.md#developer-and-test-modes).
 
 ## Loading from IConfiguration
 

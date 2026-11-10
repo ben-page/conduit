@@ -149,7 +149,7 @@ No manual subscription configuration is needed.
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | Yes: Service Bus keeps every entity's messages | Each topic, queue and subscription is deleted after 4 hours idle (`AutoDeleteOnIdle`) |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | Yes | Each is deleted after 5 minutes idle |
 
-Developer mode gives each developer isolated broker resources (e.g. topic `alice-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests.
+With the code below, the topic is `alice-conduit` instead of `conduit`; what the modes are for is in [Transports → Developer and Test modes](index.md#developer-and-test-modes).
 
 ```csharp
 builder.Services.AddConduit(conduit =>
@@ -215,8 +215,8 @@ Messages use JSON serialization (`ConduitRuntime.JsonOptions`) with type informa
 | `MessageId` | From `MessageContext` or auto-generated |
 | `CorrelationId` | From `MessageContext.ConversationId` |
 | `ReplyTo`, `ReplyToSessionId` | The reply queue and the request's correlation id (requests only); a reply carries the latter as its `SessionId` |
-| Application property `CausationId` | From `MessageContext.CausationId` (historical name, kept for existing consumers) |
-| Application properties `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside `MessageId`/`CorrelationId`/the historical `CausationId` property above |
+| Application property `CausationId` | From `MessageContext.CausationId` (also written as `conduit-causation-id`) |
+| Application properties `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside `MessageId`/`CorrelationId`/the `CausationId` property above |
 | Application properties `traceparent`, `tracestate` | W3C trace context, when the publish runs inside a trace |
 | Application property `conduit-source-app` | The publishing application's `ApplicationName`, used by the [self-published event filter](index.md#self-published-events) (omitted when `ApplicationName` is unset) |
 

@@ -175,8 +175,8 @@ if (result.error?.code === 'PreconditionFailed') {
 }
 ```
 
-The page sends one message and gets one answer. `Validate()` holds the checks that need no data, and the generated
-mediator runs it just before the handler; whatever either of them refuses comes back as `result.error`, not as an
+The page sends one message and gets one answer. [`Validate()`](core-concepts.md#validate) holds the checks that need no
+data, and the generated mediator runs it just before the handler; whatever either of them refuses comes back as `result.error`, not as an
 exception the page has to catch. What deactivation does to badges and shifts is the handler's business, and it is the
 same whether the command came from the browser, a nightly job or a test.
 

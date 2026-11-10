@@ -4,7 +4,6 @@
 - [The rule: one analyzer in the composition root](#the-rule-one-analyzer-in-the-composition-root)
 - [Project layout](#project-layout)
 - [Handlers must be public](#handlers-must-be-public)
-- [Diagnostics](#diagnostics)
 - [Why only one analyzer](#why-only-one-analyzer)
 
 ## Overview
@@ -74,18 +73,13 @@ builder.Services.AddConduit();
 Cross-assembly discovery is gated by accessibility: the composition-root assembly can only
 reference a handler that is `public`. A handler that is `internal` (or otherwise not
 accessible) in a referenced module assembly will **not** be auto-registered. Make every
-command/query handler and event listener that should be dispatched `public`.
+command/query handler and event listener that should be dispatched `public`. The build reports an inaccessible
+command or query handler as [CONDUIT004](diagnostics.md#conduit004--handler-not-accessible), so the contract does not
+silently go without one.
 
 (Handlers in the *same* assembly as the analyzer may still be `internal` — they are
 accessible to the generated code there. The `public` requirement only applies to handlers
 discovered across an assembly boundary.)
-
-## Diagnostics
-
-- **CONDUIT004 — Handler not accessible.** Reported when a command or query has a handler
-  in a referenced assembly that is not accessible to the generating assembly (for example,
-  an `internal` handler). The contract would otherwise silently have no registered handler.
-  Fix it by making the handler `public`.
 
 ## Why only one analyzer
 

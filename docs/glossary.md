@@ -25,11 +25,11 @@ The set of broker resources (topics/exchanges, queues, subscriptions/bindings) a
 and lifetime, generated consistently across transports by the `TopologyNaming` static class.
 
 - **TopologyMode** — enum on `ConduitOptions` (`Production` / `Developer` / `Test`) controlling
-  resource naming and durability. Developer/Test use ephemeral resources (Developer = 4h
-  auto-delete, Test = 5min auto-delete); Production uses durable resources.
-- **TopologyPrefix** — a single settable `ConduitOptions` property that auto-resolves on first
-  access: Developer defaults to `Environment.UserName`, Test generates a random 13-char prefix,
-  Production resolves to `null`. Set it explicitly to share a prefix across hosts in integration tests.
+  resource naming and lifetime: durable in Production, ephemeral where the broker can delete a resource
+  itself in Developer and Test. See [Developer and Test modes](transports/index.md#developer-and-test-modes).
+- **TopologyPrefix** — the `ConduitOptions` prefix of every resource name, resolved on first read when
+  unset: `Environment.UserName` in Developer mode, `test-` and 8 random hex characters in Test mode,
+  `null` in Production. Set it explicitly to share a prefix across hosts in integration tests.
 - **SystemName** — default `"conduit"`; the base name for topology resources. Replaces per-transport
   topic/exchange name configuration.
 
@@ -162,14 +162,10 @@ wire values so correlation propagates across services — if the wire omits `cau
 
 ### Self-published event filter
 
-A check in `BrokerTransportBase.ProcessInboundMessageAsync` that drops an inbound event whose
-`conduit-source-app` header (`ConduitHeaders.SourceApp`) matches this host's own `ApplicationName`.
-Exists because a broker's per-app event queue is bound to every discovered event type, including
-ones the application publishes itself — without the filter, an application would run its own event
-listeners twice: once inline at publish time, once again when the broker hands the message back.
-Applies to events only, keyed on the application (not the instance) so any replica drops the
-application's own copy. A dropped event is recorded as a `SelfPublishedEventSkipped` observation.
-See [Transports → Self-published events](transports/index.md#self-published-events).
+A broker transport's check that drops an inbound event whose `conduit-source-app` header
+(`ConduitHeaders.SourceApp`) names this host's own `ApplicationName`, so an application's listeners do
+not run a second time on the copy of its own event that the broker routes back. See
+[Transports → Self-published events](transports/index.md#self-published-events).
 
 ### Reply queue
 

@@ -145,7 +145,7 @@ No manual binding configuration is needed.
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | No: a broker restart deletes the queues | A queue is deleted 4 hours after its last consumer left; the two addresses stay |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | No | A queue is deleted 5 minutes after its last consumer left; the two addresses stay |
 
-Developer mode gives each developer isolated broker resources (e.g. address `alice-conduit-commands` instead of `conduit-commands`). Test mode creates fully isolated, short-lived resources for integration tests.
+With the code below, the commands address is `alice-conduit-commands` instead of `conduit-commands`; what the modes are for is in [Transports → Developer and Test modes](index.md#developer-and-test-modes).
 
 Each queue is created with Artemis's own auto-delete settings (`autoDelete`, `autoDeleteDelay` of 4 hours or 5 minutes, and `autoDeleteMessageCount` -1), so no reaper is needed for the queues, unlike Amazon SQS. Artemis deletes a Developer or Test queue once it has had no consumer for the delay, whatever messages it still holds; it checks every `address-queue-scan-period` (30 seconds by default), so a queue can outlive its delay by that long. A queue that never had a consumer is never auto-deleted, but every queue the transport creates gets one at once. A broker restart deletes the non-durable queues of both modes anyway.
 
@@ -217,9 +217,9 @@ Messages use JSON serialization (`ConduitRuntime.JsonOptions`) mapped onto AMQP 
 | `MessageId` | From `MessageContext` or auto-generated |
 | `CorrelationId` | From `MessageContext.ConversationId`; a reply's is the request's `ReplyCorrelationId` |
 | Header | `durable` = true on every message, replies included: a durable (Production) queue keeps it across a broker restart |
-| Property `CausationId` | From `MessageContext.CausationId` (historical name, kept for existing consumers) |
+| Property `CausationId` | From `MessageContext.CausationId` (also written as `conduit-causation-id`) |
 | Property `ReplyTo`, `ReplyCorrelationId` | Reply routing (requests only) |
-| Property `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the native and historical names above |
+| Property `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the native names and `CausationId` above |
 | Property `traceparent`, `tracestate` | W3C trace context, when the publish runs inside a trace |
 | Property `conduit-source-app` | The publishing application's `ApplicationName`, used by the [self-published event filter](index.md#self-published-events) (omitted when `ApplicationName` is unset) |
 

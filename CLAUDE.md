@@ -143,7 +143,7 @@ Solution file is `Conduit.slnx` (.NET 10 format).
 - Broker transport tests use per-transport abstract base classes (`RabbitMqTestBase`, `AsbTestBase`, etc.) that own container lifecycle (static), factory methods, and `[TestInitialize]` availability guard. `AssemblySetup` delegates to base class static init/cleanup methods.
 - Ephemeral resource cleanup for the TTL-less broker: the SQS test project reaps its own `test-{hash8}-` prefix once at `[AssemblyInitialize]` (`*TestBase.ReapProjectResourcesAsync()` → `AmazonSqsTopologyReaper.ReapByPrefixAsync`). RabbitMQ/ASB self-clean via native auto-delete/TTL, and ActiveMQ its queues (Artemis offers no auto-delete for an address created through management, so its two addresses per prefix stay, empty), so they don't reap. Cleanup is once-per-project (NOT per-host-startup — that cross-deletes concurrent hosts).
 - All test hosts must use `await using` — this is the sole disposal mechanism (no host tracking or `[TestCleanup]` disposal loops). `TestHost.DisposeAsync` is idempotent and disposes the underlying host via `IAsyncDisposable.DisposeAsync` (not sync `Dispose()`) — broker transports implement `IAsyncDisposable` only, and sync disposal deadlocks AmqpNetLite's link close in ActiveMQ.
-- Transport test matrices documented in `docs/transport-test-matrices.md` — defines the required tests for every broker transport (behavior tests + universal topology tests + transport-specific tests + container-free per-endpoint registration and configuration-binding tests). New transports MUST implement the full matrix.
+- Transport test matrices documented in `docs/contributing/transport-test-matrices.md` — defines the required tests for every broker transport (behavior tests + universal topology tests + transport-specific tests + container-free per-endpoint registration and configuration-binding tests). New transports MUST implement the full matrix.
 
 ## Project-Specific Notes
 
@@ -203,4 +203,4 @@ onboarding or answering "how does X work" questions:
 
 ## Design Spec
 
-Full design specification at `docs/design.md` — covers interfaces, generated code patterns, TypeScript output structure, validation strategy, auth model, and future Rebus integration plans.
+The original design document is kept for the record at `docs/history/2026-design.md`; its banner lists the sections that were never built or were built differently.

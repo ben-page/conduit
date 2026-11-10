@@ -12,7 +12,7 @@
 - [Request timeouts](#request-timeouts)
 - [Failed messages](#failed-messages)
 - [Stopping a host with work in flight](#stopping-a-host-with-work-in-flight)
-- [Ephemeral resource cleanup](#ephemeral-resource-cleanup)
+- [Developer and Test modes](#developer-and-test-modes)
 
 ## Overview
 
@@ -212,9 +212,9 @@ App A publishes MyEvent
 ```
 
 Running A's listeners a second time would be a bug, not a feature, so every outbound event carries
-the publishing application's name (`ConduitOptions.ApplicationName`), and a broker transport drops
-an inbound event whose stamp matches its own application name: that application's listeners
-already ran when it was published. The drop happens before a DI scope is created or the payload is
+the publishing application's name (`ConduitOptions.ApplicationName`, as `conduit-source-app`), and a
+broker transport drops an inbound event whose stamp matches its own application name: that
+application's listeners already ran when it was published. The drop happens before a DI scope is created or the payload is
 deserialized, and is recorded as a `SelfPublishedEventSkipped` observation, visible in the
 [audit trail](../audit.md), so "why didn't my listener run" has an answer.
 
@@ -228,8 +228,8 @@ A few things worth knowing about the check:
   identity, so two genuinely different deployments that happen to share one `ApplicationName` are
   a single application as far as the filter is concerned: each drops the other's events, and an
   event that one publishes but only the other listens for is lost with no error. Sharing a name
-  was already unsupported (it also means sharing the application's queues, so the two deployments
-  would steal each other's messages), but the filter makes that misconfigured
+  is unsupported anyway (it also means sharing the application's queues, so the two deployments
+  would steal each other's messages), and the filter makes that misconfigured
   case fail more quietly. Give every logical application its own name; give every replica of one
   application the same name. The names must also differ **after sanitizing**: a broker resource
   name keeps only `[A-Za-z0-9_-]`, every other character becoming `-`, so `Orders.Api` and
@@ -244,9 +244,8 @@ A few things worth knowing about the check:
 - **An application with no configured name never filters.** A missing stamp would otherwise
   compare equal to a missing `ApplicationName`, and every inbound event would be silently
   discarded: an outage, not a fix. The guard exists specifically to rule that out.
-- **A missing or foreign stamp always dispatches normally**, so events published before an
-  upgrade (no stamp yet) and events from non-Conduit producers behave exactly as before. This
-  keeps a rolling upgrade safe.
+- **A missing or foreign stamp always dispatches normally**, so an event from a non-Conduit
+  producer, or from a host with no `ApplicationName`, is handled like any other.
 - **SignalR and HTTP are unaffected.** SignalR's server mode never consumes its own hub, and its
   client mode dispatches to the server's local listeners without re-broadcasting to other clients.
   HTTP never hands a host back its own event: `/publish` only receives what another host sends it. The filter lives entirely in
@@ -347,22 +346,42 @@ acknowledgement still reaches the broker, the broker redelivers its message, so 
 raise `HostOptions.ShutdownTimeout` to cover them, or make them idempotent with the
 [inbox](../inbox.md).
 
-## Ephemeral resource cleanup
+## Developer and Test modes
 
-RabbitMQ, Azure Service Bus and ActiveMQ remove Developer and Test resources with the broker's own
-auto-delete: RabbitMQ deletes a queue when its last consumer leaves (and an exchange with its last binding),
-Azure Service Bus deletes an entity after 4 hours idle (5 minutes in Test mode), and ActiveMQ deletes a
-queue 4 hours (5 minutes in Test mode) after its last consumer left. Two things stay: RabbitMQ's
-system dead-letter queue (until the broker restarts in Developer mode; it expires after 5 minutes unused in
-Test mode), and ActiveMQ's two addresses per prefix, which Artemis does not auto-delete for an
-address created through its management API; they stay behind empty
-([see ActiveMQ](activemq.md#developer-and-test-modes)).
-SQS has no equivalent, so the transport library exposes
-`AmazonSqsTopologyReaper.ReapByPrefixAsync`, a best-effort cleanup that deletes resources whose names
-start with a given prefix. Conduit's own test suites use this (once per test project, scoped to a stable
-per-project prefix) so a shared or live broker doesn't accumulate test resources. Applications that name
-resources under a known prefix can run the same cleanup. Developer-mode resources are not auto-reaped for
-SQS: run that broker in a container locally, or call the reaper yourself.
+`ConduitOptions.TopologyMode` names a broker's resources and decides how long they live. HTTP and SignalR create no
+broker resources, so the mode does not apply to them.
+
+| Mode | Prefix by default | Lifetime |
+|---|---|---|
+| `Production` | none | Durable; nothing is deleted. |
+| `Developer` | `Environment.UserName` | Ephemeral, where the broker can delete a resource itself. |
+| `Test` | `test-` and 8 random hex characters | As Developer, sooner. |
+
+Developer mode gives each developer isolated resources on a shared broker: under the prefix `alice`, every name Conduit
+gives a resource starts with `alice-` (RabbitMQ's exchange is `alice-conduit` instead of `conduit`). Test mode gives every run a
+prefix of its own and short-lived resources, so integration tests that share a broker never see each other's
+messages. `TopologyPrefix` overrides the default prefix, in Production too; give every host of a multi-host test the
+same one so they share one topology ([ConduitBuilder properties](../configuration-reference.md#conduitbuilder-properties)).
+Each broker guide's "Developer and Test modes" section lists its resources' durability and cleanup in each mode.
+
+<a id="ephemeral-resource-cleanup"></a>
+
+How each broker removes Developer and Test resources:
+
+| Transport | Developer | Test |
+|---|---|---|
+| RabbitMQ | Non-durable and auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes; except the system dead-letter queue, which is never auto-delete (non-durable, so it lives until the broker restarts) | As Developer, and the dead-letter queue expires once unused for 5 minutes |
+| Azure Service Bus | Each topic, queue and subscription is deleted after 4 hours idle (`AutoDeleteOnIdle`) | After 5 minutes idle |
+| ActiveMQ | A queue is deleted 4 hours after its last consumer left; the two addresses stay | 5 minutes; the addresses stay |
+| Amazon SQS | Nothing is deleted: SNS and SQS have no auto-delete | Nothing is deleted |
+
+ActiveMQ's two addresses per prefix stay behind empty, because Artemis does not auto-delete an address created
+through its management API ([see ActiveMQ](activemq.md#developer-and-test-modes)). For Amazon SQS the transport
+library exposes `AmazonSqsTopologyReaper.ReapByPrefixAsync(options, prefix)`, a best-effort cleanup that deletes the
+topics and queues whose names start with a prefix. Conduit's own test suites run it once per test project, scoped to a
+stable per-project prefix, so a shared or live broker doesn't accumulate test resources; an application that names
+resources under a known prefix can run the same cleanup. Developer-mode resources are not reaped for SQS by
+themselves: run that broker in a container locally, or call the reaper yourself.
 
 ---
 

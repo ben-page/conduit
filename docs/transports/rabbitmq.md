@@ -110,7 +110,7 @@ All message types (commands, queries, events) flow through a single topic exchan
 
 Every queue a consumer reads (all of them but the reply queue and the dead-letter queue itself) is declared with `x-dead-letter-exchange: {systemName}-dead-letter`, so a message its consumer rejects goes to the system's dead-letter queue: see [Failure handling](#failure-handling). One dead-letter exchange and queue serve every application in the system.
 
-All declarations are idempotent, as long as the arguments match. A durable queue declared without `x-dead-letter-exchange` (by an earlier build, or by hand with other arguments) makes the broker refuse the declaration with `PRECONDITION_FAILED` (406, "inequivalent arg"), and the transport fails to start: delete the queue, or re-declare it with the arguments above. An application whose `ApplicationName` is `dead-letter` would name its event queue `{systemName}-dead-letter`, the dead-letter queue's name, so its startup fails with the same `PRECONDITION_FAILED`: give the application another name (and delete the queue if one was already declared under it).
+All declarations are idempotent, as long as the arguments match. A durable queue already declared with other arguments (by hand, say, without `x-dead-letter-exchange`) makes the broker refuse the declaration with `PRECONDITION_FAILED` (406, "inequivalent arg"), and the transport fails to start: delete the queue, or re-declare it with the arguments above. An application whose `ApplicationName` is `dead-letter` would name its event queue `{systemName}-dead-letter`, the dead-letter queue's name, so its startup fails with the same `PRECONDITION_FAILED`: give the application another name (and delete the queue if one was already declared under it).
 
 A `ProducerOnly` host declares only the topic exchange and its reply queue: no application, command, pool or dead-letter queue, and no consumer.
 
@@ -148,7 +148,7 @@ No manual binding configuration is needed. When a message is published, the tran
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | No: a broker restart deletes them | Auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | No | As Developer, and the dead-letter queue expires once unused for 5 minutes |
 
-Developer mode gives each developer isolated broker resources (e.g. exchange `alice-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests. The dead-letter queue is never auto-delete (see [Failure handling](#failure-handling)).
+With the code below, the exchange is `alice-conduit` instead of `conduit`; what the modes are for is in [Transports → Developer and Test modes](index.md#developer-and-test-modes). The dead-letter queue is never auto-delete (see [Failure handling](#failure-handling)).
 
 ```csharp
 builder.Services.AddConduit(conduit =>
@@ -219,9 +219,9 @@ Messages use JSON serialization (`ConduitRuntime.JsonOptions`) with type informa
 | `CorrelationId` | Request/response correlation (requests and their replies only) |
 | `ReplyTo` | Reply queue name (requests only) |
 | `DeliveryMode` | `2` (persistent) on every message, replies included: a durable (Production) queue keeps it across a broker restart, and the publisher confirm arrives once it is on disk |
-| Header `CausationId` | From `MessageContext.CausationId` (historical name, kept for existing consumers) |
-| Header `ConversationId` | From `MessageContext.ConversationId` (historical name, kept for existing consumers) |
-| Header `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the historical names above |
+| Header `CausationId` | From `MessageContext.CausationId` (also written as `conduit-causation-id`) |
+| Header `ConversationId` | From `MessageContext.ConversationId` (also written as `conduit-conversation-id`) |
+| Header `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the names above |
 | Header `traceparent`, `tracestate` | W3C trace context, when the publish runs inside a trace |
 | Header `conduit-source-app` | The publishing application's `ApplicationName`, used by the [self-published event filter](index.md#self-published-events) (omitted when `ApplicationName` is unset) |
 

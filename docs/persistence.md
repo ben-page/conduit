@@ -100,13 +100,11 @@ And these indexes, besides the primary key:
 | `ix_conduit_outbox_message_id` | `MessageId` | The [post-commit flush](outbox.md#post-commit-flush)'s claim by message id |
 | `ix_conduit_outbox_status_sent` | `Status`, `SentAt` | The Sent retention, over the bulk of the table |
 
-`AutoCreateTable` creates them with the table and, on SQLite, PostgreSQL and SQL Server, adds any an existing table lacks. MySQL has no `CREATE INDEX IF NOT EXISTS`, so there the indexes come only with a new table.
-
-Startup creates tables and indexes but never alters a column. A `conduit_outbox` created by an earlier pre-release build must therefore be dropped before this build starts, or migrated: add `FailedAt`, and give `MessageId`, `ClaimToken`, `NextAttemptAt` and `SentAt` the bounded types above. Left as it is, the table fails when an entry is marked Failed and in every Failed retention cleanup, since `FailedAt` is missing. On SQL Server, startup also fails, because the indexes cannot be created over `NVARCHAR(MAX)` columns.
+`AutoCreateTable` creates them with the table and, on SQLite, PostgreSQL and SQL Server, adds any an existing table lacks. MySQL has no `CREATE INDEX IF NOT EXISTS`, so there the indexes come only with a new table. Startup never alters a column.
 
 ### The dead-letter table
 
-Besides the entry's own fields (see the [metadata](dead-letter-queue.md#metadata)), `conduit_dead_letters` has two nullable columns a [replay](dead-letter-queue.md#what-happens-during-replay) claims an entry with: `ReplayClaimToken` (text) and `ReplayClaimedAt` (a timestamp). A `conduit_dead_letters` created by an earlier pre-release build lacks them, so every replay fails until the table is dropped or the two columns are added.
+Besides the entry's own fields (see the [metadata](dead-letter-queue.md#metadata)), `conduit_dead_letters` has two nullable columns a [replay](dead-letter-queue.md#what-happens-during-replay) claims an entry with: `ReplayClaimToken` (text) and `ReplayClaimedAt` (a timestamp).
 
 ## Timestamps
 

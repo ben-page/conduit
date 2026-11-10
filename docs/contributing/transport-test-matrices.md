@@ -2,7 +2,7 @@
 
 Definitive test matrices for broker transport implementations. Every new transport MUST pass all universal tests. Transport-specific tests are added as needed for broker-specific features.
 
-Each transport has its own test project: `tests/Conduit.Transport.{Name}.Tests/` with `Integration/` for behavior tests and `Unit/` for topology manager tests.
+Each transport has its own test project: `tests/Conduit.Transport.{Name}.Tests/` with `Integration/` for behavior tests and `Unit/` for the container-free topology manager, registration and configuration tests.
 
 ---
 
@@ -13,15 +13,19 @@ Multi-host integration tests validating message routing correctness. Each test s
 ### Test Infrastructure
 
 Each transport test project contains:
-- `Support/Contracts/` — 19 contract types (commands, queries, events, results, F&F types, the shutdown probe) discovered by the source generator (RabbitMQ: 20, with the `ConcurrencyProbeCommand` of its [transport-specific](#category-11-transport-specific-behavior) concurrency test)
-- `Support/Handlers/` — 17 handlers/listeners recording invocations via `SpyLog` (RabbitMQ: 18, plus the `ConcurrencyProbeMark` its probe handler records)
-- `Integration/{Transport}Fixture.cs` — extends `TransportTestFixture` from `Conduit.TestUtils`, manages broker container via Testcontainers
+- `Support/Contracts/` — 19 contract types (commands, queries, events, results, F&F types, the shutdown probe) discovered by the source generator (RabbitMQ: 21, adding the `ConcurrencyProbeCommand` and `ThrowingFireAndForgetCommand` of its [transport-specific](#category-11-transport-specific-behavior) tests)
+- `Support/Handlers/` — 17 handlers/listeners recording invocations via `SpyLog` (RabbitMQ: 20, adding the handlers of those two commands and the `ConcurrencyProbeMark` the probe handler records)
+- `Integration/{Prefix}TestBase.cs` — the abstract base every integration test class derives from: `RabbitMqTestBase`, `AsbTestBase`, `SqsTestBase`, `ActiveMQTestBase`. It owns the broker container as static state (Testcontainers), offers `CreateHostAsync`, `CreateSenderHostAsync`, `CreateHostWithDeadLettersAsync` and `UniqueAppName`, and its `[TestInitialize]` marks a test Inconclusive when the broker is unavailable
+- `Integration/AssemblySetup.cs` — `[AssemblyInitialize]`/`[AssemblyCleanup]` delegating to the base class's static `InitializeContainer`/`CleanupContainer`
+
+`{Transport}` in a test class name below is that project's prefix: `RabbitMq`, `Asb`, `Sqs` or `ActiveMQ` (ActiveMQ's dead-letter class is `ActiveMqDeadLetterShould`).
 
 Shared infrastructure in `Conduit.TestUtils`:
 - `SpyLog` — thread-safe invocation recorder with `WaitForCountAsync`
 - `MessageContextSnapshot` — captures `MessageId`, `CausationId`, `ConversationId`
-- `TransportTestFixture` — abstract base with `CreateHostAsync`, `CreateSenderHostAsync`, `DisposeHostsAsync`, `UniqueAppName`
-- `TestHost` — lightweight `IHost` wrapper that starts hosted services
+- `TestHost` — lightweight `IHost` wrapper that starts hosted services; every test disposes its hosts with `await using`
+- `TestTopologyPrefix` — the per-project Test topology prefix `test-{hash8(assembly)}-{random}`
+- `FakeBrokerTransport` — an in-memory `BrokerTransportBase` double for container-free tests in `Conduit.Tests`
 
 ### IMediator API
 
@@ -64,8 +68,9 @@ Test class: `{Transport}EventRoutingShould`
 | 3.1 | `DeliverEventToAllSubscribingApps` | A publishes, B + C listen (different app names) | B spy == 1, C spy == 1 |
 | 3.2 | `NotBroadcastLocalOnlyEvent` | A publishes `[LocalOnly]` event | A local spy == 1, B spy == 0 |
 | 3.3 | `DeliverEventToListenerDespiteOtherListenerFailure` | B has throwing listener for `ThrowingTestEvent` | Spy records before throwing (count >= 1) |
-| 3.4 | `PropagateWireEventListenerFailure` | A publishes, B listener throws | Transport retry/dead-letter semantics exercised |
-| 3.5 | `DeliverFireAndForgetEventToSubscribingApp` | A publishes `[FireAndForget]` event, B listens | B spy == 1 (F&F only affects local listeners, transport broadcast unchanged) |
+| 3.4 | `DeliverFireAndForgetEventToSubscribingApp` | A publishes `[FireAndForget]` event, B listens | B spy == 1 (F&F only affects local listeners, transport broadcast unchanged) |
+
+What a broker does with an event whose listener throws (capture, dead letter, redelivery) is category 8's, and for each broker's own dead-letter mechanism, category 11's.
 
 ### Category 4: Competing Instance Isolation
 
@@ -106,7 +111,7 @@ Test class: `{Transport}TopologyModeShould`
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|
 | 7.1 | `CreateDurableResourcesInProductionMode` | A + B with `TopologyMode.Production` | Host starts successfully, resources created |
-| 7.2 | `CreateEphemeralResourcesInDeveloperMode` | A + B with `TopologyMode.Developer` | Host starts, resources have auto-delete/TTL flags |
+| 7.2 | `CreateEphemeralResourcesInDeveloperMode` | A + B with `TopologyMode.Developer` | Host starts, resources have auto-delete/TTL flags (Amazon SQS: the host starts; SNS and SQS have no auto-delete to assert) |
 | 7.3 | `IsolateTestModeRuns` | Two independent test runs with `TopologyMode.Test` | Different prefixes, no cross-contamination |
 | 7.4 | *(SQS only — separate test class, not a method in `{Transport}TopologyModeShould`)* | Single host, test mode | On startup of each test project, the project reaps every broker resource under its own stable `test-{hash8(assembly)}-` prefix. **SQS:** `AmazonSqsTopologyReaperShould.ReapQueuesAndTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup`. **RabbitMQ/ASB/ActiveMQ:** N/A — native auto-delete/TTL covers cleanup (on ActiveMQ the queues; its two addresses per prefix stay, empty). |
 
@@ -133,8 +138,8 @@ Universal — required of every transport, real broker only (the in-memory `Fake
 
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|
-| 9.1 | Self-published event runs local listeners exactly once | Single host both publishes and locally listens to `TestEvent` | Publish an event the app also listens to; assert one listener execution, not two — wait deliberately for the broker's own-copy round trip before asserting, since a bare `await` on publish passes vacuously either way |
-| 9.2 | Correlation and trace context survive the wire | A publishes `ContextCaptureEvent` under a known `MessageContext` and `Activity`, B captures | Publish under a known MessageContext and Activity; assert MessageId, CausationId, ConversationId and traceparent arrive intact |
+| 9.1 | `RunLocalListenersOnceForASelfPublishedEvent` | Single host both publishes and locally listens to `TestEvent` | Publish an event the app also listens to; assert one listener execution, not two — wait deliberately for the broker's own-copy round trip before asserting, since a bare `await` on publish passes vacuously either way |
+| 9.2 | `CarryKnownCorrelationAndTraceContextAcrossTheWire` | A publishes `ContextCaptureEvent` under a known `MessageContext` and `Activity`, B captures | Publish under a known MessageContext and Activity; assert MessageId, CausationId, ConversationId and traceparent arrive intact |
 
 ### Category 10: Shutdown with In-Flight Work
 
@@ -204,10 +209,10 @@ These read what the transport created through an SQS or SNS client on the same L
 |---|---|---|---|
 | 11.20 | `SqsCompetingInstanceShould.DeliverRepliesToTheInstanceThatAsked` | B handles; A1 and A2, two instances of one sending application (10 s `ResponseTimeout`), each send 10 `TestQuery`s at once | Every query gets its own answer on the instance that asked it (with one reply queue per application, half the replies went to the other instance, were deleted, and their requests timed out); two `{prefix}-conduit-{A}-replies-` queues exist, and none once A1 and A2 are disposed |
 | 11.21 | `SqsTopologyShould.CreateADeadLetterQueueWithARedrivePolicy` | B (`MaxReceiveCount` 2, 2 s visibility timeout, a pool) listens with no dead-letter store; A publishes `ThrowingTestEvent` | B's app queue and pool queue each carry a `RedrivePolicy` naming their own `{queue}-dlq` with `maxReceiveCount` 2; the reply queue and the dead-letter queues carry none; the event arrives in the app queue's dead-letter queue with its `Type` attribute, after the listener ran exactly twice |
-| 11.22 | `SqsTopologyShould.ApplyChangedAttributesToAnExistingQueueAndSubscription` | B's first release (listens for `TestEvent`, 2 s visibility timeout) starts and stops; its second release, same app name and prefix, sets a 10 s visibility timeout and `MaxReceiveCount` 7 and also listens for `FireAndForgetEvent`; A publishes `FireAndForgetEvent` | B's second release receives it (LocalStack may first hand it to the first release's cancelled long poll, hence the short visibility timeouts), and the existing queue reads back `VisibilityTimeout` 10 and `maxReceiveCount` 7, its subscription a filter policy of both types and raw delivery. Before the fix the second start failed with `QueueNameExists`. LocalStack does not refuse a re-subscription with different attributes, so the SNS side's refusal path is not exercised here |
+| 11.22 | `SqsTopologyShould.ApplyChangedAttributesToAnExistingQueueAndSubscription` | B's first release (listens for `TestEvent`, 2 s visibility timeout) starts and stops; its second release, same app name and prefix, sets a 10 s visibility timeout and `MaxReceiveCount` 7 and also listens for `FireAndForgetEvent`; A publishes `FireAndForgetEvent` | B's second release receives it (LocalStack may first hand it to the first release's cancelled long poll, hence the short visibility timeouts), and the existing queue reads back `VisibilityTimeout` 10 and `maxReceiveCount` 7, its subscription a filter policy of both types and raw delivery. A second start that re-created the queue instead would fail with `QueueNameExists`. LocalStack does not refuse a re-subscription with different attributes, so the SNS side's refusal path is not exercised here |
 | 11.23 | `SqsShutdownShould.HandBackReceivedButUnstartedMessagesAtOnce` | B1 (`DefaultConcurrency` 1, 60 s visibility timeout); five 3 s `ShutdownProbeCommand`s sent in one batch straight to its app queue; B1 stopped 0.5 s into the first, its poller blocked on the slot (not in a long poll); then B2, same app name and prefix | B2 receives the other four within 10 s, each once, and B1 ran only the first: the stopping poller made the rest of its batch visible at once. Without that call B2 receives none within 10 s |
 
-### Totals (verified 2026-11-10)
+### Totals
 
 Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class and its **4 transport-specific tests** of category 11, bringing its total to **43**. RabbitMQ adds the **9 transport-specific tests** of category 11, bringing its total to **47**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **14**, bringing its total to **52**.
 
@@ -219,7 +224,12 @@ Behavior-test methods across the four transports: 47 (RabbitMQ) + 41 (ASB) + 43 
 
 Unit tests validating that each transport's topology manager creates the correct broker resources with correct names, routing semantics, and durability settings. Tests live in `Unit/TopologyManagerShould.cs` within each transport's test project.
 
-These tests verify naming logic and configuration without requiring a live broker. They test the topology manager's resource plan — the names it computes and the flags it sets. (One exception: ActiveMQ's TM-S.12 reads the flags back from the real broker, since Artemis holds a queue's auto-delete settings only once it created the queue. ActiveMQ's TM-4.1–4.3 test `ActiveMQTopologyManager.QueueLifetimeFor` under the names `ProductionModeDurableNoAutoDelete`, `DeveloperModeAutoDeleteFourHours` and `TestModeAutoDeleteFiveMinutes`.)
+These tests verify naming logic and configuration without requiring a live broker. They test the topology manager's resource plan — the names it computes and the flags it sets. (One exception: ActiveMQ's TM-S.12 reads the flags back from the real broker, since Artemis holds a queue's auto-delete settings only once it created the queue.)
+
+The `Test Method` column of TM-1 to TM-4 names the row. Each `TopologyManagerShould` marks the rows it covers with a
+`// --- TM-x.y: Name ---` comment above the tests, which are named for the transport's own resources (RabbitMQ's
+TM-1.2 is `UseTopologyNamingForExchangeName`, Amazon SQS's `UseSharedResourceNameForSnsTopic`). See
+[Universal rows per transport](#universal-rows-per-transport) for the rows a broker cannot have.
 
 ### Category TM-1: Resource Naming
 
@@ -257,6 +267,21 @@ These tests verify naming logic and configuration without requiring a live broke
 | TM-4.2 | `CreateEphemeralResourcesInDeveloperMode` | Developer mode: auto-delete with 4-hour TTL |
 | TM-4.3 | `CreateEphemeralResourcesInTestMode` | Test mode: auto-delete with 5-minute TTL |
 
+### Universal rows per transport
+
+RabbitMQ and Azure Service Bus cover all 16 rows. Two brokers cannot have some of them:
+
+- **Amazon SQS** has no shared per-type queues: each application has one queue (and one per pool) whose SNS filter
+  policy lists the types it takes, so a command has one consumer because only one application's filter names it.
+  TM-1.5, TM-1.6 and TM-2 do not apply. SNS and SQS have no auto-delete, so TM-4 does not apply either: Developer and
+  Test resources are reaped by prefix instead (7.4). TM-1.1 is `UseCorrectMaxLengthForSqsQueues`.
+- **ActiveMQ** has no app queue besides its event queue, and no named reply queue (each instance's is a temporary
+  queue the broker names), so TM-1.3 and TM-1.4 do not apply, and its 256-character limit is pinned by the TM-1.7
+  tests rather than a TM-1.1 test. TM-2 is covered under TM-1.5 and TM-1.6 (`CommandQueueNamesAreIdenticalAcrossApps`,
+  `EventQueueNamesAreDifferentAcrossApps`), TM-3 only by the pool queue names (`UseAppResourceNameForPoolEventQueues`,
+  `UseSharedResourceNameForPoolCommandQueues`), and TM-4.1–4.3 test `ActiveMQTopologyManager.QueueLifetimeFor` as
+  `ProductionModeDurableNoAutoDelete`, `DeveloperModeAutoDeleteFourHours` and `TestModeAutoDeleteFiveMinutes`.
+
 ### Category TM-S: Transport-Specific
 
 These tests validate broker-specific topology features that don't apply to all transports.
@@ -272,7 +297,7 @@ These tests validate broker-specific topology features that don't apply to all t
 
 | # | Test Method | Validates |
 |---|---|---|
-| TM-S.2 | `CreateSqlFilterOnSubscriptions` | Subscriptions have SQL filter: `Subject = '{FullTypeName}'` |
+| TM-S.2 | `CreateSqlFilterWithCorrectFormat`, `CreateSqlFilterMatchingTopologyManagerFormat` | Subscriptions have the SQL filter `sys.Label = '{FullTypeName}'` (a Service Bus SQL filter reads the message's `Subject` as `sys.Label`) |
 | TM-S.3 | `CreateSessionEnabledReplyQueue` | `CreateReplyQueueOptions()` sets `RequiresSession = true` (and `CreateSessionEnabledReplyQueueWithCorrectName`: under the reply queue's name) |
 | TM-S.4 | `ExpireOrphanedRepliesOnTheReplyQueue` | `CreateReplyQueueOptions()`: `DefaultMessageTimeToLive` = 2 × `ResponseTimeout` |
 | TM-S.4b | `AsbReplyShould.CarryATimeToLive` (`Unit/AsbReplyShould.cs`) | The reply itself (`CreateReplyMessage`): the request's `ReplyToSessionId` as its session, and `TimeToLive` = 2 × `ResponseTimeout` |
@@ -284,10 +309,10 @@ These tests validate broker-specific topology features that don't apply to all t
 | # | Test Method | Validates |
 |---|---|---|
 | TM-S.7 | `CreateSnsFilterPolicy` | SNS subscription filter policy: `{"Type": ["FullTypeName"]}` |
-| TM-S.8 | `EnableRawMessageDelivery` | Raw message delivery enabled on all SNS subscriptions |
-| TM-S.9 | `SetSqsQueuePolicy` | SQS queue policy allows SNS topic to send messages |
 | TM-S.9b | `RefuseAFilterPolicyOverTheSnsLimit` | `AmazonSqsTopologyManager.FilterPolicy`: 150 types make a policy; 151 throw `InvalidOperationException` naming the queue and the count, before AWS is called |
 | TM-S.9c | `NameEachDeadLetterQueueAfterItsQueueWithinTheSqsLimit` | `DeadLetterQueueName` is `{queue}-dlq`, and an app or pool queue name is cut short enough (76) that it stays within 80 characters |
+
+Raw message delivery on the subscriptions is read back from LocalStack by 11.22, not by a unit test. The queue policy that lets the topic send to each queue has no test of its own; every integration test that delivers a message depends on it.
 
 #### ActiveMQ Artemis
 
@@ -296,9 +321,9 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.10 | `CreateSeparateAnycastAndMulticastAddresses` | Two addresses: anycast for commands/queries, multicast for events |
 | TM-S.11 | `UseAmqpFilterOnQueues` | `ActiveMQTopologyManager.CommandQueueFilter`: `JMSType='{FullTypeName}'`; `EventQueueFilter`: `JMSType IN ('{FullTypeName}', ...)` (and `WriteTheSameEventFilterForAnyOrderOfTheSameTypes`: each type once, in ordinal order, so the same set read back compares as unchanged) |
 | TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | `[DataRow]` Developer (14,400,000 ms) and Test (300,000 ms): `EnsureTopologyAsync` against the real broker, then each queue's configuration read back through the management API is non-durable, `auto-delete` true, `auto-delete-delay` the mode's, `auto-delete-message-count` -1. The one container-backed test in `Unit/` (`ActiveMQTestBase.RequireBroker`, Inconclusive without a broker) |
-| TM-S.13 | `UseUniqueLinkNames` | `ConsumerLinkName()` gives `consumer-{32 hex}`, unique per link, whatever the queue is called (a name cut from the queue's name to 50 characters made two long names equal and threw for a short one) |
+| TM-S.13 | `UseUniqueLinkNames` | `ConsumerLinkName()` gives `consumer-{32 hex}`, unique per link, whatever the queue is called (a name derived from the queue's name and cut to 50 characters would make two long names equal) |
 
-### Totals (verified 2026-06-09; RabbitMQ, Azure Service Bus, Amazon SQS and ActiveMQ 2026-11-10)
+### Totals
 
 The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-4 (3). Each transport adds a varying number of transport-specific (TM-S) tests, so the actual `Unit/TopologyManagerShould.cs` `[TestMethod]` count differs per transport:
 
@@ -309,7 +334,7 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 | Amazon SQS | 19 |
 | ActiveMQ | 22 |
 
-(The TM-S.x rows in this document are illustrative; the per-transport tables have grown past the original 12 transport-specific cases. The 16 universal tests are the required floor every new transport must implement.)
+The TM-S rows name the transport-specific behaviors; each `TopologyManagerShould` also carries a few tests of its own outside the matrix (`AcceptConduitOptionsInConstructor`, `CreateAppQueueWithoutSessions` and the like). The 16 universal tests are the floor a new transport must implement, unless a row cannot apply to its broker, as with Amazon SQS above.
 
 ---
 
@@ -332,8 +357,10 @@ Universal. Two endpoints on the same transport, each given a different connectio
 | R-1.3 | `RegisterOneBroadcastTargetAndOneLifecyclePerEndpoint` | `GetServices<IConduitTransport>()` and `GetServices<IHostedService>()` each yield one **distinct** object per endpoint — not the same instance twice (RabbitMQ splits this into `BroadcastToOneTransportInstancePerEndpoint` + `StartOneHostedServicePerEndpoint`) |
 | R-1.4 | `RejectANonPositiveOrInfiniteResponseTimeout` | Broker transports. Its `Use*` extension registers through `ConduitEndpointBuilder.UseTransport<TTransport>(BrokerTransportOptions)`, so `Use{Name}(..., options => options.ResponseTimeout = ...)` with zero, a negative value or `Timeout.InfiniteTimeSpan` throws `InvalidOperationException` naming the endpoint |
 
-R-1.1 to R-1.3 exist because the non-keyed registration they replaced failed silently in every one of these
-ways — see [Per-endpoint transport instances](transports/index.md#per-endpoint-transport-instances).
+R-1.1 to R-1.3 pin what a shared, non-keyed registration gets wrong without an error: two endpoints on one transport
+package sharing one options instance (the last endpoint's values winning), one transport, or one broadcast target and
+lifecycle — see
+[Per-endpoint transport instances](../transports/index.md#per-endpoint-transport-instances).
 R-1.4 exists because a broker extension that calls `UseTransport<TTransport>()` instead skips the shared
 validation, and the bad timeout then fails every request rather than the registration. The four existing
 broker transports call the options overload and lean on the core `BrokerTransportOptionsShould` (which
@@ -350,7 +377,7 @@ assert the resolved keyed options. These must not start hosted services.
 | C-1.2 | `GiveTwoEndpointsOnTheSameTransportTheirOwnKeyedOptions` | Two endpoints bind from their own sections, not each other's |
 | C-1.3 | `LetTheExplicitArgumentOverrideConfiguration` | A value passed to `Use{Name}(...)` or set in the `configure` callback beats the configured one |
 | C-1.4 | `MergeAConfiguredPoolWithCodeDeclaredMessageTypes` | A pool named in both places is one pool holding the union of both sources' message types |
-| C-1.5 | `ExplainWhichKeyIsMissingWhen...` | A required value supplied by neither source throws `InvalidOperationException` naming both the configuration key and the `Use*` argument |
+| C-1.5 | `ExplainWhichKeyIsMissingWhen...` (RabbitMQ: `ExplainWhichKeyIsMissingWhenNoConnectionStringIsSupplied`) | A required value supplied by neither source throws `InvalidOperationException` naming both the configuration key and the `Use*` argument |
 
 SignalR and HTTP have one key each and no pools, so they implement C-1.1 and C-1.5 only, named for
 the key they bind (`ResolveATransportFromTheConfiguredHubUri` / `...BaseAddress`). RabbitMQ carries
@@ -367,6 +394,7 @@ Only where a transport hand-maps something the binder cannot handle:
 | C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials`, and the scalars (`VisibilityTimeoutSeconds`, `MaxReceiveCount`, `ServiceUri`) |
 | C-S.2 | `BuildSessionCredentialsWhenATokenIsSupplied` | Amazon SQS | A `SessionToken` selects `SessionAWSCredentials` |
 | C-S.3 | `LeaveCredentialsNullForTheDefaultAwsChain` | Amazon SQS | No key pair leaves `Credentials` null so the AWS default chain applies |
+| C-S.4 | `LetCodeOverrideTheConfiguredRegion` | Amazon SQS | A region set in the `configure` callback beats the configured `Region` (C-1.3 for the hand-mapped key) |
 
 ### Category F-S: Transport-specific client construction (`Unit/{Name}ClientFactoryShould.cs`)
 
@@ -401,10 +429,10 @@ overload equivalence and de-duplication), and `TransportOptionsBindingShould`
 
 When adding a new broker transport, create a test project and implement:
 
-1. **All transport behavior tests** (Matrix 1 — 38 `[TestMethod]` tests per existing transport, categories 1–10) — copy the test class structure from an existing transport, adjust the fixture
+1. **All transport behavior tests** (Matrix 1 — 38 `[TestMethod]` tests per existing transport, categories 1–10) — copy the test classes and the `{Prefix}TestBase` from an existing transport, and adjust the base class
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
-4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable, a transport that skips it can ship the silent shared-singleton bug all broker packages once had
+4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable: without it a transport can ship a shared singleton that a second endpoint silently overwrites
 
 ### Test Project Structure
 
@@ -412,10 +440,11 @@ When adding a new broker transport, create a test project and implement:
 tests/Conduit.Transport.{Name}.Tests/
     Conduit.Transport.{Name}.Tests.csproj
     Support/
-        Contracts/          # 18 contract types (source gen requires per-assembly)
-        Handlers/           # 16 handler/listener types
+        Contracts/          # 19 contract types (source gen requires per-assembly)
+        Handlers/           # 17 handler/listener types
     Integration/
-        {Name}Fixture.cs    # Extends TransportTestFixture, manages container
+        AssemblySetup.cs    # [AssemblyInitialize]/[AssemblyCleanup] -> {Name}TestBase
+        {Name}TestBase.cs   # Abstract base: owns the container, host factories, availability guard
         {Name}CommandRoutingShould.cs
         {Name}QueryRoutingShould.cs
         {Name}EventRoutingShould.cs
