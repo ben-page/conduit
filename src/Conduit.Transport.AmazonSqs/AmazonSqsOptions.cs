@@ -36,9 +36,10 @@ public sealed class AmazonSqsOptions : BrokerTransportOptions
     public Uri? ServiceUri { get; set; }
 
     /// <summary>
-    /// Explicit AWS credentials. When null and <see cref="ServiceUri"/> is set,
-    /// dummy credentials are used automatically (LocalStack doesn't validate them).
-    /// When null and ServiceUri is not set, the default AWS credential chain is used.
+    /// Explicit AWS credentials, used whether or not <see cref="ServiceUri"/> is set.
+    /// When null and <see cref="ServiceUri"/> is set, dummy credentials are used automatically
+    /// (LocalStack doesn't validate them). When null and ServiceUri is not set, the default AWS
+    /// credential chain is used.
     /// </summary>
     public AWSCredentials? Credentials { get; set; }
 
