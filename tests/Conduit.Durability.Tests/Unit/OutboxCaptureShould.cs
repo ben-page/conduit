@@ -227,7 +227,7 @@ public class OutboxCaptureShould
     {
         // Arrange -- the delivery outlasted the claim timeout and the relay re-claimed the entry
         var store = new StubOutboxStore { ClaimLost = true };
-        var spy = new SpyLoggerProvider();
+        using var spy = new SpyLoggerProvider();
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
         var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
         store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
@@ -247,7 +247,7 @@ public class OutboxCaptureShould
     {
         // Arrange
         var store = new StubOutboxStore { ClaimLost = true };
-        var spy = new SpyLoggerProvider();
+        using var spy = new SpyLoggerProvider();
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
         var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
         store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
@@ -280,7 +280,7 @@ public class OutboxCaptureShould
             serviceProvider.GetRequiredService<AsyncOnlyScopedService>();
             return store;
         });
-        services.AddSingleton<ILocalEnvelopeDispatcher, AsyncOnlyServiceListener>();
+        services.AddSingleton<ILocalEnvelopeDispatcher>(new ScopedServiceListener<AsyncOnlyScopedService>());
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
         var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
@@ -295,6 +295,53 @@ public class OutboxCaptureShould
         store.MarkedSent.Should().Equal(10L);
         store.RetriesIncremented.Should().BeEmpty();
         created.Should().HaveCount(2).And.OnlyContain(service => service.Disposed);
+    }
+
+    [TestMethod]
+    public async Task ClaimAndDeliverAsyncKeepAnEntrySentWhenItsScopeFailsToDispose()
+    {
+        // Arrange -- the entry's listener resolves a scoped service whose DisposeAsync throws
+        var store = new StubOutboxStore();
+        using var spy = new SpyLoggerProvider();
+        var scopeFactory = CreateScopeFactoryWithListener(store, new ScopedServiceListener<ThrowingDisposeScopedService>());
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
+
+        // Act
+        var act = () => OutboxCapture.ClaimAndDeliverAsync(
+            scopeFactory, CreateDispatcher(), spy.CreateLogger("outbox"), messages, CancellationToken.None);
+
+        // Assert -- marking it sent was the point of no return: the disposal failure is logged, never retried
+        await act.Should().NotThrowAsync();
+        store.MarkedSent.Should().Equal(10L);
+        store.RetriesIncremented.Should().BeEmpty();
+        AssertScopeDisposeFailureLogged(spy, entryId: 10, type: "MyApp.Events.OrderPlaced");
+        spy.Entries.Should().NotContain(e => e.EventId.Id == 321);
+    }
+
+    [TestMethod]
+    public async Task ClaimAndDeliverAsyncLogTheListenersFailureNotItsScopesDisposalFailure()
+    {
+        // Arrange -- the listener throws, and so does disposing the scope it ran in
+        var store = new StubOutboxStore();
+        var listenerFailure = new InvalidOperationException("Simulated listener failure");
+        using var spy = new SpyLoggerProvider();
+        var scopeFactory = CreateScopeFactoryWithListener(
+            store, new ScopedServiceListener<ThrowingDisposeScopedService>(listenerFailure));
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
+
+        // Act
+        await OutboxCapture.ClaimAndDeliverAsync(
+            scopeFactory, CreateDispatcher(), spy.CreateLogger("outbox"), messages, CancellationToken.None);
+
+        // Assert -- the flush failure names the listener's exception; the disposal failure is logged on its own
+        spy.Entries.Should().ContainSingle(e => e.Message.StartsWith("Failed to flush outbox entry", StringComparison.Ordinal))
+            .Which.Exception.Should().BeSameAs(listenerFailure);
+        store.RetriesIncremented.Should().Equal(10L);
+        AssertScopeDisposeFailureLogged(spy, entryId: 10, type: "MyApp.Events.OrderPlaced");
     }
 
     [TestMethod]
@@ -412,6 +459,26 @@ public class OutboxCaptureShould
         // Assert
         transport.SentEvents.Should().BeEmpty();
         store.MarkedSent.Should().BeEmpty();
+    }
+
+    // The store, the listener, and a scoped ThrowingDisposeScopedService for the listener to resolve.
+    private static IServiceScopeFactory CreateScopeFactoryWithListener(IOutboxStore store, ILocalEnvelopeDispatcher listener)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(store);
+        services.AddSingleton(listener);
+        services.AddScoped<ThrowingDisposeScopedService>();
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
+    private static void AssertScopeDisposeFailureLogged(SpyLoggerProvider spy, long entryId, string type)
+    {
+        var disposeFailed = spy.Entries.Should().ContainSingle(e => e.EventId.Id == 322).Which;
+        disposeFailed.EventId.Name.Should().Be("OutboxScopeDisposeFailed");
+        disposeFailed.Level.Should().Be(LogLevel.Warning);
+        disposeFailed.Message.Should().Contain(entryId.ToString(CultureInfo.InvariantCulture)).And.Contain(type);
+        disposeFailed.Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("Simulated scope disposal failure");
     }
 
     private static void AssertClaimLostLogged(SpyLoggerProvider spy, long entryId, string type)

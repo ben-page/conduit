@@ -5,6 +5,7 @@ using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
+using Conduit.TestUtils;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
@@ -327,7 +328,7 @@ public class OutboxRelayShould
             serviceProvider.GetRequiredService<AsyncOnlyScopedService>();
             return store;
         });
-        services.AddSingleton<ILocalEnvelopeDispatcher, AsyncOnlyServiceListener>();
+        services.AddSingleton<ILocalEnvelopeDispatcher>(new ScopedServiceListener<AsyncOnlyScopedService>());
         var provider = services.BuildServiceProvider();
         var relay = new OutboxRelay(
             provider.GetRequiredService<IServiceScopeFactory>(),
@@ -343,6 +344,84 @@ public class OutboxRelayShould
         store.MarkedSent.Should().Equal(14L);
         store.RetriesIncremented.Should().BeEmpty();
         created.Should().HaveCount(2).And.OnlyContain(service => service.Disposed);
+    }
+
+    [TestMethod]
+    public async Task KeepAnEntrySent_WhenItsScopeFailsToDispose()
+    {
+        // Arrange -- the entry's listener resolves a scoped service whose DisposeAsync throws
+        var entry = MakeEntry(id: 21, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]);
+        using var spy = new SpyLoggerProvider();
+        using var loggerFactory = new LoggerFactory([spy]);
+        var relay = BuildRelayWithListener(
+            store,
+            new ScopedServiceListener<ThrowingDisposeScopedService>(),
+            loggerFactory.CreateLogger<OutboxRelay>(),
+            services => services.AddScoped<ThrowingDisposeScopedService>());
+
+        // Act
+        var act = () => relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- marking it sent was the point of no return: the disposal failure is logged, never retried
+        await act.Should().NotThrowAsync();
+        store.MarkedSent.Should().Equal(21L);
+        store.RetriesIncremented.Should().BeEmpty();
+        AssertScopeDisposeFailureLogged(spy, entry);
+        spy.Entries.Should().NotContain(e => e.EventId.Id == 321);
+    }
+
+    [TestMethod]
+    public async Task LogTheListenersFailure_NotItsScopesDisposalFailure()
+    {
+        // Arrange -- the listener throws, and so does disposing the scope it ran in
+        var entry = MakeEntry(id: 22, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]);
+        var listenerFailure = new InvalidOperationException("Simulated listener failure");
+        using var spy = new SpyLoggerProvider();
+        using var loggerFactory = new LoggerFactory([spy]);
+        var relay = BuildRelayWithListener(
+            store,
+            new ScopedServiceListener<ThrowingDisposeScopedService>(listenerFailure),
+            loggerFactory.CreateLogger<OutboxRelay>(),
+            services => services.AddScoped<ThrowingDisposeScopedService>());
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- the send failure names the listener's exception; the disposal failure is logged on its own
+        spy.Entries.Should().ContainSingle(e => e.Message.StartsWith("Failed to send outbox entry", StringComparison.Ordinal))
+            .Which.Exception.Should().BeSameAs(listenerFailure);
+        store.RetriesIncremented.Should().Equal(22L);
+        AssertScopeDisposeFailureLogged(spy, entry);
+    }
+
+    [TestMethod]
+    public async Task KeepAnEntrySent_WhenAnObserverFails()
+    {
+        // Arrange -- the listener attaches an observer that throws, so recording the entry as sent throws after the
+        // entry was marked sent
+        var entry = MakeEntry(id: 23, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]);
+        using var spy = new SpyLoggerProvider();
+        using var loggerFactory = new LoggerFactory([spy]);
+        var relay = BuildRelayWithListener(
+            store,
+            new ObserverAttachingListener(new ThrowingObserver()),
+            loggerFactory.CreateLogger<OutboxRelay>());
+
+        // Act
+        var act = () => relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- logged as an observation failure, not as a failed send or a lost claim, and never retried
+        await act.Should().NotThrowAsync();
+        store.MarkedSent.Should().Equal(23L);
+        store.RetriesIncremented.Should().BeEmpty();
+        spy.Entries.Should().NotContain(e => e.EventId.Id == 321);
+        var observationFailed = spy.Entries.Should().ContainSingle(e => e.EventId.Id == 323).Which;
+        observationFailed.EventId.Name.Should().Be("OutboxObservationFailed");
+        observationFailed.Level.Should().Be(LogLevel.Warning);
+        observationFailed.Message.Should().Contain("23").And.Contain(nameof(OutboxSent));
     }
 
     [TestMethod]
@@ -386,6 +465,36 @@ public class OutboxRelayShould
         // Assert -- the sweep fails loudly, before delivering anything
         (await act.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("ClaimToken");
         transport.SentEventEnvelopes.Should().BeEmpty();
+    }
+
+    // A relay whose entry scopes resolve the listener, plus whatever registerServices adds.
+    private static OutboxRelay BuildRelayWithListener(
+        IOutboxStore store,
+        ILocalEnvelopeDispatcher listener,
+        ILogger<OutboxRelay> logger,
+        Action<IServiceCollection>? registerServices = null)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<IOutboxStore>(_ => store);
+        services.AddSingleton(listener);
+        registerServices?.Invoke(services);
+        var provider = services.BuildServiceProvider();
+
+        return new OutboxRelay(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            CreateDispatcher(),
+            Options.Create(new OutboxOptions { MaxRetries = 3 }),
+            logger);
+    }
+
+    private static void AssertScopeDisposeFailureLogged(SpyLoggerProvider spy, OutboxEntry entry)
+    {
+        var disposeFailed = spy.Entries.Should().ContainSingle(e => e.EventId.Id == 322).Which;
+        disposeFailed.EventId.Name.Should().Be("OutboxScopeDisposeFailed");
+        disposeFailed.Level.Should().Be(LogLevel.Warning);
+        disposeFailed.Message.Should().Contain(entry.Id.ToString(CultureInfo.InvariantCulture)).And.Contain(entry.Type);
+        disposeFailed.Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("Simulated scope disposal failure");
     }
 
     private static void AssertClaimLostLogged(
@@ -635,4 +744,32 @@ file sealed class EventCapturingLogger : ILogger<OutboxRelay>
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) => this.Entries.Add((logLevel, eventId, formatter(state, exception)));
+}
+
+/// <summary>
+/// A local-only listener that attaches <paramref name="observer"/> to the context it is delivered under: the entry's
+/// own context, so the relay's observations of that entry reach the observer.
+/// </summary>
+file sealed class ObserverAttachingListener(IConduitObserver observer) : ILocalEnvelopeDispatcher
+{
+    public bool DeliversLocally(string messageType) => true;
+
+    public bool IsLocalOnly(string messageType) => true;
+
+    public bool IsFireAndForget(string fullTypeName) => false;
+
+    public bool IsEvent(string fullTypeName) => true;
+
+    public Task PublishLocalEnvelopeAsync(DispatchEnvelope envelope, IServiceProvider scopedServices, CancellationToken cancellationToken)
+    {
+        MessageContext.Current!.AttachObserver(observer);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>An observer that throws on every observation.</summary>
+file sealed class ThrowingObserver : IConduitObserver
+{
+    public void OnObservation(MessageObservation observation, MessageContext context)
+        => throw new InvalidOperationException("Simulated observer failure");
 }

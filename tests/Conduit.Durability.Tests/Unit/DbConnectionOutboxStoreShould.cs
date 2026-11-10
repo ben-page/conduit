@@ -349,6 +349,24 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task NotResolveARowItsOwnClaimAlreadyResolved()
+    {
+        // Arrange — the claim marks its entry sent, which leaves the claim's token on the row
+        await this.SaveEntryAsync("msg-resolved");
+        var claimed = (await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None)).Single();
+        (await this.store.MarkSentAsync(claimed.Id, claimed.ClaimToken!, CancellationToken.None)).Should().BeTrue();
+
+        // Act — a second outcome under the same token, as a failure after the mark-sent would attempt
+        var retried = await this.store.IncrementRetryAsync(claimed.Id, claimed.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        var markedFailed = await this.store.MarkFailedAsync(claimed.Id, claimed.ClaimToken!, CancellationToken.None);
+
+        // Assert — the row stays Sent: not released to be delivered again, not marked failed
+        retried.Should().BeFalse();
+        markedFailed.Should().BeFalse();
+        (await this.ReadRowAsync(claimed.Id)).Should().Be((OutboxEntryStatus.Sent, 0, claimed.ClaimToken));
+    }
+
+    [TestMethod]
     public async Task TakeOverAClaimOnlyOnceItIsOlderThanTheConfiguredClaimTimeout()
     {
         // Arrange — a host whose deliveries can run long gives its claims an hour

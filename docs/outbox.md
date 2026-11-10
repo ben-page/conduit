@@ -243,8 +243,8 @@ conduit.AddDurability(durability =>
         outbox.BatchSize = 100;                                // entries per sweep (default: 100)
         outbox.MaxRetries = 10;                                // before marking failed (default: 10)
         outbox.InitialBackoff = TimeSpan.FromSeconds(5);       // wait after a first failed send (default: 5s)
-        outbox.MaxBackoff = TimeSpan.FromMinutes(5);           // longest wait between attempts (default: 5m)
-        outbox.ClaimTimeout = TimeSpan.FromMinutes(5);         // a claim older than this may be taken over (default: 5m)
+        outbox.MaxBackoff = TimeSpan.FromMinutes(5);           // longest wait between attempts (default: 5m; at most 1 day)
+        outbox.ClaimTimeout = TimeSpan.FromMinutes(5);         // a claim older than this may be taken over (default: 5m; at most 1 day)
         outbox.AutoCreateTable = true;                         // create table on startup (default: true)
         outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries older than this (default: 7d); Zero disables
         outbox.FailedRetention = null;                          // delete Failed entries older than this (default: null = follow CompletedRetention); Zero keeps them forever
@@ -271,7 +271,7 @@ The wait is stored on the row (`NextAttemptAt`), so it holds across a relay rest
 different hosts, whose clocks it assumes agree, as the grace period already does. The relay claims only on
 its sweeps, so an entry goes out on the first sweep after its wait ends. `InitialBackoff = TimeSpan.Zero`
 turns backoff off: a failed entry is due again on the next sweep. `AddOutbox` refuses a negative
-`InitialBackoff`, and a `MaxBackoff` below it, with an `OptionsValidationException`.
+`InitialBackoff`, and a `MaxBackoff` below it or above one day, with an `OptionsValidationException`.
 
 ### Claim timeout
 
@@ -289,7 +289,7 @@ was still delivered by both workers: the outbox is [at-least-once](#limitations)
 
 Keep `ClaimTimeout` well above the longest delivery: an entry's local listeners and its transport send together.
 `ClaimLost` in the log means a delivery outlasted it; raise it, or find the slow listener. `AddOutbox` refuses a
-`ClaimTimeout` that is not positive with an `OptionsValidationException`.
+`ClaimTimeout` that is not positive, or is above one day, with an `OptionsValidationException`.
 
 ### Retention
 
@@ -414,9 +414,10 @@ and `OutboxRelay` apply the identical per-entry delivery contract:
 
 1. Resolve `ILocalEnvelopeDispatcher` from a **fresh DI scope** — one scope per entry, mirroring
    fire-and-forget's own fresh-scope semantics (the scope that captured the envelope is long gone
-   by the time flush or the relay runs). The scope ends with step 3, before step 4, and is disposed
-   asynchronously: a scoped service that implements only `IAsyncDisposable` (some database contexts
-   and pooled clients do) is disposed like any other, and a disposal that throws fails the delivery.
+   by the time flush or the relay runs). The scope lives until the entry's outcome is written, after
+   step 4 (or after the release that follows a failure), and is then disposed asynchronously: a scoped
+   service that implements only `IAsyncDisposable` (some database contexts and pooled clients do) is
+   disposed like any other.
 2. If the entry's type is one whose local listeners the outbox owns (`DeliversLocally(type)` —
    `true` only for captured, non-Immediate `[FireAndForget]` events), run its local listener chain
    (with pipeline behaviors) against that fresh scope.
@@ -428,6 +429,11 @@ and `OutboxRelay` apply the identical per-entry delivery contract:
    awaited, so it neither holds the relay until the transport's response timeout nor counts a
    delivered message as failed.
 4. Mark the entry `Sent`, if this worker's claim still holds it (see [Claim timeout](#claim-timeout)).
+   This is the point of no return. Nothing after it can retry the entry: a scope disposal that throws
+   is logged as a Warning with `EventId` **322** (`OutboxScopeDisposeFailed`, naming the entry), and an
+   observer that fails to record the outcome as one with `EventId` **323** (`OutboxObservationFailed`).
+   On a failed delivery the scope is disposed the same way after the release, so the failure the relay
+   or the flush logs is the listener's or the transport's, never the disposal's.
 
 Plain events never reach step 2 for their *local* listeners — `DeliversLocally` is `false` for
 them, because they already ran inline, inside the handler's own transaction, at publish time.

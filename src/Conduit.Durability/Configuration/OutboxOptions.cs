@@ -8,6 +8,9 @@ namespace Conduit.Durability.Configuration;
 /// </summary>
 public sealed class OutboxOptions
 {
+    /// <summary>The longest <see cref="MaxBackoff"/> and <see cref="ClaimTimeout"/> may be: one day.</summary>
+    internal static readonly TimeSpan LongestDuration = TimeSpan.FromDays(1);
+
     /// <summary>How often the relay polls for pending entries. Default: 5 seconds.</summary>
     public TimeSpan RelayInterval { get; set; } = TimeSpan.FromSeconds(5);
     /// <summary>Entries newer than this are ignored by the relay. Default: 10 seconds.</summary>
@@ -24,7 +27,10 @@ public sealed class OutboxOptions
     /// </summary>
     public TimeSpan InitialBackoff { get; set; } = TimeSpan.FromSeconds(5);
 
-    /// <summary>The longest an entry waits between two attempts (see <see cref="InitialBackoff"/>). Default: 5 minutes.</summary>
+    /// <summary>
+    /// The longest an entry waits between two attempts (see <see cref="InitialBackoff"/>). At most one day.
+    /// Default: 5 minutes.
+    /// </summary>
     public TimeSpan MaxBackoff { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -32,7 +38,7 @@ public sealed class OutboxOptions
     /// was stopped mid-send) and another relay may claim the entry and deliver it again, so a crash never strands a
     /// message. A worker still delivering past it has lost the claim: its outcome for the entry is refused (logged as
     /// <c>ClaimLost</c>, EventId 321) and the row stays as the new claim leaves it. Keep it well above the longest
-    /// delivery, local listeners and transport send together. Default: 5 minutes.
+    /// delivery, local listeners and transport send together. Positive, and at most one day. Default: 5 minutes.
     /// </summary>
     public TimeSpan ClaimTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
@@ -79,8 +85,8 @@ public sealed class OutboxOptions
 
     /// <summary>
     /// Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type, a negative
-    /// <see cref="InitialBackoff"/>, a <see cref="MaxBackoff"/> below it, and a <see cref="ClaimTimeout"/> that is not
-    /// positive.
+    /// <see cref="InitialBackoff"/>, a <see cref="MaxBackoff"/> below it or above <see cref="LongestDuration"/>, and a
+    /// <see cref="ClaimTimeout"/> that is not positive or is above <see cref="LongestDuration"/>.
     /// </summary>
     /// <exception cref="OptionsValidationException">An option is invalid; each failure names it.</exception>
     internal void Validate()
@@ -97,10 +103,21 @@ public sealed class OutboxOptions
                 $"OutboxOptions.MaxBackoff is {this.MaxBackoff}, below OutboxOptions.InitialBackoff ({this.InitialBackoff}).");
         }
 
-        // A claim that is stale at once would let any relay take over an entry another is still delivering.
+        // A failed send adds the backoff to now, which throws near TimeSpan.MaxValue.
+        if (this.MaxBackoff > LongestDuration)
+        {
+            failures.Add($"OutboxOptions.MaxBackoff is {this.MaxBackoff}; it can be at most {LongestDuration}.");
+        }
+
+        // A claim that is stale at once would let any relay take over an entry another is still delivering; the claim
+        // subtracts the timeout from now, which throws near TimeSpan.MaxValue.
         if (this.ClaimTimeout <= TimeSpan.Zero)
         {
             failures.Add($"OutboxOptions.ClaimTimeout is {this.ClaimTimeout}; it must be positive.");
+        }
+        else if (this.ClaimTimeout > LongestDuration)
+        {
+            failures.Add($"OutboxOptions.ClaimTimeout is {this.ClaimTimeout}; it can be at most {LongestDuration}.");
         }
 
         foreach (var (key, type) in this.PersistedProperties)

@@ -58,4 +58,58 @@ public sealed class OutboxOptionsShould
         act.Should().Throw<OptionsValidationException>()
             .Which.Failures.Should().ContainSingle().Which.Should().Contain("ClaimTimeout");
     }
+
+    [TestMethod]
+    [DataRow(OneDayAndATick)]
+    [DataRow(long.MaxValue)]
+    public void RefuseAClaimTimeoutAboveADay(long ticks)
+    {
+        // Arrange — the claim subtracts the timeout from now, which throws for a value near TimeSpan.MaxValue
+        var services = new ServiceCollection();
+
+        // Act
+        var act = () => services.AddConduit(conduit => conduit.AddDurability(durability =>
+            durability.AddOutbox(options => options.ClaimTimeout = TimeSpan.FromTicks(ticks))));
+
+        // Assert
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Failures.Should().ContainSingle().Which.Should().Contain("ClaimTimeout").And.Contain("1.00:00:00");
+    }
+
+    [TestMethod]
+    [DataRow(OneDayAndATick)]
+    [DataRow(long.MaxValue)]
+    public void RefuseAMaxBackoffAboveADay(long ticks)
+    {
+        // Arrange — a failed send adds the backoff to now, which throws for a value near TimeSpan.MaxValue
+        var services = new ServiceCollection();
+
+        // Act
+        var act = () => services.AddConduit(conduit => conduit.AddDurability(durability =>
+            durability.AddOutbox(options => options.MaxBackoff = TimeSpan.FromTicks(ticks))));
+
+        // Assert
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Failures.Should().ContainSingle().Which.Should().Contain("MaxBackoff").And.Contain("1.00:00:00");
+    }
+
+    [TestMethod]
+    public void AcceptAClaimTimeoutAndAMaxBackoffOfExactlyADay()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        var act = () => services.AddConduit(conduit => conduit.AddDurability(durability =>
+            durability.AddOutbox(options =>
+            {
+                options.ClaimTimeout = TimeSpan.FromDays(1);
+                options.MaxBackoff = TimeSpan.FromDays(1);
+            })));
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    private const long OneDayAndATick = TimeSpan.TicksPerDay + 1;
 }

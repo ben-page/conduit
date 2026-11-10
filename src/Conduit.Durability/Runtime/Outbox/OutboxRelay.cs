@@ -110,6 +110,10 @@ public sealed partial class OutboxRelay(
             var claimToken = entry.ClaimToken ?? throw new InvalidOperationException(
                 $"{store.GetType().Name}.ClaimPendingAsync returned outbox entry {entry.Id} without its ClaimToken.");
 
+            // Same delivery as the post-commit flush (OutboxDelivery): the entry's own scope, the dispatch inside it,
+            // the outcome, and only then the scope's disposal.
+            var entryScope = scopeFactory.CreateAsyncScope();
+            var sent = false;
             try
             {
                 var payload = JsonSerializer.Deserialize<JsonElement>(entry.Payload, ConduitRuntime.JsonOptions);
@@ -124,15 +128,13 @@ public sealed partial class OutboxRelay(
                     entry.ConversationId,
                     OutboxProperties.Read(entry.Properties, options.Value.PersistedProperties));
 
-                await this.DeliverAsync(envelope, cancellationToken);
+                await OutboxDelivery.DispatchAsync(envelope, entryScope.ServiceProvider, transportDispatcher, cancellationToken);
 
-                if (await store.MarkSentAsync(entry.Id, claimToken, cancellationToken))
+                // The point of no return: nothing after a true result reaches the catch below.
+                sent = await store.MarkSentAsync(entry.Id, claimToken, cancellationToken);
+                if (!sent)
                 {
-                    MessageContext.Observe(new OutboxSent(entry.Id));
-                }
-                else
-                {
-                    LogClaimLost(logger, entry.Id, entry.Type);
+                    OutboxLog.ClaimLost(logger, entry.Id, entry.Type);
                 }
             }
 #pragma warning disable CA1031
@@ -149,11 +151,11 @@ public sealed partial class OutboxRelay(
                     {
                         LogRetriesExhausted(logger, entry.Id, entry.Type, entry.MessageId, null);
                         ConduitTelemetry.RecordOutboxRetriesExhausted(entry.Type);
-                        MessageContext.Observe(new OutboxRetryExhausted(entry.Id));
+                        this.Observe(new OutboxRetryExhausted(entry.Id), entry.Id);
                     }
                     else
                     {
-                        LogClaimLost(logger, entry.Id, entry.Type);
+                        OutboxLog.ClaimLost(logger, entry.Id, entry.Type);
                     }
                 }
                 else
@@ -162,12 +164,20 @@ public sealed partial class OutboxRelay(
                     var retryDelay = OutboxBackoff.Delay(options.Value, entry.RetryCount + 1);
                     if (!await store.IncrementRetryAsync(entry.Id, claimToken, retryDelay, cancellationToken))
                     {
-                        LogClaimLost(logger, entry.Id, entry.Type);
+                        OutboxLog.ClaimLost(logger, entry.Id, entry.Type);
                     }
                 }
             }
             finally
             {
+                // After the outcome and outside the catch: neither a disposal failure nor an observer's can retry the
+                // entry, and neither replaces a delivery failure the catch has already logged.
+                await OutboxDelivery.DisposeEntryScopeAsync(entryScope, logger, entry.Id, entry.Type);
+                if (sent)
+                {
+                    this.Observe(new OutboxSent(entry.Id), entry.Id);
+                }
+
                 // The entry's context ends with the entry: the next one (which may fail to read before it restores its
                 // own) and the relay loop never run under it.
                 MessageContext.RestoreContext(previousContext);
@@ -175,24 +185,19 @@ public sealed partial class OutboxRelay(
         }
     }
 
-    /// <summary>
-    /// Delivers one entry's envelope, as the post-commit flush does: local listeners first, from a fresh scope, then
-    /// transports. Redelivery re-runs local listeners — the idempotent-listener requirement is load-bearing. The scope
-    /// is disposed before the entry is marked sent, so its disposal is part of the delivery.
-    /// </summary>
-    private async Task DeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    // Records an observation of an entry whose outcome is written: an observer that throws is logged, never treated as
+    // the entry's failure.
+    private void Observe(MessageObservation observation, long entryId)
     {
-        await using var entryScope = scopeFactory.CreateAsyncScope();
-        var localDispatcher = entryScope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
-
-        if (localDispatcher is not null && localDispatcher.DeliversLocally(envelope.Type))
+        try
         {
-            await localDispatcher.PublishLocalEnvelopeAsync(envelope, entryScope.ServiceProvider, cancellationToken);
+            MessageContext.Observe(observation);
         }
-
-        if (localDispatcher is null || !localDispatcher.IsLocalOnly(envelope.Type))
+#pragma warning disable CA1031
+        catch (Exception exception)
+#pragma warning restore CA1031
         {
-            await transportDispatcher.SendAsync(envelope, localDispatcher, cancellationToken);
+            OutboxLog.ObservationFailed(logger, observation.GetType().Name, entryId, exception);
         }
     }
 
@@ -233,10 +238,4 @@ public sealed partial class OutboxRelay(
     [LoggerMessage(EventId = 320, EventName = "OutboxRetriesExhausted", Level = LogLevel.Error,
         Message = "Outbox entry {EntryId} (type: {Type}, message: {MessageId}) exhausted retries, marking as failed")]
     private static partial void LogRetriesExhausted(ILogger logger, long entryId, string type, string messageId, Exception? exception);
-
-    // The flush logs the same event (OutboxCapture.LogClaimLost).
-    [LoggerMessage(EventId = 321, EventName = "ClaimLost", Level = LogLevel.Warning,
-        Message = "Lost the claim on outbox entry {EntryId} (type: {Type}): another worker took it over after the claim " +
-            "timeout, or it was already resolved, so this attempt's outcome was not recorded")]
-    private static partial void LogClaimLost(ILogger logger, long entryId, string type);
 }
