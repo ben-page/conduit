@@ -305,7 +305,7 @@ or a test.
 
 `TopologyMode` names a broker's resources and decides how long they live: `Production` (durable, no prefix),
 `Developer` (prefixed with the user name, ephemeral where the broker can delete a resource itself) or `Test` (a random
-prefix per run, deleted sooner). What each mode does on each broker, and the Amazon SQS reaper, are in
+prefix per run, deleted sooner where the broker can delete them). What each mode does on each broker, and the Amazon SQS reaper, are in
 [Transports → Developer and Test modes](transports/index.md#developer-and-test-modes).
 
 ## Loading from IConfiguration

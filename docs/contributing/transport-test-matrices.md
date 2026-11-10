@@ -229,7 +229,8 @@ These tests verify naming logic and configuration without requiring a live broke
 The `Test Method` column of TM-1 to TM-4 names the row. Each `TopologyManagerShould` marks the rows it covers with a
 `// --- TM-x.y: Name ---` comment above the tests, which are named for the transport's own resources (RabbitMQ's
 TM-1.2 is `UseTopologyNamingForExchangeName`, Amazon SQS's `UseSharedResourceNameForSnsTopic`). See
-[Universal rows per transport](#universal-rows-per-transport) for the rows a broker cannot have.
+[Universal rows per transport](#universal-rows-per-transport) for the rows that do not apply to a broker, or that
+its unit tests do not cover.
 
 ### Category TM-1: Resource Naming
 
@@ -269,18 +270,29 @@ TM-1.2 is `UseTopologyNamingForExchangeName`, Amazon SQS's `UseSharedResourceNam
 
 ### Universal rows per transport
 
-RabbitMQ and Azure Service Bus cover all 16 rows. Two brokers cannot have some of them:
+RabbitMQ and Azure Service Bus cover all 16 rows. Amazon SQS and ActiveMQ differ.
 
-- **Amazon SQS** has no shared per-type queues: each application has one queue (and one per pool) whose SNS filter
-  policy lists the types it takes, so a command has one consumer because only one application's filter names it.
-  TM-1.5, TM-1.6 and TM-2 do not apply. SNS and SQS have no auto-delete, so TM-4 does not apply either: Developer and
-  Test resources are reaped by prefix instead (7.4). TM-1.1 is `UseCorrectMaxLengthForSqsQueues`.
-- **ActiveMQ** has no app queue besides its event queue, and no named reply queue (each instance's is a temporary
-  queue the broker names), so TM-1.3 and TM-1.4 do not apply, and its 256-character limit is pinned by the TM-1.7
-  tests rather than a TM-1.1 test. TM-2 is covered under TM-1.5 and TM-1.6 (`CommandQueueNamesAreIdenticalAcrossApps`,
-  `EventQueueNamesAreDifferentAcrossApps`), TM-3 only by the pool queue names (`UseAppResourceNameForPoolEventQueues`,
-  `UseSharedResourceNameForPoolCommandQueues`), and TM-4.1–4.3 test `ActiveMQTopologyManager.QueueLifetimeFor` as
-  `ProductionModeDurableNoAutoDelete`, `DeveloperModeAutoDeleteFourHours` and `TestModeAutoDeleteFiveMinutes`.
+**Amazon SQS** has no shared per-type queues: each application has one queue (and one per pool) whose SNS filter policy
+lists the types it takes, so a command has one consumer because only one application's filter names it.
+
+- *Does not apply:* TM-1.5, TM-1.6 and TM-2.1 (no per-type queues), and TM-4 (SNS and SQS have no auto-delete;
+  Developer and Test resources are reaped by prefix instead, 7.4).
+- *Not covered at unit level:* TM-2.2. It applies, since an event's subscription is on each listening application's
+  own queue, but no unit test pins it.
+- TM-1.1 is `UseCorrectMaxLengthForSqsQueues`.
+
+**ActiveMQ** names each application's event queue on the multicast address `CreateAppResourceName(options, 256)` (in
+`ActiveMQTopologyManager`), and has no named reply queue: each instance's is a dynamic node the broker creates and names.
+
+- *Does not apply:* TM-1.4 (the dynamic reply node), and TM-1.6's per-type event queues, which ActiveMQ does not have.
+- *Covered under other markers:* the per-app event queue follows TM-1.3, pinned by `UseAppResourceNameForEventQueues`
+  under the TM-1.6 marker. The 256-character limit (TM-1.1) is pinned by the TM-1.7 tests. TM-2 is covered under TM-1.5
+  and TM-1.6 (`CommandQueueNamesAreIdenticalAcrossApps`, `EventQueueNamesAreDifferentAcrossApps`), TM-3.1 by the pool
+  queue names (`UseAppResourceNameForPoolEventQueues`, `UseSharedResourceNameForPoolCommandQueues`), and TM-4.1–4.3 by
+  tests of `ActiveMQTopologyManager.QueueLifetimeFor` (`ProductionModeDurableNoAutoDelete`,
+  `DeveloperModeAutoDeleteFourHours`, `TestModeAutoDeleteFiveMinutes`).
+- *Not covered at unit level:* TM-3.2 and TM-3.3. They apply: the app event queue's filter takes the subscribed events
+  minus every pool-assigned type. No unit test pins that; integration test 11.9 does.
 
 ### Category TM-S: Transport-Specific
 
@@ -321,7 +333,7 @@ Raw message delivery on the subscriptions is read back from LocalStack by 11.22,
 | TM-S.10 | `CreateSeparateAnycastAndMulticastAddresses` | Two addresses: anycast for commands/queries, multicast for events |
 | TM-S.11 | `UseAmqpFilterOnQueues` | `ActiveMQTopologyManager.CommandQueueFilter`: `JMSType='{FullTypeName}'`; `EventQueueFilter`: `JMSType IN ('{FullTypeName}', ...)` (and `WriteTheSameEventFilterForAnyOrderOfTheSameTypes`: each type once, in ordinal order, so the same set read back compares as unchanged) |
 | TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | `[DataRow]` Developer (14,400,000 ms) and Test (300,000 ms): `EnsureTopologyAsync` against the real broker, then each queue's configuration read back through the management API is non-durable, `auto-delete` true, `auto-delete-delay` the mode's, `auto-delete-message-count` -1. The one container-backed test in `Unit/` (`ActiveMQTestBase.RequireBroker`, Inconclusive without a broker) |
-| TM-S.13 | `UseUniqueLinkNames` | `ConsumerLinkName()` gives `consumer-{32 hex}`, unique per link, whatever the queue is called (a name derived from the queue's name and cut to 50 characters would make two long names equal) |
+| TM-S.13 | `UseUniqueLinkNames` | `ConsumerLinkName()` gives `consumer-{32 hex}`, unique per link, whatever the queue is called (a name derived from the queue's name and cut to 50 characters would make two long names equal and throw for a short one) |
 
 ### Totals
 
@@ -334,7 +346,7 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 | Amazon SQS | 19 |
 | ActiveMQ | 22 |
 
-The TM-S rows name the transport-specific behaviors; each `TopologyManagerShould` also carries a few tests of its own outside the matrix (`AcceptConduitOptionsInConstructor`, `CreateAppQueueWithoutSessions` and the like). The 16 universal tests are the floor a new transport must implement, unless a row cannot apply to its broker, as with Amazon SQS above.
+The TM-S rows name the transport-specific behaviors; each `TopologyManagerShould` also carries a few tests of its own outside the matrix (`AcceptConduitOptionsInConstructor`, `CreateAppQueueWithoutSessions` and the like). The 16 universal tests are the floor a new transport must implement, unless a row cannot apply to its broker, as with Amazon SQS and ActiveMQ above.
 
 ---
 
@@ -430,7 +442,7 @@ overload equivalence and de-duplication), and `TransportOptionsBindingShould`
 When adding a new broker transport, create a test project and implement:
 
 1. **All transport behavior tests** (Matrix 1 — 38 `[TestMethod]` tests per existing transport, categories 1–10) — copy the test classes and the `{Prefix}TestBase` from an existing transport, and adjust the base class
-2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
+2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x), unless a row cannot apply to the broker ([Universal rows per transport](#universal-rows-per-transport)) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
 4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable: without it a transport can ship a shared singleton that a second endpoint silently overwrites
 

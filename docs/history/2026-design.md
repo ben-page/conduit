@@ -5,7 +5,7 @@
 > library as it ships. These sections describe things that were never built, or were built differently:
 >
 > - **Overview, Goals, Non-Goals, Event Model, Future Considerations.** The frontend is any TypeScript app (the
->   browser sample is Vite), not Angular. Rebus was never integrated or planned: the broker transports (Azure Service
+>   browser sample is Vite), not Angular. Rebus was never integrated, and is not planned: the broker transports (Azure Service
 >   Bus, RabbitMQ, Amazon SQS, ActiveMQ) are built in, and no NATS or Redis transport is planned.
 > - **Project Structure.** It omits `Conduit.Contracts`, `Conduit.Durability`, `Conduit.Audit`, `Conduit.Jobs`,
 >   `Conduit.Resilience` and the `Conduit.Persistence` packages.

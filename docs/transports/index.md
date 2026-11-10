@@ -358,9 +358,9 @@ broker resources, so the mode does not apply to them.
 | `Test` | `test-` and 8 random hex characters | As Developer, sooner. |
 
 Developer mode gives each developer isolated resources on a shared broker: under the prefix `alice`, every name Conduit
-gives a resource starts with `alice-` (RabbitMQ's exchange is `alice-conduit` instead of `conduit`). Test mode gives every run a
-prefix of its own and short-lived resources, so integration tests that share a broker never see each other's
-messages. `TopologyPrefix` overrides the default prefix, in Production too; give every host of a multi-host test the
+gives a resource starts with `alice-` (RabbitMQ's exchange is `alice-conduit` instead of `conduit`). Test mode gives
+every run a prefix of its own and, where the broker can delete them, short-lived resources, so integration tests that
+share a broker never see each other's messages. `TopologyPrefix` overrides the default prefix, in Production too; give every host of a multi-host test the
 same one so they share one topology ([ConduitBuilder properties](../configuration-reference.md#conduitbuilder-properties)).
 Each broker guide's "Developer and Test modes" section lists its resources' durability and cleanup in each mode.
 

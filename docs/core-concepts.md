@@ -178,7 +178,7 @@ await mediator.ExecuteAsync(
 
 ## Validate()
 
-`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` innermost — after every behavior, immediately before the handler — so a behavior that refuses never runs the caller's input. Every message is validated before its handler runs, whether it was dispatched in process or arrived over the wire. A local `[FireAndForget]` command is validated on the caller's thread before it is queued, so an invalid one is refused to its caller and never queued.
+`ICommand` and `IQuery<TResult>` have a default interface method called `Validate()`. Use it for structural precondition guards that are always invalid regardless of application state. The generated mediator calls `Validate()` innermost — after every behavior, immediately before the handler — so a behavior that refuses never runs the caller's input. Every command and query is validated before its handler runs, whether it was dispatched in process or arrived over the wire. A local `[FireAndForget]` command is validated on the caller's thread before it is queued, so an invalid one is refused to its caller and never queued.
 
 ```csharp
 using Conduit.Exceptions;
