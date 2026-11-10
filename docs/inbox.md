@@ -33,7 +33,7 @@ You may not need it when:
 
 ## How it works
 
-The inbox is an `IInboundInterceptor` — a **gate** that runs on the inbound wire path *before* the message payload is deserialized, so a duplicate costs almost nothing. It keys off the dispatch's `MessageContext.MessageId`, which the transport sets before the gate runs (see [A message without an id](#a-message-without-an-id)), and consults the inbox store:
+The inbox is an `IInboundInterceptor` — a **gate** that runs on the inbound wire path *before* the message payload is deserialized, so a duplicate costs almost nothing. It keys off the dispatch's `MessageContext.MessageId`, which a broker transport sets before the gate runs (see [A message without an id](#a-message-without-an-id) for HTTP and SignalR), and consults the inbox store:
 
 ```
 Inbound wire message arrives (transport provides MessageId)
@@ -52,7 +52,7 @@ Inbound wire message arrives (transport provides MessageId)
 
 ### A message without an id
 
-Every transport starts the dispatch's context before the gates run: from the ids the message carries (a broker message's, or a caller's on an HTTP or SignalR edge that [trusts its callers](security.md)), or with a fresh `MessageId` otherwise. So:
+A broker transport starts the dispatch's context before the gates run, from the ids the message carries, or with a fresh `MessageId` when it carries none. The HTTP endpoint and the SignalR hub start one before the gates only for a dispatch that carries properties or a caller's ids on an edge that [trusts its callers](security.md#correlation-ids); any other request reaches the gate with no context and passes unrecorded, which loses nothing, since that edge mints a fresh `MessageId` for every request anyway. So:
 
 - **A broker message that arrives without a message id** (from a producer that is not Conduit, say) gets a fresh one on each delivery, and its redeliveries are not recognized as duplicates.
 - **A request handed to `HandleWireRequestAsync` outside any dispatch** (host code calling the wire entry point itself, with no `MessageContext`) passes the gate unrecorded. So does every request a `PreflightWireRequestAsync` checks: the preflight records nothing.

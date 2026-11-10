@@ -201,14 +201,14 @@ subscribes it as it does an event one of its listeners handles.
 
 ### Coalescing a burst into the work it represents
 
-Ten corrections to one production line's output log mean **one** rebuild of that line's shift
-report, not ten. A trigger can say so: `CoalesceBy` declares what makes two units of work the same,
-and `Merge` declares how they combine.
+Ten badge scans at one location mean **one** rebuild of that location's summary, not ten. A trigger
+can say so: `CoalesceBy` declares what makes two units of work the same, and `Merge` declares how
+they combine.
 
 ```csharp
-jobs.On<OutputEntryCorrected>("shift-report-rebuild")
-    .CoalesceBy(entry => entry.LineId)
-    .Run(entry => new RebuildShiftReport(entry.LineId, entry.From))
+jobs.On<BadgeScanned>("location-summary-rebuild")
+    .CoalesceBy(scan => scan.LocationId)
+    .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
     .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming);
 ```
 
