@@ -111,7 +111,10 @@ IMediator.PublishAsync(@event)
   |                                                 -- EventListenerException propagates to the caller
   3. transport broadcast:
   |     foreach IConduitTransport in DI:
-  |         transport.SendEventAsync(DispatchEnvelope("Ns.MyEvent", payload), ct)
+  |         try
+  |             transport.SendEventAsync(DispatchEnvelope("Ns.MyEvent", payload), ct)
+  |         catch (Exception ex)
+  |             ConduitRuntime.LogTransportBroadcastFailure(...)   -- EventId 22, keep going
   4. MessageContext.RestoreContext(previous)
 ```
 

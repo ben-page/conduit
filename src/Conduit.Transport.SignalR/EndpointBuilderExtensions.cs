@@ -1,5 +1,6 @@
 using Conduit.Configuration;
 using Conduit.Runtime;
+using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,11 +19,9 @@ public static class EndpointBuilderExtensions
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="hubUri">The hub URI. Overrides the configured value when given.</param>
-    /// <param name="configure">Optional callback to adjust the options after binding.</param>
+    /// <param name="configure">Optional callback to adjust the options after binding, e.g.
+    /// <see cref="SignalROptions.ConfigureConnection"/> for a hub behind authorization.</param>
     /// <returns>The endpoint builder for chaining.</returns>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage(
-        "Reliability", "CA2000:Dispose objects before losing scope",
-        Justification = "Transport lifetime is managed by DI via keyed singleton registration.")]
     public static ConduitEndpointBuilder UseSignalR(
         this ConduitEndpointBuilder builder,
         Uri? hubUri = null,
@@ -54,16 +53,23 @@ public static class EndpointBuilderExtensions
         // inspectable instead of being bound and dropped.
         builder.Services.AddKeyedSingleton(builder.EndpointName, options);
 
+        // Built by a keyed factory, so the container owns the transport (and the HubConnection it owns) and disposes it
+        // with itself; an instance registration is never disposed. Nothing connects until the first send.
+        var resolvedHubUri = options.HubUri;
+        var configureConnection = options.ConfigureConnection;
         builder.Services.AddKeyedSingleton(
-            builder.EndpointName, new SignalRTransport(BuildHubConnection(options.HubUri)));
+            builder.EndpointName,
+            (serviceProvider, _) => new SignalRTransport(
+                BuildHubConnection(resolvedHubUri, configureConnection),
+                serviceProvider.GetService<ConduitTypeRegistry>()));
 
         return builder.UseTransport<SignalRTransport>();
     }
 
-    private static HubConnection BuildHubConnection(Uri hubUri)
+    private static HubConnection BuildHubConnection(Uri hubUri, Action<HttpConnectionOptions>? configureConnection)
     {
         return new HubConnectionBuilder()
-            .WithUrl(hubUri)
+            .WithUrl(hubUri, connectionOptions => configureConnection?.Invoke(connectionOptions))
             .AddJsonProtocol(options =>
             {
                 options.PayloadSerializerOptions.PropertyNamingPolicy =

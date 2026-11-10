@@ -64,6 +64,26 @@ public class HttpTransportShould
         id.Should().NotBeEmpty();
     }
 
+    // A routed [FireAndForget] command goes out with SendEventAsync: over HTTP that is a POST to /dispatch whose reply
+    // is discarded. The receiving endpoint runs the handler inline, so it has run by the time the send returns.
+    [TestMethod]
+    public async Task SendAFireAndForgetCommandWithoutAReply()
+    {
+        // Arrange
+        await using var handlerHost = CreateHandlerHost();
+        var store = handlerHost.GetRequiredService<ItemStore>();
+        await using var callerHost = CreateCallerHost(handlerHost.Address);
+        var mediator = callerHost.GetRequiredService<IMediator>();
+        var id = Guid.NewGuid();
+
+        // Act
+        await mediator.ExecuteAsync(new NoteItemCommand(id, "Noted"));
+
+        // Assert
+        store.Get(id).Should().Be("Noted");
+        callerHost.GetRequiredService<ItemStore>().Get(id).Should().BeNull();
+    }
+
     [TestMethod]
     public async Task RoundTripVoidCommand()
     {

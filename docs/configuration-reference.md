@@ -297,6 +297,9 @@ default AWS credential chain — this is the common case, not an error state.
 |---|---|---|
 | `HubUri` | `Uri` | Required (or pass it to `UseSignalR(hubUri)`) |
 
+`SignalROptions.ConfigureConnection` (an `Action<HttpConnectionOptions>`: access token provider, headers) is code
+only, set in the `configure` callback; configuration never binds it.
+
 **HTTP** (`endpoint.UseHttp()`)
 
 | Key | Type | Notes |
@@ -305,8 +308,8 @@ default AWS credential chain — this is the common case, not an error state.
 | `BasePath` | `string` | Default `/api/conduit` |
 
 The caller-owned `UseHttp(httpClient, basePath?)` overload never reads `BaseAddress` from
-configuration — it exists for when you manage the `HttpClient` lifetime yourself (e.g. via
-`IHttpClientFactory` elsewhere), and the `HttpClient` you pass in already has a `BaseAddress`. It
+configuration — it exists for when you own a long-lived `HttpClient` yourself (the transport holds
+it for the life of the host and never disposes it), and the `HttpClient` you pass in already has a `BaseAddress`. It
 does still read the endpoint's configured `BasePath` when the `basePath` argument is omitted, so
 `Conduit:Endpoints:{name}:BasePath` applies to either `UseHttp` overload.
 

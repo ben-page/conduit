@@ -1,6 +1,10 @@
+using System.Text.Json;
 using AwesomeAssertions;
+using Conduit.Configuration;
+using Conduit.Runtime;
 using Conduit.Transport.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR.Tests.Unit;
 
@@ -39,5 +43,26 @@ public class SignalRTransportShould
         // Assert
         await action.Should().ThrowExactlyAsync<ArgumentNullException>();
         await transport.DisposeAsync();
+    }
+
+    // UseSignalR used to register the instance it built, which the container never disposes: the HubConnection outlived
+    // the host. Registered through a keyed factory, the container owns it.
+    [TestMethod]
+    public async Task BeDisposedWithTheContainer()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        new ConduitBuilder(services).AddEndpoint(
+            "inventory", endpoint => endpoint.UseSignalR(new Uri("http://127.0.0.1:1/conduit")));
+        var serviceProvider = services.BuildServiceProvider();
+        var transport = serviceProvider.GetRequiredKeyedService<SignalRTransport>("inventory");
+        var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
+
+        // Act
+        await serviceProvider.DisposeAsync();
+
+        // Assert
+        var action = () => transport.SendRequestAsync(envelope, CancellationToken.None);
+        await action.Should().ThrowAsync<ObjectDisposedException>();
     }
 }

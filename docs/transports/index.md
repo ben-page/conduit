@@ -258,7 +258,7 @@ A few things worth knowing about the check:
   keeps a rolling upgrade safe.
 - **SignalR and HTTP are unaffected.** SignalR's server mode never consumes its own hub, and its
   client mode dispatches to the server's local listeners without re-broadcasting to other clients.
-  HTTP carries no events at all — `SendEventAsync` is unsupported. The filter lives entirely in
+  HTTP never hands a host back its own event: `/publish` only receives what another host sends it. The filter lives entirely in
   `BrokerTransportBase`, shared by the four broker transports only.
 - **There is no configuration knob to turn it off.** The filter is unconditional wherever it
   applies; add an opt-out only if a concrete use case for double-processing your own events

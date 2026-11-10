@@ -129,6 +129,98 @@ public class SignalRTransportShould
             .WithMessage("*InternalError*");
     }
 
+    // The carried ruling: a routed [FireAndForget] command goes out with SendEventAsync, and a client-mode transport
+    // must invoke the hub's Dispatch for it (the reply discarded), not Publish, whose event switch refuses a command as
+    // an unknown message type. The hub runs the handler inline, so it has run by the time the send returns.
+    [TestMethod]
+    public async Task DispatchAFireAndForgetCommandThroughTheHubsDispatchMethod()
+    {
+        // Arrange
+        await using var handlerHost = CreateHandlerHost();
+        var store = handlerHost.GetRequiredService<ItemStore>();
+        await using var callerHost = CreateCallerHost(handlerHost.Address);
+        var mediator = callerHost.GetRequiredService<IMediator>();
+        var id = Guid.NewGuid();
+
+        // Act
+        await mediator.ExecuteAsync(new NoteItemCommand(id, "Noted"));
+
+        // Assert
+        store.Get(id).Should().Be("Noted");
+        callerHost.GetRequiredService<ItemStore>().Get(id).Should().BeNull();
+    }
+
+    // A reply-less send of an event (the host's registry says so) goes to the hub's Publish, whose listeners run on the
+    // remote host.
+    [TestMethod]
+    public async Task PublishAnEventThroughTheHubsPublishMethod()
+    {
+        // Arrange
+        await using var handlerHost = CreateHandlerHost();
+        var spy = handlerHost.GetRequiredService<EventSpy<ItemCreatedEvent>>();
+        var registry = new ConduitTypeRegistry(eventTypes: [typeof(ItemCreatedEvent)], commandTypes: [], queryTypes: []);
+        await using var transport = new SignalRTransport(
+            new HubConnectionBuilder().WithUrl($"{handlerHost.Address}/conduit").Build(), registry);
+        var id = Guid.NewGuid();
+        var envelope = new DispatchEnvelope(
+            typeof(ItemCreatedEvent).FullName!,
+            JsonSerializer.SerializeToElement(new ItemCreatedEvent(id, "Published"), ConduitRuntime.JsonOptions));
+
+        // Act
+        await transport.SendEventAsync(envelope, CancellationToken.None);
+
+        // Assert
+        await spy.WaitForCountAsync(1);
+        spy.Events.Should().ContainSingle().Which.Id.Should().Be(id);
+    }
+
+    private static TestWebHost CreateClosingHost()
+    {
+        return TestWebHost.Start(
+            builder => builder.Services.AddSignalR(),
+            app => app.MapHub<ClosingHub>("/closing"));
+    }
+
+    // Automatic reconnect gives up (here at once: no retry delays) and the connection is Disconnected for good. The
+    // transport used to remember it had connected once and fail every later send until the process restarted.
+    [TestMethod]
+    public async Task ReconnectAfterTheConnectionClosedForGood()
+    {
+        // Arrange
+        await using var host = CreateClosingHost();
+        var hubConnection = new HubConnectionBuilder()
+            .WithUrl($"{host.Address}/closing")
+            .WithAutomaticReconnect([])
+            .Build();
+        await using var transport = new SignalRTransport(hubConnection);
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        hubConnection.Closed += _ =>
+        {
+            closed.TrySetResult();
+            return Task.CompletedTask;
+        };
+        var close = new DispatchEnvelope(ClosingHub.CloseType, JsonSerializer.SerializeToElement(new { }));
+        var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
+        await transport.SendRequestAsync(envelope, CancellationToken.None);
+        try
+        {
+            await transport.SendRequestAsync(close, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not AssertFailedException)
+        {
+            // The invocation dies with its connection.
+        }
+
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Act
+        var action = () => transport.SendRequestAsync(envelope, CancellationToken.None);
+
+        // Assert
+        await action.Should().NotThrowAsync();
+        hubConnection.State.Should().Be(HubConnectionState.Connected);
+    }
+
     private static TestWebHost CreateRecordingHost()
     {
         return TestWebHost.Start(

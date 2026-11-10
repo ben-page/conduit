@@ -617,7 +617,7 @@ public static class MediatorEmitter
         sb.AppendLine($"        {indent}        }}");
         sb.AppendLine($"        {indent}        catch (Exception ex)");
         sb.AppendLine($"        {indent}        {{");
-        sb.AppendLine($"        {indent}            ConduitRuntime.LogListenerFailure(logger, transport.GetType().Name, ex);");
+        sb.AppendLine($"        {indent}            ConduitRuntime.LogTransportBroadcastFailure(logger, transport.GetType().Name, eventEnvelope.Type, ex);");
         sb.AppendLine($"        {indent}        }}");
         sb.AppendLine($"        {indent}    }}");
         sb.AppendLine($"        {indent}}}");

@@ -601,6 +601,10 @@ public static partial class ConduitRuntime
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(4, "ListenerFailed"),
             "Event listener '{Listener}' threw an exception");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogTransportBroadcastFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(22, "TransportBroadcastFailed"),
+            "Transport '{Transport}' failed to broadcast event '{Type}'");
+
     // Warning-level logs. A refusal is the caller's mistake, not the server's, so none carries an exception (or a stack).
     private static readonly Action<ILogger, string, string, string, Exception?> LogRefusedEvent =
         LoggerMessage.Define<string, string, string>(LogLevel.Warning, new EventId(7, "RefusedEvent"),
@@ -1276,6 +1280,18 @@ public static partial class ConduitRuntime
     /// <summary>Logs that an individual event listener threw an exception.</summary>
     public static void LogListenerFailure(ILogger logger, string listenerName, Exception exception)
         => LogListenerFailed(logger, listenerName, exception);
+
+    /// <summary>
+    /// Logs that a transport failed to broadcast an event (EventId 22, <c>TransportBroadcastFailed</c>, Error). Called by
+    /// the generated publish's broadcast loop, which carries on to the next transport: a transport is not a listener, so
+    /// its failure is never logged as <c>ListenerFailed</c>.
+    /// </summary>
+    /// <param name="logger">The logger the failure is written to.</param>
+    /// <param name="transportName">The failing transport's type name.</param>
+    /// <param name="typeName">The event's wire type name.</param>
+    /// <param name="exception">What the transport threw.</param>
+    public static void LogTransportBroadcastFailure(ILogger logger, string transportName, string typeName, Exception exception)
+        => LogTransportBroadcastFailed(logger, transportName, typeName, exception);
 
     /// <summary>
     /// The refusal for a wire request whose type this host neither handles nor routes, logged at Warning without a stack

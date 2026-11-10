@@ -11,7 +11,7 @@
 
 ## Overview
 
-SignalR provides persistent, bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect.
+SignalR provides persistent, bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services send to each other's hubs with automatic reconnect; a service's [client-mode transport](#client-mode-service-to-service) sends only, it does not receive the hub's events.
 
 ## Server setup
 
@@ -90,7 +90,7 @@ client.on('MyApp.Events.OrderShippedEvent', (event) => {
 ```
 
 ```csharp
-// C# (SignalR client)
+// C# (your own SignalR HubConnection: Conduit's client-mode transport does not receive events)
 hubConnection.On<JsonElement>("MyApp.Events.OrderShippedEvent", payload =>
 {
     Console.WriteLine($"Shipped: {payload}");
@@ -155,7 +155,19 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-This creates a `SignalRTransport` in client mode. It wraps a `HubConnection` with automatic reconnect. The connection is lazy and auto-starts on the first dispatch call, so your service starts without waiting for the remote hub.
+This creates a `SignalRTransport` in client mode. It wraps a `HubConnection` with automatic reconnect. The connection is lazy and auto-starts on the first dispatch call, so your service starts without waiting for the remote hub. If the connection closes for good (automatic reconnect gave up, or the hub closed it), the next send starts it again; a send made while an automatic reconnect is still in progress fails as SignalR fails it. The container owns the transport and its `HubConnection`, and disposes both with the host.
+
+**Client mode is send-only.** It sends commands and queries through the hub's `Dispatch`, and a routed `[FireAndForget]` command through `Dispatch` too, its result discarded (a refusal still throws). It does not receive the events the remote hub pushes: a service that needs another service's events uses a broker transport. Receiving events in client mode is deferred.
+
+A hub mapped behind `RequireAuthorization` needs a credential on the connection. `SignalROptions.ConfigureConnection` reaches the `HubConnection`'s HTTP options (access token provider, headers, proxy, client certificates):
+
+```csharp
+endpoint.UseSignalR(new Uri("https://inventory-service/conduit"), options =>
+    options.ConfigureConnection = connection =>
+        connection.AccessTokenProvider = () => tokenSource.GetTokenAsync());
+```
+
+`ConfigureConnection` is code only; configuration never binds it.
 
 The hub URI can also come from configuration instead of the `hubUri` argument:
 

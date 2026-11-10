@@ -1,4 +1,5 @@
 using Conduit.Configuration;
+using Conduit.Runtime;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -11,8 +12,9 @@ public static class EndpointBuilderExtensions
 {
     /// <summary>
     /// Configures this endpoint to use HTTP POST to a remote Conduit dispatch endpoint.
-    /// The <paramref name="httpClient"/> is captured at configuration time and registered
-    /// as a keyed singleton — its lifetime is tied to the DI container.
+    /// The transport holds <paramref name="httpClient"/> for the life of the container and never disposes it: pass a
+    /// long-lived client you own (not one from <c>IHttpClientFactory.CreateClient</c>, whose handler rotation a client
+    /// held this long never sees), or use <see cref="UseHttp(ConduitEndpointBuilder, Action{HttpOptions})"/>.
     /// </summary>
     /// <param name="builder">The endpoint builder.</param>
     /// <param name="httpClient">An HttpClient with BaseAddress set to the remote service.</param>
@@ -33,8 +35,12 @@ public static class EndpointBuilderExtensions
         // an HttpClient supplied by the caller doesn't opt an endpoint out of configuration.
         var resolvedBasePath = basePath ?? builder.Configuration?["BasePath"] ?? "/api/conduit";
 
+        // Built by the container, which hands it the host's message types (an event is published, not dispatched). The
+        // caller keeps owning the HttpClient: HttpTransport is not disposable and never disposes it.
         builder.Services.AddKeyedSingleton(
-            builder.EndpointName, new HttpTransport(httpClient, resolvedBasePath));
+            builder.EndpointName,
+            (serviceProvider, _) => new HttpTransport(
+                httpClient, resolvedBasePath, serviceProvider.GetService<ConduitTypeRegistry>()));
 
         return builder.UseTransport<HttpTransport>();
     }
@@ -80,7 +86,8 @@ public static class EndpointBuilderExtensions
             endpointName,
             (serviceProvider, _) => new HttpTransport(
                 serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(endpointName),
-                basePath));
+                basePath,
+                serviceProvider.GetService<ConduitTypeRegistry>()));
 
         return builder.UseTransport<HttpTransport>();
     }

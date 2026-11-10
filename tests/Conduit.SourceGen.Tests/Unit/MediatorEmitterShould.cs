@@ -446,6 +446,31 @@ namespace App.Events
         catchIndex.Should().BeGreaterThan(enqueueIndex);
     }
 
+    // A transport that refuses a broadcast is not an event listener: logging it as ListenerFailed ("Event listener
+    // 'SignalRTransport' threw...") sent a reader looking for a listener that does not exist.
+    [TestMethod]
+    public void LogATransportsBroadcastFailureAsTransportBroadcastFailed()
+    {
+        // Arrange
+        const string source = """
+            using Conduit.Messages;
+
+            namespace TestApp;
+
+            public record ItemShipped(string Detail) : IEvent;
+            """;
+
+        // Act
+        var (output, _) = RunGenerator(source);
+        var mediatorSource = FindGeneratedSource(output, "ConduitMediator");
+
+        // Assert
+        mediatorSource.Should().NotBeNull();
+        mediatorSource.Should().Contain(
+            "ConduitRuntime.LogTransportBroadcastFailure(logger, transport.GetType().Name, eventEnvelope.Type, ex);");
+        mediatorSource.Should().NotContain("LogListenerFailure(logger, transport.");
+    }
+
     [TestMethod]
     public void EmitTransactionGatedCaptureInPublishAsync()
     {
