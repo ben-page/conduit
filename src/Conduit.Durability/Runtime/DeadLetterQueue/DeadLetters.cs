@@ -17,7 +17,7 @@ namespace Conduit.Durability.Runtime.DeadLetterQueue;
 /// refused while the first holds it. Delivery is at least once: a process that stops after the redelivery and before
 /// the removal leaves the entry claimed, and the first replay after the claim times out re-publishes it once more.
 /// </remarks>
-public sealed class DeadLetters : IDeadLetters
+internal sealed class DeadLetters : IDeadLetters
 {
     private readonly IDeadLetterStore store;
     private readonly IServiceProvider serviceProvider;

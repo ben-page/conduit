@@ -1,4 +1,5 @@
 using Conduit.Durability.DeadLetterQueue;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;

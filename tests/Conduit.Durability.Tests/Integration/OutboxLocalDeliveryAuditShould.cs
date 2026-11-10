@@ -3,6 +3,7 @@ using Conduit.Audit;
 using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;

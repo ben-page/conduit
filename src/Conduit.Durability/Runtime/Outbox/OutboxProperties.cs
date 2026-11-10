@@ -2,13 +2,14 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Runtime;
 
 namespace Conduit.Durability.Runtime.Outbox;
 
 /// <summary>
 /// Writes the dispatch properties a host lists in <see cref="OutboxOptions.PersistedProperties"/> into an outbox
-/// entry's <see cref="Persistence.Outbox.OutboxEntry.Properties"/> column, and reads them back for delivery. Both
+/// entry's <see cref="OutboxEntry.Properties"/> column, and reads them back for delivery. Both
 /// delivery paths — the post-commit flush and <see cref="OutboxRelay"/> — restore the bag through <see cref="Read"/>,
 /// so a relay retry of a failed flush runs under exactly the properties the flush did.
 /// </summary>

@@ -1,4 +1,4 @@
-namespace Conduit.Durability.Persistence.Outbox;
+namespace Conduit.Durability.Outbox;
 
 /// <summary>A page of failed outbox entries, oldest first.</summary>
 public sealed class FailedOutboxPage

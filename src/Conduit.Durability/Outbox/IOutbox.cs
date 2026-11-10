@@ -1,7 +1,6 @@
 using Conduit.Durability.Configuration;
-using Conduit.Durability.Persistence.Outbox;
 
-namespace Conduit.Durability.Runtime.Outbox;
+namespace Conduit.Durability.Outbox;
 
 /// <summary>
 /// User-facing operations on the outbox entries whose retries ran out: find them, and hand them back to the relay.

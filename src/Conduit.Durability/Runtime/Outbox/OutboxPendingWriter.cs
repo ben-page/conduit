@@ -1,4 +1,5 @@
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
 using Conduit.Runtime;

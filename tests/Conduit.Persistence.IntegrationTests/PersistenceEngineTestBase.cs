@@ -4,6 +4,7 @@ using Conduit.Audit.Persistence;
 using Conduit.Audit.Runtime;
 using Conduit.Durability.Configuration;
 using Conduit.Durability.DeadLetterQueue;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;

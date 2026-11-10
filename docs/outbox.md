@@ -334,9 +334,13 @@ Once the cause is fixed, [retry the entries](#retrying-failed-entries).
 
 A Failed entry is the only copy of a message that never reached its listeners or broker, so it stays in the
 table (until `FailedRetention`) instead of being dropped. Inject `IOutbox` to find failed entries and hand them
-back to the relay:
+back to the relay. It and the types it takes and returns (`FailedOutboxFilter`, `FailedOutboxPage`, `OutboxEntry`,
+`OutboxEntryStatus`) live in the `Conduit.Durability.Outbox` namespace, as the dead letter queue's live in
+`Conduit.Durability.DeadLetterQueue`:
 
 ```csharp
+using Conduit.Durability.Outbox;
+
 var outbox = serviceProvider.GetRequiredService<IOutbox>();
 
 // Find them: oldest first, optionally of one type, a page at a time

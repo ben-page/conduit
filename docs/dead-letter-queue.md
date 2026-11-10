@@ -119,11 +119,13 @@ The engine package carries the provider reference, so no generic connection-type
 
 ## Replay
 
-Inject `IDeadLetters` to browse, replay, and discard.
+Inject `IDeadLetters` to browse, replay, and discard. It and the types it takes and returns (`DeadLetterFilter`, `DeadLetterPage`, `DeadLetterEntry`, `ReplayResult`) live in the `Conduit.Durability.DeadLetterQueue` namespace.
 
 ### Single message
 
 ```csharp
+using Conduit.Durability.DeadLetterQueue;
+
 var deadLetters = serviceProvider.GetRequiredService<IDeadLetters>();
 
 var result = await deadLetters.ReplayAsync(deadLetterId, cancellationToken);

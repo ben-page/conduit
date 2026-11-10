@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Conduit.Durability.Outbox;
 using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Tests.Support;

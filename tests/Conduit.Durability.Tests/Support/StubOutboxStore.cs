@@ -1,4 +1,5 @@
-﻿using Conduit.Durability.Persistence.Outbox;
+﻿using Conduit.Durability.Outbox;
+using Conduit.Durability.Persistence.Outbox;
 using System.Data.Common;
 
 namespace Conduit.Durability.Tests.Support;

@@ -1,4 +1,5 @@
-﻿using Conduit.Middleware;
+﻿using Conduit.Durability.Outbox;
+using Conduit.Middleware;
 using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;

@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Persistence;
 using Microsoft.Extensions.Options;
 

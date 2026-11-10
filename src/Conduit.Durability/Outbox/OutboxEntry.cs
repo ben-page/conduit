@@ -1,4 +1,4 @@
-﻿namespace Conduit.Durability.Persistence.Outbox;
+﻿namespace Conduit.Durability.Outbox;
 
 /// <summary>
 /// Represents a message stored in the outbox table for reliable delivery.
@@ -36,10 +36,10 @@ public sealed class OutboxEntry
     /// </summary>
     public string? Properties { get; init; }
     /// <summary>
-    /// The token of the claim that returned this entry from <see cref="IOutboxStore.ClaimPendingAsync"/>: the relay
-    /// hands it back to <see cref="IOutboxStore.MarkSentAsync"/>, <see cref="IOutboxStore.IncrementRetryAsync"/> or
-    /// <see cref="IOutboxStore.MarkFailedAsync"/>, which resolve the entry only while that claim still holds it. Null
-    /// on an entry no claim returned (a new entry, a <see cref="IOutboxStore.QueryFailedAsync"/> result).
+    /// The token of the claim that returned this entry from <see cref="Persistence.Outbox.IOutboxStore.ClaimPendingAsync"/>: the relay
+    /// hands it back to <see cref="Persistence.Outbox.IOutboxStore.MarkSentAsync"/>, <see cref="Persistence.Outbox.IOutboxStore.IncrementRetryAsync"/> or
+    /// <see cref="Persistence.Outbox.IOutboxStore.MarkFailedAsync"/>, which resolve the entry only while that claim still holds it. Null
+    /// on an entry no claim returned (a new entry, a <see cref="Persistence.Outbox.IOutboxStore.QueryFailedAsync"/> result).
     /// </summary>
     public string? ClaimToken { get; init; }
 }

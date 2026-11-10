@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Conduit.Durability.Tests" />
+    <InternalsVisibleTo Include="Conduit.Persistence.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Conduit\Conduit.csproj" />

@@ -1,4 +1,4 @@
-namespace Conduit.Durability.Persistence.Outbox;
+namespace Conduit.Durability.Outbox;
 
 /// <summary>
 /// Filter and page for listing the outbox entries whose retries ran out (<see cref="OutboxEntryStatus.Failed"/>).

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Durability.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;

@@ -2,6 +2,7 @@ using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using AwesomeAssertions;
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Jobs;
 using Conduit.Jobs.Configuration;

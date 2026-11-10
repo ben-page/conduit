@@ -1,3 +1,4 @@
+using Conduit.Durability.Outbox;
 using Conduit.Durability.Persistence.Outbox;
 
 namespace Conduit.Durability.Runtime.Outbox;
@@ -5,7 +6,7 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// <summary>
 /// The <see cref="IOutbox"/> that <c>AddOutbox</c> registers, over the registered <see cref="IOutboxStore"/>.
 /// </summary>
-public sealed class OutboxOperations : IOutbox
+internal sealed class OutboxOperations : IOutbox
 {
     private readonly IOutboxStore store;
 

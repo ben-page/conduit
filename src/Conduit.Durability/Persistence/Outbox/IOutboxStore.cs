@@ -1,4 +1,5 @@
 ﻿using System.Data.Common;
+using Conduit.Durability.Outbox;
 using Conduit.Persistence;
 
 namespace Conduit.Durability.Persistence.Outbox;

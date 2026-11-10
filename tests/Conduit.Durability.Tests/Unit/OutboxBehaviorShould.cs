@@ -1,5 +1,6 @@
 ﻿using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Durability.Outbox;
 using Conduit.Persistence;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
