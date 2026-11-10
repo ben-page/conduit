@@ -33,6 +33,8 @@ public class RestEndpointShould
         app.MapConduitPost<TakeItemCommand>("/api/items/take");
         app.MapConduitPost<AttachDocumentCommand>("/api/documents");
         app.MapConduitPost<UploadConduitFileCommand>("/api/uploads/document");
+        app.MapConduitPost<ClaimScreenNameCommand>("/api/screen-names");
+        app.MapConduitPost<ClaimScreenNamePositionallyCommand>("/api/screen-names/positional");
 
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -265,6 +267,58 @@ public class RestEndpointShould
         }
     }
 
+    // A multipart body binds only what a JSON body could write: a [JsonIgnore]d member stays out of a caller's reach
+    // whichever content type the caller picks, whether a setter or a constructor parameter would take it.
+    [TestMethod]
+    public async Task NotBindAJsonIgnoredPropertyFromMultipart()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            using var settableForm = new MultipartFormDataContent();
+            settableForm.Add(new StringContent("Reactor"), "screen_name");
+            settableForm.Add(new StringContent("admin"), "Role");
+            using var positionalForm = new MultipartFormDataContent();
+            positionalForm.Add(new StringContent("Reactor"), "screenName");
+            positionalForm.Add(new StringContent("admin"), "role");
+
+            // Act
+            var settableResponse = await client.PostAsync("/api/screen-names", settableForm);
+            var positionalResponse = await client.PostAsync("/api/screen-names/positional", positionalForm);
+
+            // Assert
+            settableResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await settableResponse.Content.ReadFromJsonAsync<string>()).Should().Be("Reactor|reader");
+            positionalResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await positionalResponse.Content.ReadFromJsonAsync<string>()).Should().Be("Reactor|reader");
+        }
+    }
+
+    [TestMethod]
+    public async Task BindAMultipartFieldByItsJsonPropertyName()
+    {
+        // Arrange
+        var (app, client) = CreateTestHost();
+        await using (app)
+        using (client)
+        {
+            using var wireNameForm = new MultipartFormDataContent();
+            wireNameForm.Add(new StringContent("Reactor"), "screen_name");
+            using var clrNameForm = new MultipartFormDataContent();
+            clrNameForm.Add(new StringContent("Reactor"), "ScreenName");
+
+            // Act
+            var wireNameResponse = await client.PostAsync("/api/screen-names", wireNameForm);
+            var clrNameResponse = await client.PostAsync("/api/screen-names", clrNameForm);
+
+            // Assert
+            (await wireNameResponse.Content.ReadFromJsonAsync<string>()).Should().Be("Reactor|reader");
+            (await clrNameResponse.Content.ReadFromJsonAsync<string>()).Should().Be("|reader");
+        }
+    }
+
     [TestMethod]
     public async Task Answer400ForAMissingRequiredFile()
     {
@@ -283,7 +337,7 @@ public class RestEndpointShould
             response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             json.GetProperty("title").GetString().Should().Be("BadRequest");
-            json.GetProperty("detail").GetString().Should().Contain("Document");
+            json.GetProperty("detail").GetString().Should().ContainEquivalentOf("document");
         }
     }
 

@@ -1,18 +1,22 @@
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json.Serialization.Metadata;
 using Conduit.Exceptions;
 using Conduit.Messages;
+using Conduit.Runtime;
 using Microsoft.AspNetCore.Http;
 
 namespace Conduit.Transport.Http.Internal;
 
 /// <summary>
 /// Binds a command instance from an <see cref="HttpRequest"/> with a
-/// <c>multipart/form-data</c> body. Scalar properties come from form fields
-/// (case-insensitive name match); the single file property binds from the
-/// first <see cref="IFormFile"/>. Constructor parameters bind first (a record's
-/// primary constructor); then each settable property no parameter covered, so a
-/// class command with a parameterless constructor binds too.
+/// <c>multipart/form-data</c> body. It binds exactly the members a JSON body could write, by the same names: the
+/// command's JSON contract (<see cref="ConduitRuntime.JsonOptions"/>' <see cref="JsonTypeInfo"/>) drives it, so a
+/// <c>[JsonIgnore]</c>d member is never bound, a field matches the member's wire name (<c>[JsonPropertyName]</c>, else
+/// the camelCase name) in any letter case, and an indexer or a member with no setter is skipped. The constructor
+/// System.Text.Json deserializes with binds first (a record's primary constructor); then each writable member no
+/// constructor parameter covered (a class command's settable properties). The single file property binds from the
+/// file part of its wire name, else the first file.
 /// </summary>
 /// <remarks>
 /// A field that does not convert throws <see cref="FormatException"/>, <see cref="InvalidCastException"/> or
@@ -29,73 +33,99 @@ internal static class MultipartCommandBinder
         var form = await request.ReadFormAsync(cancellationToken);
 
         var commandType = typeof(TCommand);
+
+        // GetTypeInfo needs the options configured, which the serializer does on their first use; the first request to
+        // reach this host may be this one. Idempotent, and exactly what reading a JSON body would do to them.
+        ConduitRuntime.JsonOptions.MakeReadOnly(populateMissingResolver: true);
+        var contract = ConduitRuntime.JsonOptions.GetTypeInfo(commandType);
+        var ctor = contract.ConstructorAttributeProvider as ConstructorInfo
+            ?? throw new InvalidOperationException(
+                $"{commandType.Name} has no constructor System.Text.Json can deserialize it with.");
+
+        // The file member, only when it is on the wire: an ignored file property is no more bindable than any other.
         var fileProp = FilePropertyMetadata.GetFileProperty(commandType);
+        var fileMember = fileProp is null
+            ? null
+            : contract.Properties.FirstOrDefault(member =>
+                IsOnTheWire(member)
+                && member.AttributeProvider is PropertyInfo property
+                && string.Equals(property.Name, fileProp.Name, StringComparison.Ordinal));
 
         // Read the file once, whether a constructor parameter or a setter takes it.
         object? fileValue = null;
-        if (fileProp is not null)
+        if (fileMember is not null)
         {
-            var file = form.Files.GetFile(fileProp.Name) ?? form.Files.FirstOrDefault();
+            var file = form.Files.GetFile(fileMember.Name) ?? form.Files.FirstOrDefault();
             if (file is null && FilePropertyMetadata.IsFileRequired(commandType))
             {
-                throw new BadRequestException($"The file '{fileProp.Name}' is required.");
+                throw new BadRequestException($"The file '{fileMember.Name}' is required.");
             }
 
-            fileValue = await BuildFileValueAsync(file, fileProp.PropertyType, cancellationToken);
+            fileValue = await BuildFileValueAsync(file, fileMember.PropertyType, cancellationToken);
         }
 
-        // The widest public constructor: a record's primary constructor, or a class's parameterless one.
-        var ctor = commandType.GetConstructors()
-            .OrderByDescending(c => c.GetParameters().Length)
-            .First();
+        // Each constructor parameter binds from the member System.Text.Json matched it to. A parameter whose member is
+        // ignored takes its default, as a JSON body leaves it.
+        var parameterMembers = contract.Properties
+            .Where(member => member.AssociatedParameter is { IsMemberInitializer: false } && IsOnTheWire(member))
+            .ToDictionary(member => member.AssociatedParameter!.Position);
 
         var parameters = ctor.GetParameters();
         var args = new object?[parameters.Length];
-        var boundNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < parameters.Length; i++)
         {
             var parameter = parameters[i];
-            var name = parameter.Name ?? string.Empty;
-            boundNames.Add(name);
 
-            if (fileProp is not null && string.Equals(name, fileProp.Name, StringComparison.OrdinalIgnoreCase))
+            if (!parameterMembers.TryGetValue(i, out var member))
+            {
+                args[i] = DefaultFor(parameter);
+            }
+            else if (member == fileMember)
             {
                 args[i] = fileValue;
             }
-            else if (form.TryGetValue(name, out var values))
+            else if (form.TryGetValue(member.Name, out var values))
             {
-                args[i] = ConvertScalar(values.ToString(), parameter.ParameterType, name);
+                args[i] = ConvertScalar(values.ToString(), parameter.ParameterType, member.Name);
             }
             else
             {
-                args[i] = parameter.HasDefaultValue ? parameter.DefaultValue : GetDefault(parameter.ParameterType);
+                args[i] = DefaultFor(parameter);
             }
         }
 
         var command = (TCommand)ctor.Invoke(args);
 
-        // Then the settable properties no constructor parameter covered. A property the form does not mention keeps its
+        // Then each writable member no constructor parameter covered. A member the form does not mention keeps its
         // initializer's value.
-        foreach (var property in commandType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var member in contract.Properties)
         {
-            if (boundNames.Contains(property.Name) || property.SetMethod is not { IsPublic: true })
+            if (member.Set is null || member.AssociatedParameter is { IsMemberInitializer: false })
             {
                 continue;
             }
 
-            if (fileProp is not null && string.Equals(property.Name, fileProp.Name, StringComparison.Ordinal))
+            if (member == fileMember)
             {
-                property.SetValue(command, fileValue);
+                member.Set(command, fileValue);
             }
-            else if (form.TryGetValue(property.Name, out var values))
+            else if (form.TryGetValue(member.Name, out var values))
             {
-                property.SetValue(command, ConvertScalar(values.ToString(), property.PropertyType, property.Name));
+                member.Set(command, ConvertScalar(values.ToString(), member.PropertyType, member.Name));
             }
         }
 
         return command;
     }
+
+    // A [JsonIgnore]d member stays in the contract's Properties (a constructor parameter still matches it), but with
+    // neither accessor: System.Text.Json neither writes nor reads it, nor binds its constructor parameter.
+    private static bool IsOnTheWire(JsonPropertyInfo member) =>
+        member.Get is not null || member.Set is not null;
+
+    private static object? DefaultFor(ParameterInfo parameter) =>
+        parameter.HasDefaultValue ? parameter.DefaultValue : GetDefault(parameter.ParameterType);
 
     private static async Task<object?> BuildFileValueAsync(IFormFile? file, Type target, CancellationToken cancellationToken)
     {
