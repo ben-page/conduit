@@ -46,6 +46,8 @@ Registration order matters for [background jobs](jobs.md) alone. `AddJobs` inspe
 
 The driver ships inside the engine package, so there is **no generic connection-type parameter** — write `conduit.UsePostgres("Host=...")`, not `UsePostgres<NpgsqlConnection>(...)`.
 
+On SQL Server, every connection Conduit opens runs `SET NOCOUNT OFF` first: the outbox and the jobs count the rows each terminal write changed, and a server whose `user options` include `NOCOUNT` would otherwise report none. A connection factory you register yourself (the outbox's transaction-aware one) opens the connections those writes use in its place, so it should leave `NOCOUNT` off as well.
+
 ## Tables
 
 Each feature creates its tables on startup if they are absent, before any of its background services (the outbox relay, the inbox cleanup) makes its first pass:

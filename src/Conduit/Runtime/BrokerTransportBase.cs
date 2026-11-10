@@ -31,9 +31,9 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(502, "MessageAbandoned"),
             "Abandoned message '{Type}' (support reference: {Reference}); the broker redelivers or dead-letters it");
 
-    private static readonly Action<ILogger, string, Exception?> LogMessageProcessingError =
-        LoggerMessage.Define<string>(LogLevel.Error, new EventId(503, "MessageProcessingError"),
-            "Error processing message '{Type}'");
+    private static readonly Action<ILogger, string, string, Exception?> LogMessageProcessingError =
+        LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(503, "MessageProcessingError"),
+            "Error processing message '{Type}' (support reference: {Reference})");
 
     private static readonly Action<ILogger, string, Exception?> LogReplyError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(504, "ReplyError"),
@@ -614,11 +614,15 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            LogMessageProcessingError(this.Logger, messageType, ex);
+            // Answered as the runtime answers an unexpected failure (InternalError, the fixed message, the reference the
+            // exception is logged under), never with the exception's own message. Reached only when the mediator itself
+            // throws: a custom IWireMediator, or a service the generated one resolves that cannot be built.
+            reference = ConduitRuntime.SupportReference();
+            LogMessageProcessingError(this.Logger, messageType, reference, ex);
             handlerException = ex;
 
             replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
-                DispatchResult<object>.Fail("InternalError", ex.Message),
+                ConduitRuntime.UnexpectedFailure(reference),
                 ConduitRuntime.JsonOptions));
         }
 
@@ -753,9 +757,10 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            LogMessageProcessingError(this.Logger, messageType, ex);
+            var reference = ConduitRuntime.SupportReference();
+            LogMessageProcessingError(this.Logger, messageType, reference, ex);
             await this.CaptureOrAbandonAsync(
-                scope.ServiceProvider, message, messageType, ex, reference: null, alreadyLogged: true);
+                scope.ServiceProvider, message, messageType, ex, reference, alreadyLogged: true);
             return;
         }
 
@@ -833,7 +838,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// </summary>
     private async Task SettleUndispatchableAsync(TMessage message, string messageType, Exception exception)
     {
-        LogMessageProcessingError(this.Logger, messageType, exception);
+        var reference = ConduitRuntime.SupportReference();
+        LogMessageProcessingError(this.Logger, messageType, reference, exception);
 
         AsyncServiceScope captureScope;
         try
@@ -852,7 +858,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         // Only the scope's creation is guarded: a capture's own acknowledgement must not fail into a second one
         await using (captureScope)
         {
-            if (await this.TryCaptureErrorAsync(captureScope.ServiceProvider, message, messageType, exception, reference: null))
+            if (await this.TryCaptureErrorAsync(captureScope.ServiceProvider, message, messageType, exception, reference))
             {
                 return;
             }

@@ -23,12 +23,24 @@ public sealed class SqlServerConduitConnectionFactory
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Every connection is handed out at <c>NOCOUNT OFF</c>. The outbox's and the jobs' terminal writes require exactly one
+    /// row affected, and a server whose <c>user options</c> include <c>NOCOUNT</c> (512) starts each session at
+    /// <c>NOCOUNT ON</c>, which reports -1: the outbox would take every sent entry for a lost claim and resend it, and a job
+    /// run would execute again.
+    /// </remarks>
     public async Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqlConnection(this.connectionString);
         try
         {
             await connection.OpenAsync(cancellationToken);
+            await using (var countRows = connection.CreateCommand())
+            {
+                countRows.CommandText = "SET NOCOUNT OFF";
+                await countRows.ExecuteNonQueryAsync(cancellationToken);
+            }
+
             return connection;
         }
         catch

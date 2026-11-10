@@ -71,6 +71,11 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         LoggerMessage.Define<int, string, TimeSpan>(LogLevel.Warning, new EventId(112, "ReconnectFailed"),
             "Reconnection attempt {Attempt} to Artemis for endpoint '{Endpoint}' failed; retrying in {Delay}");
 
+    private static readonly Action<ILogger, string, Exception?> LogInboundMessageFailed =
+        LoggerMessage.Define<string>(LogLevel.Error, new EventId(113, "InboundMessageFailed"),
+            "Processing Artemis message '{Type}' failed outside its dispatch; a message left unsettled is delivered " +
+            "again once its link closes");
+
     /// <summary>
     /// Creates a new ActiveMQ Artemis transport instance.
     /// </summary>
@@ -757,7 +762,27 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
 
         // Not awaited (the link's callback is synchronous): ProcessInboundMessageAsync handles
         // ack/abandon, and the base class tracks the call so stop can drain it
-        _ = this.ProcessInboundMessageAsync(inboundMessage);
+        _ = this.ProcessInboundAndObserveAsync(inboundMessage);
+    }
+
+    /// <summary>
+    /// Runs the inbound dispatch and observes what escapes it (a settlement the link refused), which nothing else awaits:
+    /// it is logged at Error (<c>InboundMessageFailed</c>, EventId 113), not left to the unobserved-task handler. The
+    /// message is not settled again here: whatever settled it already stands, and one left unsettled is redelivered by
+    /// Artemis once its link closes.
+    /// </summary>
+    private async Task ProcessInboundAndObserveAsync(ActiveMQInboundMessage inboundMessage)
+    {
+        try
+        {
+            await this.ProcessInboundMessageAsync(inboundMessage);
+        }
+#pragma warning disable CA1031 // Nothing else observes this task: what escapes the dispatch is logged, never settled twice.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            LogInboundMessageFailed(this.Logger, this.GetMessageType(inboundMessage) ?? "(none)", exception);
+        }
     }
 
     private void OnReplyReceived(IReceiverLink receiverLink, Message message)

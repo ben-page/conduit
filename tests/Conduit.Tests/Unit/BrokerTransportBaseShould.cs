@@ -250,6 +250,46 @@ public partial class BrokerTransportBaseShould
         abandoned.Exception.Should().BeNull();
     }
 
+    // A mediator that throws (here a translator that cannot be built, which the generated mediator resolves for every
+    // request) is answered as the runtime answers an unexpected failure: the fixed message and a reference that finds
+    // the logged exception, never the exception's own message
+    [TestMethod]
+    public async Task AnswerARequestWhoseMediatorThrowsAsAnUnexpectedFailure()
+    {
+        // Arrange
+        await using var host = StartHost(
+            withInterceptor: true,
+            configureBuilder: builder => builder.Services.AddSingleton<IWireExceptionTranslator>(
+                _ => throw new InvalidOperationException("The translator cannot be built.")));
+        var interceptor = host.GetRequiredService<RecordingErrorInterceptor>();
+        var logger = new RecordingLogger<FakeBrokerTransport>();
+        var transport = new FakeBrokerTransport(
+            host.GetRequiredService<ConduitOptions>(), host.Services, logger: logger);
+        var envelope = TestEnvelope.ForRequest(new EchoCommand("hello"));
+        var message = new FakeBrokerMessage
+        {
+            Type = envelope.Type,
+            Body = new BinaryData(envelope.Payload.GetRawText()),
+            IsRequest = true,
+        };
+
+        // Act
+        await transport.DeliverAsync(message);
+
+        // Assert -- the reply, the 503 line and the capture share one reference
+        var reply = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
+            transport.Replies.Should().ContainSingle().Subject.ToString(), ConduitRuntime.JsonOptions)!;
+        reply.Error!.Code.Should().Be("InternalError");
+        reply.Error.Message.Should().Be("An unexpected error occurred.");
+        var reference = reply.Error.Reference;
+        reference.Should().NotBeNullOrEmpty();
+        var logged = logger.Entries.Should().ContainSingle(entry => entry.EventId.Id == 503).Subject;
+        logged.Message.Should().Contain($"support reference: {reference}");
+        logged.Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("The translator cannot be built.");
+        interceptor.Captures.Should().ContainSingle().Which.Reference.Should().Be(reference);
+    }
+
     private static TestWebHost StartHost(
         bool withInterceptor,
         Action<ConduitBuilder>? configure = null,

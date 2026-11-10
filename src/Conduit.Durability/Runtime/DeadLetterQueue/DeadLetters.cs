@@ -26,25 +26,25 @@ internal sealed class DeadLetters : IDeadLetters
     private static readonly Action<ILogger, string, Exception?> LogReplaySucceeded =
         LoggerMessage.Define<string>(
             LogLevel.Information,
-            new EventId(301, "DlqReplaySucceeded"),
+            new EventId(311, "DlqReplaySucceeded"),
             "Replayed dead letter '{MessageType}'");
 
     private static readonly Action<ILogger, string, Exception?> LogReplayFailed =
         LoggerMessage.Define<string>(
             LogLevel.Warning,
-            new EventId(302, "DlqReplayFailed"),
+            new EventId(312, "DlqReplayFailed"),
             "Failed to replay dead letter '{MessageType}'");
 
     private static readonly Action<ILogger, string, Guid, Exception?> LogReplayedEntryNotRemoved =
         LoggerMessage.Define<string, Guid>(
             LogLevel.Warning,
-            new EventId(303, "DlqReplayedEntryNotRemoved"),
+            new EventId(313, "DlqReplayedEntryNotRemoved"),
             "Replayed dead letter '{MessageType}', but could not remove entry {DeadLetterId}: it stays claimed, and a replay after its claim times out re-publishes it again");
 
     private static readonly Action<ILogger, string, Guid, Exception?> LogReplayClaimNotReleased =
         LoggerMessage.Define<string, Guid>(
             LogLevel.Warning,
-            new EventId(304, "DlqReplayClaimNotReleased"),
+            new EventId(314, "DlqReplayClaimNotReleased"),
             "Could not release the replay claim on dead letter '{MessageType}' entry {DeadLetterId}: it can be replayed again once the claim times out");
 
     /// <summary>

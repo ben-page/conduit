@@ -35,9 +35,12 @@ public interface IInboundErrorInterceptor
     /// <param name="exception">The exception that caused the failure. For a request that answered
     /// <c>InternalError</c>, whose real exception the runtime logged rather than returned, one that names
     /// the answer; <paramref name="reference"/> then finds the log line.</param>
-    /// <param name="reference">The support reference of a request that answered <c>InternalError</c>
-    /// (<c>DispatchError.Reference</c>): the value its caller was given and the logged exception carries.
-    /// Null for every other failure.</param>
+    /// <param name="reference">The support reference the failure was logged under, when it has one: a request or a
+    /// <c>[FireAndForget]</c> command that answered <c>InternalError</c> (<c>DispatchError.Reference</c>: the value its
+    /// caller was given and the logged exception carries), an event whose dispatch failed outside its listeners, a
+    /// dispatch the mediator itself threw, and a message that failed before dispatch. Null for a listener's failure
+    /// (each listener's exception is logged on its own) and for a body its type cannot read (a refusal, logged without
+    /// a reference).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
     /// <c>true</c> if the message was captured (the transport should acknowledge);

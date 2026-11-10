@@ -1195,9 +1195,10 @@ public static partial class ConduitRuntime
     /// finding it needs no log scopes. The ConversationId can come from outside: a trusting HTTP or SignalR edge takes it
     /// from its caller (checked there), a broker transport from the message (unchecked: a foreign producer can send
     /// anything), and a host can start a context itself. CR/LF would forge log lines, so it is used only when it is a
-    /// plain token (<see cref="MessageContextIds"/>); otherwise one is minted.
+    /// plain token (<see cref="MessageContextIds"/>); otherwise one is minted. Internal so <see cref="BrokerTransportBase{TMessage}"/>
+    /// references a failure it caught itself by the same rule.
     /// </summary>
-    private static string SupportReference()
+    internal static string SupportReference()
     {
         var conversationId = MessageContext.Current?.ConversationId;
         return MessageContextIds.IsValid(conversationId)
