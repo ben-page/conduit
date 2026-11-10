@@ -1,5 +1,4 @@
 using Conduit.Generated;
-using Conduit.Sample.Todos;
 using Conduit.Sample.Todos.Commands;
 using Conduit.Sample.Todos.Queries;
 

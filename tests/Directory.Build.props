@@ -6,6 +6,9 @@
     <IsPackable>false</IsPackable>
     <IsPublishable>false</IsPublishable>
     <IsTestProject>true</IsTestProject>
+    <!-- MSTest runs on Microsoft.Testing.Platform (global.json selects it for dotnet test). -->
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
 
   <!-- JUnit XML logger so every test project emits TestResults.xml that the

@@ -12,8 +12,6 @@
     <Project Path="samples/service-to-service/Conduit.Sample.Orders/Conduit.Sample.Orders.csproj" />
   </Folder>
   <Folder Name="/src/">
-    <File Path="src/Directory.Build.props" />
-    <File Path="src/Directory.Packages.props" />
     <Project Path="src/Conduit.Analysis/Conduit.Analysis.csproj" />
     <Project Path="src/Conduit.Audit/Conduit.Audit.csproj" />
     <Project Path="src/Conduit.Contracts/Conduit.Contracts.csproj" />
@@ -38,7 +36,6 @@
   <Folder Name="/tests/">
     <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
-    <File Path="tests/Directory.Packages.props" />
     <Project Path="tests/Conduit.Audit.Tests/Conduit.Audit.Tests.csproj" />
     <Project Path="tests/Conduit.Durability.Tests/Conduit.Durability.Tests.csproj" />
     <Project Path="tests/Conduit.Jobs.Tests/Conduit.Jobs.Tests.csproj" />

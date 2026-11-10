@@ -11,8 +11,6 @@
     <IsPublishable>true</IsPublishable>
     <DebugType>embedded</DebugType>
     <EmbedAllSources>true</EmbedAllSources>
-    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
-    <EnableMSTestRunner>true</EnableMSTestRunner>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -32,7 +30,7 @@
        `dotnet pack -p:ConduitPackagePrefix=Acme.Conduit` packs Conduit as Acme.Conduit and Conduit.Transport.Http as
        Acme.Conduit.Transport.Http. Each package's Description is in its own project file. -->
   <PropertyGroup>
-    <ConduitPackagePrefix Condition="'$(ConduitPackagePrefix)' == ''">Conduit</ConduitPackagePrefix>
+    <ConduitPackagePrefix Condition="'$(ConduitPackagePrefix)' == ''">Conduit.NET</ConduitPackagePrefix>
     <PackageId Condition="'$(MSBuildProjectName)' == 'Conduit'">$(ConduitPackagePrefix)</PackageId>
     <PackageId Condition="$(MSBuildProjectName.StartsWith('Conduit.'))">$(ConduitPackagePrefix)$(MSBuildProjectName.Substring(7))</PackageId>
     <Authors>Ben Page</Authors>

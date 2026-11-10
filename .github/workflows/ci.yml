@@ -4,14 +4,19 @@ name: CI
 #
 # Stages, mirroring the original GitLab pipeline:
 #   test ──┐
-#          ├─▶ pack ─▶ publish ─▶ release      (tags vMAJOR.MINOR.PATCH[-suffix] only)
+#          ├─▶ pack ─▶ publish ─▶ release      (pushed tags vMAJOR.MINOR.PATCH[-suffix] only)
 #   transport-ts ┘
 #
-# `publish` runs in the `release` environment. Give that environment a required
-# reviewer (Settings → Environments → release) and publishing waits for a human
-# click, as the GitLab `when: manual` job did. Without a protection rule it runs
-# as soon as `pack` is green. Publishing is irreversible: a NuGet package version
-# can never be overwritten.
+# `publish` pushes the packages to this repository's GitHub Packages feed and to
+# nuget.org. It runs in the `release` environment: give that environment a
+# required reviewer (Settings → Environments → release) and publishing waits for
+# a human click, as the GitLab `when: manual` job did. Without a protection rule
+# it runs as soon as `pack` is green. Publishing is irreversible: a NuGet package
+# version can never be overwritten.
+#
+# Secrets: `NUGET_API_KEY`, a nuget.org API key with push rights to the
+# Conduit.NET.* ids. Store it as a secret of the `release` environment, so only a
+# run a reviewer approved can read it. GitHub Packages uses GITHUB_TOKEN.
 
 on:
   push:
@@ -34,13 +39,13 @@ jobs:
     name: Build and test (.NET)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
-          # global.json pins 10.0.0 with rollForward latestFeature; 10.0.x
+          # global.json pins 10.0.100 with rollForward latestFeature; 10.0.x
           # installs the newest 10.0 SDK, which satisfies it.
           dotnet-version: 10.0.x
           cache: true
@@ -49,7 +54,7 @@ jobs:
       # The browser-client sample (samples/browser-client/Conduit.Sample.Notes)
       # runs `npm install` + `vite build` as part of its MSBuild graph, and
       # Vite 8 requires Node 20+.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -75,7 +80,7 @@ jobs:
           --report-spekt-junit "MethodFormat=Class;FailureBodyFormat=Verbose"
           --ignore-exit-code 8
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results-dotnet
@@ -94,11 +99,11 @@ jobs:
       run:
         working-directory: tests/transport-ts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -110,7 +115,7 @@ jobs:
 
       - run: npx vitest run --reporter=default --reporter=junit --outputFile.junit=TestResults/TestResults.xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results-transport-ts
@@ -121,16 +126,17 @@ jobs:
     name: Pack
     # test and transport-ts gate the release: never publish red.
     needs: [test, transport-ts]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A pushed v* tag only: never a pull request, a branch or a manual run.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
           cache: true
@@ -149,11 +155,14 @@ jobs:
           fi
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-      # Pack every project under src/ (all inherit IsPackable=true). Per-project
-      # rather than solution-level so samples/, which also inherit IsPackable,
-      # are left out. Each pack builds its own dependency closure, so no Node
-      # is needed here. RepositoryUrl ties the package to this repository,
-      # which GitHub Packages requires to accept a push with GITHUB_TOKEN.
+      # Pack every project under src/ (Conduit.Analysis sets IsPackable=false and
+      # packs nothing; it ships inside SourceGen and TypeGen). Per-project rather
+      # than solution-level, so the samples are never built here: each pack builds
+      # its own dependency closure, and no Node is needed. RepositoryUrl ties the
+      # package to this repository, which GitHub Packages requires to accept a
+      # push with GITHUB_TOKEN. ContinuousIntegrationBuild makes the build
+      # deterministic, so the embedded PDBs carry /_/ source paths rather than
+      # the runner's checkout directory.
       - name: dotnet pack
         run: |
           echo "Packing Conduit ${{ steps.version.outputs.version }}"
@@ -162,10 +171,11 @@ jobs:
               --configuration Release \
               --output ./artifacts \
               -p:Version="${{ steps.version.outputs.version }}" \
-              -p:RepositoryUrl="https://github.com/${{ github.repository }}"
+              -p:RepositoryUrl="https://github.com/${{ github.repository }}" \
+              -p:ContinuousIntegrationBuild=true
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: artifacts/*.nupkg
@@ -173,8 +183,11 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish to GitHub Packages
+    name: Publish to GitHub Packages and nuget.org
     needs: pack
+    # pack already runs on a pushed v* tag only; repeated so this job can never
+    # run on anything else, whatever pack's condition becomes.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # The manual gate: protect this environment with a required reviewer.
     environment: release
@@ -182,37 +195,52 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: packages
           path: artifacts
 
       # GITHUB_TOKEN can push packages to this repository's registry, so no
-      # long-lived secret is needed. To publish to nuget.org instead, point
-      # --source at https://api.nuget.org/v3/index.json and --api-key at a
-      # NUGET_API_KEY repository secret.
-      - name: dotnet nuget push
+      # long-lived secret is needed. --skip-duplicate on both pushes: re-running
+      # this job after one push failed completes the other instead of failing on
+      # the versions already published.
+      - name: Push to GitHub Packages
         run: >
           dotnet nuget push "artifacts/*.nupkg"
           --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
           --api-key "${{ secrets.GITHUB_TOKEN }}"
+          --skip-duplicate
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [[ -z "$NUGET_API_KEY" ]]; then
+            echo "::error::The NUGET_API_KEY secret is not set; nothing was pushed to nuget.org."
+            exit 1
+          fi
+          dotnet nuget push "artifacts/*.nupkg" \
+            --source "https://api.nuget.org/v3/index.json" \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
 
   release:
     name: GitHub Release
     needs: [pack, publish]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: packages
           path: artifacts
@@ -229,5 +257,5 @@ jobs:
           gh release create "$tag" artifacts/*.nupkg \
             --verify-tag \
             --title "Conduit $tag" \
-            --notes "NuGet packages are attached below and published to this repository's GitHub Packages feed. See [README.md](README.md) for details." \
+            --notes "NuGet packages are attached below and published to nuget.org and to this repository's GitHub Packages feed. See [README.md](README.md) for details." \
             "${prerelease[@]}"

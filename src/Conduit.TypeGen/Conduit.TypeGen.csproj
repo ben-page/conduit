@@ -56,8 +56,9 @@
     <None Include="$(OutputPath)\Conduit.TypeGen.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
     <None Include="$(OutputPath)\Conduit.Analysis.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
     <None Include="$(OutputPath)\System.Reflection.MetadataLoadContext.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
-    <!-- Named after the package id: NuGet imports only build/{PackageId}.targets, so under another
-         ConduitPackagePrefix a file kept as Conduit.TypeGen.targets would never be imported (NU5129). -->
+    <!-- Named after the package id: NuGet imports only build/{PackageId}.targets, and the id follows
+         ConduitPackagePrefix (Conduit.NET.TypeGen by default), so a file kept as Conduit.TypeGen.targets would never
+         be imported (NU5129). -->
     <None Include="Conduit.TypeGen.targets" Pack="true" PackagePath="build/$(PackageId).targets" Visible="false" />
   </ItemGroup>
 

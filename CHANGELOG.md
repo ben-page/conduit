@@ -14,6 +14,8 @@ The first public preview. The entries below are the changes since the earlier, u
 
 ### Changed
 
+- Packages publish under the `Conduit.NET` prefix (`Conduit.NET`, `Conduit.NET.SourceGen`, `Conduit.NET.Transport.Http`
+  and so on); namespaces and assembly names stay `Conduit`.
 - `EndpointBuilder` is renamed `ConduitEndpointBuilder`; the old name collided with ASP.NET Core's `EndpointBuilder`.
 - The SignalR hub pushes only `[ClientVisible]` events to its clients by default; it pushed every broadcast event.
   Register an `IEventRecipientResolver` to decide otherwise: it then chooses the recipients of every event

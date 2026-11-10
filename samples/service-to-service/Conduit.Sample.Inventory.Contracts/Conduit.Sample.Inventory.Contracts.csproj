@@ -4,7 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);CS9057;IDE0005</NoWarn>
+    <!-- The messages keep the Inventory service's namespace, which is their wire name
+         (Conduit.Sample.Inventory.Commands.*), wherever the contract project sits. -->
+    <RootNamespace>Conduit.Sample.Inventory</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

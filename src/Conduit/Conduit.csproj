@@ -5,7 +5,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <NoWarn>$(NoWarn);NU1510</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,7 +15,6 @@
     <PackageReference Include="Microsoft.Extensions.Options" />
     <PackageReference Include="System.IO.Hashing" />
     <PackageReference Include="System.Memory.Data" />
-    <PackageReference Include="System.Diagnostics.DiagnosticSource" />
   </ItemGroup>
 
   <ItemGroup>

@@ -88,9 +88,9 @@ The samples reference Conduit's projects under `src/` so that they build against
 own project, reference the packages instead:
 
 ```shell
-dotnet add package Conduit
-dotnet add package Conduit.SourceGen
-dotnet add package Conduit.Transport.SignalR   # Notes, Inventory, Orders
-dotnet add package Conduit.Transport.Http      # Notes, Orders, Todos
-dotnet add package Conduit.TypeGen             # Notes: the generated TypeScript client
+dotnet add package Conduit.NET
+dotnet add package Conduit.NET.SourceGen
+dotnet add package Conduit.NET.Transport.SignalR   # Notes, Inventory, Orders
+dotnet add package Conduit.NET.Transport.Http      # Notes, Orders, Todos
+dotnet add package Conduit.NET.TypeGen             # Notes: the generated TypeScript client
 ```

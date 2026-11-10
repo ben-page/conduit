@@ -33,7 +33,6 @@
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <PackageVersion Include="PolySharp" Version="1.16.0" />
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
-    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.13" />
     <PackageVersion Include="System.IO.Hashing" Version="10.0.13" />
     <PackageVersion Include="System.Memory.Data" Version="10.0.13" />
     <PackageVersion Include="System.Reflection.MetadataLoadContext" Version="10.0.13" />

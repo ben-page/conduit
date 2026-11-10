@@ -5,7 +5,6 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <NoWarn>$(NoWarn);CS9057</NoWarn>
     <UserSecretsId>55e81404-ecf7-4909-983a-fe0c51515cec</UserSecretsId>
   </PropertyGroup>
 
