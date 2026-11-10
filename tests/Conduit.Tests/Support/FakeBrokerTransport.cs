@@ -17,10 +17,19 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     private readonly ConcurrentQueue<string> lifecycle = new();
     private volatile bool started;
 
-    public FakeBrokerTransport(ConduitOptions conduitOptions, IServiceProvider serviceProvider)
-        : base(new FakeBrokerOptions(), conduitOptions, serviceProvider, NullLogger.Instance)
+    public FakeBrokerTransport(
+        ConduitOptions conduitOptions,
+        IServiceProvider serviceProvider,
+        FakeBrokerOptions? options = null)
+        : base(options ?? new FakeBrokerOptions(), conduitOptions, serviceProvider, NullLogger.Instance)
     {
     }
+
+    /// <summary>
+    /// When set, a request's publish never completes until its token is cancelled, as a publish whose
+    /// broker confirm never comes (a broker under a memory alarm stops reading the connection).
+    /// </summary>
+    public bool PublishRequestsHang { get; set; }
 
     /// <summary>Events handed to the "broker", in publish order.</summary>
     public IReadOnlyList<FakeBrokerMessage> PublishedEvents => this.publishedEvents.ToArray();
@@ -115,13 +124,20 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
         return Task.CompletedTask;
     }
 
-    protected override Task<ReadOnlyMemory<byte>> PublishRequestAsync(
+    protected override async Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
         string correlationId,
         CancellationToken cancellationToken)
-        => Task.FromResult(new BinaryData("{}").ToMemory());
+    {
+        if (this.PublishRequestsHang)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        return new BinaryData("{}").ToMemory();
+    }
 
     protected override Task PublishEventAsync(
         DispatchEnvelope envelope,

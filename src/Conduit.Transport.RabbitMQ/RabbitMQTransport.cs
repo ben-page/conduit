@@ -48,9 +48,13 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
     // A channel that publishes with confirms: BasicPublishAsync returns only once the broker acknowledged
     // the message and throws when it refuses it, so a message the broker never took is never reported sent.
-    // Immutable, with no confirm rate limiter, so both publishing channels share it.
+    // No outstanding-confirm rate limiter (explicitly null: a limiter holds per-channel state), so the
+    // immutable options are shared by both publishing channels.
     private static readonly CreateChannelOptions ConfirmingChannel =
-        new(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true);
+        new(
+            publisherConfirmationsEnabled: true,
+            publisherConfirmationTrackingEnabled: true,
+            outstandingPublisherConfirmationsRateLimiter: null);
 
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
@@ -143,7 +147,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         this.topologyResult = await topologyManager.EnsureTopologyAsync(
             this.publishChannel!, eventTypeNames, commandQueryTypeNames, cancellationToken);
 
-        await this.EnsureReplyQueueAsync(cancellationToken);
+        await this.EnsureReplyQueueAsync(afterRecovery: false, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -152,7 +156,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         var topologyManager = new RabbitMQTopologyManager(this.options, this.ConduitOptions);
         await topologyManager.EnsureExchangeAsync(this.publishChannel!, cancellationToken);
 
-        await this.EnsureReplyQueueAsync(cancellationToken);
+        await this.EnsureReplyQueueAsync(afterRecovery: false, cancellationToken);
     }
 
     /// <summary>
@@ -165,51 +169,66 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     /// a fresh name, which every request from then on carries; a request still awaiting a reply on the old
     /// name times out, as any lost reply does.
     /// </summary>
-    private async Task EnsureReplyQueueAsync(CancellationToken cancellationToken)
+    /// <param name="afterRecovery">
+    /// Whether the connection just recovered. At start a failure propagates and the host fails to start;
+    /// after a recovery it is logged (the client would swallow it), naming the queue being declared.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the declarations.</param>
+    private async Task EnsureReplyQueueAsync(bool afterRecovery, CancellationToken cancellationToken)
     {
         var queueName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.replyInstanceId);
 
-        IChannel channel;
         try
         {
-            channel = await this.DeclareReplyQueueAsync(queueName, cancellationToken);
-        }
-        catch (OperationInterruptedException exception)
-            when (exception.ShutdownReason?.ReplyCode == Constants.ResourceLocked)
-        {
-            this.replyInstanceId = Guid.NewGuid().ToString("N");
-            var freshName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.replyInstanceId);
-            LogReplyQueueLocked(this.Logger, queueName, freshName, null);
+            IChannel channel;
+            try
+            {
+                channel = await this.DeclareReplyQueueAsync(queueName, cancellationToken);
+            }
+            catch (OperationInterruptedException exception)
+                when (exception.ShutdownReason?.ReplyCode == Constants.ResourceLocked)
+            {
+                this.replyInstanceId = Guid.NewGuid().ToString("N");
+                var freshName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.replyInstanceId);
+                LogReplyQueueLocked(this.Logger, queueName, freshName, null);
 
-            queueName = freshName;
-            channel = await this.DeclareReplyQueueAsync(queueName, cancellationToken);
-        }
+                queueName = freshName;
+                channel = await this.DeclareReplyQueueAsync(queueName, cancellationToken);
+            }
 
-        try
-        {
-            var replyConsumer = new AsyncEventingBasicConsumer(channel);
-            replyConsumer.ReceivedAsync += this.OnReplyReceivedAsync;
-            await channel.BasicConsumeAsync(
-                queue: queueName,
-                autoAck: true,
-                consumer: replyConsumer,
-                cancellationToken: cancellationToken);
-        }
-        catch
-        {
-            await CloseAndDisposeChannelAsync(channel);
-            throw;
-        }
+            try
+            {
+                var replyConsumer = new AsyncEventingBasicConsumer(channel);
+                replyConsumer.ReceivedAsync += this.OnReplyReceivedAsync;
+                await channel.BasicConsumeAsync(
+                    queue: queueName,
+                    autoAck: true,
+                    consumer: replyConsumer,
+                    cancellationToken: cancellationToken);
+            }
+            catch
+            {
+                await CloseAndDisposeChannelAsync(channel);
+                throw;
+            }
 
-        // The reply address every request reads from here on
-        var previousChannel = this.replyConsumerChannel;
-        this.replyConsumerChannel = channel;
-        this.replyQueueName = queueName;
+            // The reply address every request reads from here on
+            var previousChannel = this.replyConsumerChannel;
+            this.replyConsumerChannel = channel;
+            this.replyQueueName = queueName;
 
-        // After a recovery: the client re-opened the previous channel, without its consumer
-        if (previousChannel is not null)
+            // After a recovery: the client re-opened the previous channel, without its consumer
+            if (previousChannel is not null)
+            {
+                await CloseAndDisposeChannelAsync(previousChannel);
+            }
+        }
+#pragma warning disable CA1031
+        catch (Exception exception) when (afterRecovery && exception is not OperationCanceledException)
+#pragma warning restore CA1031
         {
-            await CloseAndDisposeChannelAsync(previousChannel);
+            // The client swallows a recovery handler's exception: log it, or no reply would arrive unexplained
+            LogReplyQueueNotRecovered(this.Logger, queueName, exception);
         }
     }
 
@@ -257,17 +276,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             return;
         }
 
-        try
-        {
-            await this.EnsureReplyQueueAsync(args.CancellationToken);
-        }
-#pragma warning disable CA1031
-        catch (Exception exception) when (exception is not OperationCanceledException)
-#pragma warning restore CA1031
-        {
-            // The client swallows a recovery handler's exception: log it, or no reply would arrive unexplained
-            LogReplyQueueNotRecovered(this.Logger, this.replyQueueName, exception);
-        }
+        await this.EnsureReplyQueueAsync(afterRecovery: true, args.CancellationToken);
     }
 
     /// <inheritdoc />
@@ -424,7 +433,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             CorrelationId = message.Args.BasicProperties.CorrelationId,
         };
 
-        // Confirmed before the request is acknowledged: a reply the broker refused is logged by the base class
+        // Confirmed before the request is acknowledged: a reply the broker refused is logged by the base class.
+        // Nothing bounds the wait for the confirm but the drain's deadline when the host stops (the
+        // requester's own response timeout bounds what it waits for, not this publish).
         await this.replyPublishChannel.BasicPublishAsync(
             exchange: string.Empty,
             routingKey: message.Args.BasicProperties.ReplyTo,

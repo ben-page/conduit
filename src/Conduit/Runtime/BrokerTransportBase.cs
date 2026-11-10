@@ -245,7 +245,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var sw = Stopwatch.StartNew();
         try
         {
-            var replyData = await this.PublishRequestAsync(envelope, body, headers, correlationId, cancellationToken);
+            var replyData = await this.PublishWithinResponseTimeoutAsync(envelope, body, headers, correlationId, cancellationToken);
             sw.Stop();
 
             ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
@@ -260,6 +260,47 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             sw.Stop();
             MessageContext.Observe(new TransportSendFailed(ex.Message, ex.GetType().Name));
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Runs <see cref="PublishRequestAsync"/>, the publish and the wait for the reply together, within
+    /// <see cref="BrokerTransportOptions.ResponseTimeout"/>. A publish can wait on the broker as long as a
+    /// reply can (a confirm a broker under a memory alarm never sends, a half-open connection), so the bound
+    /// covers both: when it passes first, the request fails with the same <see cref="TimeoutException"/> as
+    /// a reply that never came, never a cancellation. The caller's own token still cancels it as itself.
+    /// </summary>
+    private async Task<ReadOnlyMemory<byte>> PublishWithinResponseTimeoutAsync(
+        DispatchEnvelope envelope,
+        BinaryData body,
+        IReadOnlyDictionary<string, string> headers,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var responseTimeout = new CancellationTokenSource(this.Options.ResponseTimeout, TimeProvider.System);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, responseTimeout.Token);
+
+        var publishing = this.PublishRequestAsync(envelope, body, headers, correlationId, bounded.Token);
+        try
+        {
+            // WaitAsync releases the caller even from a publish that does not honor its token
+            return await publishing.WaitAsync(bounded.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // A publish left running may still fail: observe it, so nothing reports it unobserved
+            _ = publishing.ContinueWith(
+                static abandoned => _ = abandoned.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+            if (responseTimeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw this.CreateReplyTimeoutException(envelope.Type);
+            }
+
             throw;
         }
     }
@@ -875,7 +916,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <param name="headers">Outbound metadata assembled by the base class. Transports map these
     /// onto their native property model; the dictionary is never shared between publishes.</param>
     /// <param name="correlationId">The id the reply must carry back. Its waiter is already registered.</param>
-    /// <param name="cancellationToken">The caller's token.</param>
+    /// <param name="cancellationToken">The caller's token, linked with the response timeout, which bounds the
+    /// publish and the wait for the reply together: pass it to both.</param>
     protected abstract Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,

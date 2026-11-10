@@ -271,6 +271,16 @@ instance**, not load-balanced across replicas, because the inline run happens at
 the broker-delivered copy is the one that gets dropped. See
 [Core Concepts → Where an application's own listeners run](../core-concepts.md#where-an-applications-own-listeners-run).
 
+## Request timeouts
+
+A request sent through a broker transport has one deadline, its endpoint's `ResponseTimeout` (default
+60 seconds), and it covers the publish and the wait for the reply together. When it passes, the request
+fails with `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`),
+whether the reply never came or the broker never confirmed the publish (RabbitMQ waits for every
+publish's confirm, which a broker under a memory or disk alarm withholds). It is never an
+`OperationCanceledException`: only the caller's own cancellation token produces one. A request still
+waiting when the transport stops fails with an `InvalidOperationException`.
+
 ## Stopping a host with work in flight
 
 When the host stops (SIGTERM, `StopAsync`), a broker transport finishes the messages it is already
