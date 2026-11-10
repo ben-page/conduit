@@ -11,7 +11,7 @@ footer, and rewriting relative links for the site. `docs/why-conduit.md` becomes
 
 ## Run it locally
 
-Node.js 22 (see `.nvmrc`):
+Node.js 22.23.4 or later (see `.nvmrc`; Astro's minimum, and the floor [CONTRIBUTING.md](../CONTRIBUTING.md) states):
 
 ```shell
 cd site

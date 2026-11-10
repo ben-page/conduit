@@ -2,7 +2,7 @@ namespace Conduit.Runtime;
 
 /// <summary>
 /// Bidirectional transport for delivering messages between Conduit nodes.
-/// Implementations handle specific protocols (SignalR, HTTP, Rebus, etc.).
+/// Implementations handle specific protocols (HTTP, SignalR, Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ).
 /// </summary>
 public interface IConduitTransport
 {

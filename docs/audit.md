@@ -215,7 +215,7 @@ The timeout counts from the dispatch's last observation, not its first, so a dis
 MessageContext.Observe(new CustomObservation("reindex.progress", processed));
 ```
 
-Each observation is timed by the host's `TimeProvider`, and the sweep's "now" reads it too, so a test ages a dispatch by advancing a `FakeTimeProvider`; the sweep's cadence is real time. A sweep that throws is logged at Error (EventId 521, `StaleGroupSweepFailed`), and the next one runs as usual. A dispatch nested in a retrying attempt follows the attempt (see [Records and retried attempts](#records-and-retried-attempts)): its provisional record, like its real one, is written once the attempt is kept and dropped if it is abandoned.
+A dispatch's record is timed by the host's `TimeProvider`: the record's `Timestamp` (when its first observation arrived), the arrival of each later observation (what the timeout counts from) and the batch's `BatchTimestamp`. The sweep's "now" reads it too, so a test ages a dispatch by advancing a `FakeTimeProvider`; the sweep's cadence is real time. The `Timestamp` each observation carries in the record's observation list is different: the core stamps it with the machine clock (`DateTime.UtcNow`) as the observation is made, so under a fake clock it does not follow the record's. A sweep that throws is logged at Error (EventId 521, `StaleGroupSweepFailed`), and the next one runs as usual. A dispatch nested in a retrying attempt follows the attempt (see [Records and retried attempts](#records-and-retried-attempts)): its provisional record, like its real one, is written once the attempt is kept and dropped if it is abandoned.
 
 ### Shutdown
 

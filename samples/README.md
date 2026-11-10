@@ -13,9 +13,10 @@ of them at a time.
 ## Prerequisites
 
 - The .NET 10 SDK, and a development certificate for HTTPS (`dotnet dev-certs https --trust`).
-- Node.js 20.19 or later, with npm (Vite 8's minimum). `dotnet build` at the repository root builds the Notes sample,
-  whose build runs `npm install` (when `ClientApp/node_modules` is missing) and `vite build` (`npm run build`) in
-  `ClientApp/`. Without Node the root build fails.
+- Node.js 20.19 or later, with npm. That is Vite 8's minimum, and the Notes sample genuinely needs no more; working on
+  the repository itself needs Node.js 22.23.4 or later (see [CONTRIBUTING.md](../CONTRIBUTING.md)). `dotnet build` at
+  the repository root builds the Notes sample, whose build runs `npm install` (when `ClientApp/node_modules` is
+  missing) and `vite build` (`npm run build`) in `ClientApp/`. Without Node the root build fails.
 
 Build once at the repository root before running a sample: the Notes sample loads the TypeGen task from
 `src/Conduit.TypeGen/bin/`, which the root build produces.

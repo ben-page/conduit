@@ -7,8 +7,9 @@ public issue.
 ## Prerequisites
 
 - The .NET 10 SDK (`global.json` selects 10.0 with feature roll-forward).
-- Node.js 22.12 or later, with npm: the TypeScript transport tests need it, and the root build runs `npm install` and
-  `vite build` for the Notes sample (see [samples/README.md](samples/README.md)).
+- Node.js 22.23.4 or later (the Node 22 line CI runs), with npm: the TypeScript transport tests need it, the root
+  build runs `npm install` and `vite build` for the Notes sample (see [samples/README.md](samples/README.md)), and the
+  documentation site's build needs this release (Astro's minimum).
 - Docker or Podman, for the container-backed tests below.
 
 ## Build

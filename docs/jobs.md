@@ -607,13 +607,15 @@ An optional per-declaration ceiling, on a schedule (`jobs.Schedule(...).MaxRunti
 trigger (`jobs.On<TEvent>().MaxRuntime(...)`); it must be positive. Exceeding it cancels the run's
 token and records the run as `Cancelled`, turning a hung job into a bounded, visible outcome rather
 than one that blocks its schedule indefinitely through the overlap check. It is enforced by the
-heartbeat, which already knows when the attempt began, and it works with or without a database.
+heartbeat, which already knows when the attempt began, and it works with or without a database, with one
+exception: without a database, a run started by hand (`TriggerNowAsync`) ignores it.
 
 **With a database it is only as precise as the heartbeat.** The limit is checked when the heartbeat
 renews the claim, so it takes effect at the first renewal at or after it: with the default
 `HeartbeatInterval` of 30 seconds, a `MaxRuntime` of 10 seconds cancels the run at about 30 seconds,
 and one of 45 seconds at about a minute. Lower `HeartbeatInterval` if that granularity matters.
-Without a database the in-memory scheduler cancels on time.
+Without a database the in-memory scheduler cancels a scheduled or triggered run on time; a manual run
+(`TriggerNowAsync`) is not bounded by `MaxRuntime` at all, a known issue in this preview.
 
 Because cancellation is cooperative, the heartbeat keeps renewing the claim after it has asked the
 job to stop — otherwise a handler that takes its time winding down would have its claim go stale and

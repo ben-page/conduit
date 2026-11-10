@@ -53,7 +53,7 @@ jobs:
 
       # The browser-client sample (samples/browser-client/Conduit.Sample.Notes)
       # runs `npm install` + `vite build` as part of its MSBuild graph, and
-      # Vite 8 requires Node 20+.
+      # Vite 8 requires Node 20.19+; the floor CONTRIBUTING.md states is 22.23.4.
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -257,5 +257,5 @@ jobs:
           gh release create "$tag" artifacts/*.nupkg \
             --verify-tag \
             --title "Conduit $tag" \
-            --notes "NuGet packages are attached below and published to nuget.org and to this repository's GitHub Packages feed. See [README.md](README.md) for details." \
+            --notes "NuGet packages are attached below and published to nuget.org and to this repository's GitHub Packages feed. See [README.md](https://github.com/ben-page/conduit/blob/${tag}/README.md) for details." \
             "${prerelease[@]}"
