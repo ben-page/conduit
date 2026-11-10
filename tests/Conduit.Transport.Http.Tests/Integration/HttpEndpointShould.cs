@@ -5,7 +5,6 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http;
 using Conduit.Transport.Http.Tests.Support;
-using Conduit.Transport.SignalR;
 using Conduit.Runtime;
 using Conduit.Generated;
 using Conduit.TestUtils;
@@ -30,11 +29,9 @@ public class HttpEndpointShould
 
         builder.Services.AddSingleton<ItemStore>();
         builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
 
         var app = builder.Build();
         app.MapConduitEndpoint();
-        app.MapHub<ConduitHub>("/conduit");
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
 

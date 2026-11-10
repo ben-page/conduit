@@ -102,7 +102,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
 
             return true;
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Any failure is reported as a build error: an MSBuild task logs, it does not throw.
         catch (Exception ex)
 #pragma warning restore CA1031
         {

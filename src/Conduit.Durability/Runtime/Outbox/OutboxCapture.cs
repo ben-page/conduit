@@ -263,7 +263,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                         OutboxLog.ClaimLost(logger, entry.Id, written.Envelope.Type);
                     }
                 }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One entry's failed delivery is left for the relay to retry; it must not stop the rest of the flush.
                 catch (Exception exception)
 #pragma warning restore CA1031
                 {

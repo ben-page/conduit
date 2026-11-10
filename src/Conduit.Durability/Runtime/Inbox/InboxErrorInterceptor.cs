@@ -54,7 +54,7 @@ internal sealed class InboxErrorInterceptor : IInboundErrorInterceptor
         {
             await this.store.RemoveAsync(messageId, cancellationToken);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A release that fails is logged, never a second failure for the transport to settle.
         catch (Exception ex)
 #pragma warning restore CA1031
         {

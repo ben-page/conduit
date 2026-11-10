@@ -65,7 +65,7 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
             MessageContext.Observe(new DeadLettered(exception.Message, sourceEndpoint));
             return true;
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A capture that fails counts as not captured; the transport then settles the message itself.
         catch (Exception ex)
 #pragma warning restore CA1031
         {

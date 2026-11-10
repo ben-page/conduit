@@ -1105,14 +1105,14 @@ public static partial class ConduitRuntime
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Any other failure is an InternalError answer with a support reference, never an exception at the edge.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
             foreach (var translator in translators ?? [])
             {
                 ConduitException? refusal = null;
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A faulty translator must not replace the real failure; it is logged and the next one is asked.
                 try
                 {
                     refusal = translator.Translate(ex);
@@ -1224,7 +1224,7 @@ public static partial class ConduitRuntime
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Any other failure is logged (PublishError) and ends here, as this method's contract states.
         catch (Exception ex)
 #pragma warning restore CA1031
         {

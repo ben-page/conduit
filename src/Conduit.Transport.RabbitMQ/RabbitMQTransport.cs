@@ -82,6 +82,10 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(108, "ReplyQueueNotRecovered"),
             "Could not re-establish reply queue '{ReplyQueue}' after the connection recovered; requests will time out");
 
+    private static readonly Action<ILogger, string, Exception?> LogConsumerCancelFailed =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(109, "ConsumerCancelFailed"),
+            "Could not cancel consumer '{ConsumerTag}' while stopping; closing its channel stops it");
+
     /// <summary>
     /// Creates a new RabbitMQ transport instance.
     /// </summary>
@@ -223,7 +227,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
                 await CloseAndDisposeChannelAsync(previousChannel);
             }
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // After a recovery the client swallows a handler's exception: log it, or no reply would arrive unexplained.
         catch (Exception exception) when (afterRecovery && exception is not OperationCanceledException)
 #pragma warning restore CA1031
         {
@@ -325,11 +329,11 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             {
                 await channel.BasicCancelAsync(consumerTag, noWait: false, cancellationToken: cancellationToken);
             }
-#pragma warning disable CA1031
-            catch (Exception)
+#pragma warning disable CA1031 // Best effort while stopping: closing the channel stops a consumer whose cancel failed.
+            catch (Exception exception)
 #pragma warning restore CA1031
             {
-                // Best-effort cancellation during shutdown
+                LogConsumerCancelFailed(this.Logger, consumerTag, exception);
             }
         }
     }
@@ -383,7 +387,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
                 this.Connection.Dispose();
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Disposal never throws: a connection that cannot close cleanly is dropped by the broker.
             catch (Exception)
 #pragma warning restore CA1031
             {
@@ -650,7 +654,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
                 await channel.CloseAsync();
             }
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Closing never throws: the broker requeues whatever is unacknowledged on a channel it loses.
         catch (Exception)
 #pragma warning restore CA1031
         {
@@ -666,7 +670,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         {
             channel.Dispose();
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Disposal never throws: a channel that failed to close is let go.
         catch (Exception)
 #pragma warning restore CA1031
         {

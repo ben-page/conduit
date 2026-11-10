@@ -642,7 +642,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
                 return;
             }
 
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One failed attempt must not end the reconnection loop; an attempt stop overtook ends it quietly.
             try
             {
                 if (await this.RebuildAsync(stopToken))

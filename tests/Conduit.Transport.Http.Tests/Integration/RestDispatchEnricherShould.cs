@@ -4,7 +4,6 @@ using System.Security.Claims;
 using AwesomeAssertions;
 using Conduit.Runtime;
 using Conduit.Transport.Http.Tests.Support;
-using Conduit.Transport.SignalR;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -28,7 +27,6 @@ public class RestDispatchEnricherShould
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton<CapturedProperties>();
         builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
         if (withEnricher)
         {
             builder.Services.AddSingleton<IDispatchContextEnricher, SubClaimUserIdEnricher>();

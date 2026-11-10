@@ -77,6 +77,67 @@ public class DispatchResultShould
         error.Details![0].Text.Should().BeNull();
     }
 
+    [TestMethod]
+    public void RoundTripAnOkResultUnchanged()
+    {
+        // Arrange
+        var ok = DispatchResult<Receipt>.Ok(new Receipt("order-9", 4));
+
+        // Act
+        var back = RoundTrip(ok);
+
+        // Assert -- record equality: Data is a record and Error null on both sides
+        back.Should().Be(ok);
+    }
+
+    [TestMethod]
+    public void RoundTripAFailureWithDetailsAndReferenceUnchanged()
+    {
+        // Arrange -- every wire property of an error: code, message, details, the code's status, a support reference
+        var built = DispatchResult<Receipt>.Fail(
+            ErrorCode.PreconditionFailed,
+            "The order changed since it was read.",
+            [new DispatchErrorDetail("eTag", "Stale."), new DispatchErrorDetail(null, "Reload the order.")]);
+        var failed = built with { Error = built.Error! with { Reference = "ref-412" } };
+
+        // Act
+        var back = RoundTrip(failed);
+
+        // Assert
+        back.Should().BeEquivalentTo(failed);
+        back.Data.Should().BeNull();
+        var error = back.Error!;
+        error.Code.Should().Be(ErrorCode.PreconditionFailed.Value);
+        error.Message.Should().Be("The order changed since it was read.");
+        error.Status.Should().Be(412);
+        error.Reference.Should().Be("ref-412");
+        error.Type.Should().BeNull();
+        error.Data.Should().BeNull();
+    }
+
+    [TestMethod]
+    public void KeepEachDetailOfAFailureInOrder()
+    {
+        // Arrange
+        DispatchErrorDetail[] details =
+        [
+            new("name", "Required."),
+            new("lines[2].quantity", "Must be positive."),
+            new(null, "The order is closed."),
+        ];
+        var failed = DispatchResult<Receipt>.Fail(ErrorCode.BadRequest, "The order is invalid.", details);
+
+        // Act
+        var back = RoundTrip(failed);
+
+        // Assert -- each detail record equal to the one sent, in the order sent
+        back.Error!.Details.Should().Equal(details);
+    }
+
+    private static DispatchResult<T> RoundTrip<T>(DispatchResult<T> result) =>
+        JsonSerializer.Deserialize<DispatchResult<T>>(
+            JsonSerializer.Serialize(result, ConduitRuntime.JsonOptions), ConduitRuntime.JsonOptions)!;
+
     private sealed record Receipt(string OrderId, int Lines);
 
     private sealed class BlockedItemsRefusal(int total, IReadOnlyList<DispatchErrorDetail> details)

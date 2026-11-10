@@ -164,7 +164,7 @@ internal sealed class ActiveMQReplySenders
                 await link.CloseAsync(CloseTimeout);
             }
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Detaching never throws: a link already closing, or a broker that does not answer in time, is let go.
         catch (Exception)
 #pragma warning restore CA1031
         {

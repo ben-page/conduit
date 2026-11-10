@@ -522,7 +522,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                             var inboundMessage = new AmazonSqsInboundMessage(sqsMessage, queueAddress);
                             await this.ProcessInboundMessageAsync(inboundMessage);
                         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Nothing else observes this task: what escapes the dispatch is logged, the message left unsettled.
                         catch (Exception exception)
 #pragma warning restore CA1031
                         {
@@ -541,7 +541,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
             {
                 break;
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One failed poll must not end the poller; it pauses, then polls again.
             catch (Exception ex)
 #pragma warning restore CA1031
             {
@@ -603,7 +603,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 LogMessagesNotMadeVisible(this.Logger, failed.Count, queueAddress, null);
             }
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Best effort: a message not made visible reappears when its visibility timeout lapses.
         catch (Exception exception)
 #pragma warning restore CA1031
         {
@@ -631,7 +631,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         {
             // Already gone
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Returned, not thrown: stop goes on, and disposal tries the deletion again and logs a failure.
         catch (Exception exception)
 #pragma warning restore CA1031
         {
@@ -682,7 +682,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
             {
                 break;
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One failed reply poll must not end the reply poller; it pauses, then polls again.
             catch (Exception ex)
 #pragma warning restore CA1031
             {

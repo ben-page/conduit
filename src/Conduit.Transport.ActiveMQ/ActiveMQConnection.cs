@@ -212,7 +212,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
                     receiverLink.SetCredit(0, CreditMode.Auto);
                 }
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Best effort while stopping: a link whose credit cannot be set is closed with the others anyway.
             catch (Exception)
 #pragma warning restore CA1031
             {
@@ -247,7 +247,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
         {
             this.connection.Close(TimeSpan.Zero);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Abort never throws: a connection already closing or closed may refuse the close.
         catch (Exception)
 #pragma warning restore CA1031
         {
@@ -270,7 +270,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
                 await this.connection.CloseAsync(CloseTimeout);
             }
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Disposal never throws: a lost connection is already closed, and one that does not answer is abandoned.
         catch (Exception)
 #pragma warning restore CA1031
         {
@@ -284,7 +284,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
         {
             await receiverLink.CloseAsync(CloseTimeout);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Closing never throws: the broker releases whatever is unsettled on the link either way.
         catch (Exception)
 #pragma warning restore CA1031
         {
@@ -306,7 +306,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
                 {
                     attempt.Result.Close(TimeSpan.Zero);
                 }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A connection nothing else holds is closed best effort, on a continuation no one observes.
                 catch (Exception)
 #pragma warning restore CA1031
                 {

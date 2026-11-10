@@ -3,7 +3,6 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http.Tests.Support;
-using Conduit.Transport.SignalR;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +19,6 @@ public class FileUploadShould
         var store = new UploadedFileStore();
         builder.Services.AddSingleton(store);
         builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
 
         var app = builder.Build();
 

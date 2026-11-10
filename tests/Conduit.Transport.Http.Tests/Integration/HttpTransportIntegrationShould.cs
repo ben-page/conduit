@@ -3,7 +3,6 @@ using Conduit.Transport.Http;
 using Conduit.TestUtils;
 using Conduit.Transport.Http.Tests.Support;
 using Conduit.Generated;
-using Conduit.Transport.SignalR;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,13 +19,8 @@ public class HttpTransportShould
             {
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitSignalR();
             },
-            app =>
-            {
-                app.MapConduitEndpoint();
-                app.MapHub<ConduitHub>("/conduit");
-            });
+            app => app.MapConduitEndpoint());
     }
 
     private static TestWebHost CreateCallerHost(string remoteAddress)
@@ -44,9 +38,7 @@ public class HttpTransportShould
                         endpoint.RouteNamespace<CreateItemCommand>();
                     });
                 });
-                builder.Services.AddConduitSignalR();
-            },
-            app => app.MapHub<ConduitHub>("/conduit"));
+            });
     }
 
     [TestMethod]
@@ -128,13 +120,8 @@ public class HttpTransportShould
             {
                 builder.Services.AddSingleton<ItemStore>();
                 builder.Services.AddConduit();
-                builder.Services.AddConduitSignalR();
             },
-            app =>
-            {
-                app.MapConduitEndpoint("/api/messages");
-                app.MapHub<ConduitHub>("/conduit");
-            });
+            app => app.MapConduitEndpoint("/api/messages"));
 
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -157,9 +144,7 @@ public class HttpTransportShould
                         endpoint.RouteNamespace<CreateItemCommand>();
                     });
                 });
-                builder.Services.AddConduitSignalR();
-            },
-            app => app.MapHub<ConduitHub>("/conduit"));
+            });
         var mediator = callerHost.GetRequiredService<IMediator>();
 
         // Act

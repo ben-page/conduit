@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using AwesomeAssertions;
 using Conduit.Transport.Http.Tests.Support;
-using Conduit.Transport.SignalR;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,7 +16,6 @@ public class FileResponseShould
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
         builder.Services.AddSingleton<ItemStore>();
 
         var app = builder.Build();

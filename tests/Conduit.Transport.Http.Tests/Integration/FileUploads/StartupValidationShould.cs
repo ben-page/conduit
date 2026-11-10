@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using Conduit.Transport.Http.Tests.Support;
-using Conduit.Transport.SignalR;
 using Conduit.Generated;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,7 +15,6 @@ public class StartupValidationShould
         // Arrange
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddConduit();
-        builder.Services.AddConduitSignalR();
         var app = builder.Build();
 
         // Act

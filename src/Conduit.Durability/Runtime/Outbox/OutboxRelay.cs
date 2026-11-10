@@ -58,7 +58,7 @@ public sealed partial class OutboxRelay(
             {
                 break;
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One failed sweep must not end the relay; the next interval sweeps again.
             catch (Exception ex)
 #pragma warning restore CA1031
             {
@@ -141,7 +141,7 @@ public sealed partial class OutboxRelay(
                     OutboxLog.ClaimLost(logger, entry.Id, entry.Type);
                 }
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One entry's failed delivery is retried or marked failed; it must not stop the rest of the sweep.
             catch (Exception ex)
 #pragma warning restore CA1031
             {
@@ -197,7 +197,7 @@ public sealed partial class OutboxRelay(
         {
             MessageContext.Observe(observation);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // The entry's outcome is already written; an observer's failure must not change it.
         catch (Exception exception)
 #pragma warning restore CA1031
         {

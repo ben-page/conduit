@@ -450,7 +450,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             await this.RequeueAsync(message);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Best effort while stopping: an unsettled message is redelivered once the channel or link closes.
         catch (Exception)
 #pragma warning restore CA1031
         {
@@ -508,7 +508,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                     MessageContext.Observe(new SelfPublishedEventSkipped(messageType));
                 }
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A message that cannot start its dispatch is settled (captured or acknowledged), never left to loop.
             catch (Exception ex)
 #pragma warning restore CA1031
             {
@@ -537,7 +537,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 var payload = JsonSerializer.Deserialize<JsonElement>(body, ConduitRuntime.JsonOptions);
                 envelope = new DispatchEnvelope(messageType, payload);
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // An unreadable body or an unbuildable scope is settled (captured or acknowledged), never left to loop.
             catch (Exception ex)
 #pragma warning restore CA1031
             {
@@ -610,7 +610,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
                 result, ConduitRuntime.JsonOptions));
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Any dispatch failure becomes the caller's error reply and a dead-letter capture, never a dead consumer.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
@@ -627,7 +627,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             await this.SendReplyAsync(message, replyData);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A reply that cannot be sent times out at the caller; the request is still settled below.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
@@ -734,7 +734,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             result = await wireMediator.HandleWireRequestAsync(envelope, CancellationToken.None);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A thrown dispatch is logged, then captured or abandoned, as a failed listener is.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
@@ -825,7 +825,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             captureScope = this.ServiceProvider.CreateAsyncScope();
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Without a scope there is no capture: the message is acknowledged so it cannot loop.
         catch (Exception scopeException)
 #pragma warning restore CA1031
         {
@@ -875,7 +875,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
             body = this.GetMessageBody(message);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // An unresolvable interceptor or an unreadable body counts as not captured; the caller settles the message.
         catch (Exception resolveException)
 #pragma warning restore CA1031
         {
@@ -891,7 +891,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 captured |= await interceptor.TryCaptureAsync(
                     messageType, body, this.EndpointName, exception, reference, CancellationToken.None);
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One failing interceptor must not keep the failure from the others.
             catch (Exception interceptorException)
 #pragma warning restore CA1031
             {

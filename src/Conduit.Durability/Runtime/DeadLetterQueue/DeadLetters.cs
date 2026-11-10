@@ -108,7 +108,7 @@ public sealed class DeadLetters : IDeadLetters
 
             await transport.RedeliverAsync(envelope, ids, cancellationToken);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A failed redelivery is the replay's result, not an exception; the claim is released for the next replay.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
@@ -124,7 +124,7 @@ public sealed class DeadLetters : IDeadLetters
         {
             await this.store.RemoveAsync(id, CancellationToken.None);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // The message is already redelivered: a failed removal leaves the entry claimed until its claim times out.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
@@ -212,7 +212,7 @@ public sealed class DeadLetters : IDeadLetters
         {
             await this.store.ReleaseReplayClaimAsync(id, claimToken, CancellationToken.None);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // A release that fails leaves the claim to time out; it must not replace the redelivery's own failure.
         catch (Exception ex)
 #pragma warning restore CA1031
         {

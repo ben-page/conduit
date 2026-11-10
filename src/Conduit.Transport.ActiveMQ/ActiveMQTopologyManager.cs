@@ -274,7 +274,7 @@ internal sealed class ActiveMQTopologyManager
 
             await SendManagementRequestAsync(sender, receiver, replyAddress, request, cancellationToken);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Filtered to the broker's "already exists" answer: creating an address is idempotent.
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
             || ex.Message.Contains("ActiveMQAddressExistsException", StringComparison.OrdinalIgnoreCase))
 #pragma warning restore CA1031
@@ -373,7 +373,7 @@ internal sealed class ActiveMQTopologyManager
 
             await SendManagementRequestAsync(sender, receiver, replyAddress, request, cancellationToken);
         }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Filtered to the broker's "already exists" answer: creating a queue is idempotent.
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
             || ex.Message.Contains("ActiveMQQueueExistsException", StringComparison.OrdinalIgnoreCase))
 #pragma warning restore CA1031
@@ -495,7 +495,7 @@ internal sealed class ActiveMQTopologyManager
                     await link.CloseAsync(ManagementTimeout);
                 }
             }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // Best effort: a management link that fails to detach must not fail the topology step it served.
             catch (Exception)
 #pragma warning restore CA1031
             {

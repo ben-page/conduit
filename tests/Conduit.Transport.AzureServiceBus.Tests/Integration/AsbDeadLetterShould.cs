@@ -377,9 +377,7 @@ public class AsbDeadLetterShould : AsbTestBase
                 File.Delete(path);
             }
         }
-#pragma warning disable CA1031
         catch
-#pragma warning restore CA1031
         {
             // Best-effort cleanup
         }

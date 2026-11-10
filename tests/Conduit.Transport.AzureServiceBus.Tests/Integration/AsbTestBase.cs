@@ -153,9 +153,7 @@ public abstract class AsbTestBase
             {
                 await adminClient.DeleteTopicAsync(topicName);
             }
-#pragma warning disable CA1031
             catch
-#pragma warning restore CA1031
             {
                 // Best-effort — topic may not exist if host failed to start.
             }
@@ -184,17 +182,13 @@ public abstract class AsbTestBase
                 {
                     await adminClient.DeleteQueueAsync(queueName);
                 }
-#pragma warning disable CA1031
                 catch
-#pragma warning restore CA1031
                 {
                     // Best-effort — queue may have been removed concurrently.
                 }
             }
         }
-#pragma warning disable CA1031
         catch
-#pragma warning restore CA1031
         {
             // Best-effort — listing queues may fail under load.
         }

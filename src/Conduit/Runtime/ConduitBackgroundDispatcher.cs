@@ -77,7 +77,7 @@ public sealed class ConduitBackgroundDispatcher : BackgroundService
                     {
                         await workItem(token);
                     }
-#pragma warning disable CA1031
+#pragma warning disable CA1031 // One failing work item must not stop the items queued behind it.
                     catch (OperationCanceledException) when (token.IsCancellationRequested)
                     {
                         // Shutdown deadline reached mid-item -- expected
