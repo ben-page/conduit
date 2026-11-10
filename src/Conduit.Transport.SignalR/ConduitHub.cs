@@ -2,6 +2,7 @@ using System.Text.Json;
 using Conduit.Exceptions;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Conduit.Transport.SignalR;
@@ -24,7 +25,8 @@ public class ConduitHub(
     IEnumerable<IDispatchContextEnricher> enrichers,
     IEnumerable<ConduitServerInfo> serverInfo,
     IOptions<ConduitSignalROptions> options,
-    IServiceProvider services) : Hub
+    IServiceProvider services,
+    ILogger<ConduitHub> logger) : Hub
 {
     /// <summary>The client method <see cref="OnConnectedAsync"/> invokes with the <see cref="ConduitServerInfo"/>.</summary>
     public const string ServerInfoMethod = "ConduitServerInfo";
@@ -77,8 +79,9 @@ public class ConduitHub(
     /// <summary>
     /// Publishes an event received from a SignalR client. A refusal (the type filter, an unknown type) fails the
     /// invocation with a <see cref="HubException"/> carrying the refusal's message, written in the reader's language. A
-    /// dispatch that failed outside the listeners (<see cref="EventDispatchException"/>: a pipeline behavior, the
-    /// listeners' resolution, a gate that threw) fails it with the fixed message of an unexpected failure.
+    /// listener's failure (<see cref="EventListenerException"/>), and a dispatch that failed outside the listeners
+    /// (<see cref="EventDispatchException"/>: a pipeline behavior, the listeners' resolution, a gate that threw), fail it
+    /// with the fixed message of an unexpected failure; the exception stays in the log, under a support reference.
     /// </summary>
     /// <param name="type">The fully-qualified event type name.</param>
     /// <param name="payload">The JSON payload to deserialize.</param>
@@ -104,6 +107,15 @@ public class ConduitHub(
         {
             // Publish answers nothing, so the refusal fails the invocation: a HubException's message reaches the client.
             var error = RefusalRendering.RenderResult(DispatchResult<object>.Fail(refusal), services, MessageContext.Current).Error!;
+            throw new HubException(error.Message);
+        }
+        catch (EventListenerException failure)
+        {
+            // A listener failed (every listener ran, each failure logged): the first failure is logged here under a
+            // support reference and the invocation fails with the fixed message, as below. Left to SignalR it was a
+            // generic invocation error, and with EnableDetailedErrors the listener's message.
+            var error = RefusalRendering.RenderResult(
+                ConduitRuntime.UnexpectedEventFailure(logger, type, failure), services, MessageContext.Current).Error!;
             throw new HubException(error.Message);
         }
         catch (EventDispatchException failure)

@@ -312,6 +312,48 @@ public class ConduitRuntimeShould
         logger.Entries.Should().ContainSingle(entry => entry.Level == LogLevel.Error && entry.EventId.Id == 2);
     }
 
+    // A listener's failure reaching an edge (HTTP /publish, the hub's Publish) is answered as any unexpected failure:
+    // a reference minted there, logged with the first listener failure, and the InternalError answer carrying it
+    [TestMethod]
+    public void AnswerAListenerFailureAtAnEdgeAsAnUnexpectedFailureLoggedWithTheFirstListenersException()
+    {
+        // Arrange
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        var first = new InvalidOperationException("The first listener failed.");
+        var failure = new EventListenerException(
+            "One or more listeners failed.", [first, new InvalidOperationException("The second listener failed.")]);
+
+        // Act
+        var result = ConduitRuntime.UnexpectedEventFailure(logger, "Test.Failing", failure);
+
+        // Assert -- the InternalError answer, its reference the one the single Error line carries with the first failure
+        result.Error.Should().NotBeNull();
+        result.Error!.Code.Should().Be("InternalError");
+        result.Error.Message.Should().Be("An unexpected error occurred.");
+        result.Error.Reference.Should().MatchRegex("^[0-9a-f]{32}$");
+        var error = logger.Entries.Should().ContainSingle().Subject;
+        error.Level.Should().Be(LogLevel.Error);
+        error.EventId.Id.Should().Be(2);
+        error.EventId.Name.Should().Be("PublishError");
+        error.Message.Should().Contain("Test.Failing").And.Contain(result.Error.Reference);
+        error.Exception.Should().BeSameAs(first);
+    }
+
+    // An EventListenerException built with no listener failures has no inner exception: the line carries it instead
+    [TestMethod]
+    public void LogAListenerFailureWithNoInnerExceptionAsItself()
+    {
+        // Arrange
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        var failure = new EventListenerException("No listener named its failure.", []);
+
+        // Act
+        ConduitRuntime.UnexpectedEventFailure(logger, "Test.Failing", failure);
+
+        // Assert
+        logger.Entries.Should().ContainSingle().Which.Exception.Should().BeSameAs(failure);
+    }
+
     [TestMethod]
     public async Task RethrowARefusedWireEventAndLogItAtWarning()
     {

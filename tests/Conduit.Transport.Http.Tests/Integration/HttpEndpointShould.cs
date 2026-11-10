@@ -262,6 +262,46 @@ public class HttpEndpointShould
         failure.Exception.Should().BeOfType<InvalidOperationException>().Which.Message.Should().Be("The behavior failed.");
     }
 
+    // A listener's failure is the common case and gets the same answer as a failure outside the listeners: the
+    // InternalError envelope with a reference, never ASP.NET's bare 500 (no reference, a second stack in the log, and
+    // the listener's message on a developer exception page)
+    [TestMethod]
+    public async Task AnswerAnEventWhoseListenerThrowsWithAnInternalErrorAndAReference()
+    {
+        // Arrange
+        var spy = new SpyLoggerProvider();
+        await using var host = TestWebHost.Start(
+            builder =>
+            {
+                builder.Logging.AddProvider(spy);
+                builder.Services.AddConduit();
+            },
+            app => app.MapConduitEndpoint());
+        using var client = new HttpClient { BaseAddress = new Uri(host.Address) };
+
+        // Act
+        var response = await PostConduitAsync(
+            client, "/api/conduit/publish", typeof(ListenerFailureEvent).FullName!, new { Data = "x" });
+
+        // Assert -- the InternalError envelope, status-coded as /dispatch codes it, its reference the logged one's
+        ((int)response.StatusCode).Should().Be(500);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContain("The listener failed.");
+        using var document = JsonDocument.Parse(body);
+        var error = document.RootElement.GetProperty("error");
+        error.GetProperty("code").GetString().Should().Be("InternalError");
+        error.GetProperty("message").GetString().Should().Be("An unexpected error occurred.");
+        var reference = error.GetProperty("reference").GetString();
+        reference.Should().NotBeNullOrEmpty();
+        var failure = spy.Entries
+            .Should().ContainSingle(entry => entry.Level >= LogLevel.Error && entry.EventId.Id == 2).Subject;
+        failure.EventId.Name.Should().Be("PublishError");
+        failure.Message.Should().Contain(reference);
+        failure.Exception.Should().BeOfType<InvalidOperationException>().Which.Message.Should().Be("The listener failed.");
+        spy.Entries.Where(entry => entry.Level >= LogLevel.Error).Select(entry => entry.EventId.Id)
+            .Should().Equal([4, 2], "the listener's own line, then the edge's -- no unhandled-exception line from ASP.NET");
+    }
+
     [TestMethod]
     public async Task Return200ForPublishEndpoint()
     {

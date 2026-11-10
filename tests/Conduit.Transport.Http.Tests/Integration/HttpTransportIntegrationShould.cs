@@ -1,4 +1,7 @@
+using System.Text.Json;
 using AwesomeAssertions;
+using Conduit.Exceptions;
+using Conduit.Runtime;
 using Conduit.Transport.Http;
 using Conduit.TestUtils;
 using Conduit.Transport.Http.Tests.Support;
@@ -168,5 +171,30 @@ public class HttpTransportShould
         // Assert — HTTP transport now reads structured DispatchResult errors, consistent with other transports
         var exception = await action.Should().ThrowAsync<InvalidOperationException>();
         exception.WithMessage("*NotFound*");
+    }
+
+    // /publish answers a listener's failure with the InternalError envelope, and the transport reads the envelope
+    // before the status: a remote InternalError (what Resilience's TransientErrors retries), with the reference the
+    // remote host logged, never an HttpRequestException
+    [TestMethod]
+    public async Task ReadAnEventWhoseRemoteListenerFailedAsARemoteInternalError()
+    {
+        // Arrange
+        await using var handlerHost = CreateHandlerHost();
+        using var httpClient = new HttpClient { BaseAddress = new Uri(handlerHost.Address) };
+        var transport = new HttpTransport(
+            httpClient, typeRegistry: handlerHost.GetRequiredService<ConduitTypeRegistry>());
+        var envelope = new DispatchEnvelope(
+            typeof(ListenerFailureEvent).FullName!,
+            JsonSerializer.SerializeToElement(new { Data = "x" }, ConduitRuntime.JsonOptions));
+
+        // Act
+        var action = () => transport.SendEventAsync(envelope, CancellationToken.None);
+
+        // Assert
+        var failure = (await action.Should().ThrowExactlyAsync<RemoteDispatchException>()).Which;
+        failure.Code.Should().Be(ErrorCode.InternalError);
+        failure.Reference.Should().NotBeNullOrEmpty();
+        failure.Message.Should().NotContain("The listener failed.");
     }
 }

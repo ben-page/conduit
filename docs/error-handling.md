@@ -305,12 +305,17 @@ Wire events are fire-and-forget, but a refusal still reaches the publisher. When
 filter's `ForbiddenException`) or its type is unknown (`BadRequest`), `HandleWireEvent` logs it at Warning without a
 stack trace (EventId 7, `RefusedEvent`) and rethrows it. HTTP `/publish` answers it with the `DispatchResult`
 envelope, status-coded as `/dispatch` is, and the hub's `Publish` fails with a `HubException`. Either way the message is
-written in the reader's language. A broker transport acknowledges the refused message. A listener's failure
-(`EventListenerException`) propagates to the transport for retry or dead-lettering, a cancellation of the caller's
-token propagates as it does for a request, and any other exception (a behavior, listener resolution, a gate that
-throws something other than a refusal) is logged at Error under a support reference and answered as an unexpected
-failure: HTTP `/publish` with the `InternalError` envelope carrying the reference, the hub's `Publish` with a
-`HubException` carrying the fixed message, and a broker transport captures or abandons it as a listener failure.
+written in the reader's language. A broker transport acknowledges the refused message. A cancellation of the caller's
+token propagates as it does for a request.
+
+Any other failure is unexpected, whether a listener threw (`EventListenerException`: every listener still ran, and
+each failure is logged as `ListenerFailed`) or the dispatch failed outside the listeners (a behavior, listener
+resolution, a gate that throws something other than a refusal). The publisher hears an unexpected failure, never the
+exception. HTTP `/publish` answers the `InternalError` envelope: 500, the fixed message and the support reference,
+which the C# `HttpTransport` throws as a `RemoteDispatchException` with code `InternalError`. The hub's `Publish` fails
+with a `HubException` carrying the fixed message. The reference is in the Error line (EventId 2, `PublishError`) that
+carries the exception: the first listener's failure, or the failure outside the listeners. A broker transport has no
+publisher waiting, so it captures the message or abandons it to the broker for retry or dead-lettering.
 
 ## ErrorCode equality
 

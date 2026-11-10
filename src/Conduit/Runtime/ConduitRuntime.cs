@@ -1150,7 +1150,8 @@ public static partial class ConduitRuntime
     /// message <c>"An unexpected error occurred."</c> (never the exception's), the reference, and the sentence name
     /// (<see cref="ConduitTextNames.UnexpectedError"/>) an edge writes in the reader's language. What
     /// <see cref="HandleWireRequest(string, IEnumerable{IInboundInterceptor}, Func{DispatchEnvelope}, Func{string, JsonElement, CancellationToken, Task{object}}, ILogger, CancellationToken)"/>
-    /// answers, and what an edge answers for an <see cref="EventDispatchException"/>.
+    /// answers, and what an edge answers for an <see cref="EventDispatchException"/> and, through
+    /// <see cref="UnexpectedEventFailure"/>, for an <see cref="EventListenerException"/>.
     /// </summary>
     public static DispatchResult<object> UnexpectedFailure(string reference)
     {
@@ -1160,6 +1161,32 @@ public static partial class ConduitRuntime
         {
             Error = failed.Error! with { Reference = reference, Text = new RefusalText(ConduitTextNames.UnexpectedError) },
         };
+    }
+
+    /// <summary>
+    /// The answer an edge where a publisher waits (HTTP <c>/publish</c>, the SignalR hub's <c>Publish</c>) gives a wire
+    /// event whose listener failed: logged at Error (EventId 2, <c>PublishError</c>) under a support reference minted
+    /// here, with the first listener failure (<see cref="Exception.InnerException"/>, or <paramref name="failure"/>
+    /// itself when it carries none), and answered <see cref="UnexpectedFailure(string)"/>, as an
+    /// <see cref="EventDispatchException"/> is. The listener's message and stack stay in the log. A broker transport does
+    /// not call it: it captures or abandons the <see cref="EventListenerException"/> itself.
+    /// </summary>
+    /// <param name="logger">The logger the failure is written to.</param>
+    /// <param name="messageType">The event's wire type name.</param>
+    /// <param name="failure">What <see cref="IWireMediator.HandleWireEventAsync"/> threw for the failed listeners.</param>
+    /// <returns>The <c>InternalError</c> answer, carrying the reference the failure was logged under.</returns>
+    public static DispatchResult<object> UnexpectedEventFailure(
+        ILogger logger,
+        string messageType,
+        EventListenerException failure)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(messageType);
+        ArgumentNullException.ThrowIfNull(failure);
+
+        var reference = SupportReference();
+        LogPublishError(logger, messageType, reference, failure.InnerException ?? failure);
+        return UnexpectedFailure(reference);
     }
 
     /// <summary>
@@ -1180,7 +1207,8 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// Runs inbound interceptor gates, then deserializes and dispatches a wire event.
-    /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter, and a refusal
+    /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter (HTTP and SignalR answer
+    /// it as an unexpected failure, through <see cref="UnexpectedEventFailure"/>), and a refusal
     /// (<see cref="ConduitException"/>: a gate such as the type filter, or an unknown type) to the transport to answer its
     /// caller, logged at Warning without a stack (EventId 7, <c>RefusedEvent</c>). A cancellation of
     /// <paramref name="cancellationToken"/> propagates unlogged. Any other exception -- the dispatch failed outside its

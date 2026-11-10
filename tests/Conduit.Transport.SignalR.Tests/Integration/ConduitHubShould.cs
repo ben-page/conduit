@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.SignalR.Tests.Integration;
 
@@ -96,13 +97,21 @@ public class ConduitHubShould
         await spy.WaitForCountAsync(1);
     }
 
+    // A listener's failure fails the invocation as a failure outside the listeners does: a HubException with the fixed
+    // message of an unexpected failure, logged under a support reference, and nothing of the listener's exception
     [TestMethod]
     public async Task PropagateListenerFailureAsHubError()
     {
-        // Arrange — ExplodingEventListener throws InvalidOperationException.
-        // The wire event dispatch now propagates EventListenerException so
-        // transports (service bus, SignalR) can decide how to handle the failure.
-        await using var host = CreateHost();
+        // Arrange — ExplodingEventListener throws InvalidOperationException
+        var spy = new SpyLoggerProvider();
+        await using var host = TestWebHost.Start(
+            builder =>
+            {
+                builder.Logging.AddProvider(spy);
+                builder.Services.AddConduit();
+                builder.Services.AddConduitSignalR();
+            },
+            app => app.MapHub<ConduitHub>("/conduit"));
         await using var connection = await ConnectToHub(host.Address);
         var payload = JsonSerializer.SerializeToElement(new { Data = "boom" });
 
@@ -116,8 +125,17 @@ public class ConduitHubShould
             noContext,
             noHeaders);
 
-        // Assert — exception propagates to the caller
-        await act.Should().ThrowAsync<Exception>();
+        // Assert — a HubException (the server's own message reaches the client only through one) with the fixed text,
+        // and the listener's failure in the single PublishError line, under its reference
+        var failure = await act.Should().ThrowExactlyAsync<HubException>();
+        failure.Which.Message.Should().EndWith("HubException: An unexpected error occurred.");
+        failure.Which.Message.Should().NotContain("Event handler exploded!");
+        var logged = spy.Entries
+            .Should().ContainSingle(entry => entry.Level >= LogLevel.Error && entry.EventId.Id == 2).Subject;
+        logged.EventId.Name.Should().Be("PublishError");
+        logged.Message.Should().MatchRegex(@"\(reference [A-Za-z0-9-]{1,64}\)");
+        logged.Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("Event handler exploded!");
     }
 
     // A behavior that throws fails the event outside its listeners: Publish answers nothing, so the invocation fails

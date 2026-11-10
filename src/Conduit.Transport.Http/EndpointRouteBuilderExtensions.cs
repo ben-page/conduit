@@ -4,6 +4,7 @@ using Conduit.Runtime;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.Http;
 
@@ -16,10 +17,11 @@ public static class EndpointRouteBuilderExtensions
     /// Maps POST endpoints for Conduit wire dispatch. The message type is read from the
     /// <c>X-Conduit-Type</c> header and the request body contains the plain serialized message.
     /// A refused event (the type filter, an unknown type) is answered on <c>/publish</c> as <c>/dispatch</c> answers a
-    /// refused request: the <see cref="DispatchResult{T}"/>, status-coded from its error. An event whose dispatch failed
-    /// outside its listeners (<see cref="EventDispatchException"/>: a pipeline behavior, the listeners' resolution, a
-    /// gate that threw) is answered as <c>/dispatch</c> answers an unexpected failure: <c>InternalError</c> (500), the
-    /// fixed message and the support reference it was logged under.
+    /// refused request: the <see cref="DispatchResult{T}"/>, status-coded from its error. An event whose listener failed
+    /// (<see cref="EventListenerException"/>), or whose dispatch failed outside its listeners
+    /// (<see cref="EventDispatchException"/>: a pipeline behavior, the listeners' resolution, a gate that threw), is
+    /// answered as <c>/dispatch</c> answers an unexpected failure: <c>InternalError</c> (500), the fixed message and the
+    /// support reference it was logged under.
     /// </summary>
     /// <remarks>
     /// The dispatch's correlation ids are the server's unless <paramref name="trustCallerContext"/> says otherwise:
@@ -74,6 +76,7 @@ public static class EndpointRouteBuilderExtensions
             HttpRequest httpRequest,
             IWireMediator mediator,
             IEnumerable<IDispatchContextEnricher> enrichers,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
@@ -88,6 +91,18 @@ public static class EndpointRouteBuilderExtensions
                 // A refused event (the type filter, an unknown type) is answered as /dispatch answers a refused request.
                 return Answer(RefusalRendering.RenderResult(
                     DispatchResult<object>.Fail(refusal),
+                    httpRequest.HttpContext.RequestServices,
+                    MessageContext.Current));
+            }
+            catch (EventListenerException failure)
+            {
+                // A listener failed (every listener ran, each failure logged): answered as an unexpected failure, under
+                // a reference minted and logged here with the first failure, never the exception. Left to ASP.NET it was
+                // a bare 500 with no reference, a second stack in the log, and the listener's message and stack on a
+                // developer exception page.
+                return Answer(RefusalRendering.RenderResult(
+                    ConduitRuntime.UnexpectedEventFailure(
+                        loggerFactory.CreateLogger(typeof(EndpointRouteBuilderExtensions)), envelope.Type, failure),
                     httpRequest.HttpContext.RequestServices,
                     MessageContext.Current));
             }
