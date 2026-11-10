@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Conduit.Configuration;
 using Conduit.Runtime;
@@ -5,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
 
 namespace Conduit.Transport.RabbitMQ;
 
@@ -21,8 +23,12 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 {
     private readonly RabbitMQOptions options;
 
-    // Names this instance's reply queue, which no other instance shares
-    private readonly string instanceId = Guid.NewGuid().ToString("N");
+    // Names this instance's reply queue, which no other instance shares; replaced by a fresh id when another
+    // connection holds the name (EnsureReplyQueueAsync)
+    private string replyInstanceId;
+
+    // Every reply queue name this transport declared: the client's automatic recovery leaves them alone
+    private readonly ConcurrentDictionary<string, byte> replyQueueNames = new(StringComparer.Ordinal);
 
     // Outbound requests, events and redeliveries, and the topology declarations (publisher confirms on)
     private IChannel? publishChannel;
@@ -32,11 +38,10 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
     // Consumes this instance's reply queue
     private IChannel? replyConsumerChannel;
-    private string? replyQueueName;
-    private TopologyResult? topologyResult;
 
-    // Set when stop begins: a message abandoned from then on is requeued, not dead-lettered
-    private volatile bool stopping;
+    // The reply address, read by every request: replaced when the reply queue moves to a fresh name
+    private volatile string? replyQueueName;
+    private TopologyResult? topologyResult;
 
     // One channel per inbound consumer; each delivery is acknowledged on the channel it arrived on
     private readonly List<(IChannel Channel, string ConsumerTag)> inboundConsumers = [];
@@ -64,6 +69,15 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         LoggerMessage.Define(LogLevel.Information, new EventId(106, "TransportStopping"),
             "Stopping RabbitMQ transport");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogReplyQueueLocked =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(107, "ReplyQueueLocked"),
+            "Reply queue '{LockedQueue}' is held by another connection; replies now go to '{ReplyQueue}', " +
+            "and a request still awaiting a reply on the old queue times out");
+
+    private static readonly Action<ILogger, string, Exception?> LogReplyQueueNotRecovered =
+        LoggerMessage.Define<string>(LogLevel.Error, new EventId(108, "ReplyQueueNotRecovered"),
+            "Could not re-establish reply queue '{ReplyQueue}' after the connection recovered; requests will time out");
+
     /// <summary>
     /// Creates a new RabbitMQ transport instance.
     /// </summary>
@@ -75,6 +89,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         : base(options, conduitOptions, serviceProvider, logger)
     {
         this.options = options;
+        this.replyInstanceId = options.InitialReplyQueueInstanceId ?? Guid.NewGuid().ToString("N");
     }
 
     /// <inheritdoc/>
@@ -93,9 +108,20 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         var factory = new ConnectionFactory
         {
             Uri = new Uri(this.options.ConnectionString),
+
+            // The client's automatic recovery leaves the reply queue and its consumer alone: re-declaring the
+            // exclusive queue fails RESOURCE_LOCKED while the broker still holds the old connection, and a
+            // failure there abandons the whole recovery attempt. The transport re-establishes them itself once
+            // the rest of the topology has recovered (OnConnectionRecoveredAsync).
+            TopologyRecoveryFilter = new TopologyRecoveryFilter
+            {
+                QueueFilter = queue => !this.replyQueueNames.ContainsKey(queue.Name),
+                ConsumerFilter = consumer => !this.replyQueueNames.ContainsKey(consumer.Queue),
+            },
         };
 
         this.Connection = await factory.CreateConnectionAsync(cancellationToken);
+        this.Connection.RecoverySucceededAsync += this.OnConnectionRecoveredAsync;
         this.publishChannel = await this.Connection.CreateChannelAsync(ConfirmingChannel, cancellationToken);
 
         // Replies go out on a channel of their own: a channel error closes the channel it happens on (an
@@ -129,35 +155,119 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         await this.EnsureReplyQueueAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Declares this instance's reply queue and consumes it, at start and again after every connection
+    /// recovery. The queue is named by the client (<c>{system}-{app}-replies-{instanceId}</c>): a
+    /// server-named one came back from recovery under a new name while every request still carried the old
+    /// one in <c>ReplyTo</c>. It is exclusive, so no other client on the vhost can consume this instance's
+    /// replies. When another connection holds the name (<c>RESOURCE_LOCKED</c>: a half-open old connection
+    /// of this instance the broker has not timed out yet, or anyone else), the instance takes a fresh id and
+    /// a fresh name, which every request from then on carries; a request still awaiting a reply on the old
+    /// name times out, as any lost reply does.
+    /// </summary>
     private async Task EnsureReplyQueueAsync(CancellationToken cancellationToken)
     {
-        // This instance's reply queue: exclusive to its connection and deleted with it, but named by the
-        // client. Automatic recovery re-declares the queue after a lost connection; a server-named one came
-        // back under a new name while every request still carried the old one in ReplyTo, so no reply
-        // reached this instance again. The client-named one comes back under the same name.
-        var queueName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.instanceId);
+        var queueName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.replyInstanceId);
 
-        this.replyConsumerChannel = await this.Connection!.CreateChannelAsync(
-            cancellationToken: cancellationToken);
-        await this.replyConsumerChannel.QueueDeclareAsync(
-            queue: queueName,
-            durable: false,
-            exclusive: true,
-            autoDelete: true,
-            arguments: null,
-            noWait: false,
-            cancellationToken: cancellationToken);
+        IChannel channel;
+        try
+        {
+            channel = await this.DeclareReplyQueueAsync(queueName, cancellationToken);
+        }
+        catch (OperationInterruptedException exception)
+            when (exception.ShutdownReason?.ReplyCode == Constants.ResourceLocked)
+        {
+            this.replyInstanceId = Guid.NewGuid().ToString("N");
+            var freshName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.replyInstanceId);
+            LogReplyQueueLocked(this.Logger, queueName, freshName, null);
 
-        // Consume replies
-        var replyConsumer = new AsyncEventingBasicConsumer(this.replyConsumerChannel);
-        replyConsumer.ReceivedAsync += this.OnReplyReceivedAsync;
-        await this.replyConsumerChannel.BasicConsumeAsync(
-            queue: queueName,
-            autoAck: true,
-            consumer: replyConsumer,
-            cancellationToken: cancellationToken);
+            queueName = freshName;
+            channel = await this.DeclareReplyQueueAsync(queueName, cancellationToken);
+        }
 
+        try
+        {
+            var replyConsumer = new AsyncEventingBasicConsumer(channel);
+            replyConsumer.ReceivedAsync += this.OnReplyReceivedAsync;
+            await channel.BasicConsumeAsync(
+                queue: queueName,
+                autoAck: true,
+                consumer: replyConsumer,
+                cancellationToken: cancellationToken);
+        }
+        catch
+        {
+            await CloseAndDisposeChannelAsync(channel);
+            throw;
+        }
+
+        // The reply address every request reads from here on
+        var previousChannel = this.replyConsumerChannel;
+        this.replyConsumerChannel = channel;
         this.replyQueueName = queueName;
+
+        // After a recovery: the client re-opened the previous channel, without its consumer
+        if (previousChannel is not null)
+        {
+            await CloseAndDisposeChannelAsync(previousChannel);
+        }
+    }
+
+    /// <summary>
+    /// Declares the exclusive reply queue <paramref name="queueName"/> on a new channel and returns the
+    /// channel. A failed declaration closes its channel (a channel error), so the channel is disposed and the
+    /// exception rethrown.
+    /// </summary>
+    private async Task<IChannel> DeclareReplyQueueAsync(string queueName, CancellationToken cancellationToken)
+    {
+        // Known to the recovery filter before the client records the queue, so it never recovers it
+        this.replyQueueNames.TryAdd(queueName, 0);
+
+        var channel = await this.Connection!.CreateChannelAsync(cancellationToken: cancellationToken);
+        try
+        {
+            await channel.QueueDeclareAsync(
+                queue: queueName,
+                durable: false,
+                exclusive: true,
+                autoDelete: true,
+                arguments: null,
+                noWait: false,
+                cancellationToken: cancellationToken);
+
+            return channel;
+        }
+        catch
+        {
+            await CloseAndDisposeChannelAsync(channel);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Re-establishes the reply queue once the client has recovered the connection and the rest of the
+    /// topology. The client awaits its recovery handlers in order, and this one is subscribed first, so the
+    /// reply queue is back before any handler subscribed later hears of the recovery.
+    /// </summary>
+    private async Task OnConnectionRecoveredAsync(object sender, AsyncEventArgs args)
+    {
+        // Recovered before the transport ever declared a reply queue: start declares it
+        if (this.replyQueueName is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await this.EnsureReplyQueueAsync(args.CancellationToken);
+        }
+#pragma warning disable CA1031
+        catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+        {
+            // The client swallows a recovery handler's exception: log it, or no reply would arrive unexplained
+            LogReplyQueueNotRecovered(this.Logger, this.replyQueueName, exception);
+        }
     }
 
     /// <inheritdoc />
@@ -196,9 +306,6 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     protected override async Task StopReceivingAsync(CancellationToken cancellationToken)
     {
         LogTransportStopping(this.Logger, null);
-
-        // From here on, an abandoned message is requeued rather than dead-lettered (AbandonAsync)
-        this.stopping = true;
 
         // Cancel the inbound consumers only. Their channels stay open, since a handler still running
         // acknowledges on its delivery's channel, and so does the reply consumer, since a handler may
@@ -335,12 +442,17 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     /// dead-letter queue (<c>{system}-dead-letter</c>) once, rather than handing it straight back to a
     /// consumer that fails it again, forever. Only what Conduit did not capture gets here: with a
     /// dead-letter store registered, the base class captures and acknowledges a failed message.
-    /// Once the transport is stopping, the message is requeued: one the drain returns undispatched belongs
-    /// to another instance, not the dead-letter queue (and a handler failing during the drain is
-    /// redelivered, to be dead-lettered by the instance that fails it next).
     /// </summary>
     protected override Task AbandonAsync(RabbitMQInboundMessage message) =>
-        message.Channel.BasicNackAsync(message.Args.DeliveryTag, multiple: false, requeue: this.stopping).AsTask();
+        message.Channel.BasicNackAsync(message.Args.DeliveryTag, multiple: false, requeue: false).AsTask();
+
+    /// <summary>
+    /// Returns a message delivered after stop began draining to its queue (<c>BasicNack</c> with
+    /// <c>requeue: true</c>), for another instance to take: it was never dispatched, so it belongs on the
+    /// queue, not the dead-letter queue <see cref="AbandonAsync"/> would send it to.
+    /// </summary>
+    protected override Task RequeueAsync(RabbitMQInboundMessage message) =>
+        message.Channel.BasicNackAsync(message.Args.DeliveryTag, multiple: false, requeue: true).AsTask();
 
     // -----------------------------------------------------------------------
     // Outbound primitives

@@ -109,6 +109,12 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
         return Task.CompletedTask;
     }
 
+    protected override Task RequeueAsync(FakeBrokerMessage message)
+    {
+        message.Requeued = true;
+        return Task.CompletedTask;
+    }
+
     protected override Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,

@@ -33,6 +33,13 @@ public sealed class RabbitMQOptions : BrokerTransportOptions
     public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
+    /// The instance id in the name of the transport's first reply queue
+    /// (<c>{system}-{app}-replies-{instanceId}</c>), so a test can take that name before the host starts.
+    /// Null, outside tests: a fresh id. Internal, so configuration never binds it.
+    /// </summary>
+    internal string? InitialReplyQueueInstanceId { get; set; }
+
+    /// <summary>
     /// Throws when <see cref="BrokerTransportOptions.DefaultConcurrency"/> or a pool's
     /// <see cref="ReceiverPoolOptions.Concurrency"/> is outside 1..65535, which a consumer's prefetch
     /// count and dispatch concurrency (both <see cref="ushort"/>) would otherwise silently wrap.

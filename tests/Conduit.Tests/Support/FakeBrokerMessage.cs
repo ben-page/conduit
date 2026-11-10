@@ -23,4 +23,7 @@ public sealed class FakeBrokerMessage
     public int AcknowledgeAttempts { get; set; }
 
     public bool Abandoned { get; set; }
+
+    /// <summary>Handed back to the broker undispatched (<c>RequeueAsync</c>), as opposed to abandoned as a failure.</summary>
+    public bool Requeued { get; set; }
 }

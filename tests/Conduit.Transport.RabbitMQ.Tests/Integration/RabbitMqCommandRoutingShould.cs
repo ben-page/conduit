@@ -227,7 +227,11 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         result.Value.Should().Be("handled:after");
     }
 
-    /// <summary>Completes when the host's connection for <paramref name="endpointName"/> next finishes recovering.</summary>
+    /// <summary>
+    /// Completes when the host's connection for <paramref name="endpointName"/> next finishes recovering. The
+    /// client awaits recovery handlers in subscription order, and the transport subscribed its own (which
+    /// re-declares the reply queue) when it connected, so the reply queue is back before this completes.
+    /// </summary>
     private static Task WhenRecoveredAsync(TestHost host, string endpointName)
     {
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

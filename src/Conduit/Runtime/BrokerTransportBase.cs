@@ -166,7 +166,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <summary>
     /// Waits for every inbound message still being processed to finish, until
     /// <paramref name="shutdownToken"/> fires; from the moment it is called, a message the broker client
-    /// still hands over is returned to the broker undispatched (<see cref="AbandonAsync"/>). Never throws:
+    /// still hands over is returned to the broker undispatched (<see cref="RequeueAsync"/>). Never throws:
     /// at the deadline it logs how many handlers it left running and returns.
     /// </summary>
     /// <param name="shutdownToken">The host's shutdown deadline.</param>
@@ -381,8 +381,9 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
     /// <summary>
     /// Hands a message that arrived after stop began draining back to the broker, so another consumer
-    /// gets it. Best effort: the channel or link may already be closing, and an unsettled message is
-    /// redelivered either way.
+    /// gets it: <see cref="RequeueAsync"/>, never <see cref="AbandonAsync"/>, since nothing about it failed
+    /// and a transport may dead-letter what it abandons. Best effort: the channel or link may already be
+    /// closing, and an unsettled message is redelivered either way.
     /// </summary>
     private async Task ReturnToBrokerAsync(TMessage message)
     {
@@ -390,7 +391,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
         try
         {
-            await this.AbandonAsync(message);
+            await this.RequeueAsync(message);
         }
 #pragma warning disable CA1031
         catch (Exception)
@@ -841,8 +842,21 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <summary>Marks the message as successfully processed.</summary>
     protected abstract Task AcknowledgeAsync(TMessage message);
 
-    /// <summary>Marks the message for redelivery. Also returns a message that arrives while stop is draining.</summary>
+    /// <summary>
+    /// Settles a delivery whose dispatch failed and that nothing captured: the broker redelivers it or
+    /// dead-letters it, per the transport. Never called for a message that was not dispatched; see
+    /// <see cref="RequeueAsync"/>.
+    /// </summary>
     protected abstract Task AbandonAsync(TMessage message);
+
+    /// <summary>
+    /// Hands a message back to the broker undispatched, for another instance to take: one the broker
+    /// client delivered after stop began draining. Nothing about it failed, so a transport whose
+    /// <see cref="AbandonAsync"/> dead-letters must override this to requeue. Defaults to
+    /// <see cref="AbandonAsync"/>, which redelivers on a broker that does not dead-letter an abandoned
+    /// message at once.
+    /// </summary>
+    protected virtual Task RequeueAsync(TMessage message) => this.AbandonAsync(message);
 
     // -----------------------------------------------------------------------
     // Abstract methods — outbound

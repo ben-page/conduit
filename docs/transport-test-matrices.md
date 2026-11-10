@@ -140,7 +140,7 @@ Universal — required of every transport, real broker only (the in-memory `Fake
 
 Test class: `{Transport}ShutdownShould`
 
-Universal. Both send `ShutdownProbeCommand(Input, DelayMs)`, whose handler records itself on entry and then runs `DelayMs` ignoring cancellation. The container-free `BrokerTransportShutdownShould` in `Conduit.Tests` pins the same stop sequence on `FakeBrokerTransport` (plus a message delivered after stop began is abandoned, not dispatched); these prove it holds against the real broker.
+Universal. Both send `ShutdownProbeCommand(Input, DelayMs)`, whose handler records itself on entry and then runs `DelayMs` ignoring cancellation. The container-free `BrokerTransportShutdownShould` in `Conduit.Tests` pins the same stop sequence on `FakeBrokerTransport` (plus a message delivered after stop began is requeued through `RequeueAsync`, neither dispatched nor abandoned: `RequeueAMessageDeliveredAfterStopBegins`); these prove it holds against the real broker.
 
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|
@@ -157,15 +157,16 @@ Integration tests of one broker's own mechanics, beyond the shared matrix.
 
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|
-| 11.1 | `RabbitMqCommandRoutingShould.KeepReplyingAfterConnectionRecovery` | A sends (15 s `ResponseTimeout`), B handles; one round trip, then the broker container is restarted (`RabbitMqTestBase.RestartBrokerAsync`: Testcontainers `StopAsync`/`StartAsync`; Inconclusive for a configured or reused broker, or a re-mapped port) | Once both connections raise `RecoverySucceededAsync` (no fixed sleep), a second request gets its reply: the client-named reply queue came back under the name its requests carry in `ReplyTo` |
+| 11.1 | `RabbitMqCommandRoutingShould.KeepReplyingAfterConnectionRecovery` | A sends (15 s `ResponseTimeout`), B handles; one round trip, then the broker container is restarted (`RabbitMqTestBase.RestartBrokerAsync`: Testcontainers `StopAsync`/`StartAsync`; Inconclusive for a configured or reused broker, or a re-mapped port) | Once both connections raise `RecoverySucceededAsync` (no fixed sleep; the transport's own handler, which re-declares the reply queue, runs first), a second request gets its reply: the client-named reply queue came back under the name its requests carry in `ReplyTo` |
 | 11.2 | `RabbitMqConcurrencyShould.RunHandlersInParallelUpToConcurrency` | B with `DefaultConcurrency = 4`; A sends 8 `ConcurrencyProbeCommand`s (1 s handler) at once | All 8 answered, and replaying the handler's `ConcurrencyProbeMark`s gives exactly 4 running at once: in parallel, never beyond the concurrency |
 | 11.3 | `RabbitMqDeadLetterShould.RouteAFailedEventToTheDeadLetterExchangeWithoutAConduitDlq` | A publishes `ThrowingTestEvent`, B listens with no dead-letter store | After 2 s the listener has run once (rejected, not requeued), and `{prefix}-conduit-dead-letter` holds the event once (`basic.get` twice: the event, then nothing), with `x-first-death-reason: rejected` and `x-first-death-queue` = B's app queue |
+| 11.4 | `RabbitMqReplyQueueShould.FallBackToAFreshNameWhenTheNameIsLocked` | B handles; a test connection declares an exclusive queue under the reply queue name A would take (`InitialReplyQueueInstanceId` pins it); then A starts and sends | A starts despite `RESOURCE_LOCKED`, its request gets its reply (so the reply went to A's fresh queue), and the locked queue holds no message |
 
 ### Totals (verified 2026-11-10)
 
-Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **3 transport-specific tests** of category 11, bringing its total to **41**.
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**.
 
-Behavior-test methods across the four transports: 41 (RabbitMQ) + 38 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **156 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 42 (RabbitMQ) + 38 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **157 `[TestMethod]` integration tests**.
 
 ---
 

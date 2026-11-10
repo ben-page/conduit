@@ -1039,7 +1039,7 @@ All 4 broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) shar
 
 **Abstract methods (transport-specific):**
 - Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `EnsureOutboundTopologyAsync`, `StartConsumersAsync`, `StopReceivingAsync`, `StopConsumersAsync`, `DisposeAsync`
-- Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync`
+- Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync` (a failed dispatch), and the virtual `RequeueAsync` (a message delivered while stop drains, handed back undispatched; defaults to `AbandonAsync`)
 - Outbound: `IsStarted`, `PublishRequestAsync`, `PublishEventAsync`
 
 **Design decisions:**

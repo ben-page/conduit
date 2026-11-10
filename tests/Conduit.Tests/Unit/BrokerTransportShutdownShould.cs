@@ -74,7 +74,7 @@ public class BrokerTransportShutdownShould
     }
 
     [TestMethod]
-    public async Task AbandonAMessageDeliveredAfterStopBegins()
+    public async Task RequeueAMessageDeliveredAfterStopBegins()
     {
         // Arrange -- a broker client can still hand over a message it fetched before it stopped receiving
         await using var host = StartHost();
@@ -88,8 +88,10 @@ public class BrokerTransportShutdownShould
         // Act
         await transport.DeliverAsync(message);
 
-        // Assert -- not dispatched, and handed back to the broker for another consumer
-        message.Abandoned.Should().BeTrue();
+        // Assert -- not dispatched, and handed back to the broker for another consumer through the requeue
+        // hook: nothing about it failed, so it is not abandoned, which a transport may dead-letter
+        message.Requeued.Should().BeTrue();
+        message.Abandoned.Should().BeFalse();
         message.Acknowledged.Should().BeFalse();
         spy.Count.Should().Be(0);
     }

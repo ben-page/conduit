@@ -281,8 +281,9 @@ handling before it closes anything those handlers need:
    stay open, and so does the reply consumer, since a handler may itself be awaiting a reply.
 2. **Drain.** The transport waits for every handler still running to finish, reply and acknowledge
    its message, bounded by the host's shutdown deadline (`HostOptions.ShutdownTimeout`, 30 seconds
-   by default). A message the broker client still hands over during this step is returned to the
-   broker undispatched, for another instance to take.
+   by default). A message the broker client still hands over during this step is requeued
+   undispatched, for another instance to take: it is not a failure, so it is never dead-lettered. A
+   handler that fails during the drain is abandoned like any other failure (on RabbitMQ, dead-lettered).
 3. **Close.** Only then are the channels, links and receivers closed, and a request still awaiting
    a reply fails with an `InvalidOperationException`.
 
