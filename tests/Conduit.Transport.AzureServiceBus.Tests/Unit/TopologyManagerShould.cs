@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Azure.Messaging.ServiceBus.Administration;
 using Conduit.Configuration;
 using Conduit.Runtime;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Transport.AzureServiceBus.Tests.Unit;
 
@@ -32,7 +33,8 @@ public class TopologyManagerShould
         return new AzureServiceBusTopologyManager(
             adminClient,
             asbOptions ?? new AzureServiceBusOptions { ConnectionString = "not-used" },
-            conduitOptions ?? CreateConduitOptions());
+            conduitOptions ?? CreateConduitOptions(),
+            NullLogger.Instance);
     }
 
     // --- TM-1.1: UseCorrectMaxLengthForBroker ---
@@ -395,7 +397,7 @@ public class TopologyManagerShould
         var eventType = "Shipping.Events.OrderShipped";
         var queryType = "Catalog.Queries.GetProduct";
 
-        // Act — build SqlRuleFilter the same way TryCreateSubscriptionAsync does
+        // Act — build SqlRuleFilter the same way EnsureSubscriptionAsync does
         var commandFilter = new SqlRuleFilter($"sys.Label = '{commandType}'");
         var eventFilter = new SqlRuleFilter($"sys.Label = '{eventType}'");
         var queryFilter = new SqlRuleFilter($"sys.Label = '{queryType}'");
@@ -413,7 +415,7 @@ public class TopologyManagerShould
     {
         // Arrange — the reply queue requires sessions for request/response correlation.
         // Verify the topology manager passes requiresSession: true for the reply queue.
-        // The queue options object built by TryCreateQueueAsync sets RequiresSession.
+        // The queue options object built by CreateReplyQueueOptions sets RequiresSession.
         var queueOptions = new CreateQueueOptions("conduit-orders-replies")
         {
             RequiresSession = true,
@@ -440,6 +442,28 @@ public class TopologyManagerShould
         // Assert — reply queue has correct name and is session-enabled
         queueOptions.Name.Should().Be("conduit-orders-replies");
         queueOptions.RequiresSession.Should().BeTrue();
+    }
+
+    // --- TM-S.4: ExpireOrphanedRepliesOnTheReplyQueue ---
+
+    [TestMethod]
+    public void ExpireOrphanedRepliesOnTheReplyQueue()
+    {
+        // Arrange -- a reply nobody reads (its request timed out, or its process is gone) must not stay
+        var asbOptions = new AzureServiceBusOptions
+        {
+            ConnectionString = "not-used",
+            ResponseTimeout = TimeSpan.FromSeconds(45),
+        };
+        var manager = CreateManager(asbOptions, CreateConduitOptions(applicationName: "orders"));
+
+        // Act
+        var queueOptions = manager.CreateReplyQueueOptions();
+
+        // Assert -- the session-enabled reply queue discards a reply after twice the response timeout
+        queueOptions.Name.Should().Be("conduit-orders-replies");
+        queueOptions.RequiresSession.Should().BeTrue();
+        queueOptions.DefaultMessageTimeToLive.Should().Be(TimeSpan.FromSeconds(90));
     }
 
     [TestMethod]

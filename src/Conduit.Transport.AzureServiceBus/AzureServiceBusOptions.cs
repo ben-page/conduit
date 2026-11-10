@@ -32,4 +32,12 @@ public sealed class AzureServiceBusOptions : BrokerTransportOptions
     /// Azure Service Bus Emulator, which exposes AMQP and HTTP on different ports.
     /// </summary>
     public string? AdminConnectionString { get; set; }
+
+    /// <summary>
+    /// How long a reply waits in a reply queue to be read before Service Bus discards it: twice
+    /// <see cref="BrokerTransportOptions.ResponseTimeout"/>, both the reply's own time to live and the reply
+    /// queue's default. A request reads its reply as soon as it arrives or never (the request timed out, or
+    /// its process is gone), and nothing else reads a request's session.
+    /// </summary>
+    internal TimeSpan ReplyTimeToLive => this.ResponseTimeout * 2;
 }

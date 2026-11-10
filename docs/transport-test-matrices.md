@@ -147,7 +147,7 @@ Universal. Both send `ShutdownProbeCommand(Input, DelayMs)`, whose handler recor
 | 10.1 | `CompleteAnInFlightHandlerBeforeClosing` | A sends (2 s handler), B1 + B2 (same app name) compete; the one that takes it is disposed 0.5 s into the handler | Disposal took more than 1 s (stop waited), A gets the handler's reply, and after a redelivery window (immediate for RabbitMQ/ActiveMQ, the visibility timeout — set to 5 s — for SQS) the standby has received nothing: the message was acknowledged once |
 | 10.2 | `StopWhenTheHostTokenExpires` | A sends (10 s handler), B handles; `TestHost.StopAsync` with a 1 s token | Stop took at least ~1 s and well under the handler's 10 s; A's request then fails with `TimeoutException` |
 
-Azure Service Bus's 10.1 is `[Ignore]`d for now: stopping its processor cancels the token the transport still settles and replies with, so the drained handler's reply and completion fail. It is enabled with the fix that settles with `CancellationToken.None`.
+Azure Service Bus's 10.1 is `SettleTheInFlightMessageOnStop`: the same hosts and assertions, plus a peek of the app queue right after the disposal, which must find nothing. Service Bus redelivers a message whose settle failed only once its lock expires (a minute by default), past any practical redelivery window, but the message is still in the queue to be peeked. Stopping the processor cancels `ProcessMessageEventArgs.CancellationToken`, so the transport replies and settles with `CancellationToken.None`; with the processor's token, this test fails on the peek.
 
 ### Category 11: Transport-specific behavior
 
@@ -162,11 +162,19 @@ Integration tests of one broker's own mechanics, beyond the shared matrix.
 | 11.3 | `RabbitMqDeadLetterShould.RouteAFailedEventToTheDeadLetterExchangeWithoutAConduitDlq` | A publishes `ThrowingTestEvent`, B listens with no dead-letter store | After 2 s the listener has run once (rejected, not requeued), and `{prefix}-conduit-dead-letter` holds the event once (`basic.get` twice: the event, then nothing), with `x-first-death-reason: rejected` and `x-first-death-queue` = B's app queue |
 | 11.4 | `RabbitMqReplyQueueShould.FallBackToAFreshNameWhenTheNameIsLocked` | B handles; a test connection declares an exclusive queue under the reply queue name A would take (`InitialReplyQueueInstanceId` pins it); then A starts and sends | A starts despite `RESOURCE_LOCKED`, its request gets its reply (so the reply went to A's fresh queue), and the locked queue holds no message |
 
+#### Azure Service Bus
+
+| # | Test Method | Hosts | Assert |
+|---|---|---|---|
+| 11.5 | `AsbTopologyShould.UpdateASubscriptionWhenAPoolAssignmentChanges` | B starts and stops with no pool (`TestCommand`'s and `TestEvent`'s subscriptions forward to its app queue); B restarts, same app name and prefix, with a pool handling both; A sends `TestCommand` | B's restart succeeds, both subscriptions' `ForwardTo` name the pool's queue (admin client), and A gets the handler's reply |
+| 11.6 | `AsbTopologyShould.RefuseASubscriptionThatForwardsToAnotherApplication` | B handles every command; C, another app name on the same prefix, also handling them, starts | C's start throws `InvalidOperationException` naming a collision between applications: a shared subscription forwarding to another application's queue is never taken over |
+| 11.7 | `AsbShutdownShould.FailARequestStillAwaitingItsReplyOnStop` | A (30 s `ResponseTimeout`) sends a `ShutdownProbeCommand` (5 s handler), B handles; once B's handler is running, A is stopped | A's request throws exactly `InvalidOperationException("The transport for endpoint 'broker' stopped before the reply arrived.")` within 3 s of the stop: the session receive is raced against the waiter `FailPendingReplies` fails |
+
 ### Totals (verified 2026-11-10)
 
-Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**.
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**. Azure Service Bus adds its **3**, bringing its total to **41**.
 
-Behavior-test methods across the four transports: 42 (RabbitMQ) + 38 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **157 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **160 `[TestMethod]` integration tests**.
 
 ---
 
@@ -229,6 +237,8 @@ These tests validate broker-specific topology features that don't apply to all t
 |---|---|---|
 | TM-S.2 | `CreateSqlFilterOnSubscriptions` | Subscriptions have SQL filter: `Subject = '{FullTypeName}'` |
 | TM-S.3 | `CreateSessionEnabledReplyQueue` | Reply queue has `RequiresSession = true` |
+| TM-S.4 | `ExpireOrphanedRepliesOnTheReplyQueue` | `CreateReplyQueueOptions()`: the reply queue's name, `RequiresSession`, and `DefaultMessageTimeToLive` = 2 × `ResponseTimeout` |
+| TM-S.4b | `AsbReplyShould.CarryATimeToLive` (`Unit/AsbReplyShould.cs`) | The reply itself (`CreateReplyMessage`): the request's `ReplyToSessionId` as its session, and `TimeToLive` = 2 × `ResponseTimeout` |
 
 #### Amazon SQS (+SNS)
 
@@ -246,14 +256,14 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.11 | `UseAmqpFilterOnQueues` | Queue filter expression: `AMQPSubject = '{FullTypeName}'` |
 | TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | Native `auto-delete-delay` in milliseconds per topology mode |
 
-### Totals (verified 2026-06-09; RabbitMQ 2026-11-10)
+### Totals (verified 2026-06-09; RabbitMQ and Azure Service Bus 2026-11-10)
 
 The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-4 (3). Each transport adds a varying number of transport-specific (TM-S) tests, so the actual `Unit/TopologyManagerShould.cs` `[TestMethod]` count differs per transport:
 
 | Transport | Unit topology `[TestMethod]` count |
 |---|---|
 | RabbitMQ | 24 |
-| Azure Service Bus | 25 |
+| Azure Service Bus | 26 |
 | Amazon SQS | 17 |
 | ActiveMQ | 23 |
 

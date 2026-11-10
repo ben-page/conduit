@@ -87,13 +87,20 @@ Topic: {systemName}
 │   (multicast — event, SQL filter: Subject = '{FullTypeName}',
 │    forwards to subscribing app's queue)
 Queue: {systemName}-{appName}
-Queue: {systemName}-{appName}-replies (session-enabled)
+Queue: {systemName}-{appName}-replies (session-enabled, messages expire after 2 × ResponseTimeout)
 Queue: {systemName}-{appName}-{poolName} (optional)
 ```
 
 All messages (commands, queries, events) publish to the shared topic. Subscriptions with SQL filters (`Subject = '{FullTypeName}'`) forward matching messages to the appropriate app queue. Replies are the only exception — they go point-to-point to the session-enabled reply queue.
 
 All creation is idempotent. Multiple pods starting simultaneously will not conflict (409 responses are swallowed).
+
+A subscription that already exists but forwards to a different queue than this application's configuration names is either this application's to redirect or a collision:
+
+- **This application's own.** An event subscription (its name carries the application's name), or a command or query subscription that forwards to another of this application's queues — its app queue or one of its configured pools. That is what moving a type into a pool, or back out of one, leaves behind. Startup updates the subscription's forwarding to the queue the configuration names now and logs `SubscriptionRedirected`; while two releases with different pools run side by side, the instance that started last decides.
+- **Another application's.** A command or query subscription that forwards to any other queue: a second application handles the same command or query type, which unicast routing forbids. Startup fails with an `InvalidOperationException` (`... This indicates a naming collision between applications.`) rather than take the subscription over.
+
+A command or query subscription left forwarding to a pool this application no longer has is the second case, since that queue is no longer one of its own: delete the subscription, and the next startup creates it afresh.
 
 
 ### Unicast vs multicast subscriptions
@@ -150,7 +157,11 @@ When the generated mediator routes a command to an ASB endpoint:
 
 Replies time out after `ResponseTimeout` (default 60 seconds). Reply messages bypass the topic and go directly to the session-enabled reply queue.
 
-A request with no reply within `ResponseTimeout` fails with a `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`), the same on every broker transport. It is never an `OperationCanceledException`, which only the caller's own cancellation token produces, so a `catch (OperationCanceledException)` around a dispatch cannot swallow a remote that did not answer. A request still waiting when the transport stops fails with an `InvalidOperationException`.
+A request with no reply within `ResponseTimeout` fails with a `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`), the same on every broker transport. It is never an `OperationCanceledException`, which only the caller's own cancellation token produces, so a `catch (OperationCanceledException)` around a dispatch cannot swallow a remote that did not answer. A request still waiting when the transport stops fails at once with an `InvalidOperationException` (`The transport for endpoint '{endpoint}' stopped before the reply arrived.`), rather than waiting out its `ResponseTimeout`.
+
+A reply nobody will read does not stay in the reply queue. The sender reads its reply as soon as it arrives or never (the request timed out, or the sender stopped or crashed), and nothing else accepts a request's session, so each reply carries a time to live of twice the replying endpoint's `ResponseTimeout`, and the reply queue is created with a default message time to live of twice the requesting endpoint's. Service Bus discards a reply when either passes, where it would otherwise stay until the queue reached its size quota and every reply failed. A reply queue that already exists keeps the settings it was created with; the reply's own time to live still applies.
+
+A handler still running when its host stops replies and completes its message before the transport closes, as on every broker (see [Stopping a host with work in flight](index.md#stopping-a-host-with-work-in-flight)): the transport replies and settles without the processor's cancellation token, which stopping cancels.
 
 ## Auto-discovery
 
@@ -199,6 +210,8 @@ endpoint.UseAzureServiceBus(connectionString, options =>
 ```
 
 This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue processed with concurrency 2, while everything else uses the default queue at concurrency 20. Use pools to prevent slow or resource-intensive commands from blocking normal traffic.
+
+Moving a type into a pool, out of one, or between two takes effect at the next startup, which redirects the type's existing subscription to its new queue (see [Topology](#topology)). Removing a pool altogether is the exception for commands and queries: delete their subscriptions that still forward to its queue (an event's subscription is redirected regardless).
 
 `AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
 endpoint's section) and configured again in code on the same name, and the two merge into one pool

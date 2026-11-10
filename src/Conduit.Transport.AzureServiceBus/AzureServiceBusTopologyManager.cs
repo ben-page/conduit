@@ -2,6 +2,7 @@ using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Conduit.Configuration;
 using Conduit.Runtime;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.AzureServiceBus;
 
@@ -11,18 +12,25 @@ namespace Conduit.Transport.AzureServiceBus;
 /// </summary>
 internal sealed class AzureServiceBusTopologyManager
 {
+    private static readonly Action<ILogger, string, string, string, Exception?> LogSubscriptionRedirected =
+        LoggerMessage.Define<string, string, string>(LogLevel.Information, new EventId(200, "SubscriptionRedirected"),
+            "Subscription '{Subscription}' forwarded to '{PreviousQueue}'; it now forwards to '{Queue}'");
+
     private readonly ServiceBusAdministrationClient adminClient;
     private readonly AzureServiceBusOptions options;
     private readonly ConduitOptions conduitOptions;
+    private readonly ILogger logger;
 
     internal AzureServiceBusTopologyManager(
         ServiceBusAdministrationClient adminClient,
         AzureServiceBusOptions options,
-        ConduitOptions conduitOptions)
+        ConduitOptions conduitOptions,
+        ILogger logger)
     {
         this.adminClient = adminClient;
         this.options = options;
         this.conduitOptions = conduitOptions;
+        this.logger = logger;
     }
 
     /// <summary>
@@ -39,8 +47,7 @@ internal sealed class AzureServiceBusTopologyManager
         await this.TryCreateTopicAsync(topicName, ephemeralTtl, cancellationToken);
 
         // Reply queue with sessions enabled for request/response correlation
-        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
-        await this.TryCreateQueueAsync(replyQueueName, requiresSession: true, ephemeralTtl, cancellationToken);
+        await this.TryCreateQueueAsync(this.CreateReplyQueueOptions(), cancellationToken);
     }
 
     /// <summary>
@@ -61,11 +68,14 @@ internal sealed class AzureServiceBusTopologyManager
 
         // Default app queue for receiving events forwarded from subscriptions
         var appQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 260);
-        await this.TryCreateQueueAsync(appQueueName, requiresSession: false, ephemeralTtl, cancellationToken);
+        await this.TryCreateQueueAsync(CreateQueueOptions(appQueueName, ephemeralTtl), cancellationToken);
 
         // Reply queue with sessions enabled for request/response correlation
-        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
-        await this.TryCreateQueueAsync(replyQueueName, requiresSession: true, ephemeralTtl, cancellationToken);
+        await this.TryCreateQueueAsync(this.CreateReplyQueueOptions(), cancellationToken);
+
+        // The queues this application's subscriptions forward to: a subscription forwarding to any of them
+        // is this application's own, whichever of them its configuration names now
+        var ownQueues = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { appQueueName };
 
         // Pool queues — must be created before subscriptions because
         // subscription ForwardTo targets are validated by ASB at creation time
@@ -73,29 +83,46 @@ internal sealed class AzureServiceBusTopologyManager
         {
             var poolQueueName = TopologyNaming.CreateAppResourceName(
                 this.conduitOptions, pool.Name, 260);
-            await this.TryCreateQueueAsync(
-                poolQueueName, requiresSession: false, ephemeralTtl, cancellationToken);
+            await this.TryCreateQueueAsync(CreateQueueOptions(poolQueueName, ephemeralTtl), cancellationToken);
+            ownQueues.Add(poolQueueName);
         }
 
         // Event subscriptions: multicast (per-app, includes app name)
         foreach (var eventType in subscribedEventTypes)
         {
-            var targetQueue = this.GetTargetQueueForType(eventType, appQueueName);
-            var subscriptionName = TopologyNaming.CreateAppResourceName(
-                this.conduitOptions, eventType, 50);
-            await this.TryCreateSubscriptionAsync(
-                topicName, subscriptionName, eventType, targetQueue, ephemeralTtl, cancellationToken);
+            var subscription = new SubscriptionPlan(
+                TopologyNaming.CreateAppResourceName(this.conduitOptions, eventType, 50),
+                eventType,
+                this.GetTargetQueueForType(eventType, appQueueName),
+                AppScoped: true);
+            await this.EnsureSubscriptionAsync(topicName, subscription, ownQueues, ephemeralTtl, cancellationToken);
         }
 
         // Command/query subscriptions: unicast (shared, no app name)
         foreach (var commandQueryType in handledCommandQueryTypes)
         {
-            var targetQueue = this.GetTargetQueueForType(commandQueryType, appQueueName);
-            var subscriptionName = TopologyNaming.CreateSharedResourceName(
-                this.conduitOptions, commandQueryType, 50);
-            await this.TryCreateSubscriptionAsync(
-                topicName, subscriptionName, commandQueryType, targetQueue, ephemeralTtl, cancellationToken);
+            var subscription = new SubscriptionPlan(
+                TopologyNaming.CreateSharedResourceName(this.conduitOptions, commandQueryType, 50),
+                commandQueryType,
+                this.GetTargetQueueForType(commandQueryType, appQueueName),
+                AppScoped: false);
+            await this.EnsureSubscriptionAsync(topicName, subscription, ownQueues, ephemeralTtl, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// The reply queue every request of this application reads its reply from: session-enabled, each reply in
+    /// its own request's session, and discarding a reply after <see cref="AzureServiceBusOptions.ReplyTimeToLive"/>
+    /// by default. A reply nobody has read by then belongs to a request that gave up, and would otherwise stay
+    /// until the queue reaches its size quota and every reply fails.
+    /// </summary>
+    internal CreateQueueOptions CreateReplyQueueOptions()
+    {
+        var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
+        var queueOptions = CreateQueueOptions(replyQueueName, this.ComputeEphemeralTtl());
+        queueOptions.RequiresSession = true;
+        queueOptions.DefaultMessageTimeToLive = this.options.ReplyTimeToLive;
+        return queueOptions;
     }
 
     /// <summary>
@@ -126,6 +153,17 @@ internal sealed class AzureServiceBusTopologyManager
         };
     }
 
+    private static CreateQueueOptions CreateQueueOptions(string name, TimeSpan? autoDeleteOnIdle)
+    {
+        var queueOptions = new CreateQueueOptions(name);
+        if (autoDeleteOnIdle.HasValue)
+        {
+            queueOptions.AutoDeleteOnIdle = autoDeleteOnIdle.Value;
+        }
+
+        return queueOptions;
+    }
+
     private async Task TryCreateTopicAsync(
         string name,
         TimeSpan? autoDeleteOnIdle,
@@ -147,24 +185,10 @@ internal sealed class AzureServiceBusTopologyManager
         }
     }
 
-    private async Task TryCreateQueueAsync(
-        string name,
-        bool requiresSession,
-        TimeSpan? autoDeleteOnIdle,
-        CancellationToken cancellationToken)
+    private async Task TryCreateQueueAsync(CreateQueueOptions queueOptions, CancellationToken cancellationToken)
     {
         try
         {
-            var queueOptions = new CreateQueueOptions(name)
-            {
-                RequiresSession = requiresSession,
-            };
-
-            if (autoDeleteOnIdle.HasValue)
-            {
-                queueOptions.AutoDeleteOnIdle = autoDeleteOnIdle.Value;
-            }
-
             await this.adminClient.CreateQueueAsync(queueOptions, cancellationToken);
         }
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
@@ -173,19 +197,25 @@ internal sealed class AzureServiceBusTopologyManager
         }
     }
 
-    private async Task TryCreateSubscriptionAsync(
+    /// <summary>
+    /// Creates <paramref name="subscription"/>, or makes an existing one forward where this application's
+    /// configuration says. An existing subscription that forwards elsewhere is redirected when it is this
+    /// application's own: an event's, named for the application, or one forwarding to another of
+    /// <paramref name="ownQueues"/>, as when a pool takes a type over or hands it back. One forwarding to any
+    /// other queue is another application's, a naming collision: startup fails rather than take it over.
+    /// </summary>
+    private async Task EnsureSubscriptionAsync(
         string topicName,
-        string subscriptionName,
-        string messageType,
-        string forwardTo,
+        SubscriptionPlan subscription,
+        HashSet<string> ownQueues,
         TimeSpan? autoDeleteOnIdle,
         CancellationToken cancellationToken)
     {
         try
         {
-            var subscriptionOptions = new CreateSubscriptionOptions(topicName, subscriptionName)
+            var subscriptionOptions = new CreateSubscriptionOptions(topicName, subscription.Name)
             {
-                ForwardTo = forwardTo,
+                ForwardTo = subscription.ForwardTo,
             };
 
             if (autoDeleteOnIdle.HasValue)
@@ -196,7 +226,7 @@ internal sealed class AzureServiceBusTopologyManager
             // ASB SQL filter uses sys.Label (not Subject) to match ServiceBusMessage.Subject
             var ruleOptions = new CreateRuleOptions(
                 "TypeFilter",
-                new SqlRuleFilter($"sys.Label = '{messageType}'"));
+                new SqlRuleFilter($"sys.Label = '{subscription.MessageType}'"));
 
             await this.adminClient.CreateSubscriptionAsync(
                 subscriptionOptions, ruleOptions, cancellationToken);
@@ -204,23 +234,29 @@ internal sealed class AzureServiceBusTopologyManager
         catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
         {
             // Subscription already exists — another pod or app created it first.
-            // Verify the existing subscription forwards to the expected queue.
-            // A mismatch indicates a naming collision — this is a configuration error.
-            var existing = await this.adminClient.GetSubscriptionAsync(
-                topicName, subscriptionName, cancellationToken);
+            SubscriptionProperties existing = await this.adminClient.GetSubscriptionAsync(
+                topicName, subscription.Name, cancellationToken);
 
             // ASB normalizes ForwardTo to a full URI (e.g., "http://host/queue-name").
             // Compare by entity name only — extract the last path segment.
-            var existingTarget = GetEntityName(existing.Value.ForwardTo);
-            var expectedTarget = GetEntityName(forwardTo);
+            var existingTarget = GetEntityName(existing.ForwardTo);
+            if (string.Equals(existingTarget, subscription.ForwardTo, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
 
-            if (!string.Equals(existingTarget, expectedTarget, StringComparison.OrdinalIgnoreCase))
+            if (!subscription.AppScoped && !ownQueues.Contains(existingTarget))
             {
                 throw new InvalidOperationException(
-                    $"Subscription '{subscriptionName}' on topic '{topicName}' already exists but " +
-                    $"forwards to '{existing.Value.ForwardTo}' instead of expected '{forwardTo}'. " +
-                    $"This indicates a naming collision between applications.");
+                    $"Subscription '{subscription.Name}' on topic '{topicName}' already exists but " +
+                    $"forwards to '{existing.ForwardTo}' instead of expected '{subscription.ForwardTo}'. " +
+                    "This indicates a naming collision between applications. If that queue belonged to this " +
+                    "application (a pool it no longer has), delete the subscription.");
             }
+
+            existing.ForwardTo = subscription.ForwardTo;
+            await this.adminClient.UpdateSubscriptionAsync(existing, cancellationToken);
+            LogSubscriptionRedirected(this.logger, subscription.Name, existingTarget, subscription.ForwardTo, null);
         }
     }
 
@@ -237,4 +273,11 @@ internal sealed class AzureServiceBusTopologyManager
 
         return forwardTo;
     }
+
+    /// <summary>
+    /// A subscription this application needs: its name, the message type its filter matches, the queue it
+    /// forwards to, and whether its name is this application's alone (an event's) rather than shared by every
+    /// application (a command's or query's).
+    /// </summary>
+    private sealed record SubscriptionPlan(string Name, string MessageType, string ForwardTo, bool AppScoped);
 }

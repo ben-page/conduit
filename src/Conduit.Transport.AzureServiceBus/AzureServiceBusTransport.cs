@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Conduit.Configuration;
@@ -19,6 +20,9 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
 {
     private readonly AzureServiceBusOptions options;
     private readonly List<ServiceBusProcessor> processors = [];
+
+    // One sender per reply queue for the transport's lifetime, rather than a link attached and detached per reply
+    private readonly ConcurrentDictionary<string, ServiceBusSender> replySenders = new(StringComparer.Ordinal);
 
     private ServiceBusClient? client;
     private ServiceBusSender? topicSender;
@@ -86,7 +90,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         var adminConnectionString = this.options.AdminConnectionString ?? this.options.ConnectionString;
         var adminClient = new ServiceBusAdministrationClient(adminConnectionString);
         var topologyManager = new AzureServiceBusTopologyManager(
-            adminClient, this.options, this.ConduitOptions);
+            adminClient, this.options, this.ConduitOptions, this.Logger);
 
         LogDiscoveredEventTypes(this.Logger, eventTypeNames.Count, null);
 
@@ -100,7 +104,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         var adminConnectionString = this.options.AdminConnectionString ?? this.options.ConnectionString;
         var adminClient = new ServiceBusAdministrationClient(adminConnectionString);
         var topologyManager = new AzureServiceBusTopologyManager(
-            adminClient, this.options, this.ConduitOptions);
+            adminClient, this.options, this.ConduitOptions, this.Logger);
 
         await topologyManager.EnsureOutboundTopologyAsync(cancellationToken);
     }
@@ -155,6 +159,13 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
 
         this.processors.Clear();
 
+        foreach (var replySender in this.replySenders.Values)
+        {
+            await replySender.DisposeAsync();
+        }
+
+        this.replySenders.Clear();
+
         if (this.topicSender is not null)
         {
             await this.topicSender.DisposeAsync();
@@ -196,26 +207,39 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         return (messageId, causationId, conversationId);
     }
 
+    // Replying and settling never pass ProcessMessageEventArgs.CancellationToken. StopProcessingAsync cancels
+    // it as soon as stop begins, while the drain is still waiting for the handler to reply and settle: a
+    // reply sent with it is lost, and a message whose settle fails stays locked until its lock expires, when
+    // Service Bus redelivers it and the handler runs a second time.
+
     /// <inheritdoc />
     protected override async Task SendReplyAsync(ProcessMessageEventArgs message, BinaryData replyBody)
     {
-        var replyMessage = new ServiceBusMessage(replyBody)
-        {
-            SessionId = message.Message.ReplyToSessionId,
-            ContentType = "application/json",
-        };
-
-        await using var sender = this.client!.CreateSender(message.Message.ReplyTo);
-        await sender.SendMessageAsync(replyMessage, message.CancellationToken);
+        var replyMessage = this.CreateReplyMessage(message.Message, replyBody);
+        var sender = await this.GetReplySenderAsync(message.Message.ReplyTo);
+        await sender.SendMessageAsync(replyMessage, CancellationToken.None);
     }
 
     /// <inheritdoc />
     protected override Task AcknowledgeAsync(ProcessMessageEventArgs message) =>
-        message.CompleteMessageAsync(message.Message, message.CancellationToken);
+        message.CompleteMessageAsync(message.Message, CancellationToken.None);
 
     /// <inheritdoc />
     protected override Task AbandonAsync(ProcessMessageEventArgs message) =>
-        message.AbandonMessageAsync(message.Message, cancellationToken: message.CancellationToken);
+        message.AbandonMessageAsync(message.Message, cancellationToken: CancellationToken.None);
+
+    /// <summary>
+    /// The reply to <paramref name="request"/>: in the request's own session, and discarded after
+    /// <see cref="AzureServiceBusOptions.ReplyTimeToLive"/>, by which time a request still waiting for it has
+    /// given up, and nothing else reads its session.
+    /// </summary>
+    internal ServiceBusMessage CreateReplyMessage(ServiceBusReceivedMessage request, BinaryData replyBody) =>
+        new(replyBody)
+        {
+            SessionId = request.ReplyToSessionId,
+            ContentType = "application/json",
+            TimeToLive = this.options.ReplyTimeToLive,
+        };
 
     // -----------------------------------------------------------------------
     // Outbound primitives
@@ -249,7 +273,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
 
         await this.topicSender!.SendMessageAsync(serviceBusMessage, cancellationToken);
 
-        return await this.ReceiveSessionReplyAsync(envelope.Type, correlationId, cancellationToken);
+        return await this.AwaitSessionReplyAsync(envelope.Type, correlationId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -348,9 +372,52 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     }
 
     /// <summary>
+    /// The sender for replies to <paramref name="replyTo"/>, created on the first reply to that queue and kept
+    /// until the transport is disposed.
+    /// </summary>
+    private async ValueTask<ServiceBusSender> GetReplySenderAsync(string replyTo)
+    {
+        if (this.replySenders.TryGetValue(replyTo, out var sender))
+        {
+            return sender;
+        }
+
+        var created = this.client!.CreateSender(replyTo);
+        if (this.replySenders.TryAdd(replyTo, created))
+        {
+            return created;
+        }
+
+        // A concurrent reply to the same queue added its sender first; this one never opened a link
+        await created.DisposeAsync();
+        return this.replySenders[replyTo];
+    }
+
+    /// <summary>
+    /// Waits for a request's reply in the request's own session. Service Bus keeps the reply until the session
+    /// is accepted, so no reply consumer feeds the base class's waiter; this races the session receive against
+    /// that waiter only so that a stop, which fails every waiter, ends the request at once, as on every broker.
+    /// </summary>
+    private async Task<ReadOnlyMemory<byte>> AwaitSessionReplyAsync(
+        string messageType,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var received = this.ReceiveSessionReplyAsync(messageType, correlationId, waiting.Token);
+        var stopped = this.AwaitReplyAsync(correlationId, waiting.Token);
+
+        var first = await Task.WhenAny(received, stopped);
+
+        // The other wait is cancelled and left to end on its own; a failure it still reports is observed
+        await waiting.CancelAsync();
+        ObserveFault(first == received ? stopped : received);
+
+        return await first;
+    }
+
+    /// <summary>
     /// Receives a request's reply from its own session on the shared, session-enabled reply queue.
-    /// Service Bus keeps the reply until the session is accepted, so this transport waits on the
-    /// session rather than on the base class's reply waiter, and needs no reply consumer.
     /// </summary>
     private async Task<ReadOnlyMemory<byte>> ReceiveSessionReplyAsync(
         string messageType,
@@ -376,6 +443,13 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
 
         return replyMessage.Body.ToMemory();
     }
+
+    private static void ObserveFault(Task task) =>
+        _ = task.ContinueWith(
+            static abandoned => _ = abandoned.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private static void SeedOutboundMessageContext(
         ServiceBusMessage message,
