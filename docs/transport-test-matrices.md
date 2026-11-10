@@ -317,7 +317,8 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 
 Container-free unit tests over a `ServiceCollection`, proving that a host with **two endpoints on
 the same transport** gets two independent transports, and that each endpoint's options bind from its
-own configuration section. Tests live in `Unit/` within each transport's test project. No broker is
+own configuration section; and, where a transport builds its broker clients from those options, over
+the clients it builds (category F-S). Tests live in `Unit/` within each transport's test project. No broker is
 involved — if one of these needs a container, it is testing the wrong thing.
 
 ### Category R-1: Per-endpoint registration (`Unit/{Name}EndpointRegistrationShould.cs`)
@@ -376,7 +377,7 @@ Where a transport builds its broker clients from the bound options:
 | F-S.1 | `UseConfiguredCredentialsAgainstAws` | Amazon SQS | With `Region` and `Credentials` (a `Support/StubAwsCredentials`), both clients carry those credentials (`Config.DefaultAWSCredentials`), in that region |
 | F-S.2 | `UseConfiguredCredentialsWithACustomEndpoint` | Amazon SQS | With `ServiceUri` and `Credentials`, the endpoint is overridden and the credentials are still the configured ones |
 | F-S.3 | `UseAPlaceholderPairForACustomEndpointWithoutCredentials` | Amazon SQS | `ServiceUri` alone gets the LocalStack placeholder pair (`test`/`test`) |
-| F-S.4 | `LeaveCredentialsToTheDefaultChainWhenNoneAreConfigured` | Amazon SQS | `Region` alone leaves the clients without credentials, so the SDK's default chain applies |
+| F-S.4 | `PutNoCredentialsOnTheClientsAgainstAwsWithoutConfiguredOnes` | Amazon SQS | `Region` alone puts neither configured nor placeholder credentials on the clients' configuration, so the SDK's default chain applies |
 
 ### Category O-S: Transport-specific option validation (`Unit/{Name}OptionsShould.cs`)
 
@@ -400,7 +401,7 @@ overload equivalence and de-duplication), and `TransportOptionsBindingShould`
 
 When adding a new broker transport, create a test project and implement:
 
-1. **All transport behavior tests** (Matrix 1 — 36 `[TestMethod]` tests per existing transport, categories 1–10) — copy the test class structure from an existing transport, adjust the fixture
+1. **All transport behavior tests** (Matrix 1 — 38 `[TestMethod]` tests per existing transport, categories 1–10) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
 4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable, a transport that skips it can ship the silent shared-singleton bug all broker packages once had

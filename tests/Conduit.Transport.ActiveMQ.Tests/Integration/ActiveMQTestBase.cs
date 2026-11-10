@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Amqp;
 using Conduit.Configuration;
 using Conduit.Durability;
@@ -87,14 +88,16 @@ public abstract class ActiveMQTestBase
     }
 
     /// <summary>
-    /// Inconclusive unless this test run started the Artemis container, the only broker a test may restart. A
-    /// test that creates durable topology calls it first, so it leaves a broker it cannot restart untouched.
+    /// Inconclusive unless this test run started the Artemis container, the only broker a test may stop or
+    /// restart. A test that creates durable topology calls it first, so it leaves a broker it cannot restart
+    /// untouched.
     /// </summary>
+    [MemberNotNull(nameof(container))]
     protected static void RequireRestartableBroker()
     {
         if (container is null)
         {
-            Assert.Inconclusive("Restarting the broker needs the Artemis container this test run started.");
+            Assert.Inconclusive("Stopping or restarting the broker needs the Artemis container this test run started.");
         }
     }
 
@@ -116,10 +119,7 @@ public abstract class ActiveMQTestBase
     /// </summary>
     protected static async Task StopBrokerAsync()
     {
-        if (container is null)
-        {
-            Assert.Inconclusive("Stopping the broker needs the Artemis container this test run started.");
-        }
+        RequireRestartableBroker();
 
         brokerPort = container.GetMappedPublicPort(61616);
         await container.StopAsync();
@@ -134,10 +134,7 @@ public abstract class ActiveMQTestBase
     /// </summary>
     protected static async Task StartBrokerAsync()
     {
-        if (container is null)
-        {
-            Assert.Inconclusive("Starting the broker needs the Artemis container this test run started.");
-        }
+        RequireRestartableBroker();
 
         await container.StartAsync();
 

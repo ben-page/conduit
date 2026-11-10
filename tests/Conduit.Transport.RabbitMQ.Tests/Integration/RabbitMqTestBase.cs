@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Conduit.Configuration;
 using Conduit.Durability;
 using Conduit.Persistence.Sqlite;
@@ -90,6 +91,7 @@ public abstract class RabbitMqTestBase
     /// Inconclusive unless this test run started the broker container, the only broker a test may restart. A
     /// test that declares durable topology calls it first, so it leaves a broker it cannot restart untouched.
     /// </summary>
+    [MemberNotNull(nameof(container))]
     protected static void RequireRestartableBroker()
     {
         if (container is null)
@@ -107,10 +109,7 @@ public abstract class RabbitMqTestBase
     /// </summary>
     protected static async Task RestartBrokerAsync()
     {
-        if (container is null)
-        {
-            Assert.Inconclusive("Restarting the broker needs the RabbitMQ container this test run started.");
-        }
+        RequireRestartableBroker();
 
         var port = container.GetMappedPublicPort(RabbitMqBuilder.RabbitMqPort);
         await container.StopAsync();

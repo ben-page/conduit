@@ -24,7 +24,7 @@
 
 The Amazon SQS transport provides durable, broker-based messaging over SNS and SQS together: **SNS** carries the fan-out, **SQS** holds the per-application queues. All message types (commands, queries, events) are published to a single SNS topic, and SNS subscription filter policies route each message to the queues that should receive it. Commands and queries use request/response with a reply queue per transport instance. The transport runs as an `IHostedService` that manages topology, long-polling consumers, and reply correlation.
 
-Unlike the other broker transports there is no connection string: the transport connects with an AWS region and the default AWS credential chain.
+Unlike the other broker transports there is no connection string: the transport connects with an AWS region and the default AWS credential chain, unless `Credentials` is set.
 
 ## Setup
 
@@ -57,7 +57,7 @@ endpoint.UseAmazonSqs(options =>
 | Property | Default | Description |
 |---|---|---|
 | `Region` | `null` | AWS region. Falls back to the SDK's own region resolution when unset. Not used when `ServiceUri` is set. |
-| `ServiceUri` | `null` | Override endpoint for both SNS and SQS, used for [LocalStack](#localstack). |
+| `ServiceUri` | `null` | Override endpoint for both SNS and SQS, used for [LocalStack](#localstack). A non-LocalStack endpoint override (a VPC or FIPS endpoint) needs explicit `Credentials`, otherwise the placeholder pair is used. |
 | `Credentials` | `null` | Explicit AWS credentials, used with or without `ServiceUri`. When unset, the default AWS credential chain applies; with `ServiceUri` set, the LocalStack placeholder pair is used instead (see [Credentials](#credentials) and [LocalStack](#localstack)). |
 | `DefaultConcurrency` | `10` | How many handlers the application queue's poller runs at once. The poller receives up to 10 messages per long poll and starts each one as a handler slot frees up. |
 | `ResponseTimeout` | `00:01:00` | How long a request waits for its reply (see [Request/response](#requestresponse)). Positive and finite, and at most `VisibilityTimeoutSeconds`. |
@@ -97,7 +97,7 @@ conduit.AddEndpoint("orders", endpoint => endpoint.UseAmazonSqs());
 
 ### Credentials
 
-Without `Credentials`, the transport authenticates through the **default AWS credential chain** (environment variables, profile, container or instance role), what you want in a deployed environment rather than secrets in appsettings. Set `Credentials` to use explicit ones, against AWS or a `ServiceUri` endpoint alike. Configuration supplies it nested under `Credentials`, mirroring the property it populates:
+Without `Credentials`, the transport authenticates through the **default AWS credential chain** (environment variables, profile, container or instance role) against AWS; a `ServiceUri` endpoint without `Credentials` gets the LocalStack placeholder pair (see [LocalStack](#localstack)). The default chain is what you want in a deployed environment rather than secrets in appsettings. Set `Credentials` to use explicit ones, against AWS or a `ServiceUri` endpoint alike. Configuration supplies it nested under `Credentials`, mirroring the property it populates:
 
 ```json
 {

@@ -65,7 +65,7 @@ public class AmazonSqsClientFactoryShould
     }
 
     [TestMethod]
-    public void LeaveCredentialsToTheDefaultChainWhenNoneAreConfigured()
+    public void PutNoCredentialsOnTheClientsAgainstAwsWithoutConfiguredOnes()
     {
         // Arrange
         var options = new AmazonSqsOptions { Region = RegionEndpoint.EUWest1 };
@@ -75,7 +75,8 @@ public class AmazonSqsClientFactoryShould
         using var sns = snsClient;
         using var sqs = sqsClient;
 
-        // Assert — no credentials on the clients, so the SDK resolves them through its default chain
+        // Assert — neither configured nor placeholder credentials reach the clients, so the SDK resolves its own
+        // through the default chain
         sns.Config.DefaultAWSCredentials.Should().BeNull();
         sqs.Config.DefaultAWSCredentials.Should().BeNull();
     }
