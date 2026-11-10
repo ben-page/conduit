@@ -148,15 +148,17 @@ public partial class BrokerTransportBaseShould
     }
 
     // A behavior wraps the listeners, outside their own try: its failure is no refusal and no handled event, so the
-    // event is kept as a failed listener's is -- captured with the support reference the runtime logged it under,
-    // the broker told once, by the capture
+    // event is kept as a failed listener's is -- captured with the original exception (not the runtime's wrapper) and
+    // the support reference the runtime logged it under, the broker told once, by the capture
     [TestMethod]
     public async Task CaptureAWireEventWhoseBehaviorThrows()
     {
         // Arrange
+        var spy = new SpyLoggerProvider();
         await using var host = StartHost(
             withInterceptor: true,
-            conduit => conduit.AddPipeline(typeof(ThrowingEventBehavior<,>)));
+            conduit => conduit.AddPipeline(typeof(ThrowingEventBehavior<,>)),
+            builder => builder.Logging.AddProvider(spy));
         var interceptor = host.GetRequiredService<RecordingErrorInterceptor>();
         var logger = new RecordingLogger<FakeBrokerTransport>();
         var transport = new FakeBrokerTransport(
@@ -166,10 +168,17 @@ public partial class BrokerTransportBaseShould
         // Act
         await transport.DeliverAsync(message);
 
-        // Assert -- captured with a reference, acknowledged once by the capture, never completed as handled
+        // Assert -- captured with the original and the logged reference, acknowledged once by the capture, never
+        // completed as handled
         var capture = interceptor.Captures.Should().ContainSingle().Subject;
         capture.MessageType.Should().Be(typeof(BehaviorFailureEvent).FullName);
+        capture.Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("The behavior failed.");
+        var failure = spy.Entries.Should().ContainSingle(entry => entry.Level >= LogLevel.Error).Subject;
+        failure.EventId.Id.Should().Be(2);
+        failure.EventId.Name.Should().Be("PublishError");
         capture.Reference.Should().NotBeNullOrEmpty();
+        failure.Message.Should().Contain($"(reference {capture.Reference})");
         transport.Lifecycle.Should().Equal("acknowledged");
         message.AcknowledgeAttempts.Should().Be(1);
         message.Abandoned.Should().BeFalse();
@@ -217,22 +226,28 @@ public partial class BrokerTransportBaseShould
     }
 
     // The listeners are resolved inside the behaviors and outside each listener's own try: one that cannot be built
-    // fails the dispatch before any listener runs, and the event is settled as a failed listener's is
+    // fails the dispatch before any listener runs, and the event is settled as a failed listener's is -- but the
+    // runtime already logged it, so the abandon names the reference without a second stack
     [TestMethod]
     public async Task AbandonAWireEventWhoseListenerCannotBeBuiltWhenNothingCaptures()
     {
         // Arrange
         await using var host = StartHost(withInterceptor: false);
-        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var logger = new RecordingLogger<FakeBrokerTransport>();
+        var transport = new FakeBrokerTransport(
+            host.GetRequiredService<ConduitOptions>(), host.Services, logger: logger);
         var message = EventMessage(new UnbuildableListenerEvent("x"));
 
         // Act
         await transport.DeliverAsync(message);
 
-        // Assert -- abandoned, so the broker redelivers or dead-letters it, never acknowledged as handled
+        // Assert -- abandoned, so the broker redelivers or dead-letters it, never acknowledged as handled; one abandon
+        // line, without the exception (alreadyLogged: true), where a listener's EventListenerException carries it
         message.Abandoned.Should().BeTrue();
         message.Acknowledged.Should().BeFalse();
         transport.Lifecycle.Should().BeEmpty();
+        var abandoned = logger.Entries.Should().ContainSingle(entry => entry.EventId.Id == 502).Subject;
+        abandoned.Exception.Should().BeNull();
     }
 
     private static TestWebHost StartHost(

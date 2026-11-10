@@ -36,6 +36,11 @@ The first public preview. The entries below are the changes since the earlier, u
   causation and conversation ids.
 - An event whose body its type cannot read is refused: HTTP `/publish` answers 400 and the hub's `Publish` throws a
   `HubException`, where both reported success.
+- An event published over HTTP or SignalR whose dispatch fails (a pipeline behavior, listener resolution, a gate, or a
+  listener) is answered as an unexpected failure, its exception logged under a support reference: `/publish` answers
+  `InternalError` with the reference (a `RemoteDispatchException` at the C# `HttpTransport`), and the hub's `Publish`
+  throws a `HubException` with the fixed message. Every such failure but a listener's was reported as success, so an
+  outbox relaying through `HttpTransport` now retries what it used to mark delivered.
 - The outbox and dead-letter tables changed columns. Drop the `conduit_outbox` and `conduit_dead_letters` tables an
   earlier build created; Conduit creates the current ones at startup.
 - RabbitMQ topology: each transport instance has its own client-named reply queue, and every inbound queue
