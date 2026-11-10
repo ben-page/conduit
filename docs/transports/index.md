@@ -242,7 +242,9 @@ A few things worth knowing about the check:
   was already unsupported — it also means sharing one competing-consumer command/query queue, so
   the two deployments would steal each other's commands — but the filter makes that misconfigured
   case fail more quietly. Give every logical application its own name; give every replica of one
-  application the same name.
+  application the same name. The names must also differ **after sanitizing**: a broker resource
+  name keeps only `[A-Za-z0-9_-]`, every other character becoming `-`, so `Orders.Api` and
+  `Orders-Api` carry different stamps but name the same queues, and share them as one application would.
 - **Requests are never dropped.** A command or query legitimately routed back to its own
   application — self-routing, or a receiver pool shared with the publisher — must still be
   handled, so the check only ever looks at events.

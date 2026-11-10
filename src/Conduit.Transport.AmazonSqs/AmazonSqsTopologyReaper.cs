@@ -2,6 +2,7 @@ using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Conduit.Runtime;
 
 namespace Conduit.Transport.AmazonSqs;
 
@@ -14,8 +15,9 @@ namespace Conduit.Transport.AmazonSqs;
 public static class AmazonSqsTopologyReaper
 {
     /// <summary>
-    /// Deletes all SQS queues and SNS topics whose names start with <paramref name="prefix"/>.
-    /// Deleting an SNS topic also removes its subscriptions.
+    /// Deletes all SQS queues and SNS topics whose names start with <paramref name="prefix"/>, sanitized as
+    /// resource names are (<see cref="TopologyNaming.Sanitize"/>: a <c>john.doe</c> topology prefix names its
+    /// resources <c>john-doe-…</c>, and that is what is matched). Deleting an SNS topic also removes its subscriptions.
     /// </summary>
     public static async Task<int> ReapByPrefixAsync(
         AmazonSqsOptions options, string prefix, CancellationToken cancellationToken = default)
@@ -23,6 +25,7 @@ public static class AmazonSqsTopologyReaper
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
 
+        var resourcePrefix = ResourceNamePrefix(prefix);
         var (snsClient, sqsClient) = AmazonSqsClientFactory.Create(options);
         var reaped = 0;
 
@@ -33,7 +36,7 @@ public static class AmazonSqsTopologyReaper
             do
             {
                 var queues = await sqsClient.ListQueuesAsync(
-                    new ListQueuesRequest { QueueNamePrefix = prefix, MaxResults = 1000, NextToken = queueToken },
+                    new ListQueuesRequest { QueueNamePrefix = resourcePrefix, MaxResults = 1000, NextToken = queueToken },
                     cancellationToken);
                 foreach (var queueUrl in queues.QueueUrls ?? [])
                 {
@@ -60,7 +63,7 @@ public static class AmazonSqsTopologyReaper
                 foreach (var topic in topics.Topics ?? [])
                 {
                     var name = topic.TopicArn[(topic.TopicArn.LastIndexOf(':') + 1)..];
-                    if (!name.StartsWith(prefix, StringComparison.Ordinal))
+                    if (!name.StartsWith(resourcePrefix, StringComparison.Ordinal))
                     {
                         continue;
                     }
@@ -83,4 +86,10 @@ public static class AmazonSqsTopologyReaper
 
         return reaped;
     }
+
+    /// <summary>
+    /// The prefix the reaper matches resource names against: <paramref name="prefix"/> as <see cref="TopologyNaming"/>
+    /// writes it into a name. It used to match the raw prefix, so a Developer prefix with a dot deleted nothing.
+    /// </summary>
+    internal static string ResourceNamePrefix(string prefix) => TopologyNaming.Sanitize(prefix);
 }

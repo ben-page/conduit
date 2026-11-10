@@ -96,7 +96,7 @@ public static class ConduitConfigurationBinder
             {
                 throw new InvalidOperationException(
                     $"Receiver pool name '{name}' at '{poolSection.Path}' is reserved: its queue would be named " +
-                    "like a transport's own reply or dead-letter queue.");
+                    "like a transport's reply queue, or the broker-side dead-letter queue a transport may create.");
             }
 
             if (!seenNames.Add(name))

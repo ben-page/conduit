@@ -96,6 +96,8 @@ Address: {systemName}-events                   (MULTICAST)
 Reply queue: per-instance, temporary (destroyed on shutdown)
 ```
 
+Every resource name is sanitized to `[A-Za-z0-9_-]`, any other character becoming `-`. The default `ApplicationName` is the entry assembly's name, so an application named `Conduit.Sample.Orders` gets the event queue `conduit-Conduit-Sample-Orders`, not `conduit-Conduit.Sample.Orders`.
+
 ### Anycast and multicast
 
 Artemis routes by address type, which maps exactly onto Conduit's two delivery semantics:

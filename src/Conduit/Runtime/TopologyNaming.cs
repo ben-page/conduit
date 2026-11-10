@@ -109,10 +109,16 @@ public static class TopologyNaming
 
     /// <summary>
     /// Replaces every character outside <c>[A-Za-z0-9_-]</c>, the set every broker accepts in a resource
-    /// name, with <c>-</c>, one for one.
+    /// name, with <c>-</c>, one for one: what every name this class builds goes through. Use it to match a
+    /// name segment you hold raw, such as a topology prefix to clean up by (<c>john.doe</c> names resources
+    /// <c>john-doe-…</c>).
     /// </summary>
-    internal static string Sanitize(string name) =>
-        string.Create(name.Length, name, static (sanitized, source) =>
+    /// <param name="name">The raw name or name segment.</param>
+    public static string Sanitize(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        return string.Create(name.Length, name, static (sanitized, source) =>
         {
             for (var index = 0; index < source.Length; index++)
             {
@@ -122,6 +128,7 @@ public static class TopologyNaming
                     : '-';
             }
         });
+    }
 
     private static string BuildBase(string? prefix, string systemName) =>
         prefix is not null ? $"{prefix}-{systemName}" : systemName;

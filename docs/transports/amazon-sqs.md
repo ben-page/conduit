@@ -154,6 +154,8 @@ For that reason `RawMessageDelivery` defaults to `true` and the transport valida
 
 SQS queue names are capped at **80 characters**. `TopologyNaming` truncates and hashes names that would exceed the cap, so a long `SystemName`, application name or pool name will produce a hashed suffix rather than a failure. Names stay stable and collision-resistant, but they will not always be human-readable — keep `SystemName` and application names short if you want to recognise your queues in the AWS console.
 
+Every resource name is also sanitized to `[A-Za-z0-9_-]` (the only characters SQS queue and SNS topic names accept), any other character becoming `-`. The default `ApplicationName` is the entry assembly's name, so an application named `Conduit.Sample.Orders` gets the queue `conduit-Conduit-Sample-Orders`, not `conduit-Conduit.Sample.Orders`. `AmazonSqsTopologyReaper.ReapByPrefixAsync` sanitizes the prefix it is given the same way, so a `john.doe` prefix reaps the `john-doe-…` resources.
+
 ## Developer and test modes
 
 `TopologyMode` on `ConduitOptions` controls resource naming:

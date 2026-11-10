@@ -89,6 +89,8 @@ All message types (commands, queries, events) flow through a single topic exchan
 
 All declarations are idempotent.
 
+Every resource name is sanitized to `[A-Za-z0-9_-]`, any other character becoming `-`. The default `ApplicationName` is the entry assembly's name, so an application named `Conduit.Sample.Orders` gets the queue `conduit-Conduit-Sample-Orders`, not `conduit-Conduit.Sample.Orders`.
+
 ### Unicast correctness
 
 RabbitMQ does not have a built-in unicast subscription concept like Azure Service Bus. Unicast correctness for commands and queries relies on only one app binding a given type's routing key. If two apps bind the same command type, RabbitMQ will round-robin between them, which is incorrect for request/response semantics. Ensure each command/query type is handled by exactly one service.

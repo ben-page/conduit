@@ -52,8 +52,8 @@ public abstract class BrokerTransportOptions
         if (IsReservedPoolName(name))
         {
             throw new ArgumentException(
-                $"The receiver pool name '{name}' is reserved: its queue would be named like a transport's own " +
-                "reply or dead-letter queue. Choose another name.",
+                $"The receiver pool name '{name}' is reserved: its queue would be named like a transport's reply " +
+                "queue, or the broker-side dead-letter queue a transport may create. Choose another name.",
                 nameof(name));
         }
 
@@ -72,8 +72,9 @@ public abstract class BrokerTransportOptions
     }
 
     /// <summary>
-    /// Whether <paramref name="name"/> would give a pool's queue the name of a transport's own reply or
-    /// dead-letter queue: <c>replies</c> or <c>dead-letter</c>, compared as resource names are built
+    /// Whether <paramref name="name"/> would give a pool's queue the name of a transport's reply queue
+    /// (<c>replies</c>) or of the broker-side dead-letter queue a transport may create (<c>dead-letter</c>;
+    /// none creates one yet, the name is held for it), compared as resource names are built
     /// (sanitized, so <c>dead letter</c> is <c>dead-letter</c>) and ignoring case. <see cref="AddPool"/> and
     /// the configuration binder refuse such a name.
     /// </summary>
