@@ -74,9 +74,10 @@ public class InMemoryJobsShould
         var outcome = await host.GetRequiredService<IJobs>().CancelAsync(
             DurableJobScheduler.BuildJobKey("warm", Start.AddMinutes(1)), CancellationToken.None);
 
-        // Assert
+        // Assert — past the ten minutes the job would take, it has still not finished: it was cancelled
         outcome.Should().Be(CancellationOutcome.Requested);
-        await Task.Delay(100);
+        timeProvider.Advance(spy.JobDuration);
+        await Task.Delay(200);
         spy.Count.Should().Be(0);
     }
 

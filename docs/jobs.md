@@ -594,7 +594,7 @@ var outcome = await jobs.CancelAsync("nightly-rollup@2026-08-25T02:00:00.0000000
 
 | Outcome | Meaning |
 |---|---|
-| `Requested` | The flag is set; a running host will see it within one heartbeat, and a run not yet started never starts. Not "it stopped". |
+| `Requested` | The flag is set; a running host will see it within one heartbeat, and a run not yet claimed never starts. Not "it stopped". |
 | `NotFound` | No run with that key exists. |
 | `AlreadyComplete` | The run had already reached a terminal state. |
 
@@ -940,10 +940,21 @@ conduit.AddJobs(jobs =>
 ```
 
 `AddJobs` validates the options and fails at startup with an `InvalidOperationException` naming the
-offending one: `HeartbeatInterval`, `MaxAttempts` and `CleanupInterval` must be positive;
-`ClaimTimeout` must be more than twice `HeartbeatInterval` and at most one day; the three retentions
-cannot be negative (zero purges a row at the next cleanup); and `RetryBackoff` must hold at least one
-entry, every one positive. A declaration's `MaxRuntime` must be positive too.
+offending one:
+
+- `HeartbeatInterval` and `MaxAttempts` must be positive.
+- `ClaimTimeout` must be more than twice `HeartbeatInterval` and at most one day.
+- `CleanupInterval` must be positive and at most one day: the cleanup waits it between passes, and a
+  wait past about 49.7 days would end the cleanup service, and with it the host.
+- `RetryBackoff` must hold at least one entry, each positive and at most one day: a backoff is added
+  to now, and one near `TimeSpan.MaxValue` would leave the retry unrecorded and the run re-executing
+  every `ClaimTimeout`. For no retry at all, set `MaxAttempts = 1`.
+- The three retentions cannot be negative and can be at most 3650 days (zero purges a row at the
+  next cleanup): each is subtracted from now, and one near `TimeSpan.MaxValue` would fail every
+  cleanup pass, so nothing would ever be purged.
+- A declaration's `MaxRuntime` must be positive too.
+
+The one-day and 3650-day ceilings are the outbox's and the inbox's.
 
 Every knob here but `ManageOnly` describes the durable path.
 [Without a database](#without-a-database) none of them apply — there are no tables to create, no

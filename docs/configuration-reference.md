@@ -343,9 +343,10 @@ reach the rest of the library:
 
 ### Upgrading an existing host
 
-Every existing code-only registration still compiles unchanged — the connection-string and hub-URI
-arguments became optional rather than moving. Two consequences are worth knowing before you upgrade
-the packages:
+Almost every existing code-only registration still compiles unchanged — the connection-string and
+hub-URI arguments became optional rather than moving; the one exception is a job declaration whose
+lambda returns unrelated command types (below). A few consequences are worth knowing before you
+upgrade the packages:
 
 - **Recompile downstream assemblies.** `RabbitMQOptions.ConnectionString`,
   `ActiveMQOptions.ConnectionString`, and `AzureServiceBusOptions.ConnectionString` relaxed from `required init` to `{ get; set; }` so configuration
@@ -357,6 +358,16 @@ the packages:
   `ScheduleBuilder.RunAtStart()`. Callers still compile unchanged, but the method's signature changed,
   so an assembly compiled against the previous package version must be rebuilt rather than swapped in
   (binary breaking, as above).
+- **`ScheduleBuilder.Run` and `EventTriggerBuilder<TEvent>.Run` are now generic, `Run<TCommand>(...)`**,
+  so the declared command type is known when the job is declared (a `[FireAndForget]` command is
+  refused there; see [jobs](jobs.md#two-kinds-of-job)). A lambda returning one command type infers it
+  and compiles unchanged; one whose branches return unrelated command types has no type to infer and
+  needs `Run<ICommand>(...)`. The signatures changed, so this is binary breaking as above.
+- **`AddJobs` refuses values it used to accept**, failing at startup with an
+  `InvalidOperationException` naming the option: a `HeartbeatInterval` or `MaxAttempts` of zero or
+  less, a declaration's `MaxRuntime` of zero or less, a negative retention, and durations above their
+  ceiling (one day for `CleanupInterval` and each `RetryBackoff` entry, 3650 days for a retention).
+  See [jobs](jobs.md#configuration-reference).
 - **A missing required value now throws `InvalidOperationException`.**
   Where `UseRabbitMQ(null)` or `UseSignalR(null)` used to fail immediately in a guard clause with
   an `ArgumentNullException`/`ArgumentException`, the

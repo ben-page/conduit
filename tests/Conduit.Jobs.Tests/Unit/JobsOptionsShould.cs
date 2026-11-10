@@ -8,6 +8,9 @@ namespace Conduit.Jobs.Tests.Unit;
 [TestClass]
 public class JobsOptionsShould
 {
+    private const long OneDayAndATick = TimeSpan.TicksPerDay + 1;
+    private const long TenYearsAndATick = (3650 * TimeSpan.TicksPerDay) + 1;
+
     [TestMethod]
     [DataRow(nameof(JobsOptions.HeartbeatInterval), 0)]
     [DataRow(nameof(JobsOptions.HeartbeatInterval), -1)]
@@ -97,16 +100,68 @@ public class JobsOptionsShould
         act.Should().NotThrow();
     }
 
+    [TestMethod]
+    [DataRow(nameof(JobsOptions.CleanupInterval), OneDayAndATick, "1.00:00:00")]
+    [DataRow(nameof(JobsOptions.CleanupInterval), long.MaxValue, "1.00:00:00")]
+    [DataRow(nameof(JobsOptions.RetryBackoff), OneDayAndATick, "1.00:00:00")]
+    [DataRow(nameof(JobsOptions.RetryBackoff), long.MaxValue, "1.00:00:00")]
+    [DataRow(nameof(JobsOptions.FailedRetention), TenYearsAndATick, "3650.00:00:00")]
+    [DataRow(nameof(JobsOptions.FailedRetention), long.MaxValue, "3650.00:00:00")]
+    [DataRow(nameof(JobsOptions.CompletedRetention), TenYearsAndATick, "3650.00:00:00")]
+    [DataRow(nameof(JobsOptions.CompletedRetention), long.MaxValue, "3650.00:00:00")]
+    [DataRow(nameof(JobsOptions.HistoryRetention), TenYearsAndATick, "3650.00:00:00")]
+    [DataRow(nameof(JobsOptions.HistoryRetention), long.MaxValue, "3650.00:00:00")]
+    public void RefuseADurationAboveItsCeiling(string option, long ticks, string ceiling)
+    {
+        // Arrange — the cleanup's Task.Delay throws past about 49.7 days, ending the cleanup service and, by default,
+        // the host; a backoff is added to now and a retention subtracted from it, both of which overflow near
+        // TimeSpan.MaxValue: the retry is never recorded, the purge never runs
+
+        // Act
+        var act = () => new ConduitBuilder(new ServiceCollection())
+            .AddJobs(jobs => SetDuration(jobs, option, TimeSpan.FromTicks(ticks)));
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*JobsOptions.{option}*at most {ceiling}*");
+    }
+
+    [TestMethod]
+    public void AcceptEveryCeilingExactly()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+        {
+            jobs.CleanupInterval = TimeSpan.FromDays(1);
+            jobs.RetryBackoff = [TimeSpan.FromDays(1)];
+            jobs.FailedRetention = TimeSpan.FromDays(3650);
+            jobs.CompletedRetention = TimeSpan.FromDays(3650);
+            jobs.HistoryRetention = TimeSpan.FromDays(3650);
+        }
+
+        // Act
+        var act = () => new ConduitBuilder(new ServiceCollection()).AddJobs(Configure);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
     private static void Set(JobsBuilder jobs, string option, int value)
     {
-        var duration = TimeSpan.FromSeconds(value);
+        if (option == nameof(JobsOptions.MaxAttempts))
+        {
+            jobs.MaxAttempts = value;
+            return;
+        }
+
+        SetDuration(jobs, option, TimeSpan.FromSeconds(value));
+    }
+
+    private static void SetDuration(JobsBuilder jobs, string option, TimeSpan duration)
+    {
         switch (option)
         {
             case nameof(JobsOptions.HeartbeatInterval):
                 jobs.HeartbeatInterval = duration;
-                break;
-            case nameof(JobsOptions.MaxAttempts):
-                jobs.MaxAttempts = value;
                 break;
             case nameof(JobsOptions.CleanupInterval):
                 jobs.CleanupInterval = duration;

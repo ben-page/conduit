@@ -233,7 +233,8 @@ keep the two in step.
   one, by its run key or its schedule's name: `TryTrack` records the key the durable runner would
   give the run (`ManualRunKey`, `DurableJobScheduler.BuildJobKey`/`BuildStartUpJobKey`), and `TryCancel`
   matches a run key first, so code written against the durable API (cancel the key trigger-now
-  returned) does not get `NotFound` in a test host. Test: `InMemoryJobsShould.CancelByRunKey`.
+  returned) does not get `NotFound` in a test host. Tests: `InMemoryJobsShould.CancelByRunKey`,
+  `InMemoryJobStateShould.CancelTheRunAKeyNamesBeforeTheScheduleItAlsoNames`.
 - **`JobOverlapException` is not `ConflictException`.** `ConflictException` is a wire refusal: any
   handler letting it escape would answer its client 409 with this message. An `IJobs` caller decides
   whether an overlap is its client's business; an uncaught one is an unexpected failure (500, logged).
@@ -389,7 +390,7 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   store never fences. **Stopping wins:** `DisposeAsync` cancels `stop`, which is linked into every
   renewal's token, and a renewal that fails once stopping returns without fencing. The job has ended
   and its outcome's guarded write decides; fencing there would drop a finished job's outcome as a 410.
-  `ClaimTimeout` is capped at one day (`JobsOptions.LongestClaimTimeout`, checked in `JobsOptions.Validate()`): the deadline's
+  `ClaimTimeout` is capped at one day (`JobsOptions.LongestDuration`, checked in `JobsOptions.Validate()`): the deadline's
   `CancellationTokenSource(TimeSpan, TimeProvider)` throws past about 49.7 days, which would fail every
   renewal. Tests: `ClaimHeartbeatShould.FenceItselfAfterClaimTimeoutOfFailures` /
   `.FenceAtTheClaimTimeoutWhenTheRenewalThatWouldDecideItHangs` /
@@ -503,7 +504,8 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   which catches `Run<ICommand>(...)` returning one in `BuildRun`, the start-up run, trigger-now, the
   in-memory paths and the trigger listener (the coalescing factory is not wrapped: its scope is
   serialized and run as the declared `TCommand`); and in `Rehydrate`, failing the attempt of a stored
-  run whose type gained the attribute. Tests: `ScheduleBuilderShould`.
+  run whose type gained the attribute. Tests: `ScheduleBuilderShould`,
+  `JobFailureShould.FailAStoredRunWhoseCommandIsFireAndForget`.
 - **Shutdown's drain is bounded by the host's deadline.** `DurableJobScheduler.StopAsync` awaits
   `DrainAsync().WaitAsync(cancellationToken)`; on the deadline it logs `DrainAbandoned` (EventId 411,
   Warning, the in-flight run keys from `ClaimedJobExecutor.RunningJobKeys`) and returns. Unbounded, a
@@ -515,12 +517,22 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   option (the jobs package's and `DispatchRetryOptions`' exception, not Durability's
   `OptionsValidationException`; the two older checks' messages are unchanged): `HeartbeatInterval` not
   positive (the heartbeat would renew in a loop), `ClaimTimeout` not more than twice it or above a day,
-  `MaxAttempts` not positive, a negative retention, `CleanupInterval` not positive, `RetryBackoff` empty
-  or with an entry not positive. A declaration's `MaxRuntime` is not an option, so `AddJobs` checks it
-  beside, over schedules and triggers. `RetryBackoff` (default 1, 2, 4 minutes; `BackoffAfter(n)` takes
-  entry `min(n - 1, Count - 1)`, the last repeating) replaced `30 * 2^attempts` in `ClaimedJobExecutor`,
-  and `CleanupInterval` (default 1 hour) the `JobCleanup` constant; both are mirrored on `JobsBuilder`.
-  Tests: `JobsOptionsShould`, `JobsConfigurationShould.RejectANonPositiveMaxRuntimeOn*`,
+  `MaxAttempts` not positive, a retention negative or above 3650 days, `CleanupInterval` not positive or
+  above a day, `RetryBackoff` empty or with an entry not positive or above a day. A declaration's
+  `MaxRuntime` is not an option, so `AddJobs` checks it beside, over schedules and triggers.
+  **The ceilings are load-bearing**, and mirror Durability's `DurationLimits` (`LongestDuration` one day,
+  `LongestRetention` 3650 days; mirrored, as `JobsOptions.LongestDuration`/`LongestRetention`, because
+  Jobs does not reference Durability and those are internal): a `CleanupInterval` past about 49.7 days
+  makes `PeriodicCleanupServiceBase`'s `Task.Delay`, which is outside its try, throw after the first pass,
+  ending `JobCleanup` and, under the default `BackgroundServiceExceptionBehavior`, the host; a
+  `RetryBackoff` entry near `TimeSpan.MaxValue` ("never retry") overflowed `GetUtcNow() + backoff`, the
+  catch-all logged `OutcomeNotRecorded`, and the run re-executed every `ClaimTimeout` with its attempt
+  count never moving (no retry is `MaxAttempts = 1`); a retention near it made `now - retention` throw on
+  every cleanup pass, so nothing was purged. `RetryBackoff` (default 1, 2, 4 minutes; `BackoffAfter(n)`
+  takes entry `min(n - 1, Count - 1)`, the last repeating) replaced `30 * 2^attempts` in
+  `ClaimedJobExecutor`, and `CleanupInterval` (default 1 hour) the `JobCleanup` constant; both are
+  mirrored on `JobsBuilder`. Tests: `JobsOptionsShould` (`.RefuseADurationAboveItsCeiling`,
+  `.AcceptEveryCeilingExactly`), `JobsConfigurationShould.RejectANonPositiveMaxRuntimeOn*`,
   `JobFailureShould.DelayTheRetryByTheConfiguredBackoff`.
 - **`MaxRuntime` is checked on heartbeat ticks** (durable path), so it takes effect at the first renewal
   at or after the limit: 10 s under the default 30 s interval fires at about 30 s. The in-memory scheduler

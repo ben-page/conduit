@@ -79,7 +79,7 @@ public class DurableJobSchedulerShould
         await JobsDatabaseProbe.WaitForOnlyRunAsync(database);
 
         // Act — the clock reaches the run's due time, and no further
-        timeProvider.Advance(TimeSpan.FromSeconds(30));
+        await AdvanceInStepsAsync(timeProvider, TimeSpan.FromSeconds(30));
 
         // Assert
         await spy.WaitForCountAsync(1);
@@ -105,11 +105,27 @@ public class DurableJobSchedulerShould
         await host.GetRequiredService<IMediator>().PublishAsync(new PunchChanged("loc-1", Start));
         await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
-        // Act
-        timeProvider.Advance(TimeSpan.FromSeconds(30));
+        // Act — the clock reaches the scope's due time, and no further
+        await AdvanceInStepsAsync(timeProvider, TimeSpan.FromSeconds(30));
 
         // Assert
         await workstations.WaitForCountAsync(1);
+    }
+
+    /// <summary>
+    /// Moves the clock to <paramref name="total"/> in five-second steps. The publish's wake may still be running
+    /// its sweep pass: one jump to the due time, landing between the pass's claim and its sleep computation,
+    /// would leave the run due but unclaimed and the sweep asleep for its two-minute ceiling on a frozen clock.
+    /// Stepping keeps the due time in the future until the sweep has armed its timer for it.
+    /// </summary>
+    private static async Task AdvanceInStepsAsync(FakeTimeProvider timeProvider, TimeSpan total)
+    {
+        var step = TimeSpan.FromSeconds(5);
+        for (var advanced = TimeSpan.Zero; advanced < total; advanced += step)
+        {
+            timeProvider.Advance(step);
+            await Task.Delay(20);
+        }
     }
 
     private static Task<TestHost> StartHostAsync(

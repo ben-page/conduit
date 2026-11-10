@@ -67,6 +67,47 @@ public class JobFailureShould
     }
 
     [TestMethod]
+    [Timeout(30_000)]
+    public async Task FailAStoredRunWhoseCommandIsFireAndForget()
+    {
+        // Arrange — a pending run naming a [FireAndForget] command, as a run written before its type gained the
+        // attribute would; dispatched, it would be recorded Completed before its handler had started
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        var store = JobsDatabaseProbe.StoreFor(database);
+        await store.EnsureTablesExistAsync(CancellationToken.None);
+        await store.TryMaterializeAsync(
+            new JobRun
+            {
+                JobKey = "nightly@stored",
+                ScheduleName = "nightly",
+                MessageType = typeof(FireAndForgetJob).FullName!,
+                Payload = "{}",
+                RunAt = Start,
+                Status = JobRunStatus.Pending,
+            },
+            CancellationToken.None);
+
+        // Act — a runner's sweep claims it at start
+        await using var host = await JobsTestHost.StartAsync(
+            jobs =>
+            {
+                jobs.MaxAttempts = 1;
+                jobs.Schedule("nightly").Cron("0 2 * * *").Run(() => new RecordedJob("nightly"));
+            },
+            spy,
+            timeProvider,
+            database.ConnectionString);
+        var run = await JobsDatabaseProbe.WaitForTerminalAsync(database, "nightly@stored");
+
+        // Assert — the attempt failed naming the reason, and the handler was never reached
+        run.Status.Should().Be(JobRunStatus.Failed);
+        run.LastError.Should().Contain(typeof(FireAndForgetJob).FullName!).And.Contain("[FireAndForget]");
+        spy.StartedCount.Should().Be(0);
+    }
+
+    [TestMethod]
     public async Task MarkFailedAndAdvanceTheCursorOnceAttemptsAreExhausted()
     {
         // Arrange

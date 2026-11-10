@@ -40,4 +40,23 @@ public class InMemoryJobStateShould
         state.TryCancel("warm").Should().BeTrue();
         first.IsCancellationRequested.Should().BeTrue();
     }
+
+    [TestMethod]
+    public void CancelTheRunAKeyNamesBeforeTheScheduleItAlsoNames()
+    {
+        // Arrange — one schedule is named exactly as the other's run is keyed
+        var state = new InMemoryJobState();
+        using var keyed = new CancellationTokenSource();
+        using var named = new CancellationTokenSource();
+        state.TryTrack("warm", "warm@manual-1", keyed).Should().BeTrue();
+        state.TryTrack("warm@manual-1", "warm@manual-1@manual-2", named).Should().BeTrue();
+
+        // Act
+        var cancelled = state.TryCancel("warm@manual-1");
+
+        // Assert — a run key names exactly one run, so it wins
+        cancelled.Should().BeTrue();
+        keyed.IsCancellationRequested.Should().BeTrue();
+        named.IsCancellationRequested.Should().BeFalse();
+    }
 }
