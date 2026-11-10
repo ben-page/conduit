@@ -9,6 +9,10 @@
   - [\[LocalOnly\]](#localonly)
   - [Inbound events](#inbound-events)
   - [Self-published events](#self-published-events)
+- [Request timeouts](#request-timeouts)
+- [Failed messages](#failed-messages)
+- [Stopping a host with work in flight](#stopping-a-host-with-work-in-flight)
+- [Ephemeral resource cleanup](#ephemeral-resource-cleanup)
 
 ## Overview
 
@@ -18,66 +22,51 @@ Conduit ships six transports in two categories.
 
 **Point-to-point transports** connect two services directly:
 
-- **SignalR** provides persistent bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect. See [SignalR](signalr.md).
-- **HTTP** maps commands and queries to RESTful endpoints or an envelope dispatch endpoint. Request/response only. No server-to-client push. See [HTTP](http.md).
+- **SignalR** provides persistent bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services send to each other's hubs with automatic reconnect. See [SignalR](signalr.md).
+- **HTTP** maps commands and queries to RESTful endpoints or a wire dispatch endpoint. Request/response only. No server-to-client push. See [HTTP](http.md).
 
-**Durable messaging (broker) transports** use a message broker for reliable communication. All four
-share the same `BrokerTransportBase<TMessage>` template (inbound dispatch orchestration, reply
-queues, topology naming via `TopologyNaming`/`SystemName`) and differ only in broker-specific
-primitives, so they follow identical Conduit patterns. Each has a dedicated `IConduitTransport` and
-an `IHostedService` consumer:
+**Broker transports** use a message broker between services. All four share the same
+`BrokerTransportBase<TMessage>` template (inbound dispatch orchestration, reply correlation,
+failure settlement, the stop sequence, topology naming via `TopologyNaming`/`SystemName`) and differ only in
+broker-specific primitives, so they follow identical Conduit patterns. Each has a dedicated `IConduitTransport` and
+an `IHostedService` consumer, and each guide follows the same outline: setup, options and configuration keys,
+topology, Developer and Test modes, request/response, failure handling, wire format, receiver pools and limitations.
 
 | Transport | Broker / protocol | Guide |
 |---|---|---|
+| **RabbitMQ** | RabbitMQ.Client (AMQP 0-9-1 exchanges, queues, bindings) | [rabbitmq.md](rabbitmq.md) |
 | **Azure Service Bus** | Azure.Messaging.ServiceBus (queues, topics, subscriptions) | [azure-service-bus.md](azure-service-bus.md) |
-| **RabbitMQ** | RabbitMQ.Client (AMQP exchanges, queues, bindings) | [rabbitmq.md](rabbitmq.md) |
 | **Amazon SQS** | AWSSDK SQS (+ SNS for fan-out) | [amazon-sqs.md](amazon-sqs.md) |
-| **ActiveMQ** | AMQPNetLite.Core (ActiveMQ Artemis) | [activemq.md](activemq.md) |
+| **ActiveMQ** | AMQPNetLite.Core (AMQP 1.0, ActiveMQ Artemis) | [activemq.md](activemq.md) |
 
 Your handlers never reference a transport. The same `ICommandHandler<T>` works whether the message arrived locally, over SignalR, via HTTP, or from a broker queue.
 
 ### Per-endpoint transport instances
 
 Every endpoint gets its own transport instance, options, and `IHostedService` lifecycle, keyed in DI
-by the endpoint name. Two endpoints on the same transport package — say `orders` pointed at one
-RabbitMQ cluster and `audit` pointed at another — are two fully independent connections, each built
-from its own options. This is true for all six transports; the four broker packages register their
-options and transport as keyed singletons per endpoint, matching what SignalR and HTTP already did.
-
-Before that, the four broker packages registered their options and transport as **non-keyed**
-singletons and added a keyed entry that merely forwarded to the non-keyed one. MS.DI resolves the
-last-registered descriptor, so a host with two endpoints on one transport package ended up with a
-single instance built from the *last* endpoint's options — and every symptom of that was silent:
-commands routed to the first endpoint reached the second endpoint's broker with no error;
-`GetServices<IConduitTransport>()` returned two entries that were the same object, so every
-published event went twice to one broker and never to the other; two `IHostedService` entries
-resolved to that one object, so `StartAsync` ran twice and created its topology twice; and
-dead-letter replay, which resolves the transport by the recorded `SourceEndpoint`, replayed onto the
-wrong broker. Keying every registration by endpoint name is what rules all four out, which is why no
-broker package registers its options or its concrete transport type without a key — the only
-non-keyed entries left are the `IConduitTransport` and `IHostedService` forwarders, one per
-endpoint, each resolving that endpoint's keyed instance.
+by the endpoint name. Two endpoints on the same transport package (say `orders` pointed at one
+RabbitMQ cluster and `audit` pointed at another) are two fully independent connections, each built
+from its own options. This is true for all six transports. No broker package registers its options or its
+concrete transport type without a key: the only non-keyed entries are the `IConduitTransport` and
+`IHostedService` forwarders, one per endpoint, each resolving that endpoint's keyed instance. Dead-letter replay
+resolves the transport by the endpoint name it recorded, so a replay reaches the broker the message came from.
 
 The intended use of two endpoints on the same transport type is **two different brokers**. Two
-endpoints on the same transport pointed at the *same* broker from the *same* application will now
-genuinely start two independent transports, each creating its own app-scoped topology. That topology
-collides: `TopologyNaming.CreateAppResourceName` keys resource names off `ApplicationName`, not the
-endpoint name, so both endpoints derive identical resource names — with different consequences for
+endpoints on the same transport pointed at the *same* broker from the *same* application start two
+independent transports, each creating its own app-scoped topology, and that topology collides:
+`TopologyNaming.CreateAppResourceName` keys resource names off `ApplicationName`, not the
+endpoint name, so both endpoints derive identical resource names, with different consequences for
 each message kind. Commands and queries route: dispatch resolves exactly one keyed transport by
 endpoint name, so a routed message is only ever sent once, and the two endpoints' identical queue
-names just make them competing consumers on that one queue — redundant, not incorrect. Events do not
-route, they broadcast: the generated mediator iterates every registered `IConduitTransport` and calls
-`SendEventAsync` on each one (`MediatorEmitter.EmitBroadcastBlock`), with no dedupe by broker or
-connection. Two endpoints on the same broker publish every event twice to the same topic, and because
-both derive the same app-scoped event queue name, that queue receives two copies and listeners run
-twice — unless the durability inbox is enabled to dedupe by message ID. This is not a regression from
-the per-endpoint change: before it, registering a transport twice returned the same shared instance
-for both registrations, and broadcasting to it produced the same double publish. It just was not
-previously documented. If you need two logically separate destinations on the same broker
-technology, give them distinct connection strings (different brokers, or at minimum different virtual
-hosts/namespaces).
+names just make them competing consumers on that one queue: redundant, not incorrect. Events do not
+route, they broadcast: the generated mediator sends each event to every registered `IConduitTransport`,
+with no dedupe by broker or connection. Two endpoints on the same broker publish every event twice to the
+same topic, and because both derive the same app-scoped event queue name, that queue receives two copies
+and listeners run twice, unless the durability inbox is enabled to dedupe by message ID. If you need two
+logically separate destinations on the same broker technology, give them distinct connection strings
+(different brokers, or at minimum different virtual hosts/namespaces).
 
-Configuration can supply each endpoint's operational values — connection strings, regions, timeouts —
+Configuration can supply each endpoint's operational values (connection strings, regions, timeouts)
 without touching code. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration).
 
 ## Routing
@@ -104,7 +93,7 @@ bool reserved = await mediator.ExecuteAsync(
     new ReserveInventoryCommand("SKU-42", 5), cancellationToken);
 ```
 
-The generated mediator checks the route table, serializes the command into a `DispatchEnvelope`, sends it over the transport, and deserializes the response. The caller never knows the handler is in another process.
+The generated mediator checks the route table, serializes the command into a `DispatchEnvelope`, sends it over the transport, and deserializes the response. The caller never knows the handler is in another process. A remote failure throws `RemoteDispatchException`, carrying the remote error's code.
 
 Routes only apply to commands and queries. Events broadcast rather than route (see below).
 
@@ -112,7 +101,7 @@ Routes only apply to commands and queries. Events broadcast rather than route (s
 
 When two services communicate, both need the message type definitions. The simplest approach is to copy the record declarations into the calling service. They just need to match by full type name and shape.
 
-For larger systems, put the shared types in a standalone class library that both services reference:
+For larger systems, put the shared types in a standalone class library that both services reference. `Conduit.Contracts` holds the message interfaces and attributes with no package dependencies of its own:
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
@@ -120,7 +109,7 @@ For larger systems, put the shared types in a standalone class library that both
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Conduit" />
+    <PackageReference Include="Conduit.Contracts" />
   </ItemGroup>
 </Project>
 ```
@@ -131,7 +120,7 @@ namespace Inventory.Commands;
 public record ReserveInventoryCommand(string ProductId, int Quantity) : ICommand<bool>;
 ```
 
-Both services reference the contracts library. The handling service implements handlers. The calling service configures routes.
+Both services reference the contracts library. The handling service implements handlers. The calling service configures routes. A contract that carries a file (`ConduitFile`) needs the `Conduit` package instead, which holds that type.
 
 The namespace matters. A namespace route matches on whole namespace segments: `RouteNamespace<Inventory.Commands.ReserveStock>()` covers `Inventory.Commands` and `Inventory.Commands.Bulk`, but not `Inventory.CommandsArchive`. Keep contract types in a predictable hierarchy.
 
@@ -175,7 +164,7 @@ PublishAsync(event)
 
 The publisher does not know who is listening. Each transport receives a `DispatchEnvelope` and delivers it using its own mechanism.
 
-Transport broadcast is fire-and-forget. A transport failure does not affect local listener execution.
+The local listeners run first (a `[FireAndForget]` event's in the background), then each transport is sent the event in turn. A transport that throws is logged (`TransportBroadcastFailed`, naming the transport and the event) and the broadcast carries on to the next: a transport failure never fails the publish. A local listener that throws does (unless the event is `[FireAndForget]`, whose listeners' failures are logged): its failure reaches the publisher before anything is broadcast. Only server-mode and broker transports are broadcast to; a client-mode SignalR or HTTP endpoint is not.
 
 ### [LocalOnly]
 
@@ -209,9 +198,9 @@ This prevents echo loops. If an inbound event were re-broadcast, it would bounce
 
 ### Self-published events
 
-The four broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) route every
-message through a shared topic/exchange, and each application's per-app event queue is bound to
-*every* discovered event type — including the ones the application publishes itself. Left alone,
+The four broker transports (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ) route every
+message through a shared topic/exchange, and each application's event queue is bound to every event type
+the application listens for, including the ones it publishes itself. Left alone,
 that means a broker-backed application receives its own broadcast back:
 
 ```
@@ -224,7 +213,7 @@ App A publishes MyEvent
 
 Running A's listeners a second time would be a bug, not a feature, so every outbound event carries
 the publishing application's name (`ConduitOptions.ApplicationName`), and a broker transport drops
-an inbound event whose stamp matches its own application name — that application's listeners
+an inbound event whose stamp matches its own application name: that application's listeners
 already ran when it was published. The drop happens before a DI scope is created or the payload is
 deserialized, and is recorded as a `SelfPublishedEventSkipped` observation, visible in the
 [audit trail](../audit.md), so "why didn't my listener run" has an answer.
@@ -233,20 +222,20 @@ A few things worth knowing about the check:
 
 - **It keys on the application, not the instance.** Every replica of a service shares the same
   `ApplicationName`, so any instance of application A drops A's own copy, not just the instance
-  that published it. An instance-scoped stamp would let a *peer* instance run the listeners again
-  — the defect this exists to prevent, one hop later.
+  that published it. An instance-scoped stamp would let a *peer* instance run the listeners again,
+  the defect this exists to prevent, one hop later.
 - **`ApplicationName` must be unique per logical application.** The stamp *is* the application's
   identity, so two genuinely different deployments that happen to share one `ApplicationName` are
   a single application as far as the filter is concerned: each drops the other's events, and an
   event that one publishes but only the other listens for is lost with no error. Sharing a name
-  was already unsupported — it also means sharing one competing-consumer command/query queue, so
-  the two deployments would steal each other's commands — but the filter makes that misconfigured
+  was already unsupported (it also means sharing the application's queues, so the two deployments
+  would steal each other's messages), but the filter makes that misconfigured
   case fail more quietly. Give every logical application its own name; give every replica of one
   application the same name. The names must also differ **after sanitizing**: a broker resource
   name keeps only `[A-Za-z0-9_-]`, every other character becoming `-`, so `Orders.Api` and
   `Orders-Api` carry different stamps but name the same queues, and share them as one application would.
 - **Requests are never dropped.** A command or query legitimately routed back to its own
-  application — self-routing, or a receiver pool shared with the publisher — must still be
+  application (self-routing, or a receiver pool shared with the publisher) must still be
   handled, so the check only ever looks at events.
 - **Event-ness is decided by the type registry, not by "not a request."** A routed
   `[FireAndForget]` command also arrives expecting no reply, which looks like an event at the wire
@@ -254,7 +243,7 @@ A few things worth knowing about the check:
   being dropped.
 - **An application with no configured name never filters.** A missing stamp would otherwise
   compare equal to a missing `ApplicationName`, and every inbound event would be silently
-  discarded — an outage, not a fix. The guard exists specifically to rule that out.
+  discarded: an outage, not a fix. The guard exists specifically to rule that out.
 - **A missing or foreign stamp always dispatches normally**, so events published before an
   upgrade (no stamp yet) and events from non-Conduit producers behave exactly as before. This
   keeps a rolling upgrade safe.
@@ -263,8 +252,7 @@ A few things worth knowing about the check:
   HTTP never hands a host back its own event: `/publish` only receives what another host sends it. The filter lives entirely in
   `BrokerTransportBase`, shared by the four broker transports only.
 - **There is no configuration knob to turn it off.** The filter is unconditional wherever it
-  applies; add an opt-out only if a concrete use case for double-processing your own events
-  actually shows up.
+  applies.
 
 One consequence follows directly: an application's own listeners always run **on the publishing
 instance**, not load-balanced across replicas, because the inline run happens at publish time and
@@ -306,14 +294,14 @@ abandoned, and a publisher over HTTP `/publish` or the SignalR hub's `Publish` i
 An abandoned message is not gone, and it is not handled only once: until the broker dead-letters it, the broker
 delivers it again and its listener or handler runs again.
 
-- [RabbitMQ](rabbitmq.md#failed-messages) rejects it once, without requeue, to the system's dead-letter queue: the
+- [RabbitMQ](rabbitmq.md#failure-handling) rejects it once, without requeue, to the system's dead-letter queue: the
   handler ran once.
-- [ActiveMQ](activemq.md#failed-messages) redelivers it up to the address's `max-delivery-attempts` (10 by
-  default), with no delay between attempts by default, then moves it to the dead-letter address.
-- [Amazon SQS](amazon-sqs.md#failed-messages) delivers it again a visibility timeout later, up to `MaxReceiveCount`
+- [Azure Service Bus](azure-service-bus.md#failure-handling) redelivers it at once, up to the entity's maximum
+  delivery count (10 by default), then moves it to the entity's dead-letter subqueue.
+- [Amazon SQS](amazon-sqs.md#failure-handling) delivers it again a visibility timeout later, up to `MaxReceiveCount`
   (5 by default), then the redrive policy moves it to the queue's dead-letter queue.
-- [Azure Service Bus](azure-service-bus.md) redelivers it at once, up to the entity's maximum delivery count (10 by
-  default), then moves it to the entity's dead-letter subqueue.
+- [ActiveMQ](activemq.md#failure-handling) redelivers it up to the address's `max-delivery-attempts` (10 by
+  default), with no delay between attempts by default, then moves it to the dead-letter address.
 
 So a listener or a `[FireAndForget]` handler with side effects that can fail part-way should be idempotent, or
 the host should configure Conduit's [dead-letter queue](../dead-letter-queue.md), so the first failure is captured
@@ -323,6 +311,9 @@ redelivery only of a dispatch that succeeded, and releases a failed one so it ru
 A refused `[FireAndForget]` command is logged once at Warning (`FireAndForgetCommandRefused`), naming its type
 and the refusal's code, since nothing else will report it. A dead-letter replay of a command or query arrives
 without a reply address too, so it is settled as a `[FireAndForget]` command is.
+
+SignalR and HTTP settle nothing: a failure is answered to the caller, or, for an event published over them,
+fails the call ([SignalR → Failure handling](signalr.md#failure-handling), [HTTP → Failure handling](http.md#failure-handling)).
 
 ## Stopping a host with work in flight
 
@@ -336,13 +327,14 @@ handling before it closes anything those handlers need:
    A transport that is reconnecting after a lost connection stops reconnecting.
 2. **Drain.** The transport waits for every handler still running to finish, reply and acknowledge
    its message, bounded by the host's shutdown deadline (`HostOptions.ShutdownTimeout`, 30 seconds
-   by default). A message the broker client still hands over during this step is requeued
-   undispatched, for another instance to take (on Amazon SQS, made visible again at once, as is a
-   message received but not yet started when polling stopped; one SQS does not take back is logged
-   and reappears when its visibility timeout lapses): it is not a failure, so it is never
-   dead-lettered. A handler that fails during the drain is abandoned like any other failure (on
-   RabbitMQ, dead-lettered; on ActiveMQ, counted as a delivery attempt; on Amazon SQS, delivered again
-   once its visibility timeout lapses, counted toward `MaxReceiveCount`).
+   by default). A message the broker client still hands over during this step is returned
+   undispatched, for another instance to take (on RabbitMQ, requeued; on ActiveMQ, released; on Amazon
+   SQS, made visible again at once, as is a message received but not yet started when polling stopped, and
+   one SQS does not take back is logged and reappears when its visibility timeout lapses; on Azure Service
+   Bus, abandoned, which counts as a delivery): it is not a failure, so it is never dead-lettered. A handler
+   that fails during the drain is abandoned like any other failure (on RabbitMQ, dead-lettered; on ActiveMQ,
+   counted as a delivery attempt; on Amazon SQS, delivered again once its visibility timeout lapses, counted
+   toward `MaxReceiveCount`).
 3. **Close.** Only then are the channels, links and receivers closed, and a request still awaiting
    a reply fails with an `InvalidOperationException`.
 
@@ -356,18 +348,21 @@ raise `HostOptions.ShutdownTimeout` to cover them, or make them idempotent with 
 
 ## Ephemeral resource cleanup
 
-RabbitMQ, Azure Service Bus, and ActiveMQ auto-delete ephemeral resources via native broker TTLs.
-On ActiveMQ that covers the queues (deleted 4 hours, or 5 minutes in Test mode, after their last
-consumer left) but not the two addresses per prefix, which Artemis does not auto-delete for an
+RabbitMQ, Azure Service Bus and ActiveMQ remove Developer and Test resources with the broker's own
+auto-delete: RabbitMQ deletes a queue when its last consumer leaves (and an exchange with its last binding),
+Azure Service Bus deletes an entity after 4 hours idle (5 minutes in Test mode), and ActiveMQ deletes a
+queue 4 hours (5 minutes in Test mode) after its last consumer left. Two things stay: RabbitMQ's
+system dead-letter queue (until the broker restarts in Developer mode; it expires after 5 minutes unused in
+Test mode), and ActiveMQ's two addresses per prefix, which Artemis does not auto-delete for an
 address created through its management API; they stay behind empty
 ([see ActiveMQ](activemq.md#developer-and-test-modes)).
 SQS has no equivalent, so the transport library exposes
-`AmazonSqsTopologyReaper.ReapByPrefixAsync` — best-effort cleanup that deletes resources whose names
+`AmazonSqsTopologyReaper.ReapByPrefixAsync`, a best-effort cleanup that deletes resources whose names
 start with a given prefix. Conduit's own test suites use this (once per test project, scoped to a stable
 per-project prefix) so a shared or live broker doesn't accumulate test resources. Applications that name
 resources under a known prefix can run the same cleanup. Developer-mode resources are not auto-reaped for
-SQS — run that broker in a container locally, or call the reaper yourself.
+SQS: run that broker in a container locally, or call the reaper yourself.
 
 ---
 
-Previous: [Core Concepts](../core-concepts.md) | [Home](../../README.md) | Next: [SignalR](signalr.md)
+Previous: [Core Concepts](../core-concepts.md) | [Home](../../README.md) | Next: [RabbitMQ](rabbitmq.md)

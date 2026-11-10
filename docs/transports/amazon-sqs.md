@@ -2,34 +2,36 @@
 
 - [Overview](#overview)
 - [Setup](#setup)
-- [Options](#options)
+- [Options and configuration keys](#options-and-configuration-keys)
   - [Loading from configuration](#loading-from-configuration)
   - [Credentials](#credentials)
   - [LocalStack](#localstack)
 - [Topology](#topology)
+  - [Unicast by convention](#unicast-by-convention)
   - [Filter policies and raw message delivery](#filter-policies-and-raw-message-delivery)
   - [Name length](#name-length)
+  - [Auto-discovery](#auto-discovery)
 - [Permissions](#permissions)
-- [Developer and test modes](#developer-and-test-modes)
+- [Developer and Test modes](#developer-and-test-modes)
 - [Request/response](#requestresponse)
-- [Failed messages](#failed-messages)
-- [Stopping](#stopping)
-- [Auto-discovery](#auto-discovery)
+- [Failure handling](#failure-handling)
+  - [Stopping](#stopping)
 - [Wire format](#wire-format)
 - [Receiver pools](#receiver-pools)
+- [Limitations](#limitations)
 
 ## Overview
 
 The Amazon SQS transport provides durable, broker-based messaging over SNS and SQS together: **SNS** carries the fan-out, **SQS** holds the per-application queues. All message types (commands, queries, events) are published to a single SNS topic, and SNS subscription filter policies route each message to the queues that should receive it. Commands and queries use request/response with a reply queue per transport instance. The transport runs as an `IHostedService` that manages topology, long-polling consumers, and reply correlation.
 
-Unlike the other broker transports there is no connection string — the transport authenticates with an AWS region and the standard credential chain.
+Unlike the other broker transports there is no connection string: the transport connects with an AWS region and the default AWS credential chain.
 
 ## Setup
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
-    conduit.AddEndpoint("events", endpoint =>
+    conduit.AddEndpoint("orders", endpoint =>
     {
         endpoint.UseAmazonSqs(options => options.Region = RegionEndpoint.EUWest1);
         endpoint.RouteNamespace<Orders.Commands.CreateOrder>();
@@ -39,7 +41,7 @@ builder.Services.AddConduit(conduit =>
 
 `UseAmazonSqs` registers the transport as both `IConduitTransport` and `IHostedService`. The transport starts when the host starts. The callback is optional when the settings come from configuration.
 
-## Options
+## Options and configuration keys
 
 ```csharp
 endpoint.UseAmazonSqs(options =>
@@ -50,28 +52,34 @@ endpoint.UseAmazonSqs(options =>
 });
 ```
 
+`AmazonSqsOptions`:
+
 | Property | Default | Description |
 |---|---|---|
-| `Region` | *(none)* | AWS region. Falls back to the SDK's own region resolution when unset. |
-| `ServiceUri` | `null` | Override endpoint for both SNS and SQS — used for [LocalStack](#localstack) |
-| `Credentials` | `null` | Explicit AWS credentials. When unset, the default AWS credential chain applies. |
-| `DefaultConcurrency` | `10` | Default consumer concurrency. For SQS this bounds polling parallelism. |
-| `ResponseTimeout` | `60s` | Timeout for request/response operations |
-| `VisibilityTimeoutSeconds` | `60` | SQS visibility timeout. Must be **≥** `ResponseTimeout`, validated at startup. |
-| `MaxReceiveCount` | `5` | How many times SQS delivers a message before moving it to its queue's dead-letter queue — see [Failed messages](#failed-messages). 1 to 1000, validated at startup. |
-| `RawMessageDelivery` | `true` | Required to stay `true` — see [Filter policies and raw message delivery](#filter-policies-and-raw-message-delivery) |
+| `Region` | `null` | AWS region. Falls back to the SDK's own region resolution when unset. Not used when `ServiceUri` is set. |
+| `ServiceUri` | `null` | Override endpoint for both SNS and SQS, used for [LocalStack](#localstack). |
+| `Credentials` | `null` | Credentials for the `ServiceUri` endpoint. Without `ServiceUri` they are not used: the default AWS credential chain applies (see [Credentials](#credentials)). |
+| `DefaultConcurrency` | `10` | How many handlers the application queue's poller runs at once. The poller receives up to 10 messages per long poll and starts each one as a handler slot frees up. |
+| `ResponseTimeout` | `00:01:00` | How long a request waits for its reply (see [Request/response](#requestresponse)). Positive and finite, and at most `VisibilityTimeoutSeconds`. |
+| `VisibilityTimeoutSeconds` | `60` | SQS visibility timeout of the application and pool queues. Must be at least `ResponseTimeout`, validated at startup. |
+| `MaxReceiveCount` | `5` | How many times SQS delivers a message before moving it to its queue's dead-letter queue (see [Failure handling](#failure-handling)). 1 to 1000, validated at startup. |
+| `RawMessageDelivery` | `true` | Required to stay `true` (see [Filter policies and raw message delivery](#filter-policies-and-raw-message-delivery)). |
+| `Pools` | empty | Named receiver pools, added with `AddPool` (see [Receiver pools](#receiver-pools)). |
+| `EndpointName` | the endpoint's name | Read-only: `UseAmazonSqs` sets it from `AddEndpoint`, never from configuration. |
 
-Topic and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
+The transport validates `RawMessageDelivery`, `MaxReceiveCount` and `VisibilityTimeoutSeconds` when the host builds it, and throws `InvalidOperationException` naming the setting.
+
+Topic and queue names are controlled by `SystemName`, `ApplicationName` and `TopologyMode` on `ConduitOptions` (see [Developer and Test modes](#developer-and-test-modes)).
 
 ### Loading from configuration
 
-Every property above also binds from `Conduit:Endpoints:{endpointName}`, so `UseAmazonSqs()` can run with no callback at all:
+Every property above but `EndpointName` also binds from `Conduit:Endpoints:{endpointName}`, under the same name, so `UseAmazonSqs()` can run with no callback at all:
 
 ```json
 {
   "Conduit": {
     "Endpoints": {
-      "events": {
+      "orders": {
         "Region": "eu-west-1",
         "VisibilityTimeoutSeconds": 120,
         "DefaultConcurrency": 20
@@ -82,21 +90,23 @@ Every property above also binds from `Conduit:Endpoints:{endpointName}`, so `Use
 ```
 
 ```csharp
-conduit.AddEndpoint("events", endpoint => endpoint.UseAmazonSqs());
+conduit.AddEndpoint("orders", endpoint => endpoint.UseAmazonSqs());
 ```
 
 `Region` is written as an AWS **system name** (`"eu-west-1"`), not a .NET constant name. Configuration binds first; a `configure` callback overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration) for the full precedence rule, the pool-merge behavior, and the complete key reference.
 
 ### Credentials
 
-Credentials are nested under `Credentials`, mirroring the property they populate:
+Against AWS itself, the transport always authenticates through the **default AWS credential chain** (environment variables, profile, container or instance role), whether or not `Credentials` is set. Give the process its identity that way; it is what you want in a deployed environment anyway, rather than secrets in appsettings.
+
+`Credentials` is used only together with [`ServiceUri`](#localstack). Configuration supplies it nested under `Credentials`, mirroring the property it populates:
 
 ```json
 {
   "Conduit": {
     "Endpoints": {
-      "events": {
-        "Region": "eu-west-1",
+      "orders": {
+        "ServiceUri": "http://localhost:4566",
         "Credentials": {
           "AccessKey": "AKIA…",
           "SecretKey": "…",
@@ -108,7 +118,7 @@ Credentials are nested under `Credentials`, mirroring the property they populate
 }
 ```
 
-`SessionToken` is optional — supply it for temporary credentials, omit it for long-lived ones. If either `AccessKey` or `SecretKey` is missing, the transport leaves `Credentials` unset and the **default AWS credential chain** applies (environment variables, profile, container or instance role). That is usually what you want in a deployed environment; prefer it to putting secrets in appsettings.
+`SessionToken` is optional: supply it for temporary credentials, omit it for long-lived ones. If either `AccessKey` or `SecretKey` is missing, the transport leaves `Credentials` unset.
 
 ### LocalStack
 
@@ -118,7 +128,7 @@ Point both SNS and SQS at a local endpoint with `ServiceUri`:
 {
   "Conduit": {
     "Endpoints": {
-      "events": {
+      "orders": {
         "Region": "us-east-1",
         "ServiceUri": "http://localhost:4566"
       }
@@ -146,7 +156,9 @@ SQS queue: {systemName}-{appName}-{poolName}-dlq          dead-letter queue
 SQS queue: {systemName}-{appName}-replies-{instanceId}    one per transport instance, deleted on stop
 ```
 
-Every message — command, query or event — is published to the single SNS topic. Each queue has one subscription, whose filter policy lists the types the queue takes: the commands and queries the application handles and the events it listens for, minus those a [receiver pool](#receiver-pools) takes. SNS hands a message to every subscription whose filter policy matches, so every application that listens for an event gets its own copy, and the instances of one application compete for it on their shared queue. A command or query reaches exactly one application as long as exactly one application handles its type: two applications handling the same type would each receive it, as on RabbitMQ.
+`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes.
+
+Every message (command, query or event) is published to the single SNS topic. Each queue has one subscription, whose filter policy lists the types the queue takes: the commands and queries the application handles and the events it listens for, minus those a [receiver pool](#receiver-pools) takes. SNS hands a message to every subscription whose filter policy matches, so every application that listens for an event gets its own copy, and the instances of one application compete for it on their shared queue.
 
 Replies bypass SNS entirely and are sent directly to the requesting instance's reply queue.
 
@@ -157,9 +169,15 @@ Startup creates what is missing and brings what exists up to the release that is
 
 While instances of two releases run side by side, the filter policy is the one the last instance to start set: a type the newer release added stops arriving if an instance of the older one restarts.
 
+A `ProducerOnly` host creates only the topic and its reply queue: no application or pool queue, no subscription, and no poller but the reply queue's.
+
+### Unicast by convention
+
+SNS has no shared subscription that one application could hold for a command type, so a command or query reaches every application whose filter policy lists it. It reaches exactly one application only as long as exactly one application handles its type. Two applications that handle the same command each receive it, and both run their handler. For a request both reply: the first reply to arrive is the caller's answer, and the other arrives late and is deleted (`LateReply`). Handle each command or query type in one application.
+
 ### Filter policies and raw message delivery
 
-SNS filter policies match on **message attributes**, and attributes are only visible to a filter policy when the subscription uses raw message delivery. Without it, SNS wraps the payload in a JSON envelope and the attributes move into the body, where filter policies cannot see them — so every queue would receive every message.
+SNS filter policies match on **message attributes**, and attributes are only visible to a filter policy when the subscription uses raw message delivery. Without it, SNS wraps the payload in a JSON envelope and the attributes move into the body, where filter policies cannot see them, so every queue would receive every message.
 
 For that reason `RawMessageDelivery` defaults to `true` and the transport validates it at startup, throwing rather than starting up with silently-broken routing.
 
@@ -167,9 +185,25 @@ SNS accepts at most **150 values** in one filter policy, and each message type a
 
 ### Name length
 
-SQS queue names are capped at **80 characters**. An application or pool queue is named at most 76, so that its dead-letter queue, `{queue}-dlq`, fits too. `TopologyNaming` truncates and hashes names that would exceed the cap, so a long `SystemName`, application name or pool name will produce a hashed suffix rather than a failure. Names stay stable and collision-resistant, but they will not always be human-readable — keep `SystemName` and application names short if you want to recognise your queues in the AWS console.
+SQS queue names are capped at **80 characters**. An application or pool queue is named at most 76, so that its dead-letter queue, `{queue}-dlq`, fits too. `TopologyNaming` truncates and hashes names that would exceed the cap, so a long `SystemName`, application name or pool name will produce a hashed suffix rather than a failure. Names stay stable and collision-resistant, but they will not always be human-readable: keep `SystemName` and application names short if you want to recognise your queues in the AWS console.
 
 Every resource name is also sanitized to `[A-Za-z0-9_-]` (the only characters SQS queue and SNS topic names accept), any other character becoming `-`. The default `ApplicationName` is the entry assembly's name, so an application named `Conduit.Sample.Orders` gets the queue `conduit-Conduit-Sample-Orders`, not `conduit-Conduit.Sample.Orders`. `AmazonSqsTopologyReaper.ReapByPrefixAsync` sanitizes the prefix it is given the same way, so a `john.doe` prefix reaps the `john-doe-…` resources.
+
+### Auto-discovery
+
+The transport reads `ConduitTypeRegistry`, which the source generator fills at compile time, to learn which types this application takes. There is no runtime scan of the container:
+
+- An event type with an `IEventListener<T>` is added to a filter policy.
+- A type with an `ICommandHandler<T>`, `ICommandHandler<T,R>` or `IQueryHandler<T,R>` is added to a filter policy.
+
+The filter policy is that of the subscription of the queue that takes the type: the receiver pool's queue when a pool lists it, otherwise the application's queue. Each queue has one subscription (see [Topology](#topology)).
+
+A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
+(`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the
+registry (`ConduitTypeRegistry.ActivateEvent`), so it is subscribed like an event whose listener the
+generator found.
+
+No manual subscription configuration is needed.
 
 ## Permissions
 
@@ -202,27 +236,27 @@ Scope the grants by name prefix rather than by exact ARN: every reply queue carr
 
 A [long name](#name-length) is cut and hashed after its first 67 characters (71 for a reply queue), so keep `{prefix-}{systemName}-{appName}` shorter than that for the prefix to match every queue.
 
-## Developer and test modes
+## Developer and Test modes
 
 `TopologyMode` on `ConduitOptions` controls resource naming:
 
-| Mode | Prefix | Resources |
-|---|---|---|
-| `Production` | None | Standard |
-| `Developer` | `{TopologyPrefix}` (default: username) | Prefixed |
-| `Test` | `{TopologyPrefix}` (default: `test-{random}`) | Prefixed |
+| Mode | Prefix | Durable | Cleanup |
+|---|---|---|---|
+| `Production` | None | Yes | None |
+| `Developer` | `TopologyPrefix`, by default `Environment.UserName` | Yes | None: SNS and SQS have no auto-delete (see below) |
+| `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | Yes | None (see below) |
 
-Developer mode gives each developer isolated topics and queues (e.g. `alice-conduit` instead of `conduit`). Test mode creates isolated, short-lived resources for integration tests.
+Developer mode gives each developer isolated topics and queues (e.g. `alice-conduit` instead of `conduit`). Test mode creates isolated resources for integration tests.
 
-SNS and SQS have no auto-delete, so ephemeral resources accumulate, dead-letter queues included, and so does the reply queue of an instance that ended without stopping (a crash, a kill). `AmazonSqsTopologyReaper.ReapByPrefixAsync(options, prefix)` deletes queues and topics whose names start with a prefix — deleting a topic removes its subscriptions with it. The test harness calls it once per project, and it is available to applications for the same purpose.
+SNS and SQS have no auto-delete, so ephemeral resources accumulate, dead-letter queues included, and so does the reply queue of an instance that ended without stopping (a crash, a kill). `AmazonSqsTopologyReaper.ReapByPrefixAsync(options, prefix)` deletes queues and topics whose names start with a prefix; deleting a topic removes its subscriptions with it. Conduit's own test suites call it once per test project, and it is available to applications for the same purpose.
 
 ```csharp
 builder.Services.AddConduit(conduit =>
 {
     conduit.TopologyMode = TopologyMode.Developer;
-    conduit.TopologyPrefix = "myprefix";  // optional, defaults to Environment.UserName
+    conduit.TopologyPrefix = "alice";  // optional, defaults to Environment.UserName
 
-    conduit.AddEndpoint("events", endpoint =>
+    conduit.AddEndpoint("orders", endpoint =>
         endpoint.UseAmazonSqs(options => options.Region = RegionEndpoint.EUWest1));
 });
 ```
@@ -234,46 +268,35 @@ When the generated mediator routes a command to an Amazon SQS endpoint:
 1. The transport publishes the command to the SNS topic with `ReplyQueueAddress` and `CorrelationId` attributes.
 2. The subscription filter policy routes it to the handling application's queue.
 3. The handler runs and the reply is sent **directly to the sender's reply queue** with the matching correlation id, bypassing SNS.
-4. The sender matches the reply by correlation id and deserializes the `DispatchResult`.
+4. The sender matches the reply by correlation id and deserializes the `DispatchResult`. A failed result throws `RemoteDispatchException` on the caller, carrying the remote error's code and, for an unexpected failure, its support reference.
 
 Each transport instance has a reply queue of its own, `{systemName}-{appName}-replies-{instanceId}`, created when it starts and deleted when it stops, so the reply reaches the instance that sent the request however many instances of the application run. A reply that arrives after its request timed out or was cancelled is deleted and logged at Debug (`LateReply`, EventId 111). An instance that ends without stopping (a crash, a kill) leaves its reply queue behind, holding any reply that arrives for it until SQS's retention period (4 days) expires the reply. In Developer and Test mode [`ReapByPrefixAsync`](#developer-and-test-modes) deletes such queues with the rest of the prefix. Production has no reaper: an operator deletes leftover reply queues by hand (in the AWS console or with the CLI), one by one. Reaping the `-replies-` prefix would delete the reply queues of the instances still running too.
 
-Replies time out after `ResponseTimeout` (default 60 seconds). `VisibilityTimeoutSeconds` must be at least `ResponseTimeout`, or a message could become visible again — and be redelivered to another consumer — while the original caller is still waiting for its reply. The transport validates this at startup.
+`VisibilityTimeoutSeconds` must be at least `ResponseTimeout`, or a request could become visible again, and be redelivered to another consumer, while the original caller is still waiting for its reply. The transport validates this at startup.
 
-A request with no reply within `ResponseTimeout` fails with a `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`), the same on every broker transport. It is never an `OperationCanceledException`, which only the caller's own cancellation token produces, so a `catch (OperationCanceledException)` around a dispatch cannot swallow a remote that did not answer. A request still waiting when the transport stops fails with an `InvalidOperationException`.
+A request with no reply within `ResponseTimeout` (default 60 seconds) fails with a `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`), the same on every broker transport. It is never an `OperationCanceledException`, which only the caller's own cancellation token produces, so a `catch (OperationCanceledException)` around a dispatch cannot swallow a remote that did not answer. A request still waiting when the transport stops fails with an `InvalidOperationException`.
 
-## Failed messages
+## Failure handling
 
-A failed message is never redelivered forever. Where one that must be kept goes depends on whether the host registered Conduit's [dead-letter queue](../dead-letter-queue.md):
+<a id="failed-messages"></a>
 
-- **With Conduit's dead-letter store** (`AddDurability(d => d.AddDeadLetterQueue())`), Conduit captures the failed message in its database, with the exception and the message context, and deletes it from SQS. The message is browsed and replayed through `IDeadLetters`; a replay is sent straight to the application's queue.
-- **Without one**, the transport leaves the message invisible until its visibility timeout lapses. SQS then delivers it again, and once it has delivered it `MaxReceiveCount` times (5 by default) the queue's redrive policy moves it to the queue's dead-letter queue, `{queue}-dlq`, with its body and message attributes intact. So a listener that always fails runs `MaxReceiveCount` times, `VisibilityTimeoutSeconds` apart, then stops. The dead-letter queue keeps a message for 14 days, the longest SQS allows, counted from when the message was first sent; inspect it and move it back once the cause is fixed with the SQS console's dead-letter queue redrive. Today this is a failed event listener (`EventListenerException`), and a routed `[FireAndForget]` command whose handler failed unexpectedly: what Conduit's store would otherwise have captured. A message Conduit settles without a store (an undispatchable body, a refused event or fire-and-forget command, a request whose failure was already answered to its caller) is deleted, as on every broker.
+A broker transport settles each message once, by what became of its dispatch, and never retries it itself: retry happens inside the dispatch ([dispatch retry](../dispatch-retry.md), or a [pipeline behavior](../pipeline-behaviors.md)). The rules every broker shares are in [Failed messages](index.md#failed-messages). On Amazon SQS:
+
+- **A request whose handler throws** is answered: its caller receives the failure as its reply (`InternalError` with a support reference, or the refusal the handler threw), and the request is deleted from its queue. An unexpected failure is also captured when the host has Conduit's dead-letter store.
+- **An event whose listener throws, or a `[FireAndForget]` command whose handler fails unexpectedly**, has no caller to tell. Where it goes depends on whether the host registered Conduit's [dead-letter queue](../dead-letter-queue.md):
+  - **With Conduit's dead-letter store** (`AddDurability(d => d.AddDeadLetterQueue())`), Conduit captures the failed message in its database, with the exception and the message context, and deletes it from SQS. The message is browsed and replayed through `IDeadLetters`; a replay is sent straight to the application's queue.
+  - **Without one**, the transport leaves the message invisible until its visibility timeout lapses. SQS then delivers it again, and once it has delivered it `MaxReceiveCount` times (5 by default) the queue's redrive policy moves it to the queue's dead-letter queue, `{queue}-dlq`, with its body and message attributes intact. So a listener that always fails runs `MaxReceiveCount` times, `VisibilityTimeoutSeconds` apart, then stops. The dead-letter queue keeps a message for 14 days, the longest SQS allows, counted from when the message was first sent; inspect it, and move it back once the cause is fixed with the SQS console's dead-letter queue redrive.
+- **A message this host cannot read, or one it refuses** (an undispatchable body, a refused event or fire-and-forget command) is deleted, and captured first when it is unreadable and the host has the store, as on every broker.
 
 SQS counts every delivery toward `MaxReceiveCount`, including one the transport handed back undispatched while [stopping](#stopping). A failure outside the dispatch itself (deleting the message failed, say) is logged as an Error (`InboundMessageFailed`, EventId 110) and leaves the message to be delivered again once its visibility timeout lapses; the poller carries on with the next message. The reply queue and the dead-letter queues have no redrive policy of their own.
 
-## Stopping
+### Stopping
 
 When the host stops, the transport follows the [shared stop sequence](index.md#stopping-a-host-with-work-in-flight). It stops polling the application and pool queues; a message it had received but not started, and one handed over after the drain began, is made visible again at once (`ChangeMessageVisibility` to 0) for another instance to take, rather than when its visibility timeout lapses. The reply queue is polled through the drain, since a handler being drained may await a reply, and is then deleted, within the host's shutdown deadline or, failing that, when the host disposes the transport; a deletion that still fails is logged as a Warning (`ReplyQueueNotDeleted`, EventId 112) and leaves the queue behind, as a crash does (see [Request/response](#requestresponse)). Handing messages back is best effort too: what SQS does not take back at once is logged as a Warning with the count (`MessagesNotMadeVisible`, EventId 113) and reappears when its visibility timeout lapses.
 
-## Auto-discovery
-
-The transport reads `ConduitTypeRegistry` — populated at compile time by the source generator — to learn which types this application handles:
-
-- `IEventListener<T>` — adds the event type to a filter policy
-- `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — adds the type to a filter policy
-
-The filter policy is that of the subscription of the queue that takes the type: the receiver pool's queue when a pool lists it, otherwise the application's queue. Each queue has one subscription (see [Topology](#topology)).
-
-A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
-(`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the
-registry (`ConduitTypeRegistry.ActivateEvent`), so it is subscribed like an event whose listener the
-generator found.
-
-There is no runtime DI scanning and no manual subscription configuration.
-
 ## Wire format
 
-Messages use JSON serialization with metadata in SNS/SQS **message attributes**:
+Messages use JSON serialization (`ConduitRuntime.JsonOptions`) with metadata in SNS/SQS **message attributes**:
 
 | Attribute | Value |
 |---|---|
@@ -283,13 +306,13 @@ Messages use JSON serialization with metadata in SNS/SQS **message attributes**:
 | `CausationId` | From `MessageContext.CausationId` |
 | `ConversationId` | From `MessageContext.ConversationId` |
 | `ReplyQueueAddress` | Reply queue URL (requests only) |
-| `CorrelationId` | Request/response correlation (requests only) |
-| `traceparent`, `tracestate` | W3C trace context |
+| `CorrelationId` | Request/response correlation (requests and their replies only) |
+| `traceparent`, `tracestate` | W3C trace context, when the publish runs inside a trace |
 | `conduit-source-app` | The publishing application's `ApplicationName`, used by the [self-published event filter](index.md#self-published-events) (omitted when `ApplicationName` is unset) |
 
 The three correlation identifiers use short names rather than the canonical `conduit-message-id` style the other transports carry. That is a hard constraint, not a style choice: **SNS and SQS cap a message at 10 attributes**, and a request publish already uses 9 of them. Renaming the three correlation ids keeps the message under the ceiling where carrying both forms would not, leaving exactly one attribute spare.
 
-Keep that ceiling in mind if you were hoping to add your own attributes to Conduit messages — there is almost no room.
+Keep that ceiling in mind if you were hoping to add your own attributes to Conduit messages: there is almost no room.
 
 ## Receiver pools
 
@@ -309,26 +332,23 @@ endpoint.UseAmazonSqs(options =>
 });
 ```
 
-This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with its own SNS subscription, filter policy and dead-letter queue, polled with a parallelism bound of 2. Everything else uses the default queue at 20. A slow pool handler cannot starve the default queue's consumers.
+This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with its own SNS subscription, filter policy and dead-letter queue, where at most 2 handlers run at once. Everything else uses the default queue at 20. A slow pool handler cannot starve the default queue's handlers. The pool's queue takes all of the pool's types, commands, queries and events alike, and a pool's `Concurrency` defaults to `1`.
 
-`AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
-endpoint's section) and configured again in code on the same name, and the two merge into one pool
-rather than producing a duplicate. Name matching is case-insensitive, and because configuration
-binds first, the configured spelling of `Name` is the one that survives into queue naming.
-`pool.Handle(...)` de-duplicates, so the merged pool's message types are the union of what
-configuration listed and what code added:
+A pool can be declared in configuration (the endpoint's `Pools` array) and in code under the same name: the two merge into one pool (see [Pool merging](../configuration-reference.md#pool-merging)). The names `replies` and `dead-letter` are reserved.
 
-```jsonc
-{ "Name": "imports", "Concurrency": 2, "MessageTypes": [ "Catalog.Commands.BulkImportCommand" ] }
-```
-```csharp
-options.AddPool("imports", pool => pool.Handle<ReindexCatalogCommand>());
-// -> one pool "imports", Concurrency 2, handling
-//    [Catalog.Commands.BulkImportCommand, Catalog.Commands.ReindexCatalogCommand]
-```
+Remember the [80-character queue-name cap](#name-length) when naming pools: a long pool name on a long application name will be hashed. A pool whose queue would take the name of another of the application's dead-letter queues (a pool named `dlq` would take the application queue's) fails the start with an `InvalidOperationException`.
 
-Remember the [80-character queue-name cap](#name-length) when naming pools — a long pool name on a long application name will be hashed. A pool whose queue would take the name of another of the application's dead-letter queues (a pool named `dlq` would take the application queue's) fails the start with an `InvalidOperationException`.
+## Limitations
+
+- **Unicast by convention.** Two applications that handle the same command or query type both receive it ([Unicast by convention](#unicast-by-convention)).
+- **Explicit credentials only for `ServiceUri`.** Against AWS, the transport always uses the default credential chain ([Credentials](#credentials)).
+- **No auto-delete.** Developer and Test resources, and the reply queues of crashed instances, stay until someone deletes them ([Developer and Test modes](#developer-and-test-modes)).
+- **No visibility extension.** The transport does not extend a message's visibility while its handler runs. A handler that outlasts `VisibilityTimeoutSeconds` sees its message delivered again, to it or another instance, while it is still running; and a message received in a batch but waiting for a free handler slot spends its visibility timeout waiting.
+- **Standard queues.** SQS standard queues keep no order and may deliver a message more than once even without a failure; use the [inbox](../inbox.md) where a duplicate matters.
+- **One attribute spare.** A message carries at most 10 attributes, and Conduit uses 9 ([Wire format](#wire-format)).
+- **150 types per queue.** A filter policy takes at most 150 values ([Filter policies and raw message delivery](#filter-policies-and-raw-message-delivery)).
+- **Filter changes are eventual.** A changed filter policy can take up to 15 minutes to take full effect, and the last instance to start sets it.
 
 ---
 
-Previous: [RabbitMQ](rabbitmq.md) | [Home](../../README.md) | Next: [ActiveMQ](activemq.md)
+Previous: [Azure Service Bus](azure-service-bus.md) | [Home](../../README.md) | Next: [ActiveMQ](activemq.md)

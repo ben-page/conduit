@@ -1,20 +1,31 @@
 # SignalR Transport
 
 - [Overview](#overview)
-- [Server setup](#server-setup)
+- [Setup](#setup)
+  - [Server mode](#server-mode)
+  - [Client mode (service-to-service)](#client-mode-service-to-service)
+- [Options and configuration keys](#options-and-configuration-keys)
 - [Correlation ids](#correlation-ids)
 - [Client properties](#client-properties)
+- [Server identity on connect](#server-identity-on-connect)
 - [Bidirectional communication](#bidirectional-communication)
 - [Who receives an event](#who-receives-an-event)
 - [Solicited events](#solicited-events)
-- [Client mode (service-to-service)](#client-mode-service-to-service)
 - [Multi-pod deployment](#multi-pod-deployment)
+- [Request/response](#requestresponse)
+- [Failure handling](#failure-handling)
+- [Wire format](#wire-format)
+- [Limitations](#limitations)
 
 ## Overview
 
 SignalR provides persistent, bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services send to each other's hubs with automatic reconnect; a service's [client-mode transport](#client-mode-service-to-service) sends only, it does not receive the hub's events.
 
-## Server setup
+The transport has two modes. In **server mode** a host maps `ConduitHub`, which receives dispatches from its clients, and the transport pushes the host's events to them. In **client mode** an endpoint routes commands and queries to another service's hub.
+
+## Setup
+
+### Server mode
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
@@ -30,6 +41,93 @@ app.Run();
 `AddConduitSignalR()` registers SignalR services, creates a `SignalRTransport` in server mode, and registers it as `IConduitTransport`. The transport holds an `IHubContext<ConduitHub>` and pushes events to connected clients: by default only the `[ClientVisible]` ones ([Who receives an event](#who-receives-an-event)).
 
 `MapHub<ConduitHub>` maps the inbound hub. It exposes two methods: `Dispatch` for commands/queries and `Publish` for events.
+
+### Client mode (service-to-service)
+
+For a C# service that sends commands to a remote SignalR hub, configure an endpoint with `UseSignalR`:
+
+```csharp
+builder.Services.AddConduit(conduit =>
+{
+    conduit.AddEndpoint("inventory", endpoint =>
+    {
+        endpoint.UseSignalR(new Uri("https://inventory-service/conduit"));
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
+});
+```
+
+This creates a `SignalRTransport` in client mode. It wraps a `HubConnection` with automatic reconnect. The connection is lazy and auto-starts on the first dispatch call, so your service starts without waiting for the remote hub. If the connection closes for good (automatic reconnect gave up, or the hub closed it), the next send starts it again; a send made while an automatic reconnect is still in progress fails as SignalR fails it. The container owns the transport and its `HubConnection`, and disposes both with the host.
+
+**Client mode is send-only.** It sends commands and queries through the hub's `Dispatch`, and a routed `[FireAndForget]` command through `Dispatch` too, its result discarded (a refusal still throws). It does not receive the events the remote hub pushes: a service that needs another service's events uses a broker transport. Receiving events in client mode is deferred.
+
+A hub mapped behind `RequireAuthorization` needs a credential on the connection. `SignalROptions.ConfigureConnection` reaches the `HubConnection`'s HTTP options (access token provider, headers, proxy, client certificates):
+
+```csharp
+endpoint.UseSignalR(new Uri("https://inventory-service/conduit"), options =>
+    options.ConfigureConnection = connection =>
+        connection.AccessTokenProvider = () => tokenSource.GetTokenAsync());
+```
+
+The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept requests. It keeps the caller's correlation ids, so the conversation spans both services, only with `TrustCallerContext` ([Correlation ids](#correlation-ids)); leave it off on a hub browsers can reach:
+
+```csharp
+// Inventory service (remote, reached only by other services)
+builder.Services.AddConduit();
+builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true);
+
+var app = builder.Build();
+app.MapHub<ConduitHub>("/conduit");
+app.Run();
+```
+
+## Options and configuration keys
+
+Each mode has its own options class.
+
+**Server mode.** `AddConduitSignalR(configure)` configures `ConduitSignalROptions`, how the hub treats its callers:
+
+| Property | Default | Description |
+|---|---|---|
+| `TrustCallerContext` | `false` | Whether the hub honors the correlation ids a caller passes in the `context` argument ([Correlation ids](#correlation-ids)). Set it only on a hub that other services reach and browsers do not. |
+
+`AddConduitSignalR(serverInfo, configure)` also takes a `ConduitServerInfo` the hub sends each client as it connects ([Server identity on connect](#server-identity-on-connect)). Conduit binds neither from configuration: set both in code. The callbacks of several `AddConduitSignalR` calls all apply, in order.
+
+**Client mode.** `UseSignalR(hubUri, configure)` configures `SignalROptions`:
+
+| Property | Default | Description |
+|---|---|---|
+| `HubUri` | *(required)* | The remote hub's URI, e.g. `https://inventory-service/conduit`. `UseSignalR` throws `InvalidOperationException` when neither the `hubUri` argument nor configuration supplies one. |
+| `ConfigureConnection` | `null` | Configures the `HubConnection`'s HTTP options (`AccessTokenProvider`, `Headers`, a proxy, client certificates). Code only; configuration never binds it. |
+
+`HubUri` binds from `Conduit:Endpoints:{endpointName}:HubUri`, so the URI can come from configuration instead of the `hubUri` argument:
+
+```json
+{
+  "Conduit": {
+    "Endpoints": {
+      "inventory": {
+        "HubUri": "https://inventory-service/conduit"
+      }
+    }
+  }
+}
+```
+
+```csharp
+builder.Services.AddConduit(builder.Configuration, conduit =>
+{
+    conduit.AddEndpoint("inventory", endpoint =>
+    {
+        endpoint.UseSignalR();
+        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
+    });
+});
+```
+
+Configuration binds first; an explicit `UseSignalR(hubUri)` argument or a `configure` callback
+overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
+for the full precedence rule.
 
 ## Correlation ids
 
@@ -54,8 +152,6 @@ var sub = user?.FindFirst("sub")?.Value;
 if (sub is null) { properties.Remove("UserId"); return; }
 ```
 
-`ConduitSignalROptions` configures the hub (the inbound side). `SignalROptions` configures the outbound client-mode transport. `AddConduitSignalR(serverInfo, configure)` takes both a `ConduitServerInfo` and the options callback.
-
 ## Server identity on connect
 
 A host can have `ConduitHub` tell every client about itself the moment it connects:
@@ -67,7 +163,7 @@ builder.Services.AddConduitSignalR(new ConduitServerInfo(buildId));
 `OnConnectedAsync` then invokes the client method `ConduitServerInfo` (`ConduitHub.ServerInfoMethod`) with
 `{ buildId }` on every connect and every reconnect. Conduit carries the value and never derives it: a host that
 registers none sends nothing. The TypeScript transport surfaces it as `SignalRTransport.onServerInfo`
-(`docs/transports/typescript-client.md` → "Server identity").
+([TypeScript Client → Server identity](typescript-client.md#server-identity)).
 
 **On connect, not broadcast on restart.** A restart broadcast reaches the clients connected to that pod, which at
 startup is nobody. The clients that need to know are still on the old pod, and events do not replay. Every client that
@@ -187,76 +283,6 @@ The flow:
 
 The command response and the event arrive independently. The response is the return value of `Dispatch`. The event arrives as a push.
 
-## Client mode (service-to-service)
-
-For a C# service that sends commands to a remote SignalR hub, configure an endpoint with `UseSignalR`:
-
-```csharp
-builder.Services.AddConduit(conduit =>
-{
-    conduit.AddEndpoint("inventory", endpoint =>
-    {
-        endpoint.UseSignalR(new Uri("https://inventory-service/conduit"));
-        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
-    });
-});
-```
-
-This creates a `SignalRTransport` in client mode. It wraps a `HubConnection` with automatic reconnect. The connection is lazy and auto-starts on the first dispatch call, so your service starts without waiting for the remote hub. If the connection closes for good (automatic reconnect gave up, or the hub closed it), the next send starts it again; a send made while an automatic reconnect is still in progress fails as SignalR fails it. The container owns the transport and its `HubConnection`, and disposes both with the host.
-
-**Client mode is send-only.** It sends commands and queries through the hub's `Dispatch`, and a routed `[FireAndForget]` command through `Dispatch` too, its result discarded (a refusal still throws). It does not receive the events the remote hub pushes: a service that needs another service's events uses a broker transport. Receiving events in client mode is deferred.
-
-A hub mapped behind `RequireAuthorization` needs a credential on the connection. `SignalROptions.ConfigureConnection` reaches the `HubConnection`'s HTTP options (access token provider, headers, proxy, client certificates):
-
-```csharp
-endpoint.UseSignalR(new Uri("https://inventory-service/conduit"), options =>
-    options.ConfigureConnection = connection =>
-        connection.AccessTokenProvider = () => tokenSource.GetTokenAsync());
-```
-
-`ConfigureConnection` is code only; configuration never binds it.
-
-The hub URI can also come from configuration instead of the `hubUri` argument:
-
-```json
-{
-  "Conduit": {
-    "Endpoints": {
-      "inventory": {
-        "HubUri": "https://inventory-service/conduit"
-      }
-    }
-  }
-}
-```
-
-```csharp
-builder.Services.AddConduit(builder.Configuration, conduit =>
-{
-    conduit.AddEndpoint("inventory", endpoint =>
-    {
-        endpoint.UseSignalR();
-        endpoint.RouteNamespace<Inventory.Commands.ReserveStock>();
-    });
-});
-```
-
-Configuration binds first; an explicit `UseSignalR(hubUri)` argument or a `configure` callback
-overrides it. See [Loading from IConfiguration](../configuration-reference.md#loading-from-iconfiguration)
-for the full precedence rule.
-
-The remote service needs `AddConduitSignalR()` and `MapHub<ConduitHub>` to accept requests. It keeps the caller's correlation ids, so the conversation spans both services, only with `TrustCallerContext` ([Correlation ids](#correlation-ids)); leave it off on a hub browsers can reach:
-
-```csharp
-// Inventory service (remote, reached only by other services)
-builder.Services.AddConduit();
-builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true);
-
-var app = builder.Build();
-app.MapHub<ConduitHub>("/conduit");
-app.Run();
-```
-
 ## Multi-pod deployment
 
 On a single pod, server-mode `SignalRTransport` calls `Clients.All.SendAsync` (or `Clients.Users`/`Clients.Groups`, for a [resolver's](#who-receives-an-event) answer) and reaches the matching connections on that server.
@@ -273,6 +299,39 @@ This is standard ASP.NET Core configuration, not Conduit-specific. The backplane
 
 Solicited events (command triggers event on the same pod) work without a backplane because the client is always connected to the pod handling its request.
 
+## Request/response
+
+**Server mode.** The hub's `Dispatch` runs the command or query through `IWireMediator` and returns its `DispatchResult`, the handler's result in `data` or its failure in `error`. The dispatch runs under the connection's `ConnectionAborted` token, so a client that disconnects cancels the dispatches it has in flight.
+
+**Client mode.** A routed command or query invokes the remote hub's `Dispatch` and waits for its result. A failed result throws `RemoteDispatchException` on the caller, carrying the remote error's code and, for an unexpected failure, its support reference. The transport sets no response timeout of its own: the call waits as long as the connection lives, so bound it with the caller's cancellation token where that matters.
+
+## Failure handling
+
+- **A handler that throws during `Dispatch`** is answered in the result: a `ConduitException` as its refusal (code, message, status), anything else as `InternalError` with the fixed message `An unexpected error occurred.` and a support reference, which the server logs with the exception. Nothing is retried or dead-lettered: the caller has its answer.
+- **A refused event** (the type filter, an unknown type, a payload its type cannot read) fails the `Publish` invocation with a `HubException` carrying the refusal's message. A listener that throws fails it too, with SignalR's own generic message (`An unexpected error occurred invoking 'Publish' on the server.`) unless the host enables SignalR's detailed errors.
+- **Client mode** throws `RemoteDispatchException` for a failed result, a refused `[FireAndForget]` command included, and SignalR's own exception when the connection cannot carry the call.
+- **A push that fails** is the publisher's to log: a resolver fault skips the push (`RecipientResolutionFailed`, above), and a transport that throws is logged as `TransportBroadcastFailed` while the publish carries on to the other transports.
+
+## Wire format
+
+The hub speaks SignalR's JSON hub protocol, with payloads serialized by Conduit's wire options (`ConduitRuntime.JsonOptions`: camelCase names, enums by member name):
+
+| Hub method | Arguments | Returns |
+|---|---|---|
+| `Dispatch` | `type` (full type name), `payload` (the serialized message), `context` (`MessageId`, `ConversationId`, `CausationId`, or `null`), `headers` (client properties, or `null`) | `DispatchResult` |
+| `Publish` | the same four | nothing |
+
+A caller passes all four arguments, `null` for the ones it does not use: SignalR refuses an invocation whose argument count does not match. The server pushes an event by invoking the client method named after the event's full type name with the payload as its one argument, and sends `ConduitServerInfo` (`{ buildId }`) on connect when the host registered one. The [TypeScript client's wire format](typescript-client.md#wire-format) shows the same exchange from the browser.
+
+## Limitations
+
+- **No cross-pod push without a backplane.** An unsolicited event reaches only the clients connected to the pod that published it ([Multi-pod deployment](#multi-pod-deployment)).
+- **Client mode is send-only.** It does not receive the remote hub's events, and a client-mode endpoint is not a broadcast target: `PublishAsync` does not send events to the remote hub.
+- **Server mode does not send.** It cannot carry a request or replay a dead letter (`SendRequestAsync` and `RedeliverAsync` throw `NotSupportedException`); only the broker transports capture dead letters.
+- **No delivery guarantee for pushes.** An event reaches the clients connected when it is pushed; nothing is kept for a client that is offline or reconnecting.
+- **Client-mode reconnect gives up.** The `HubConnection` uses SignalR's default automatic reconnect (after 0, 2, 10 and 30 seconds, then it stops); the next send starts the connection again, and a send made during a reconnect fails.
+- **A dropped connection cancels its dispatches.** The hub dispatches under the connection's `ConnectionAborted` token.
+
 ---
 
-Previous: [Transports](index.md) | [Home](../../README.md) | Next: [TypeScript Client](typescript-client.md)
+Previous: [ActiveMQ](activemq.md) | [Home](../../README.md) | Next: [HTTP](http.md)

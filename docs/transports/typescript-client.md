@@ -6,8 +6,15 @@
 - [Enable TypeGen](#enable-typegen)
 - [Generated output](#generated-output)
 - [Browser example with SignalR](#browser-example-with-signalr)
+- [Connection recovery and state](#connection-recovery-and-state)
+- [Server identity](#server-identity)
 - [HTTP transport](#http-transport)
+  - [Properties](#properties)
+- [Wire format](#wire-format)
+- [MessageContext](#messagecontext)
 - [Type mapping](#type-mapping)
+  - [System.Text.Json attributes](#systemtextjson-attributes)
+  - [Closed sets](#closed-sets)
 
 ## Overview
 
@@ -87,12 +94,13 @@ Every generated key of a command or query interface is **required** on the wire:
   <ItemGroup>
     <PackageReference Include="Conduit" />
     <PackageReference Include="Conduit.Transport.SignalR" />
-    <PackageReference Include="Conduit.SourceGen" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <PackageReference Include="Conduit.Analysis" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Conduit.SourceGen" PrivateAssets="all" />
+    <PackageReference Include="Conduit.TypeGen" PrivateAssets="all" />
   </ItemGroup>
-  <Import Project="$(NuGetPackageRoot)conduit.typegen\$(ConduitTypeGenVersion)\build\Conduit.TypeGen.targets" />
 </Project>
 ```
+
+`Conduit.TypeGen` is a build-time package: it brings its MSBuild targets with it, so the project needs no `<Import>`, and `PrivateAssets="all"` keeps it from flowing to projects that reference this one. It does nothing until `ConduitTypeGenEnabled` is `true`.
 
 TypeGen runs as a post-build MSBuild task. It scans the compiled assembly for `[ClientVisible]` types and emits TypeScript into the configured output directory. It writes a file only when its content changed, so a build that changed nothing leaves both files, and their timestamps, as they were: a dev server watching them does not reload, and a target that lists them as `Inputs` (an `npm run build` step, say) stays up to date. A referenced assembly it cannot load is skipped, and the build log names it and the reason (`dotnet build -v n`).
 
@@ -143,7 +151,7 @@ import { ConduitClient, SignalRTransport } from './generated/conduit.generated';
 
 const transport = new SignalRTransport();
 const client = new ConduitClient(transport);
-await transport.start();
+// No start call: the first dispatch or subscription connects. Call transport.connect() to connect sooner.
 
 // Execute a command
 const createResult = await client.execute(
@@ -185,33 +193,33 @@ All methods are fully typed. The type key autocompletes and request/response typ
 
 ## Connection recovery and state
 
-**Fixed 2026-09-16** — this replaces the known defect recorded here on 2026-08-28. A consumer has the fix once it
-regenerates `conduit.ts` from a `Conduit.TypeGen` that contains it.
-
-`SignalRTransport` recovers from an outage of any length without a page reload:
+`SignalRTransport` connects lazily (the first dispatch or subscription starts the connection; `connect()` starts it
+sooner) and recovers from an outage of any length without a page reload:
 
 - **The default retry policy never gives up.** `DEFAULT_RETRY_POLICY` (exported) waits 0 s, 2 s, 5 s, 10 s, then
   every 30 s. SignalR's stock `withAutomaticReconnect()` schedule is `[0, 2s, 10s, 30s]` and then stops for good,
-  which bricked an unattended screen roughly 45 seconds into an outage. Pass `retryPolicy` in
-  `SignalRTransportOptions` to use another; `automaticReconnect: false` still turns reconnection off.
-- **`connect()` starts a dead connection again.** It used to memoize its resolved `start()` forever, so once the
-  connection closed for good every dispatch threw *"Cannot send data if the connection is not in the 'Connected'
-  State."* It now checks `connection.state` and starts again when the connection is `Disconnected`. A failed start
-  is still not cached.
+  which leaves an unattended screen dead about 45 seconds into an outage. Pass `retryPolicy` in
+  `SignalRTransportOptions` to use another; `automaticReconnect: false` turns reconnection off.
+- **`connect()` starts a dead connection again.** It reads `connection.state` and starts the connection again when it
+  is `Disconnected`, so a connection that closed for good does not leave every later dispatch failing. A failed start
+  is not cached.
 - **A close nobody asked for restarts itself.** `withAutomaticReconnect` only retries a connection that dropped, or
-  one the server closed *with* `allowReconnect`. A server close without it, a first `start()` that fails, and a
-  retry policy that gave up all used to end in `disconnected` with nothing retrying until the next dispatch. They
-  now schedule a restart on the same retry policy, so a kiosk left unattended through a graceful server shutdown
-  recovers exactly like one left unattended through a crash. The attempt count resets only after a connection has
-  stayed up 30 seconds, so a server that accepts and immediately closes a connection is retried on the schedule,
-  not in a tight loop.
-- **A dispatch made while the hub reconnects waits for it.** It used to reject *"Cannot send data…"* at once. It now
-  waits for the hub's next `onreconnected` (then sends) or `onclose` (then starts the connection again and sends),
-  for at most `reconnectWait` milliseconds (`SignalRTransportOptions`, default 10 000), and then rejects. A dispatch
-  waiting when the app calls `stop()` rejects rather than starting the connection again.
+  one the server closed *with* `allowReconnect`. A server close without it, a first start that fails, and a retry
+  policy that gave up each schedule a restart on the same retry policy, so a kiosk left unattended through a graceful
+  server shutdown recovers exactly like one left unattended through a crash. The attempt count resets only after a
+  connection has stayed up 30 seconds, so a server that accepts and immediately closes a connection is retried on the
+  schedule, not in a tight loop.
+- **A dispatch made while the hub reconnects waits for it.** It waits for the hub's next `onreconnected` (then sends)
+  or `onclose` (then starts the connection again and sends), for at most `reconnectWait` milliseconds
+  (`SignalRTransportOptions`, default 10 000), and then rejects. A dispatch waiting when the app calls `stop()`
+  rejects rather than starting the connection again.
 - **A subscription made while the server is down leaves no unhandled rejection.** `on` (`subscribe`) starts the
-  connection without waiting for it; a failed start is retried on the schedule, as above, and no longer also rejects
-  a promise nobody holds.
+  connection without waiting for it; a failed start is retried on the schedule, as above, and rejects no promise
+  nobody holds.
+
+`SignalRTransportOptions` also takes `accessTokenFactory`, for a hub behind authorization, and `configure`, which
+receives the `HubConnectionBuilder` before the transport builds the connection. Both apply when the transport is given
+a hub path (`new SignalRTransport('/conduit', options)`), not a `HubConnection` of your own.
 
 `onStateChange(handler)` reports the socket's lifecycle as a `TransportConnectionState`, and calls the handler at
 once with the current state:
@@ -228,32 +236,14 @@ once with the current state:
 or `disconnected` — an app can tell a logout from an outage. `onStateChange` is deliberately not on
 `ConduitTransport`: `HttpTransport` has no connection to report on.
 
-**Where the behavior is tested.** The transport is real TypeScript — `src/Conduit.TypeGen/Transport/base.ts`,
-`http.ts` and `signalr.ts`, embedded in `Conduit.TypeGen` and assembled into `conduit.ts` — and `tests/transport-ts`
-type-checks it (strict `tsc`) and runs it under vitest, locally (`npm test`) and in CI (the `transport-ts` job): a fake
-`HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional stop
-and a failed start, a dispatch waiting through a reconnect, a subscription whose start fails, the retry policy the
-restart loop is built with, and `HttpTransport`'s requests, properties, options, refusals and failures. Strict `tsc` checks each transport file, and also the two assembled outputs checked in under
-`tests/transport-ts/emitted/` — the default `conduit.ts` and the HTTP-only one, the only two shapes it takes (the
-configured paths change only literals). A `BaseFileEmitterShould` test pins both to the emitter, so a transport edit fails
-until the goldens are regenerated, and the golden diff is what every consumer's `conduit.ts` will show. Beside them,
-`conduit.generated.ts` is the client TypeGen's own test types produce (the shapes real contracts take: generic
-wrappers, arrays, sets, non-string dictionary keys, the System.Text.Json attributes); `EmittedGoldenShould` pins it to
-the emitter and strict `tsc` checks it against the default `conduit.ts`, so an emitter change that writes invalid
-TypeScript fails CI.
-ManagementSystem keeps its own copy of the SignalR suite, run against its committed `conduit.ts`. These tests protect a
-consumer only for a `Conduit.TypeGen` built from this source: GtlHmi pins 1.0.1 (next paragraph).
-
-**Who has this fix.** ManagementSystem regenerated `conduit.ts` against it and observed a kiosk recover from two
-five-minute outages unattended. **GtlHmi does not have it yet.** It pins `Conduit.TypeGen` 1.0.1 from NuGet, so it
-keeps the old behavior until it takes a package that contains this fix — and its `StartAwareTransport` subclass
-overrides a `start()` method the current emitter no longer emits in the same shape, so that upgrade needs its own
-look, not a version bump alone.
+The transport is real TypeScript (`src/Conduit.TypeGen/Transport/`), type-checked under strict `tsc` and tested with
+vitest in CI, and the `conduit.ts` a build writes is assembled from it.
 
 ## Server identity
 
 `SignalRTransport.onServerInfo(handler)` registers a handler for the `ConduitServerInfo` a host sends on every
-connect and reconnect (`docs/transports/signalr.md` → "Server identity on connect").
+connect and reconnect ([SignalR → Server identity on connect](signalr.md#server-identity-on-connect)).
+
 - It does **not** start the connection, so a consumer can register it at construction — before anyone signs in —
   and still hear the first connect.
 - It is not on `ConduitTransport`, because `HttpTransport` has no connection.
@@ -370,4 +360,4 @@ a closed set or enum needs no converter registered on the host.
 
 ---
 
-Previous: [SignalR](signalr.md) | [Home](../../README.md) | Next: [HTTP](http.md)
+Previous: [HTTP](http.md) | [Home](../../README.md) | Next: [Pipeline Behaviors](../pipeline-behaviors.md)
