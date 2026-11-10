@@ -61,10 +61,11 @@ itself references only `Conduit.NET.Contracts`, runs no generator, and never war
 
 ## How do I unit-test a handler?
 
-A handler is a plain class: construct it and call it. No mediator, host or container is needed.
+A handler is a plain class: construct it and call it. No mediator, host or container is needed. With the
+[Todos sample](../samples/rest-api/Conduit.Sample.Todos)'s handler and store:
 
 ```csharp
-var store = new InMemoryTodoStore();
+var store = new TodoStore();
 var handler = new CreateTodoHandler(store);
 
 var id = await handler.HandleAsync(new CreateTodoCommand("Buy milk"), CancellationToken.None);
@@ -78,7 +79,7 @@ then finds the public handlers of the projects the test references, and register
 ```csharp
 var services = new ServiceCollection();
 services.AddLogging();
-services.AddSingleton<ITodoStore, InMemoryTodoStore>();
+services.AddSingleton<TodoStore>();
 services.AddConduit();
 
 await using var provider = services.BuildServiceProvider();
@@ -112,7 +113,8 @@ project's analyzers, as `Conduit.SourceGen`. To write it to disk as well:
 The files then land in `obj/{Configuration}/{TargetFramework}/generated/Conduit.SourceGen/Conduit.SourceGen.ConduitGenerator/`:
 `ConduitMediator.g.cs`, `ConduitDispatch.g.cs` and `ConduitRegistration.g.cs`, with `ConduitRestEndpoints.g.cs` when
 the project references the HTTP transport and `ConduitResilienceDispatch.g.cs` when it references Resilience. All of
-it is in the `Conduit.Generated` namespace.
+it is in the `Conduit.Generated` namespace, except the RESTful `MapConduit*` methods, which are in
+`Microsoft.AspNetCore.Builder` beside `MapGet`.
 
 ## How does Conduit compare to MediatR?
 
@@ -133,10 +135,10 @@ pipeline behaviors around them. The differences:
 
 ## Why is there no Kafka transport?
 
-A Kafka transport existed in the unreleased builds and was dropped before the first release. Kafka's partitions and
-consumer groups fit neither the topology the other broker transports share (subscriptions that route each message type
-to the queues of the services that handle it) nor request/response, where one waiting instance must get the reply.
-The broker transports are RabbitMQ, Azure Service Bus, Amazon SQS and ActiveMQ.
+Conduit's patterns (per-type queues, request/response with replies, competing consumers by type) do not map onto
+Kafka's partitions and consumer groups. So the Kafka transport of the unreleased builds was dropped before the first
+release rather than shipped half-fitting. The broker transports are RabbitMQ, Azure Service Bus, Amazon SQS and
+ActiveMQ.
 
 ## Why Task and not ValueTask?
 

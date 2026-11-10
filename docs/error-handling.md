@@ -21,8 +21,10 @@
 Conduit provides a structured error model that works across all transports. A handler refuses a request by throwing
 a `ConduitException`, which carries an `ErrorCode`. Conduit translates it into Problem Details for REST endpoints, a
 `DispatchResult` error envelope for wire dispatch, and a log entry for a fire-and-forget event. Any other exception is
-an unexpected failure. A wire caller (the envelope endpoint, the SignalR hub, a request over a broker) is told only
-that one happened, with a support reference. A RESTful endpoint catches only `ConduitException`, so any other exception
+an unexpected failure. A wire caller (the envelope endpoint's `/dispatch` and `/publish`, the SignalR hub's `Dispatch`,
+a request over a broker) is told only that one happened, with a support reference. The hub's `Publish` fails with a
+`HubException` carrying the fixed message alone, and the reference stays in the log. A RESTful endpoint catches only
+`ConduitException`, so any other exception
 reaches ASP.NET Core's own error handling, and an in-process caller whose handler runs locally gets the original
 exception.
 

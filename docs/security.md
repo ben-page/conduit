@@ -251,8 +251,9 @@ app.MapConduitEndpoint(readClientProperties: true);
 ```
 
 Your `IDispatchContextEnricher`s run after the client's properties are read, on every HTTP and SignalR edge (RESTful
-endpoints and `WithConduitDispatchContext()` routes included), so a value an enricher writes wins. But a key an enricher leaves alone keeps whatever the client sent, so **an enricher that owns a key must
-write it or remove it on every dispatch, unauthenticated ones included**:
+endpoints and `WithConduitDispatchContext()` routes included), so a value an enricher writes wins. But a key an
+enricher leaves alone keeps whatever the client sent, so **an enricher that owns a key must write it or remove it on
+every dispatch, unauthenticated ones included**:
 
 ```csharp
 public sealed class UserIdEnricher : IDispatchContextEnricher

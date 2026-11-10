@@ -74,7 +74,7 @@ builder.Services.AddConduit(conduit =>
 |---|---|
 | `AddEndpoint(string name, Action<ConduitEndpointBuilder> configure)` | Declares a named remote endpoint; the callback picks its transport and routes ([ConduitEndpointBuilder](#conduitendpointbuilder)). A blank or repeated name throws `ArgumentException`. |
 | `AddPipeline(Type behaviorType)` | Adds an open generic `IPipelineBehavior<,>` with two type parameters, such as `typeof(LoggingBehavior<,>)`; any other type throws `ArgumentException`. First registered is outermost. See [Pipeline Behaviors](pipeline-behaviors.md). |
-| `AddTypeFilter(Action<TypeFilterBuilder> configure)` | Restricts the message types an inbound wire edge accepts, commands, queries and events, to those listed with `TypeFilterBuilder.AllowType(string fullTypeName)`. Repeated calls add to the list. See [Security](security.md#typefilterinterceptor). |
+| `AddTypeFilter(Action<TypeFilterBuilder> configure)` | Restricts the message types an inbound wire edge accepts, commands, queries and events, to those listed with `TypeFilterBuilder.AllowType(string typeName)`, each a full type name. Repeated calls add to the list. See [Security](security.md#typefilterinterceptor). |
 | `AddDispatchRetry<TPolicy>(Action<DispatchRetryOptions>? configure = null)` | Retries a failed top-level command or query that `TPolicy` (a singleton `IDispatchRetryPolicy`) covers and gives a reason for, each attempt in a fresh DI scope ([options below](#adddispatchretry-options)). A second call throws `InvalidOperationException`. See [Dispatch Retry](dispatch-retry.md). |
 | `UseConfiguration(IConfiguration configuration)` | Binds the core settings and keeps the section for the endpoints. `AddConduit(IConfiguration, …)` calls it first; called by hand, it must come before every `AddEndpoint`, which reads the section when it runs. |
 
@@ -205,7 +205,7 @@ before it, every schedule fires once across the cluster; without one, on every h
 | `MaxAttempts` | `3` | Attempts before a run is marked failed, the first included. Positive. |
 | `RetryBackoff` | 1, 2, 4 min | The wait before each further attempt; the last repeats. At least one entry, each positive and at most one day. |
 | `FailedRetention` | 7 days | How long a failed run is kept. Not negative, at most 3650 days. |
-| `CompletedRetention` | 1 day | How long a completed event-triggered run is kept. Not negative, at most 3650 days. |
+| `CompletedRetention` | 1 day | How long a completed run of a non-coalescing event trigger is kept, so a late redelivery of its event collapses on it; a coalescing trigger's run is freed when it completes. Not negative, at most 3650 days. |
 | `HistoryRetention` | 30 days | How long run history is kept. Not negative, at most 3650 days. |
 | `CleanupInterval` | 1 hour | How often expired runs and history are deleted. Positive, at most one day. |
 | `AutoCreateTable` | `true` | Creates the jobs tables at startup. |
@@ -246,7 +246,8 @@ The `AddEndpoint` callback's argument. Its properties are for transport extensio
 
 Routes are tried in the order they were declared, across endpoints, and the first that matches wins, so declare a
 `RouteType<T>()` before a `RouteNamespace` that encloses `T` if they name different endpoints. A command or query no
-route matches runs locally. Events are not routed: they are broadcast ([Transports](transports/index.md#event-broadcasting)).
+route matches runs locally. Events are not routed: they are broadcast
+([Transports](transports/index.md#event-broadcasting)).
 
 ### Transports
 
@@ -264,9 +265,13 @@ from the call, naming the configuration key and the argument.
 | `UseAmazonSqs(Action<AmazonSqsOptions>? configure = null)` | `Conduit.NET.Transport.AmazonSqs` | `Region`, or `ServiceUri` for LocalStack; with neither, the AWS SDK's default region and credential chain |
 | `UseActiveMQ(string? connectionString = null, Action<ActiveMQOptions>? configure = null)` | `Conduit.NET.Transport.ActiveMQ` | `ConnectionString` |
 
-Each transport's options and their defaults are in its guide: [SignalR](transports/signalr.md#options-and-configuration-keys),
-[HTTP](transports/http.md#options-and-configuration-keys), [Azure Service Bus](transports/azure-service-bus.md#options-and-configuration-keys), [RabbitMQ](transports/rabbitmq.md#options-and-configuration-keys),
-[Amazon SQS](transports/amazon-sqs.md#options-and-configuration-keys) and [ActiveMQ](transports/activemq.md#options-and-configuration-keys).
+Each transport's options and their defaults are in its guide:
+[SignalR](transports/signalr.md#options-and-configuration-keys),
+[HTTP](transports/http.md#options-and-configuration-keys),
+[Azure Service Bus](transports/azure-service-bus.md#options-and-configuration-keys),
+[RabbitMQ](transports/rabbitmq.md#options-and-configuration-keys),
+[Amazon SQS](transports/amazon-sqs.md#options-and-configuration-keys) and
+[ActiveMQ](transports/activemq.md#options-and-configuration-keys).
 
 `UseTransport<TTransport>()`, `UseTransport<TTransport>(BrokerTransportOptions options)` and
 `UseTransport(IConduitTransport transport)` register a transport by hand, for a transport package's own `Use*` method
@@ -280,7 +285,7 @@ or a test.
 | Member | Default | Description |
 |---|---|---|
 | `DefaultConcurrency` | `10` | How many messages the application's consumer handles at once: the prefetch count on RabbitMQ and ActiveMQ, the maximum concurrent calls on Azure Service Bus, the polling parallelism on Amazon SQS. |
-| `ResponseTimeout` | 60 s | How long a request waits for its reply before it fails with a `TimeoutException`. Positive and finite, checked in the `Use*` call. |
+| `ResponseTimeout` | 60 s | How long a request waits for its reply before it fails with a `TimeoutException`. Positive and at most `uint.MaxValue - 1` milliseconds (about 49.7 days), checked in the `Use*` call. |
 | `AddPool(string name, Action<ReceiverPoolOptions> configure)`, `Pools` | empty | A named receiver pool: its own queue and consumer for the types it `Handle`s; `Pools` lists them. `ReceiverPoolOptions.Concurrency` defaults to `1`. The names `replies` and `dead-letter` are reserved ([Pool merging](#pool-merging)). |
 | `EndpointName` | the endpoint's name | Set by the `Use*` call; read-only to you. |
 
@@ -309,7 +314,7 @@ resources.
 
 | Transport | Developer | Test |
 |---|---|---|
-| RabbitMQ | Non-durable and auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes | As Developer, and the dead-letter queue expires once unused for 5 minutes |
+| RabbitMQ | Non-durable and auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes; except the system dead-letter queue, which is never auto-delete (non-durable, so it lives until the broker restarts) | As Developer, and the dead-letter queue expires once unused for 5 minutes |
 | Azure Service Bus | Each topic, queue and subscription is deleted after 4 hours idle (`AutoDeleteOnIdle`) | After 5 minutes idle |
 | ActiveMQ | A queue is deleted 4 hours after its last consumer left; the two addresses stay | 5 minutes; the addresses stay |
 | Amazon SQS | Nothing is deleted: SNS and SQS have no auto-delete | Nothing is deleted |
@@ -405,8 +410,9 @@ SignalR and `billing` HTTP.
 ### Precedence
 
 **Configuration binds first, code runs second, so the `configure` callback always has the last word.** Every `Use*`
-method binds its section, then applies its explicit argument if one was passed and is not null (for example
-`UseRabbitMQ("amqp://…")`), then runs its callback. An explicit `UseRabbitMQ("amqp://prod")` is never redirected by a
+method binds its section, then applies its explicit argument if one was passed (for example
+`UseRabbitMQ("amqp://…")`; a connection string counts only when it is not null, empty or white space), then runs its
+callback. An explicit `UseRabbitMQ("amqp://prod")` is never redirected by a
 stray `appsettings.json` entry. The core settings follow the same order: `AddConduit(IConfiguration, …)` binds them
 before the callback runs.
 
