@@ -1,6 +1,10 @@
+using Amqp;
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Runtime;
+using Conduit.TestUtils;
+using Conduit.Transport.ActiveMQ.Tests.Integration;
+using Conduit.Transport.ActiveMQ.Tests.Support;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Transport.ActiveMQ.Tests.Unit;
@@ -208,18 +212,15 @@ public class TopologyManagerShould
     [TestMethod]
     public void ProductionModeDurableNoAutoDelete()
     {
-        // Arrange — production mode: durable=true, no auto-delete
-        // The topology manager sets durable based on TopologyMode == Production
-        // and only sets autoDelete/autoDeleteDelay for non-production modes.
-        var conduitOptions = CreateConduitOptions(topologyMode: TopologyMode.Production);
+        // Arrange
+        var topologyMode = TopologyMode.Production;
 
         // Act
-        var isDurable = conduitOptions.TopologyMode == TopologyMode.Production;
-        var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
+        var lifetime = ActiveMQTopologyManager.QueueLifetimeFor(topologyMode);
 
-        // Assert
-        isDurable.Should().BeTrue();
-        isEphemeral.Should().BeFalse();
+        // Assert — durable, and never auto-deleted
+        lifetime.Durable.Should().BeTrue();
+        lifetime.AutoDelete.Should().BeFalse();
     }
 
     [TestMethod]
@@ -240,27 +241,17 @@ public class TopologyManagerShould
     [TestMethod]
     public void DeveloperModeAutoDeleteFourHours()
     {
-        // Arrange — developer mode sets autoDeleteDelay to 4 hours in milliseconds
-        var expectedDelayMs = (long)TimeSpan.FromHours(4).TotalMilliseconds;
+        // Arrange
+        var topologyMode = TopologyMode.Developer;
 
-        // Act — this matches the value the topology manager computes for Developer mode
-        // Assert — 4 hours = 14,400,000 milliseconds
-        expectedDelayMs.Should().Be(14_400_000L);
-    }
+        // Act
+        var lifetime = ActiveMQTopologyManager.QueueLifetimeFor(topologyMode);
 
-    [TestMethod]
-    public void DeveloperModeAutoDeleteFlag()
-    {
-        // Arrange — non-production modes enable auto-delete
-        var conduitOptions = CreateConduitOptions(
-            topologyMode: TopologyMode.Developer,
-            topologyPrefix: "dev");
-
-        // Act — replicate the autoDelete check from CreateQueueAsync
-        var isAutoDelete = conduitOptions.TopologyMode != TopologyMode.Production;
-
-        // Assert
-        isAutoDelete.Should().BeTrue();
+        // Assert — not durable; deleted 4 hours (14,400,000 ms) after its last consumer, however full
+        lifetime.Durable.Should().BeFalse();
+        lifetime.AutoDelete.Should().BeTrue();
+        lifetime.AutoDeleteDelayMilliseconds.Should().Be(14_400_000L);
+        lifetime.AutoDeleteMessageCount.Should().Be(-1);
     }
 
     // --- TM-4.3: TestModeAutoDeleteFiveMinutes ---
@@ -268,27 +259,17 @@ public class TopologyManagerShould
     [TestMethod]
     public void TestModeAutoDeleteFiveMinutes()
     {
-        // Arrange — test mode sets autoDeleteDelay to 5 minutes in milliseconds
-        var expectedDelayMs = (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
+        // Arrange
+        var topologyMode = TopologyMode.Test;
 
-        // Act — this matches the value the topology manager computes for Test mode
-        // Assert — 5 minutes = 300,000 milliseconds
-        expectedDelayMs.Should().Be(300_000L);
-    }
+        // Act
+        var lifetime = ActiveMQTopologyManager.QueueLifetimeFor(topologyMode);
 
-    [TestMethod]
-    public void TestModeAutoDeleteFlag()
-    {
-        // Arrange — non-production modes enable auto-delete
-        var conduitOptions = CreateConduitOptions(
-            topologyMode: TopologyMode.Test,
-            topologyPrefix: "test-run1");
-
-        // Act — replicate the autoDelete check from CreateQueueAsync
-        var isAutoDelete = conduitOptions.TopologyMode != TopologyMode.Production;
-
-        // Assert
-        isAutoDelete.Should().BeTrue();
+        // Assert — not durable; deleted 5 minutes (300,000 ms) after its last consumer, however full
+        lifetime.Durable.Should().BeFalse();
+        lifetime.AutoDelete.Should().BeTrue();
+        lifetime.AutoDeleteDelayMilliseconds.Should().Be(300_000L);
+        lifetime.AutoDeleteMessageCount.Should().Be(-1);
     }
 
     // --- TM-S.10: CreateSeparateAnycastAndMulticastAddresses ---
@@ -314,37 +295,82 @@ public class TopologyManagerShould
     [TestMethod]
     public void UseAmqpFilterOnQueues()
     {
-        // Arrange — the topology manager creates queues with JMSType filter expressions.
-        // AMQP Subject maps to JMSType in Artemis core filter syntax.
-        var messageType = "Orders.Commands.CreateOrder";
+        // Arrange — AMQP Subject maps to JMSType in Artemis core filter syntax
+        var commandType = "Orders.Commands.CreateOrder";
+        string[] eventTypes = ["Orders.Events.OrderPlaced", "Billing.Events.Invoiced"];
 
-        // Act — reproduce the filter expression used by ActiveMQTopologyManager
-        var filterExpression = $"JMSType='{messageType}'";
+        // Act
+        var commandFilter = ActiveMQTopologyManager.CommandQueueFilter(commandType);
+        var eventFilter = ActiveMQTopologyManager.EventQueueFilter(eventTypes);
 
-        // Assert
-        filterExpression.Should().Be("JMSType='Orders.Commands.CreateOrder'");
+        // Assert — a command queue takes its own type; an event queue exactly the types it subscribes
+        commandFilter.Should().Be("JMSType='Orders.Commands.CreateOrder'");
+        eventFilter.Should().Be("JMSType IN ('Orders.Events.OrderPlaced','Billing.Events.Invoiced')");
+    }
+
+    // --- TM-S.13: UseUniqueLinkNames ---
+
+    [TestMethod]
+    public void UseUniqueLinkNames()
+    {
+        // Arrange — consumers for two queue names that share their first 41 characters, and a short one:
+        // a name cut from the queue's name to 50 characters made the first two equal and threw for the third
+        string[] queueNames = [new string('q', 41) + "-first", new string('q', 41) + "-second", "c-a"];
+
+        // Act
+        var linkNames = queueNames.Select(_ => ActiveMQTopologyManager.ConsumerLinkName()).ToList();
+
+        // Assert — every consumer link gets a name of its own, whatever its queue is called
+        linkNames.Should().OnlyHaveUniqueItems();
+        linkNames.Should().AllSatisfy(linkName => linkName.Should().MatchRegex("^consumer-[0-9a-f]{32}$"));
     }
 
     // --- TM-S.12: SetAutoDeleteDelayForEphemeralQueues ---
 
     [TestMethod]
-    public void SetAutoDeleteDelayForDeveloperMode()
+    [DataRow(TopologyMode.Developer, 14_400_000L)]
+    [DataRow(TopologyMode.Test, 300_000L)]
+    public async Task SetAutoDeleteDelayForEphemeralQueues(TopologyMode topologyMode, long expectedDelayMilliseconds)
     {
-        // Arrange — developer mode: autoDeleteDelay = 4 hours in milliseconds
-        var expectedDelayMs = (long)TimeSpan.FromHours(4).TotalMilliseconds;
+        // Arrange — against the real broker: a delay only counts once Artemis holds it
+        var connectionString = ActiveMQTestBase.RequireBroker();
+        var conduitOptions = CreateConduitOptions(
+            applicationName: "auto-delete",
+            topologyMode: topologyMode,
+            topologyPrefix: TestTopologyPrefix.NewForTest(typeof(TopologyManagerShould).Assembly));
+        var manager = CreateManager(conduitOptions: conduitOptions);
+        const string eventType = "Orders.Events.OrderPlaced";
+        const string commandType = "Orders.Commands.PlaceOrder";
 
-        // Act / Assert — verify the expected value (14,400,000 ms)
-        expectedDelayMs.Should().Be(14_400_000L);
-    }
+        // Act
+        var connection = await new ConnectionFactory().CreateAsync(new Address(connectionString));
+        try
+        {
+            await manager.EnsureTopologyAsync(new Session(connection), [eventType], [commandType], CancellationToken.None);
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
 
-    [TestMethod]
-    public void SetAutoDeleteDelayForTestMode()
-    {
-        // Arrange — test mode: autoDeleteDelay = 5 minutes in milliseconds
-        var expectedDelayMs = (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
+        // Assert — the event and the command queue alike: not durable, and deleted once they have had no
+        // consumer for the mode's delay, whatever they still hold
+        await using var management = await ArtemisManagement.ConnectAsync(connectionString);
+        string[] queueNames =
+        [
+            TopologyNaming.CreateAppResourceName(conduitOptions, 256),
+            TopologyNaming.CreateSharedResourceName(conduitOptions, commandType, 256),
+        ];
 
-        // Act / Assert — verify the expected value (300,000 ms)
-        expectedDelayMs.Should().Be(300_000L);
+        foreach (var queueName in queueNames)
+        {
+            var because = $"{queueName} is ephemeral";
+            var configuration = await management.QueueConfigurationAsync(queueName);
+            configuration.GetProperty("durable").GetBoolean().Should().BeFalse(because);
+            configuration.GetProperty("auto-delete").GetBoolean().Should().BeTrue(because);
+            configuration.GetProperty("auto-delete-delay").GetInt64().Should().Be(expectedDelayMilliseconds, because);
+            configuration.GetProperty("auto-delete-message-count").GetInt64().Should().Be(-1, because);
+        }
     }
 
     // --- Additional: Pool queue naming ---

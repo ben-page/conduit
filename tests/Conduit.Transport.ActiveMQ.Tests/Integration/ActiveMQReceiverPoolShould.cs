@@ -1,8 +1,10 @@
 using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Generated;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Transport.ActiveMQ;
+using Conduit.Transport.ActiveMQ.Tests.Support;
 using Conduit.Transport.ActiveMQ.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -21,14 +23,15 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
         "Conduit.Transport.ActiveMQ.Tests.Support.Contracts.SlowCommand";
 
     /// <summary>
-    /// Creates a handler host with a named receiver pool that routes SlowCommand
-    /// to a dedicated queue with the specified prefetch count.
+    /// Creates a handler host with a named receiver pool that routes <paramref name="pooledTypeName"/>
+    /// (SlowCommand unless given) to a dedicated queue with the specified prefetch count.
     /// </summary>
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
         string poolName,
         int poolConcurrency,
-        string? topologyPrefix = null)
+        string? topologyPrefix = null,
+        string pooledTypeName = SlowCommandTypeName)
     {
         return await TestHost.StartAsync(builder =>
         {
@@ -49,7 +52,7 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
                         options.AddPool(poolName, pool =>
                         {
                             pool.Concurrency = poolConcurrency;
-                            pool.Handle(SlowCommandTypeName);
+                            pool.Handle(pooledTypeName);
                         });
                     }));
             });
@@ -133,5 +136,35 @@ public class ActiveMQReceiverPoolShould : ActiveMQTestBase
 
         // Both were handled
         await handlerSpy.WaitForCountAsync(2, TimeSpan.FromSeconds(10));
+    }
+
+    [TestMethod]
+    public async Task DeliverAPooledEventOnce()
+    {
+        // Arrange — TestEvent belongs to a pool; the application's other events stay on its own queue
+        var handlerName = UniqueAppName("pool");
+        var publisherName = UniqueAppName("pub");
+
+        await using var handlerHost = await CreateHostWithPoolAsync(
+            handlerName, "events", 2, pooledTypeName: typeof(TestEvent).FullName!);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var publisherHost = await CreateHostAsync(
+            publisherName, prefix, handling => handling.ClearAllHandlers());
+
+        var handlerSpy = handlerHost.GetRequiredService<SpyLog>();
+        var handlerOptions = handlerHost.GetRequiredService<ConduitOptions>();
+        var appEventQueueName = TopologyNaming.CreateAppResourceName(handlerOptions, 256);
+        var poolEventQueueName = TopologyNaming.CreateAppResourceName(handlerOptions, "events", 256);
+
+        // Act
+        await publisherHost.GetRequiredService<IMediator>().PublishAsync(new TestEvent("pooled"));
+        await handlerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(15));
+
+        // Assert — the broker routed it to the pool's queue alone: with no copy on the application's
+        // own queue, no second delivery can follow the one the listener ran
+        await using var management = await ArtemisManagement.ConnectAsync(ConnectionString!);
+        (await management.MessagesAddedAsync(poolEventQueueName)).Should().Be(1);
+        (await management.MessagesAddedAsync(appEventQueueName)).Should().Be(0);
+        handlerSpy.Invocations.OfType<TestEvent>().Should().ContainSingle();
     }
 }

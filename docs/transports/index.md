@@ -286,14 +286,17 @@ waiting when the transport stops fails with an `InvalidOperationException`.
 When the host stops (SIGTERM, `StopAsync`), a broker transport finishes the messages it is already
 handling before it closes anything those handlers need:
 
-1. **Stop receiving.** RabbitMQ cancels its consumers, ActiveMQ withdraws its links' credit, Amazon
-   SQS stops polling, and Azure Service Bus stops its processors. The channels, links and clients
-   stay open, and so does the reply consumer, since a handler may itself be awaiting a reply.
+1. **Stop receiving.** RabbitMQ cancels its consumers, ActiveMQ stops replenishing its links' credit
+   (Artemis may still push up to each link's prefetch, [see ActiveMQ](activemq.md#stopping)),
+   Amazon SQS stops polling, and Azure Service Bus stops its processors. The channels, links and
+   clients stay open, and so does the reply consumer, since a handler may itself be awaiting a reply.
+   A transport that is reconnecting after a lost connection stops reconnecting.
 2. **Drain.** The transport waits for every handler still running to finish, reply and acknowledge
    its message, bounded by the host's shutdown deadline (`HostOptions.ShutdownTimeout`, 30 seconds
    by default). A message the broker client still hands over during this step is requeued
    undispatched, for another instance to take: it is not a failure, so it is never dead-lettered. A
-   handler that fails during the drain is abandoned like any other failure (on RabbitMQ, dead-lettered).
+   handler that fails during the drain is abandoned like any other failure (on RabbitMQ, dead-lettered;
+   on ActiveMQ, counted as a delivery attempt).
 3. **Close.** Only then are the channels, links and receivers closed, and a request still awaiting
    a reply fails with an `InvalidOperationException`.
 
@@ -308,6 +311,10 @@ raise `HostOptions.ShutdownTimeout` to cover them, or make them idempotent with 
 ## Ephemeral resource cleanup
 
 RabbitMQ, Azure Service Bus, and ActiveMQ auto-delete ephemeral resources via native broker TTLs.
+On ActiveMQ that covers the queues (deleted 4 hours, or 5 minutes in Test mode, after their last
+consumer left) but not the two addresses per prefix, which Artemis does not auto-delete for an
+address created through its management API; they stay behind empty
+([see ActiveMQ](activemq.md#developer-and-test-modes)).
 SQS has no equivalent, so the transport library exposes
 `AmazonSqsTopologyReaper.ReapByPrefixAsync` — best-effort cleanup that deletes resources whose names
 start with a given prefix. Conduit's own test suites use this (once per test project, scoped to a stable

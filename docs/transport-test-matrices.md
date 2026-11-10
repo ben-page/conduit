@@ -108,7 +108,7 @@ Test class: `{Transport}TopologyModeShould`
 | 7.1 | `CreateDurableResourcesInProductionMode` | A + B with `TopologyMode.Production` | Host starts successfully, resources created |
 | 7.2 | `CreateEphemeralResourcesInDeveloperMode` | A + B with `TopologyMode.Developer` | Host starts, resources have auto-delete/TTL flags |
 | 7.3 | `IsolateTestModeRuns` | Two independent test runs with `TopologyMode.Test` | Different prefixes, no cross-contamination |
-| 7.4 | *(SQS only — separate test class, not a method in `{Transport}TopologyModeShould`)* | Single host, test mode | On startup of each test project, the project reaps every broker resource under its own stable `test-{hash8(assembly)}-` prefix. **SQS:** `AmazonSqsTopologyReaperShould.ReapQueuesAndTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup`. **RabbitMQ/ASB/ActiveMQ:** N/A — native auto-delete/TTL covers cleanup. |
+| 7.4 | *(SQS only — separate test class, not a method in `{Transport}TopologyModeShould`)* | Single host, test mode | On startup of each test project, the project reaps every broker resource under its own stable `test-{hash8(assembly)}-` prefix. **SQS:** `AmazonSqsTopologyReaperShould.ReapQueuesAndTopicsMatchingThePrefixAndLeaveOthers` + once-per-project reap in `AssemblySetup`. **RabbitMQ/ASB/ActiveMQ:** N/A — native auto-delete/TTL covers cleanup (on ActiveMQ the queues; its two addresses per prefix stay, empty). |
 
 **7.4 scope.** Cleanup is per test project, once at assembly initialize, scoped to resources the project created (a stable `test-{hash8(assembly)}-` prefix via `Conduit.TestUtils.TestTopologyPrefix`). A project only deletes its own resources, so concurrent projects/hosts never interfere. The transport libraries expose `ReapByPrefixAsync` so applications can run their own prefix-scoped cleanup too.
 
@@ -170,11 +170,25 @@ Integration tests of one broker's own mechanics, beyond the shared matrix.
 | 11.6 | `AsbTopologyShould.RefuseASubscriptionThatForwardsToAnotherApplication` | B handles every command; C, another app name on the same prefix, also handling them, starts | C's start throws `InvalidOperationException` naming a collision between applications: a shared subscription forwarding to another application's queue is never taken over |
 | 11.7 | `AsbShutdownShould.FailARequestStillAwaitingItsReplyOnStop` | A (30 s `ResponseTimeout`) sends a `ShutdownProbeCommand` (5 s handler), B handles; once B's handler is running, A is stopped | A's request throws exactly `InvalidOperationException("The transport for endpoint 'broker' stopped before the reply arrived.")` within 3 s of the stop: the session receive is raced against the waiter `FailPendingReplies` fails |
 
+#### ActiveMQ
+
+Several of these read what the broker holds through the Artemis management address (`Support/ArtemisManagement`: a queue's `messagesAdded`, `countMessages` with a filter, the configuration `updateQueue` answers with).
+
+| # | Test Method | Hosts | Assert |
+|---|---|---|---|
+| 11.8 | `ActiveMQEventRoutingShould.NotDeliverAnotherAppsEventTypes` | B listens for `TestEvent` alone (`ClearAllHandlers().HandleEvent<TestEvent, TestEventListener>()`); A publishes `FireAndForgetEvent`, then `TestEvent`, over the same link | Once B's listener ran, B's app event queue has `messagesAdded` 1: its `JMSType IN (...)` filter kept out the type B does not subscribe |
+| 11.9 | `ActiveMQReceiverPoolShould.DeliverAPooledEventOnce` | B has a pool `events` handling `TestEvent`; A publishes `TestEvent` | Once B's listener ran, the pool's event queue has `messagesAdded` 1 and B's app event queue 0 (so no second copy can follow), and the listener ran once |
+| 11.10 | `ActiveMqDeadLetterShould.RouteAFailedEventToTheDeadLetterAddressWithoutAConduitDlq` | A publishes `ThrowingTestEvent`, B listens with no dead-letter store | Once the broker's `DLQ` holds one message whose `_AMQ_ORIG_QUEUE` is B's app queue, the listener has run exactly 10 times (Artemis's default `max-delivery-attempts`): each abandon was a counted `modified` (`delivery-failed`), never an uncounted `released` |
+| 11.11 | `ActiveMqDeadLetterShould.ReplayAPooledEventToItsPoolQueue` | B (dead-letter store) has a pool handling `ThrowingTestEvent`; A publishes it | The captured entry's replay is recaptured and the listener ran twice: the replay went to the pool's queue by fully qualified name (the app queue's filter drops the type, also when sent by FQQN) |
+| 11.12 | `ActiveMQReconnectShould.ResumeAfterBrokerRestart` | A sends (15 s `ResponseTimeout`), B handles; one round trip, then the broker container is restarted (`ActiveMQTestBase.RestartBrokerAsync`: Testcontainers `StopAsync`/`StartAsync`, then an AMQP connect probe until it answers; Inconclusive for a configured or reused broker, or a re-mapped port) | Once both transports complete `NextReconnection` (no fixed sleep), a request gets its reply and an event reaches B: the topology (Test-mode queues are not durable), senders, reply queue and consumers were rebuilt on new connections |
+| 11.13 | `ActiveMQReconnectShould.FailARequestAwaitingItsReplyWhenTheConnectionIsLost` | A (30 s `ResponseTimeout`) sends a `ShutdownProbeCommand` (5 s handler), B handles; once the handler runs, the broker is stopped | A's request throws exactly `InvalidOperationException("The connection to the broker for endpoint 'broker' was lost before the reply arrived.")` within 15 s of the stop, not at its timeout |
+| 11.14 | `ActiveMQReconnectShould.StopWhileReconnecting` | B; the broker is stopped and B's transport reports `IsConnected` false | Disposing B takes under 5 s, and the reconnection it overtook installs nothing (`IsConnected` false, `NextReconnection` not completed) |
+
 ### Totals (verified 2026-11-10)
 
-Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**. Azure Service Bus adds its **3**, bringing its total to **41**.
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **4 transport-specific tests** of category 11, bringing its total to **42**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **7**, bringing its total to **45**.
 
-Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **160 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 39 (SQS) + 45 (ActiveMQ) = **167 `[TestMethod]` integration tests**.
 
 ---
 
@@ -182,7 +196,7 @@ Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 39 
 
 Unit tests validating that each transport's topology manager creates the correct broker resources with correct names, routing semantics, and durability settings. Tests live in `Unit/TopologyManagerShould.cs` within each transport's test project.
 
-These tests verify naming logic and configuration without requiring a live broker. They test the topology manager's resource plan — the names it computes and the flags it sets.
+These tests verify naming logic and configuration without requiring a live broker. They test the topology manager's resource plan — the names it computes and the flags it sets. (One exception: ActiveMQ's TM-S.12 reads the flags back from the real broker, since Artemis holds a queue's auto-delete settings only once it created the queue. ActiveMQ's TM-4.1–4.3 test `ActiveMQTopologyManager.QueueLifetimeFor` under the names `ProductionModeDurableNoAutoDelete`, `DeveloperModeAutoDeleteFourHours` and `TestModeAutoDeleteFiveMinutes`.)
 
 ### Category TM-1: Resource Naming
 
@@ -255,10 +269,11 @@ These tests validate broker-specific topology features that don't apply to all t
 | # | Test Method | Validates |
 |---|---|---|
 | TM-S.10 | `CreateSeparateAnycastAndMulticastAddresses` | Two addresses: anycast for commands/queries, multicast for events |
-| TM-S.11 | `UseAmqpFilterOnQueues` | Queue filter expression: `AMQPSubject = '{FullTypeName}'` |
-| TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | Native `auto-delete-delay` in milliseconds per topology mode |
+| TM-S.11 | `UseAmqpFilterOnQueues` | `ActiveMQTopologyManager.CommandQueueFilter`: `JMSType='{FullTypeName}'`; `EventQueueFilter`: `JMSType IN ('{FullTypeName}', ...)` |
+| TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | `[DataRow]` Developer (14,400,000 ms) and Test (300,000 ms): `EnsureTopologyAsync` against the real broker, then each queue's configuration read back through the management API is non-durable, `auto-delete` true, `auto-delete-delay` the mode's, `auto-delete-message-count` -1. The one container-backed test in `Unit/` (`ActiveMQTestBase.RequireBroker`, Inconclusive without a broker) |
+| TM-S.13 | `UseUniqueLinkNames` | `ConsumerLinkName()` gives `consumer-{32 hex}`, unique per link, whatever the queue is called (a name cut from the queue's name to 50 characters made two long names equal and threw for a short one) |
 
-### Totals (verified 2026-06-09; RabbitMQ and Azure Service Bus 2026-11-10)
+### Totals (verified 2026-06-09; RabbitMQ, Azure Service Bus and ActiveMQ 2026-11-10)
 
 The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-4 (3). Each transport adds a varying number of transport-specific (TM-S) tests, so the actual `Unit/TopologyManagerShould.cs` `[TestMethod]` count differs per transport:
 
@@ -267,7 +282,7 @@ The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-
 | RabbitMQ | 24 |
 | Azure Service Bus | 26 |
 | Amazon SQS | 17 |
-| ActiveMQ | 23 |
+| ActiveMQ | 21 |
 
 (The TM-S.x rows in this document are illustrative; the per-transport tables have grown past the original 12 transport-specific cases. The 16 universal tests are the required floor every new transport must implement.)
 

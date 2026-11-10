@@ -1,3 +1,4 @@
+using Amqp;
 using Conduit.Configuration;
 using Conduit.Durability;
 using Conduit.Persistence.Sqlite;
@@ -21,6 +22,7 @@ public abstract class ActiveMQTestBase
 {
     private static IContainer? container;
     private static bool isAvailable;
+    private static ushort brokerPort;
 
     protected static string? ConnectionString { get; private set; }
 
@@ -84,6 +86,76 @@ public abstract class ActiveMQTestBase
         }
     }
 
+    /// <summary>
+    /// Restarts the Artemis container this test run started, dropping every connection to it and every
+    /// non-durable queue on it, and returns once it accepts connections again. See <see cref="StopBrokerAsync"/>
+    /// and <see cref="StartBrokerAsync"/> for when it is Inconclusive.
+    /// </summary>
+    protected static async Task RestartBrokerAsync()
+    {
+        await StopBrokerAsync();
+        await StartBrokerAsync();
+    }
+
+    /// <summary>
+    /// Stops the Artemis container this test run started, dropping every connection to it. Inconclusive
+    /// for a configured or reused broker, which other runs may share. A test that stops the broker starts
+    /// it again before it ends.
+    /// </summary>
+    protected static async Task StopBrokerAsync()
+    {
+        if (container is null)
+        {
+            Assert.Inconclusive("Stopping the broker needs the Artemis container this test run started.");
+        }
+
+        brokerPort = container.GetMappedPublicPort(61616);
+        await container.StopAsync();
+    }
+
+    /// <summary>
+    /// Starts the Artemis container <see cref="StopBrokerAsync"/> stopped and waits until it accepts
+    /// connections: the startup log line the container's wait strategy looks for is already in its log
+    /// from the first start, so that wait may end before this start does. Inconclusive when the container runtime
+    /// publishes the restarted broker on another port (Docker may; podman keeps the port), since a
+    /// transport reconnects to the address it was given.
+    /// </summary>
+    protected static async Task StartBrokerAsync()
+    {
+        if (container is null)
+        {
+            Assert.Inconclusive("Starting the broker needs the Artemis container this test run started.");
+        }
+
+        await container.StartAsync();
+
+        if (container.GetMappedPublicPort(61616) != brokerPort)
+        {
+            // The tests after this one connect to the new address
+            ConnectionString = $"amqp://admin:admin@{container.Hostname}:{container.GetMappedPublicPort(61616)}";
+            Assert.Inconclusive("The container runtime published the restarted broker on another port.");
+        }
+
+        // Each attempt is bounded, so a handshake a starting broker never answers cannot hold the test
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60);
+        while (true)
+        {
+            try
+            {
+                using var attempt = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var connection = await new ConnectionFactory()
+                    .CreateAsync(new Address(ConnectionString), attempt.Token)
+                    .WaitAsync(attempt.Token);
+                await connection.CloseAsync();
+                return;
+            }
+            catch (Exception) when (DateTimeOffset.UtcNow < deadline)
+            {
+                await Task.Delay(250);
+            }
+        }
+    }
+
     [TestInitialize]
     public void TestInitialize()
     {
@@ -91,6 +163,20 @@ public abstract class ActiveMQTestBase
         {
             Assert.Inconclusive("ActiveMQ Artemis container not available. Ensure Docker/Podman is running.");
         }
+    }
+
+    /// <summary>
+    /// The broker's connection string, for a test outside this hierarchy that needs the real broker
+    /// (a topology manager test reading back what Artemis holds). Inconclusive when there is none.
+    /// </summary>
+    internal static string RequireBroker()
+    {
+        if (!isAvailable || ConnectionString is null)
+        {
+            Assert.Inconclusive("ActiveMQ Artemis container not available. Ensure Docker/Podman is running.");
+        }
+
+        return ConnectionString;
     }
 
     /// <summary>
@@ -174,7 +260,8 @@ public abstract class ActiveMQTestBase
         string applicationName,
         string dlqDatabasePath,
         string? topologyPrefix = null,
-        Action<ConduitRegistrationOverrides>? configureHandling = null)
+        Action<ConduitRegistrationOverrides>? configureHandling = null,
+        Action<ActiveMQOptions>? configureOptions = null)
     {
         var connectionString = $"Data Source={dlqDatabasePath}";
 
@@ -192,7 +279,7 @@ public abstract class ActiveMQTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseActiveMQ(ConnectionString));
+                    endpoint.UseActiveMQ(ConnectionString, configureOptions));
 
                 conduit.UseSqlite(connectionString);
                 conduit.AddDurability(durability =>

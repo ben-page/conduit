@@ -434,11 +434,11 @@ SQS Queue: {systemName}-{appName}-{poolName} (optional)
 
 **ActiveMQ Artemis topology:**
 ```
-Anycast Address: {systemName} (commands/queries)
-├── Queue: {ReversedTypeName} (shared name — unicast)
+Anycast Address: {systemName}-commands (commands/queries, routed [FireAndForget] commands)
+├── Queue: {systemName}-{ReversedTypeName} (shared name — unicast; filter JMSType='{FullTypeName}')
 Multicast Address: {systemName}-events
-├── Queue: {appName}-{ReversedTypeName} (per-app — multicast)
-Reply Queue: per-instance exclusive temporary queue
+├── Queue: {systemName}-{appName} (per-app — multicast; filter JMSType IN (the app's events))
+Reply Queue: per-connection exclusive temporary queue
 ```
 
 Unicast correctness for commands/queries in RabbitMQ relies on only one app binding/subscribing a given type. ASB enforces unicast via shared subscription names. SQS uses shared subscription names for filter policies. ActiveMQ uses shared queue names on the anycast address.
@@ -1078,12 +1078,14 @@ All 4 broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) shar
 **Topology:**
 - Two addresses: anycast for commands/queries, multicast for events
 - Command/query queues: shared names on anycast address (unicast). Event queues: per-app names on multicast address (multicast).
-- Reply queue: per-instance exclusive temporary queue (destroyed on shutdown)
+- Reply queue: per-connection exclusive temporary queue (deleted with the connection)
 - Topology managed via Artemis management address (`activemq.management`)
 
 **Wire format:** AMQP 1.0 message properties: `Subject`=FullTypeName, `MessageId`, `CorrelationId`=ConversationId. Application properties: `CausationId`, `ReplyTo`, `ReplyCorrelationId`.
 
-**Topology modes:** Production = durable. Developer = `auto-delete-delay` 4h. Test = `auto-delete-delay` 5min (native Artemis support via queue attributes).
+**Topology modes:** Production = durable. Developer = non-durable queues, `autoDelete` with `autoDeleteDelay` 4h. Test = the same with 5min (Artemis's own queue settings, passed to `createQueue`; the two addresses are not auto-deleted, since Artemis reaps only addresses it created itself).
+
+**Reconnection:** AMQPNetLite does not reconnect, so the transport rebuilds the connection, topology, links, reply queue and consumers itself, with backoff, when the connection or any of its links closes unexpectedly.
 
 **Concurrency:** AMQP link credit (prefetch count) per receiver link.
 

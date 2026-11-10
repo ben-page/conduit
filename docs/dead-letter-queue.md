@@ -227,7 +227,7 @@ Every broker `RedeliverAsync` deliberately skips the base class's outbound heade
 | **Azure Service Bus** | Sends directly to the app queue (bypasses the topic). |
 | **RabbitMQ** | Publishes to the app queue via the default exchange (routing key = queue name). |
 | **Amazon SQS** | `SendMessage` directly to the app queue URL. |
-| **ActiveMQ Artemis** | Sends directly to the app's anycast/multicast address. |
+| **ActiveMQ Artemis** | Sends by fully qualified name (`address::queue`) to the queue the app takes the type from: a command's shared (or pool) queue on the anycast address, an event's app (or pool) queue on the multicast address. Every queue filters to its own types, so the queue matters. |
 | **HTTP** | POST to the dispatch/publish endpoint, with the current context's ids, not the original ones. |
 | **SignalR** | Invokes the hub's `Dispatch`/`Publish` method, with the current context's ids, not the original ones. |
 

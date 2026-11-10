@@ -7,6 +7,7 @@ using Conduit.Configuration;
 using Conduit.Durability.DeadLetterQueue;
 using Conduit.Runtime;
 using Conduit.TestUtils;
+using Conduit.Transport.ActiveMQ.Tests.Support;
 using Conduit.Transport.ActiveMQ.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -303,6 +304,108 @@ public class ActiveMqDeadLetterShould : ActiveMQTestBase
         {
             DeleteIfExists(dbPath);
         }
+    }
+
+    [TestMethod]
+    public async Task ReplayAPooledEventToItsPoolQueue()
+    {
+        // Arrange — ThrowingTestEvent belongs to a pool, so it reaches the application on the pool's queue:
+        // the application's own event queue filters it out
+        var handlerName = UniqueAppName("dlq-h");
+        var publisherName = UniqueAppName("dlq-p");
+        var dbPath = CreateDeadLetterDatabasePath();
+
+        try
+        {
+            await using var handler = await CreateHostWithDeadLettersAsync(
+                handlerName,
+                dbPath,
+                configureHandling: handling =>
+                {
+                    handling.ClearCommandHandlers();
+                    handling.ClearQueryHandlers();
+                },
+                configureOptions: options => options.AddPool(
+                    "throwing", pool => pool.Handle(typeof(ThrowingTestEvent).FullName!)));
+
+            await using var publisher = await CreateHostAsync(
+                publisherName,
+                handler.TopologyPrefix!,
+                handling => handling.ClearAllHandlers());
+
+            var handlerSpy = handler.GetRequiredService<SpyLog>();
+            var deadLetters = handler.GetRequiredService<IDeadLetters>();
+
+            await publisher.GetRequiredService<IMediator>().PublishAsync(new ThrowingTestEvent("pooled-replay"));
+            await WaitForDeadLetterCountAsync(deadLetters, 1, TimeSpan.FromSeconds(15));
+            var firstPage = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+            var original = firstPage.Entries.Should().ContainSingle().Subject;
+
+            // Act — the listener throws again, so the replayed delivery is captured anew
+            var replay = await deadLetters.ReplayAsync(original.Id, CancellationToken.None);
+            var recaptured = await WaitForEntryOtherThanAsync(deadLetters, original.Id, TimeSpan.FromSeconds(15));
+
+            // Assert — the replay reached the listener: it was sent to the queue that takes its type
+            replay.Success.Should().BeTrue();
+            recaptured.MessageType.Should().Be(typeof(ThrowingTestEvent).FullName);
+            handlerSpy.Invocations.OfType<ThrowingTestEvent>().Should().HaveCount(2);
+        }
+        finally
+        {
+            DeleteIfExists(dbPath);
+        }
+    }
+
+    [TestMethod]
+    [Timeout(90_000)]
+    public async Task RouteAFailedEventToTheDeadLetterAddressWithoutAConduitDlq()
+    {
+        // Arrange — a listener that always throws, and no Conduit dead-letter store to capture it
+        var handlerName = UniqueAppName("dla-h");
+        var publisherName = UniqueAppName("dla-p");
+
+        await using var handler = await CreateHostAsync(handlerName);
+        await using var publisher = await CreateHostAsync(
+            publisherName, handler.TopologyPrefix!, handling => handling.ClearAllHandlers());
+
+        var handlerSpy = handler.GetRequiredService<SpyLog>();
+        var appEventQueueName = TopologyNaming.CreateAppResourceName(handler.GetRequiredService<ConduitOptions>(), 256);
+        await using var management = await ArtemisManagement.ConnectAsync(ConnectionString!);
+
+        // Act
+        await publisher.GetRequiredService<IMediator>().PublishAsync(new ThrowingTestEvent("undeliverable"));
+        await WaitForDeadLetterAddressCountAsync(management, appEventQueueName, 1, TimeSpan.FromSeconds(30));
+
+        // Assert — each failure counted as a delivery attempt: the listener ran Artemis's default
+        // max-delivery-attempts (10) times, then the broker moved the event to its dead-letter address
+        handlerSpy.Invocations.OfType<ThrowingTestEvent>().Should().HaveCount(10)
+            .And.AllSatisfy(@event => @event.Value.Should().Be("undeliverable"));
+    }
+
+    /// <summary>
+    /// Waits until the broker's dead-letter queue (<c>DLQ</c>, the dead-letter address the stock broker
+    /// configures for every address) holds <paramref name="expectedCount"/> messages moved there from
+    /// <paramref name="sourceQueueName"/>.
+    /// </summary>
+    private static async Task WaitForDeadLetterAddressCountAsync(
+        ArtemisManagement management,
+        string sourceQueueName,
+        long expectedCount,
+        TimeSpan timeout)
+    {
+        var filter = $"_AMQ_ORIG_QUEUE = '{sourceQueueName}'";
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await management.CountMessagesAsync("DLQ", filter) >= expectedCount)
+            {
+                return;
+            }
+
+            await Task.Delay(200);
+        }
+
+        Assert.Fail($"Timed out waiting for {expectedCount} message(s) from '{sourceQueueName}' on DLQ after {timeout.TotalSeconds}s");
     }
 
     private static async Task SendRawToAppEventQueueAsync(ConduitOptions options, string messageType, byte[] body)

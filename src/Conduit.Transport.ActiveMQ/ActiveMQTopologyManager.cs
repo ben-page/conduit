@@ -15,8 +15,8 @@ namespace Conduit.Transport.ActiveMQ;
 /// Uses two addresses:
 /// - Anycast address for commands/queries: each command/query type gets its own queue
 ///   with a filter, and Artemis delivers to exactly one consumer (competing consumers).
-/// - Multicast address for events: each subscribing app gets its own queue per event type,
-///   so every app gets a copy (multicast).
+/// - Multicast address for events: each subscribing app gets its own queue (and one per pool that
+///   takes events), filtered to the event types it takes, so every app gets a copy of exactly those.
 /// </remarks>
 internal sealed class ActiveMQTopologyManager
 {
@@ -32,6 +32,15 @@ internal sealed class ActiveMQTopologyManager
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(202, "ResourceAlreadyExists"),
             "Artemis resource '{Name}' already exists");
 
+    private static readonly Action<ILogger, string, Exception?> LogUpdatingQueueFilter =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(203, "UpdatingQueueFilter"),
+            "Updating the filter of existing Artemis queue '{QueueName}'");
+
+    private static readonly TimeSpan ManagementTimeout = TimeSpan.FromSeconds(10);
+
+    private static readonly QueueLifetime ProductionLifetime =
+        new(Durable: true, AutoDelete: false, AutoDeleteDelayMilliseconds: 0, AutoDeleteMessageCount: 0);
+
     private readonly ActiveMQOptions options;
     private readonly ConduitOptions conduitOptions;
     private readonly ILogger logger;
@@ -43,6 +52,37 @@ internal sealed class ActiveMQTopologyManager
         this.logger = logger;
     }
 
+    /// <summary>The anycast address commands and queries are sent to.</summary>
+    public string AnycastAddress => TopologyNaming.CreateSharedResourceName(this.conduitOptions, "commands", 256);
+
+    /// <summary>The multicast address events are published to.</summary>
+    public string MulticastAddress => TopologyNaming.CreateSharedResourceName(this.conduitOptions, "events", 256);
+
+    /// <summary>
+    /// The fully qualified name (<c>address::queue</c>) of the queue this application takes
+    /// <paramref name="messageType"/> from, for a redelivery that must reach this application's queue
+    /// rather than every subscriber: a command or query's shared queue, an event's own app queue, or the
+    /// pool queue either kind belongs to. Each queue's filter admits the type, so a message sent there by
+    /// this name is not dropped, as one sent to a queue whose filter leaves its type out would be.
+    /// </summary>
+    public string RedeliveryQueue(string messageType, bool isCommandOrQuery)
+    {
+        var pool = this.options.Pools.FirstOrDefault(
+            candidate => candidate.MessageTypes.Contains(messageType, StringComparer.Ordinal));
+
+        if (isCommandOrQuery)
+        {
+            var commandQueueName = TopologyNaming.CreateSharedResourceName(
+                this.conduitOptions, pool is null ? messageType : $"{pool.Name}.{messageType}", 256);
+            return $"{this.AnycastAddress}::{commandQueueName}";
+        }
+
+        var eventQueueName = pool is null
+            ? TopologyNaming.CreateAppResourceName(this.conduitOptions, 256)
+            : TopologyNaming.CreateAppResourceName(this.conduitOptions, pool.Name, 256);
+        return $"{this.MulticastAddress}::{eventQueueName}";
+    }
+
     /// <summary>
     /// Creates only the addresses needed for publishing messages. Does not create
     /// inbound queues or filters. Called when <see cref="ConduitOptions.ProducerOnly"/> is true.
@@ -50,16 +90,16 @@ internal sealed class ActiveMQTopologyManager
     public async Task<(string AnycastAddress, string MulticastAddress)> EnsureAddressesAsync(
         Session session, CancellationToken cancellationToken)
     {
-        var anycastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "commands", 256);
-        var multicastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "events", 256);
+        var anycastAddress = this.AnycastAddress;
+        var multicastAddress = this.MulticastAddress;
 
-        var (sender, receiver, replyAddress) = await OpenManagementLinksAsync(session);
+        var (sender, receiver, replyAddress) = await OpenManagementLinksAsync(session, cancellationToken);
         try
         {
-            await this.CreateAddressAsync(sender, receiver, replyAddress, anycastAddress, "ANYCAST");
+            await this.CreateAddressAsync(sender, receiver, replyAddress, anycastAddress, "ANYCAST", cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            await this.CreateAddressAsync(sender, receiver, replyAddress, multicastAddress, "MULTICAST");
+            await this.CreateAddressAsync(sender, receiver, replyAddress, multicastAddress, "MULTICAST", cancellationToken);
         }
         finally
         {
@@ -80,11 +120,11 @@ internal sealed class ActiveMQTopologyManager
         IReadOnlyList<string> handledCommandQueryTypes,
         CancellationToken cancellationToken)
     {
-        var anycastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "commands", 256);
-        var multicastAddress = TopologyNaming.CreateSharedResourceName(this.conduitOptions, "events", 256);
+        var anycastAddress = this.AnycastAddress;
+        var multicastAddress = this.MulticastAddress;
 
         // Open management links once — reuse for all operations
-        var (sender, receiver, replyAddress) = await OpenManagementLinksAsync(session);
+        var (sender, receiver, replyAddress) = await OpenManagementLinksAsync(session, cancellationToken);
         try
         {
             return await this.EnsureTopologyCoreAsync(
@@ -106,10 +146,10 @@ internal sealed class ActiveMQTopologyManager
         CancellationToken cancellationToken)
     {
         // Create the two addresses
-        await this.CreateAddressAsync(sender, receiver, replyAddress, anycastAddress, "ANYCAST");
+        await this.CreateAddressAsync(sender, receiver, replyAddress, anycastAddress, "ANYCAST", cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        await this.CreateAddressAsync(sender, receiver, replyAddress, multicastAddress, "MULTICAST");
+        await this.CreateAddressAsync(sender, receiver, replyAddress, multicastAddress, "MULTICAST", cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         // Collect pool-assigned types
@@ -138,73 +178,74 @@ internal sealed class ActiveMQTopologyManager
             await this.CreateQueueAsync(
                 sender, receiver, replyAddress,
                 anycastAddress, queueName, "ANYCAST",
-                filterExpression: $"JMSType='{commandQueryType}'");
+                CommandQueueFilter(commandQueryType),
+                updateFilterIfExists: false,
+                cancellationToken);
 
             sharedCommandQueryQueues.Add(queueName);
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        // Create per-app event queues (multicast — each app gets its own copy)
+        // The per-app event queue (multicast — each app gets its own copy). Artemis hands every message
+        // on a multicast address to every queue bound to it, so the filter is what keeps out the event
+        // types other apps subscribe and the ones this app's pools take.
         var appEventQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, 256);
-        var hasAppEventQueue = false;
+        var appEventTypes = subscribedEventTypes
+            .Where(eventType => !poolAssignedTypes.Contains(eventType))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var hasAppEventQueue = appEventTypes.Count > 0;
 
-        foreach (var eventType in subscribedEventTypes)
+        if (hasAppEventQueue)
         {
-            if (poolAssignedTypes.Contains(eventType))
-            {
-                continue;
-            }
-
-            if (!hasAppEventQueue)
-            {
-                await this.CreateQueueAsync(
-                    sender, receiver, replyAddress,
-                    multicastAddress, appEventQueueName, "MULTICAST",
-                    filterExpression: null);
-                hasAppEventQueue = true;
-                cancellationToken.ThrowIfCancellationRequested();
-            }
+            await this.CreateQueueAsync(
+                sender, receiver, replyAddress,
+                multicastAddress, appEventQueueName, "MULTICAST",
+                EventQueueFilter(appEventTypes),
+                updateFilterIfExists: true,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         // Pool queues
         var commandQuerySet = new HashSet<string>(handledCommandQueryTypes, StringComparer.Ordinal);
+        var subscribedEventSet = new HashSet<string>(subscribedEventTypes, StringComparer.Ordinal);
         var poolEventQueues = new List<(string QueueName, int PrefetchCount)>();
         var poolCommandQueryQueues = new List<(string QueueName, int PrefetchCount)>();
 
         foreach (var pool in this.options.Pools)
         {
-            var hasPoolEvents = false;
-            var poolEventQueueName = TopologyNaming.CreateAppResourceName(
-                this.conduitOptions, pool.Name, 256);
-
-            foreach (var messageType in pool.MessageTypes)
+            foreach (var messageType in pool.MessageTypes.Where(commandQuerySet.Contains))
             {
-                if (commandQuerySet.Contains(messageType))
-                {
-                    var sharedPoolQueueName = TopologyNaming.CreateSharedResourceName(
-                        this.conduitOptions, $"{pool.Name}.{messageType}", 256);
+                var sharedPoolQueueName = TopologyNaming.CreateSharedResourceName(
+                    this.conduitOptions, $"{pool.Name}.{messageType}", 256);
 
-                    await this.CreateQueueAsync(
-                        sender, receiver, replyAddress,
-                        anycastAddress, sharedPoolQueueName, "ANYCAST",
-                        filterExpression: $"JMSType='{messageType}'");
+                await this.CreateQueueAsync(
+                    sender, receiver, replyAddress,
+                    anycastAddress, sharedPoolQueueName, "ANYCAST",
+                    CommandQueueFilter(messageType),
+                    updateFilterIfExists: false,
+                    cancellationToken);
 
-                    poolCommandQueryQueues.Add((sharedPoolQueueName, pool.Concurrency));
-                }
-                else
-                {
-                    if (!hasPoolEvents)
-                    {
-                        await this.CreateQueueAsync(
-                            sender, receiver, replyAddress,
-                            multicastAddress, poolEventQueueName, "MULTICAST",
-                            filterExpression: null);
-                        hasPoolEvents = true;
-                    }
+                poolCommandQueryQueues.Add((sharedPoolQueueName, pool.Concurrency));
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
-                    poolEventQueues.Add((poolEventQueueName, pool.Concurrency));
-                }
+            // One queue, and one consumer, for the pool's events: those of its types this app subscribes
+            var poolEventTypes = pool.MessageTypes.Where(subscribedEventSet.Contains).ToList();
+            if (poolEventTypes.Count > 0)
+            {
+                var poolEventQueueName = TopologyNaming.CreateAppResourceName(
+                    this.conduitOptions, pool.Name, 256);
 
+                await this.CreateQueueAsync(
+                    sender, receiver, replyAddress,
+                    multicastAddress, poolEventQueueName, "MULTICAST",
+                    EventQueueFilter(poolEventTypes),
+                    updateFilterIfExists: true,
+                    cancellationToken);
+
+                poolEventQueues.Add((poolEventQueueName, pool.Concurrency));
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
@@ -221,7 +262,8 @@ internal sealed class ActiveMQTopologyManager
 
     private async Task CreateAddressAsync(
         SenderLink sender, ReceiverLink receiver, string replyAddress,
-        string addressName, string routingType)
+        string addressName, string routingType,
+        CancellationToken cancellationToken)
     {
         LogCreatingAddress(this.logger, addressName, null);
 
@@ -230,7 +272,7 @@ internal sealed class ActiveMQTopologyManager
             var body = JsonSerializer.Serialize(new object[] { addressName, routingType });
             using var request = CreateManagementRequest("createAddress", body);
 
-            await SendManagementRequestAsync(sender, receiver, replyAddress, request);
+            await SendManagementRequestAsync(sender, receiver, replyAddress, request, cancellationToken);
         }
 #pragma warning disable CA1031
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
@@ -241,36 +283,93 @@ internal sealed class ActiveMQTopologyManager
         }
     }
 
+    /// <summary>
+    /// How long the queues of <paramref name="topologyMode"/> live. Production queues are durable and
+    /// never auto-deleted. Developer and Test queues are not durable, and Artemis deletes one once it has
+    /// had no consumer for 4 hours (Developer) or 5 minutes (Test), whatever it still holds
+    /// (<c>autoDeleteMessageCount</c> -1). A queue that never had a consumer is never auto-deleted.
+    /// </summary>
+    internal static QueueLifetime QueueLifetimeFor(TopologyMode topologyMode) => topologyMode switch
+    {
+        TopologyMode.Developer => new QueueLifetime(
+            Durable: false, AutoDelete: true, (long)TimeSpan.FromHours(4).TotalMilliseconds, AutoDeleteMessageCount: -1),
+        TopologyMode.Test => new QueueLifetime(
+            Durable: false, AutoDelete: true, (long)TimeSpan.FromMinutes(5).TotalMilliseconds, AutoDeleteMessageCount: -1),
+        TopologyMode.Production => ProductionLifetime,
+        _ => ProductionLifetime,
+    };
+
+    /// <summary>
+    /// The name of a new consumer receiver link: unique, and independent of the queue's name, which is
+    /// as short as a system and application name or as long as 256 characters.
+    /// </summary>
+    internal static string ConsumerLinkName() => LinkName("consumer");
+
+    /// <summary>
+    /// A unique name for a new link playing <paramref name="role"/>: no two links on a connection, nor on
+    /// the connection a reconnection replaces it with, share a name.
+    /// </summary>
+    internal static string LinkName(string role) => $"{role}-{Guid.NewGuid():N}";
+
+    /// <summary>
+    /// The filter of a command or query queue: the one type it is named after.
+    /// </summary>
+    internal static string CommandQueueFilter(string messageType) =>
+        $"JMSType={FilterLiteral(messageType)}";
+
+    /// <summary>
+    /// The filter of an event queue on the multicast address: the event types it takes, and no other.
+    /// </summary>
+    internal static string EventQueueFilter(IEnumerable<string> eventTypes) =>
+        $"JMSType IN ({string.Join(',', eventTypes.Select(FilterLiteral))})";
+
+    // A filter string literal: single-quoted, an embedded quote doubled
+    private static string FilterLiteral(string value) =>
+        $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
+
     private async Task CreateQueueAsync(
         SenderLink sender, ReceiverLink receiver, string replyAddress,
         string addressName, string queueName, string routingType,
-        string? filterExpression)
+        string filterExpression,
+        bool updateFilterIfExists,
+        CancellationToken cancellationToken)
     {
         LogCreatingQueue(this.logger, queueName, null);
 
         try
         {
-            var isDurable = this.conduitOptions.TopologyMode == TopologyMode.Production;
+            var lifetime = QueueLifetimeFor(this.conduitOptions.TopologyMode);
 
-            // Artemis createQueue uses positional parameters (NOT a JSON config object).
-            // The JSON config format silently defaults to multicast with no filter.
-            // Positional: [address, routingType, name, filter, durable, maxConsumers,
-            //              purgeOnNoConsumers, autoCreateAddress]
+            // Artemis's management operations take positional parameters, and it picks the createQueue
+            // overload by their count: these 19 are the overload that carries the auto-delete settings.
+            // Past purgeOnNoConsumers, every parameter but autoDelete, autoDeleteDelay and
+            // autoDeleteMessageCount is the broker's own default.
             var body = JsonSerializer.Serialize(new object?[]
             {
-                addressName,                   // address
-                routingType,                   // routingType (ANYCAST or MULTICAST)
-                queueName,                     // name
-                filterExpression,              // filter (null = no filter)
-                isDurable,                     // durable
-                -1,                            // maxConsumers (-1 = unlimited)
-                false,                         // purgeOnNoConsumers
-                false,                         // autoCreateAddress
+                addressName,                        // address
+                routingType,                        // routingType (ANYCAST or MULTICAST)
+                queueName,                          // name
+                filterExpression,                   // filter
+                lifetime.Durable,                   // durable
+                -1,                                 // maxConsumers (-1 = unlimited)
+                false,                              // purgeOnNoConsumers
+                false,                              // exclusive
+                false,                              // groupRebalance
+                -1,                                 // groupBuckets
+                false,                              // lastValue
+                null,                               // lastValueKey
+                false,                              // nonDestructive
+                0,                                  // consumersBeforeDispatch
+                -1L,                                // delayBeforeDispatch
+                lifetime.AutoDelete,                // autoDelete
+                lifetime.AutoDeleteDelayMilliseconds, // autoDeleteDelay
+                lifetime.AutoDeleteMessageCount,    // autoDeleteMessageCount
+                false,                              // autoCreateAddress
             });
 
             using var request = CreateManagementRequest("createQueue", body);
 
-            await SendManagementRequestAsync(sender, receiver, replyAddress, request);
+            await SendManagementRequestAsync(sender, receiver, replyAddress, request, cancellationToken);
         }
 #pragma warning disable CA1031
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
@@ -278,7 +377,35 @@ internal sealed class ActiveMQTopologyManager
 #pragma warning restore CA1031
         {
             LogResourceAlreadyExists(this.logger, queueName, null);
+
+            if (updateFilterIfExists)
+            {
+                await this.UpdateQueueFilterAsync(sender, receiver, replyAddress, queueName, filterExpression, cancellationToken);
+            }
         }
+    }
+
+    /// <summary>
+    /// Sets an existing event queue's filter to the event types this release subscribes: an event queue
+    /// created by an earlier release keeps the filter of that release's types otherwise, and a type added
+    /// since would never reach it. A partial <c>updateQueue</c> leaves every field it does not name alone,
+    /// except the filter, which it would clear.
+    /// </summary>
+    private async Task UpdateQueueFilterAsync(
+        SenderLink sender, ReceiverLink receiver, string replyAddress,
+        string queueName, string filterExpression,
+        CancellationToken cancellationToken)
+    {
+        LogUpdatingQueueFilter(this.logger, queueName, null);
+
+        var configuration = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["name"] = queueName,
+            ["filter-string"] = filterExpression,
+        });
+
+        using var request = CreateManagementRequest("updateQueue", JsonSerializer.Serialize(new[] { configuration }));
+        await SendManagementRequestAsync(sender, receiver, replyAddress, request, cancellationToken);
     }
 
     /// <summary>
@@ -287,7 +414,7 @@ internal sealed class ActiveMQTopologyManager
     /// per request, which dominates topology creation time.
     /// </summary>
     private static async Task<(SenderLink Sender, ReceiverLink Receiver, string ReplyAddress)>
-        OpenManagementLinksAsync(Session session)
+        OpenManagementLinksAsync(Session session, CancellationToken cancellationToken)
     {
         var replyAddressTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var receiverLink = new ReceiverLink(
@@ -307,59 +434,60 @@ internal sealed class ActiveMQTopologyManager
                 }
             });
 
-        var replyAddress = await replyAddressTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var replyAddress = await replyAddressTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
         var senderLink = new SenderLink(session, $"mgmt-send-{Guid.NewGuid():N}", "activemq.management");
 
         return (senderLink, receiverLink, replyAddress);
     }
 
+    /// <summary>
+    /// Detaches the management links and waits for the broker's answer, at most 10 seconds each (a broker
+    /// that stopped answering would otherwise hold each close for AMQPNetLite's default minute). Do not
+    /// stop waiting: with the detaches still unanswered when the sender links were attached on the same
+    /// session, a request sent right after a reconnection never reached its queue (Artemis 2.44,
+    /// <c>ActiveMQReconnectShould.ResumeAfterBrokerRestart</c>: six failures in seven runs, none since).
+    /// </summary>
     private static async Task CloseManagementLinksAsync(SenderLink sender, ReceiverLink receiver)
     {
-        try
+        foreach (var link in new Link[] { sender, receiver })
         {
-            if (!sender.IsClosed)
+            try
             {
-                await sender.CloseAsync();
+                if (!link.IsClosed)
+                {
+                    await link.CloseAsync(ManagementTimeout);
+                }
             }
-        }
 #pragma warning disable CA1031
-        catch (Exception)
+            catch (Exception)
 #pragma warning restore CA1031
-        {
-            // Best-effort cleanup
-        }
-
-        try
-        {
-            if (!receiver.IsClosed)
             {
-                await receiver.CloseAsync();
+                // Best-effort cleanup
             }
-        }
-#pragma warning disable CA1031
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Best-effort cleanup
         }
     }
 
     /// <summary>
-    /// Sends a management request using pre-opened links.
+    /// Sends a management request using pre-opened links. The send and the wait for the answer are each
+    /// bounded by 10 seconds (AMQPNetLite's own send timeout, which withdraws the message, is otherwise a
+    /// minute), and the wait also by <paramref name="cancellationToken"/>: a broker still starting can
+    /// accept a connection and then answer nothing on it.
     /// </summary>
     private static async Task SendManagementRequestAsync(
-        SenderLink sender, ReceiverLink receiver, string replyAddress, Message request)
+        SenderLink sender, ReceiverLink receiver, string replyAddress, Message request,
+        CancellationToken cancellationToken)
     {
         request.Properties.ReplyTo = replyAddress;
         request.Properties.MessageId = $"mgmt-{Guid.NewGuid():N}";
+        var operation = request.ApplicationProperties?["_AMQ_OperationName"];
 
-        await sender.SendAsync(request);
+        await sender.SendAsync(request, ManagementTimeout);
 
-        var reply = await receiver.ReceiveAsync(TimeSpan.FromSeconds(10));
+        var reply = await receiver.ReceiveAsync(ManagementTimeout).WaitAsync(cancellationToken);
         if (reply is null)
         {
             throw new TimeoutException(
-                $"ActiveMQ management request timed out after 10 seconds. Operation: {request.ApplicationProperties?["_AMQ_OperationType"]}");
+                $"ActiveMQ management request timed out after {ManagementTimeout.TotalSeconds} seconds. Operation: {operation}");
         }
 
         receiver.Accept(reply);
@@ -454,3 +582,16 @@ internal sealed class TopologyResult
         this.PoolCommandQueryQueues = poolCommandQueryQueues;
     }
 }
+
+/// <summary>
+/// The durability and auto-delete settings a queue is created with (<see cref="ActiveMQTopologyManager.QueueLifetimeFor"/>).
+/// </summary>
+/// <param name="Durable">Whether the queue and its messages survive a broker restart.</param>
+/// <param name="AutoDelete">Whether Artemis deletes the queue once it has had no consumer for the delay.</param>
+/// <param name="AutoDeleteDelayMilliseconds">How long the queue must have had no consumer.</param>
+/// <param name="AutoDeleteMessageCount">The most messages the queue may hold and still be deleted; -1 for any number.</param>
+internal readonly record struct QueueLifetime(
+    bool Durable,
+    bool AutoDelete,
+    long AutoDeleteDelayMilliseconds,
+    long AutoDeleteMessageCount);

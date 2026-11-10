@@ -1,7 +1,11 @@
 using AwesomeAssertions;
+using Conduit.Configuration;
 using Conduit.Exceptions;
+using Conduit.Runtime;
 using Conduit.TestUtils;
+using Conduit.Transport.ActiveMQ.Tests.Support;
 using Conduit.Transport.ActiveMQ.Tests.Support.Contracts;
+using Conduit.Transport.ActiveMQ.Tests.Support.Handlers;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.ActiveMQ.Tests.Integration;
@@ -91,6 +95,38 @@ public class ActiveMQEventRoutingShould : ActiveMQTestBase
         // and the listener recorded the event before throwing
         await spy.WaitForCountAsync(1);
         spy.Invocations.OfType<ThrowingTestEvent>().Should().Contain(e => e.Value == "boom");
+    }
+
+    [TestMethod]
+    public async Task NotDeliverAnotherAppsEventTypes()
+    {
+        // Arrange — an application that listens for TestEvent alone, and a publisher of two event types
+        var listenerName = UniqueAppName("listener");
+        var publisherName = UniqueAppName("pub");
+
+        await using var listenerHost = await CreateHostAsync(
+            listenerName,
+            configureHandling: handling => handling
+                .ClearAllHandlers()
+                .HandleEvent<TestEvent, TestEventListener>());
+        var prefix = listenerHost.TopologyPrefix!;
+        await using var publisherHost = await CreateHostAsync(
+            publisherName, prefix, handling => handling.ClearAllHandlers());
+
+        var listenerSpy = listenerHost.GetRequiredService<SpyLog>();
+        var mediator = publisherHost.GetRequiredService<IMediator>();
+        var appEventQueueName = TopologyNaming.CreateAppResourceName(
+            listenerHost.GetRequiredService<ConduitOptions>(), 256);
+
+        // Act — the event the application does not listen for goes first, over the same link
+        await mediator.PublishAsync(new FireAndForgetEvent("not-mine"));
+        await mediator.PublishAsync(new TestEvent("mine"));
+        await listenerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(15));
+
+        // Assert — the broker routed the application's queue the one type it subscribes, never the other
+        await using var management = await ArtemisManagement.ConnectAsync(ConnectionString!);
+        (await management.MessagesAddedAsync(appEventQueueName)).Should().Be(1);
+        listenerSpy.Invocations.Should().ContainSingle().Which.Should().Be(new TestEvent("mine"));
     }
 
     [TestMethod]
