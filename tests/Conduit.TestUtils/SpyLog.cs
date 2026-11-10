@@ -12,6 +12,34 @@ public sealed class SpyLog
 
     public int Count => this.invocations.Count;
 
+    /// <summary>
+    /// Waits until one of <paramref name="spies"/> records a <typeparamref name="T"/> and returns that
+    /// spy's index: which of several competing instances took a message.
+    /// </summary>
+    public static async Task<int> WaitForFirstAsync<T>(TimeSpan timeout, params SpyLog[] spies)
+    {
+        ArgumentNullException.ThrowIfNull(spies);
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            for (var index = 0; index < spies.Length; index++)
+            {
+                if (spies[index].Invocations.OfType<T>().Any())
+                {
+                    return index;
+                }
+            }
+
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException($"No spy recorded a {typeof(T).Name} within {timeout}");
+            }
+
+            await Task.Delay(50);
+        }
+    }
+
     public async Task WaitForCountAsync(int expected, TimeSpan? timeout = null)
     {
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));

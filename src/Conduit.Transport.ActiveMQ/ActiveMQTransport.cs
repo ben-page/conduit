@@ -204,11 +204,38 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     }
 
     /// <inheritdoc />
-    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    protected override Task StopReceivingAsync(CancellationToken cancellationToken)
     {
         LogTransportStopping(this.Logger, null);
 
-        // Close all consumer receiver links
+        // Withdraw the consumer links' credit so the broker sends no more, but keep the links open: a
+        // handler still running accepts its message on the link it arrived on. A message already in
+        // flight under the old credit still arrives, and the base class hands it back.
+        foreach (var receiverLink in this.consumerLinks)
+        {
+            try
+            {
+                if (!receiverLink.IsClosed)
+                {
+                    receiverLink.SetCredit(0, autoRestore: true);
+                }
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Best effort: a link that failed is closed below anyway
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    {
+        // The drain is over: closing a consumer link releases whatever is still unsettled on it (a
+        // handler the deadline cut short), so the broker redelivers it
         foreach (var receiverLink in this.consumerLinks)
         {
             try
@@ -554,7 +581,8 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             Message = message,
         };
 
-        // Fire and forget — ProcessInboundMessageAsync handles ack/abandon
+        // Not awaited (the link's callback is synchronous): ProcessInboundMessageAsync handles
+        // ack/abandon, and the base class tracks the call so stop can drain it
         _ = this.ProcessInboundMessageAsync(inboundMessage);
     }
 

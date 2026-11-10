@@ -122,14 +122,27 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     }
 
     /// <inheritdoc />
-    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    protected override async Task StopReceivingAsync(CancellationToken cancellationToken)
     {
         LogStoppingProcessors(this.Logger, null);
 
-        foreach (var processor in this.processors)
-        {
-            await processor.StopProcessingAsync(cancellationToken);
-        }
+        // StopProcessingAsync stops receiving and leaves the receivers open for the in-flight handlers
+        // to settle on, but it also awaits those handlers, past any token (a cancelled stop would
+        // instead leave the processor receiving). So every processor is told to stop unconditionally,
+        // and only this wait is bounded by the shutdown deadline.
+        await WaitUntilDeadlineAsync(
+            this.processors.Select(processor => processor.StopProcessingAsync(CancellationToken.None)),
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    {
+        // The drain is over: close the receivers. A message still unsettled is redelivered once its
+        // lock expires. CloseAsync awaits a handler still running too, so it is bounded the same way.
+        await WaitUntilDeadlineAsync(
+            this.processors.Select(processor => processor.CloseAsync(CancellationToken.None)),
+            cancellationToken);
     }
 
     /// <inheritdoc />

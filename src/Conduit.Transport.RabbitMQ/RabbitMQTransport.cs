@@ -27,8 +27,8 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     private string? replyQueueName;
     private TopologyResult? topologyResult;
 
-    private readonly List<string> consumerTags = [];
-    private readonly List<IChannel> consumerChannels = [];
+    // One channel per inbound consumer; each delivery is acknowledged on the channel it arrived on
+    private readonly List<(IChannel Channel, string ConsumerTag)> inboundConsumers = [];
 
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
@@ -120,13 +120,11 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         // Consume replies
         var replyConsumer = new AsyncEventingBasicConsumer(this.replyChannel);
         replyConsumer.ReceivedAsync += this.OnReplyReceivedAsync;
-        var replyTag = await this.replyChannel.BasicConsumeAsync(
+        await this.replyChannel.BasicConsumeAsync(
             queue: this.replyQueueName,
             autoAck: true,
             consumer: replyConsumer,
             cancellationToken: cancellationToken);
-        this.consumerTags.Add(replyTag);
-        this.consumerChannels.Add(this.replyChannel);
     }
 
     /// <inheritdoc />
@@ -159,17 +157,18 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     }
 
     /// <inheritdoc />
-    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    protected override async Task StopReceivingAsync(CancellationToken cancellationToken)
     {
         LogTransportStopping(this.Logger, null);
 
-        // Cancel all consumers
-        for (var i = 0; i < this.consumerTags.Count; i++)
+        // Cancel the inbound consumers only. Their channels stay open, since a handler still running
+        // acknowledges on its delivery's channel, and so does the reply consumer, since a handler may
+        // be awaiting a reply.
+        foreach (var (channel, consumerTag) in this.inboundConsumers)
         {
             try
             {
-                await this.consumerChannels[i].BasicCancelAsync(
-                    this.consumerTags[i], noWait: false, cancellationToken: cancellationToken);
+                await channel.BasicCancelAsync(consumerTag, noWait: false, cancellationToken: cancellationToken);
             }
 #pragma warning disable CA1031
             catch (Exception)
@@ -181,44 +180,36 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     }
 
     /// <inheritdoc />
+    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    {
+        // The drain is over: closing an inbound channel requeues whatever is still unacknowledged on
+        // it (a handler the deadline cut short, a prefetched delivery never dispatched). The client's
+        // close waits for a handler still running on the channel, so only the deadline bounds the wait.
+        var closing = this.inboundConsumers.Select(consumer => CloseChannelAsync(consumer.Channel)).ToList();
+        if (this.replyChannel is not null)
+        {
+            closing.Add(CloseChannelAsync(this.replyChannel));
+        }
+
+        await WaitUntilDeadlineAsync(closing, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public override async ValueTask DisposeAsync()
     {
-        foreach (var channel in this.consumerChannels)
+        foreach (var (channel, _) in this.inboundConsumers)
         {
-            try
-            {
-                if (channel.IsOpen)
-                {
-                    await channel.CloseAsync();
-                }
+            await CloseAndDisposeChannelAsync(channel);
+        }
 
-                channel.Dispose();
-            }
-#pragma warning disable CA1031
-            catch (Exception)
-#pragma warning restore CA1031
-            {
-                // Best-effort cleanup
-            }
+        if (this.replyChannel is not null)
+        {
+            await CloseAndDisposeChannelAsync(this.replyChannel);
         }
 
         if (this.publishChannel is not null)
         {
-            try
-            {
-                if (this.publishChannel.IsOpen)
-                {
-                    await this.publishChannel.CloseAsync();
-                }
-
-                this.publishChannel.Dispose();
-            }
-#pragma warning disable CA1031
-            catch (Exception)
-#pragma warning restore CA1031
-            {
-                // Best-effort cleanup
-            }
+            await CloseAndDisposeChannelAsync(this.publishChannel);
         }
 
         if (this.connection is not null)
@@ -444,8 +435,40 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             consumer: consumer,
             cancellationToken: cancellationToken);
 
-        this.consumerTags.Add(tag);
-        this.consumerChannels.Add(channel);
+        this.inboundConsumers.Add((channel, tag));
+    }
+
+    private static async Task CloseChannelAsync(IChannel channel)
+    {
+        try
+        {
+            if (channel.IsOpen)
+            {
+                await channel.CloseAsync();
+            }
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Best-effort cleanup
+        }
+    }
+
+    private static async Task CloseAndDisposeChannelAsync(IChannel channel)
+    {
+        await CloseChannelAsync(channel);
+
+        try
+        {
+            channel.Dispose();
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Best-effort cleanup
+        }
     }
 
     private Task OnReplyReceivedAsync(object sender, BasicDeliverEventArgs args)

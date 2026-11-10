@@ -14,6 +14,7 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 {
     private readonly ConcurrentQueue<FakeBrokerMessage> publishedEvents = new();
     private readonly ConcurrentQueue<BinaryData> replies = new();
+    private readonly ConcurrentQueue<string> lifecycle = new();
     private volatile bool started;
 
     public FakeBrokerTransport(ConduitOptions conduitOptions, IServiceProvider serviceProvider)
@@ -26,6 +27,12 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 
     /// <summary>Replies sent back to requesters, in send order.</summary>
     public IReadOnlyList<BinaryData> Replies => this.replies.ToArray();
+
+    /// <summary>
+    /// The stop sequence as the "broker" saw it, in order: <c>receiving stopped</c>, each
+    /// <c>acknowledged</c>, <c>consumers stopped</c>.
+    /// </summary>
+    public IReadOnlyList<string> Lifecycle => this.lifecycle.ToArray();
 
     /// <summary>Marks the transport started so the send guard passes.</summary>
     public void Start() => this.started = true;
@@ -49,7 +56,17 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 
     protected override Task StartConsumersAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    protected override Task StopConsumersAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    protected override Task StopReceivingAsync(CancellationToken cancellationToken)
+    {
+        this.lifecycle.Enqueue("receiving stopped");
+        return Task.CompletedTask;
+    }
+
+    protected override Task StopConsumersAsync(CancellationToken cancellationToken)
+    {
+        this.lifecycle.Enqueue("consumers stopped");
+        return Task.CompletedTask;
+    }
 
     public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
@@ -76,6 +93,7 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     protected override Task AcknowledgeAsync(FakeBrokerMessage message)
     {
         message.Acknowledged = true;
+        this.lifecycle.Enqueue("acknowledged");
         return Task.CompletedTask;
     }
 

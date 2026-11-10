@@ -118,7 +118,8 @@ public abstract class SqsTestBase
     protected static async Task<TestHost> CreateHostAsync(
         string applicationName,
         string? topologyPrefix = null,
-        Action<ConduitRegistrationOverrides>? configureHandling = null)
+        Action<ConduitRegistrationOverrides>? configureHandling = null,
+        Action<AmazonSqsOptions>? configureOptions = null)
     {
         var address = ServiceAddress;
 
@@ -144,7 +145,10 @@ public abstract class SqsTestBase
 
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAmazonSqs(options =>
-                        options.ServiceUri = new Uri(address!)));
+                    {
+                        options.ServiceUri = new Uri(address!);
+                        configureOptions?.Invoke(options);
+                    }));
             });
 
             if (configureHandling is not null)

@@ -51,7 +51,22 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define(LogLevel.Warning, new EventId(507, "DeadLetterStoreFailed"),
             "Failed to write to dead letter store, falling back to abandon");
 
+    private static readonly Action<ILogger, int, Exception?> LogDrainAbandoned =
+        LoggerMessage.Define<int>(LogLevel.Warning, new EventId(508, "DrainAbandoned"),
+            "Stopped with {Count} message handler(s) still running at the shutdown deadline; " +
+            "the broker redelivers any of their messages not acknowledged before the transport closes");
+
+    private static readonly Action<ILogger, string, Exception?> LogMessageReturnedOnStop =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(509, "MessageReturnedOnStop"),
+            "Returned message '{Type}' to the broker undispatched: the transport is stopping");
+
     private readonly ReplyCorrelator replies = new(TimeProvider.System);
+
+    // The ProcessInboundMessageAsync calls still running, and whether stop has stopped admitting new
+    // ones. One lock covers both, so no message is admitted after the drain took its snapshot.
+    private readonly Lock inFlightLock = new();
+    private readonly HashSet<Task> inFlight = [];
+    private bool draining;
 
     /// <summary>
     /// Creates a new broker transport base.
@@ -128,14 +143,75 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Stops the transport without abandoning work in progress: it stops receiving, waits for the
+    /// handlers already running to finish and acknowledge their messages (until
+    /// <paramref name="cancellationToken"/>, the host's shutdown deadline, fires), and only then closes
+    /// the channels, links and clients they acknowledge on. A handler still running at the deadline is
+    /// left behind: unless it acknowledges before the transport closes, the broker redelivers its message.
+    /// </summary>
+    /// <param name="cancellationToken">The host's shutdown deadline.</param>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // Replies keep flowing until the close below: a handler being drained may await one
+        await this.StopReceivingAsync(cancellationToken);
+        await this.DrainInFlightAsync(cancellationToken);
         await this.StopConsumersAsync(cancellationToken);
 
         // Nothing reads a reply after this, so a request still waiting fails now rather than at its timeout
         this.FailPendingReplies(new InvalidOperationException(
             $"The transport for endpoint '{this.EndpointName}' stopped before the reply arrived."));
+    }
+
+    /// <summary>
+    /// Waits for every inbound message still being processed to finish, until
+    /// <paramref name="shutdownToken"/> fires; from the moment it is called, a message the broker client
+    /// still hands over is returned to the broker undispatched (<see cref="AbandonAsync"/>). Never throws:
+    /// at the deadline it logs how many handlers it left running and returns.
+    /// </summary>
+    /// <param name="shutdownToken">The host's shutdown deadline.</param>
+    protected async Task DrainInFlightAsync(CancellationToken shutdownToken)
+    {
+        Task[] running;
+        lock (this.inFlightLock)
+        {
+            this.draining = true;
+            running = [.. this.inFlight];
+        }
+
+        if (running.Length == 0)
+        {
+            return;
+        }
+
+        // The tracked tasks are placeholders that only ever complete (a failure still reaches
+        // ProcessInboundMessageAsync's caller), so this waits for all of them or the deadline
+        var drained = Task.WhenAll(running);
+        await drained.WaitAsync(shutdownToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+        if (!drained.IsCompleted)
+        {
+            LogDrainAbandoned(this.Logger, running.Count(task => !task.IsCompleted), null);
+        }
+    }
+
+    /// <summary>
+    /// Waits for <paramref name="operations"/> until <paramref name="shutdownToken"/> fires, then lets the
+    /// rest finish in the background, observing any failure. Never throws. For a broker client whose
+    /// stop or close call waits for a running handler however long it takes, whatever token it is given.
+    /// </summary>
+    /// <param name="operations">The stop or close calls, already started.</param>
+    /// <param name="shutdownToken">The host's shutdown deadline.</param>
+    protected static async Task WaitUntilDeadlineAsync(IEnumerable<Task> operations, CancellationToken shutdownToken)
+    {
+        var all = Task.WhenAll(operations);
+        await all.WaitAsync(shutdownToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+        _ = all.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     // -----------------------------------------------------------------------
@@ -240,7 +316,64 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// dispatches, handles errors, and acknowledges/abandons the message.
     /// Called by the transport's native message handler.
     /// </summary>
+    /// <remarks>
+    /// Every call is tracked until it finishes, acknowledgement included, so that
+    /// <see cref="StopAsync"/> can wait for it before the channel it acknowledges on is closed. Once
+    /// stop is draining, a message the broker client still hands over is returned to the broker
+    /// undispatched instead.
+    /// </remarks>
     protected async Task ProcessInboundMessageAsync(TMessage message)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool admitted;
+        lock (this.inFlightLock)
+        {
+            admitted = !this.draining && this.inFlight.Add(completion.Task);
+        }
+
+        if (!admitted)
+        {
+            await this.ReturnToBrokerAsync(message);
+            return;
+        }
+
+        try
+        {
+            await this.DispatchInboundMessageAsync(message);
+        }
+        finally
+        {
+            lock (this.inFlightLock)
+            {
+                this.inFlight.Remove(completion.Task);
+            }
+
+            completion.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// Hands a message that arrived after stop began draining back to the broker, so another consumer
+    /// gets it. Best effort: the channel or link may already be closing, and an unsettled message is
+    /// redelivered either way.
+    /// </summary>
+    private async Task ReturnToBrokerAsync(TMessage message)
+    {
+        LogMessageReturnedOnStop(this.Logger, this.GetMessageType(message) ?? "(none)", null);
+
+        try
+        {
+            await this.AbandonAsync(message);
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Unsettled, so the broker redelivers it once the channel or link closes
+        }
+    }
+
+    private async Task DispatchInboundMessageAsync(TMessage message)
     {
         var messageType = this.GetMessageType(message);
         if (string.IsNullOrEmpty(messageType))
@@ -557,7 +690,21 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <summary>Starts message receivers/processors.</summary>
     protected abstract Task StartConsumersAsync(CancellationToken cancellationToken);
 
-    /// <summary>Stops message receivers/processors and drains pending outbound requests.</summary>
+    /// <summary>
+    /// The first step of <see cref="StopAsync"/>: stop taking new inbound messages from the broker
+    /// (cancel consumers, withdraw link credit, stop polling) while leaving open everything a handler
+    /// still running acknowledges or replies on, and the reply consumer. Called on a producer-only
+    /// host too, where it has nothing to stop. Must not throw for an expired token.
+    /// </summary>
+    /// <param name="cancellationToken">The host's shutdown deadline.</param>
+    protected abstract Task StopReceivingAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The last step of <see cref="StopAsync"/>, after the in-flight handlers drained or the deadline
+    /// passed: close the inbound channels, links or receivers and the reply consumer. A message still
+    /// unacknowledged here is redelivered by the broker. Must not throw for an expired token.
+    /// </summary>
+    /// <param name="cancellationToken">The host's shutdown deadline, possibly already expired.</param>
     protected abstract Task StopConsumersAsync(CancellationToken cancellationToken);
 
     /// <inheritdoc />
@@ -585,7 +732,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <summary>Marks the message as successfully processed.</summary>
     protected abstract Task AcknowledgeAsync(TMessage message);
 
-    /// <summary>Marks the message for redelivery.</summary>
+    /// <summary>Marks the message for redelivery. Also returns a message that arrives while stop is draining.</summary>
     protected abstract Task AbandonAsync(TMessage message);
 
     // -----------------------------------------------------------------------

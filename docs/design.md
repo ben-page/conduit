@@ -1032,13 +1032,13 @@ All 4 broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) shar
 
 **Template methods (not overridable):**
 - `StartAsync` — branches on `ProducerOnly`: true → `ConnectAsync` + `EnsureOutboundTopologyAsync`; false → `ConnectAsync` + resolves `ConduitTypeRegistry` + `EnsureTopologyAsync` + `StartConsumersAsync`
-- `StopAsync` — calls `StopConsumersAsync`
-- `SendRequestAsync` — serializes to `BinaryData`, calls `PublishRequestAsync`, deserializes reply, calls `ConduitRuntime.UnwrapReply`
+- `StopAsync` — `StopReceivingAsync`, then `DrainInFlightAsync` (waits for the inbound messages still being processed, bounded by the host's shutdown token), then `StopConsumersAsync`, then fails any request still awaiting a reply
+- `SendRequestAsync` — serializes to `BinaryData`, registers the reply waiter under a new correlation id, calls `PublishRequestAsync` (which returns `AwaitReplyAsync`, or for Service Bus receives from the request's session), deserializes reply, calls `ConduitRuntime.UnwrapReply`
 - `SendEventAsync` — serializes to `BinaryData`, calls `PublishEventAsync`
-- `ProcessInboundMessageAsync` — full inbound dispatch: save/restore `MessageContext`, create DI scope, resolve `IWireMediator`, deserialize, branch request/event, handle errors, ack/abandon
+- `ProcessInboundMessageAsync` — full inbound dispatch: save/restore `MessageContext`, create DI scope, resolve `IWireMediator`, deserialize, branch request/event, handle errors, ack/abandon; each call is tracked for the stop drain, and a message arriving while it drains is abandoned undispatched
 
 **Abstract methods (transport-specific):**
-- Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `EnsureOutboundTopologyAsync`, `StartConsumersAsync`, `StopConsumersAsync`, `DisposeAsync`
+- Lifecycle: `ConnectAsync`, `EnsureTopologyAsync`, `EnsureOutboundTopologyAsync`, `StartConsumersAsync`, `StopReceivingAsync`, `StopConsumersAsync`, `DisposeAsync`
 - Inbound: `GetMessageType`, `GetMessageBody`, `IsRequest`, `ExtractContext`, `SendReplyAsync`, `AcknowledgeAsync`, `AbandonAsync`
 - Outbound: `IsStarted`, `PublishRequestAsync`, `PublishEventAsync`
 

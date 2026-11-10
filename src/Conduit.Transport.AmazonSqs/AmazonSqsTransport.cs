@@ -24,7 +24,15 @@ namespace Conduit.Transport.AmazonSqs;
 public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMessage>
 {
     private readonly AmazonSqsOptions options;
-    private readonly List<Task> pollingTasks = [];
+
+    // The app and pool queue pollers stop first, on stop; the reply poller keeps running through the
+    // drain, since a handler being drained may await a reply, and stops with the consumers.
+    private readonly CancellationTokenSource inboundPolling = new();
+    private readonly CancellationTokenSource replyPolling = new();
+    private readonly List<Task> inboundPollers = [];
+    private readonly List<SemaphoreSlim> pollerSlots = [];
+    private Task? replyPoller;
+    private bool disposed;
 
     private AmazonSimpleNotificationServiceClient? snsClient;
     private AmazonSQSClient? sqsClient;
@@ -32,7 +40,6 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     private string? appQueueAddress;
     private string? replyQueueAddress;
     private Dictionary<string, string> poolQueueAddresses = new(StringComparer.Ordinal);
-    private CancellationTokenSource? pollingCts;
 
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogSendingRequest =
@@ -115,32 +122,28 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         this.replyQueueAddress = topologyManager.ReplyQueueAddress;
 
         // Start reply queue consumer for request/response
-        this.pollingCts = new CancellationTokenSource();
-        this.pollingTasks.Add(this.PollReplyQueueAsync(this.pollingCts.Token));
+        this.replyPoller = this.PollReplyQueueAsync(this.replyPolling.Token);
     }
 
     /// <inheritdoc />
     protected override Task StartConsumersAsync(CancellationToken cancellationToken)
     {
-        this.pollingCts = new CancellationTokenSource();
         var consumerCount = 1 + this.options.Pools.Count + 1; // app + pools + reply
 
         // Start default app queue consumer
-        this.pollingTasks.Add(this.PollQueueAsync(
-            this.appQueueAddress!, this.options.DefaultConcurrency, this.pollingCts.Token));
+        this.StartPoller(this.appQueueAddress!, this.options.DefaultConcurrency);
 
         // Start pool queue consumers
         foreach (var pool in this.options.Pools)
         {
             if (this.poolQueueAddresses.TryGetValue(pool.Name, out var poolQueueAddress))
             {
-                this.pollingTasks.Add(this.PollQueueAsync(
-                    poolQueueAddress, pool.Concurrency, this.pollingCts.Token));
+                this.StartPoller(poolQueueAddress, pool.Concurrency);
             }
         }
 
         // Start reply queue consumer
-        this.pollingTasks.Add(this.PollReplyQueueAsync(this.pollingCts.Token));
+        this.replyPoller = this.PollReplyQueueAsync(this.replyPolling.Token);
 
         LogStartingConsumers(this.Logger, consumerCount, null);
 
@@ -148,45 +151,57 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     }
 
     /// <inheritdoc />
-    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    protected override async Task StopReceivingAsync(CancellationToken cancellationToken)
     {
         LogTransportStopping(this.Logger, null);
 
-        // Signal cancellation to all polling loops
-        if (this.pollingCts is not null)
-        {
-            await this.pollingCts.CancelAsync();
-        }
+        // Stop polling the app and pool queues. A handler already started keeps its slot and the
+        // client it deletes its message with; a message received but not yet started stays
+        // invisible until its visibility timeout lapses, then is redelivered.
+        await this.inboundPolling.CancelAsync();
+        await Task.WhenAll(this.inboundPollers)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    }
 
-        // Wait for in-flight processing to complete (bounded by ResponseTimeout)
-        if (this.pollingTasks.Count > 0)
+    /// <inheritdoc />
+    protected override async Task StopConsumersAsync(CancellationToken cancellationToken)
+    {
+        // The drain is over: stop polling for replies (the base class fails any request still waiting)
+        await this.replyPolling.CancelAsync();
+        if (this.replyPoller is not null)
         {
-            try
-            {
-                await Task.WhenAll(this.pollingTasks)
-                    .WaitAsync(this.options.ResponseTimeout, cancellationToken);
-            }
-            catch (TimeoutException)
-            {
-                // Drain timeout exceeded -- proceed with shutdown
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected during shutdown
-            }
+            await this.replyPoller
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 
     /// <inheritdoc />
-    public override ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
-        this.pollingCts?.Dispose();
-        this.pollingTasks.Clear();
+        // The keyed registration and both forwarders resolve this instance, and the container
+        // disposes what each factory returns
+        if (this.disposed)
+        {
+            return;
+        }
+
+        this.disposed = true;
+
+        // Stopped already, unless the host never started or stopped it
+        await this.inboundPolling.CancelAsync();
+        await this.replyPolling.CancelAsync();
+        this.inboundPolling.Dispose();
+        this.replyPolling.Dispose();
+
+        foreach (var slots in this.pollerSlots)
+        {
+            slots.Dispose();
+        }
 
         this.snsClient?.Dispose();
         this.sqsClient?.Dispose();
-
-        return ValueTask.CompletedTask;
     }
 
     // -----------------------------------------------------------------------
@@ -387,11 +402,18 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     // Private helpers -- polling loops
     // -----------------------------------------------------------------------
 
-    private async Task PollQueueAsync(
-        string queueAddress, int maxConcurrency, CancellationToken cancellationToken)
+    private void StartPoller(string queueAddress, int maxConcurrency)
     {
-        using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        // A field, not a using in the loop: a handler releases its slot after the poller has stopped,
+        // so the slots live until DisposeAsync
+        var slots = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        this.pollerSlots.Add(slots);
+        this.inboundPollers.Add(this.PollQueueAsync(queueAddress, slots, this.inboundPolling.Token));
+    }
 
+    private async Task PollQueueAsync(
+        string queueAddress, SemaphoreSlim semaphore, CancellationToken cancellationToken)
+    {
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -411,6 +433,9 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 {
                     await semaphore.WaitAsync(cancellationToken);
 
+                    // Not awaited: the slot bounds concurrency, and the base class tracks the call so
+                    // stop can drain it. No token: a message that holds a slot always runs, or is
+                    // handed back by the base class once stop is draining.
                     _ = Task.Run(async () =>
                     {
                         try
@@ -420,9 +445,9 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                         }
                         finally
                         {
-                            semaphore.Release();
+                            ReleaseSlot(semaphore);
                         }
-                    }, cancellationToken);
+                    }, CancellationToken.None);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -444,6 +469,18 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                     break;
                 }
             }
+        }
+    }
+
+    private static void ReleaseSlot(SemaphoreSlim semaphore)
+    {
+        try
+        {
+            semaphore.Release();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposed under a handler the shutdown deadline cut short; nothing waits for the slot now
         }
     }
 

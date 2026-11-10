@@ -13,8 +13,8 @@ Multi-host integration tests validating message routing correctness. Each test s
 ### Test Infrastructure
 
 Each transport test project contains:
-- `Support/Contracts/` — 18 contract types (commands, queries, events, results, F&F types) discovered by the source generator
-- `Support/Handlers/` — 16 handlers/listeners recording invocations via `SpyLog`
+- `Support/Contracts/` — 19 contract types (commands, queries, events, results, F&F types, the shutdown probe) discovered by the source generator
+- `Support/Handlers/` — 17 handlers/listeners recording invocations via `SpyLog`
 - `Integration/{Transport}Fixture.cs` — extends `TransportTestFixture` from `Conduit.TestUtils`, manages broker container via Testcontainers
 
 Shared infrastructure in `Conduit.TestUtils`:
@@ -134,11 +134,24 @@ Universal — required of every transport, real broker only (the in-memory `Fake
 | 9.1 | Self-published event runs local listeners exactly once | Single host both publishes and locally listens to `TestEvent` | Publish an event the app also listens to; assert one listener execution, not two — wait deliberately for the broker's own-copy round trip before asserting, since a bare `await` on publish passes vacuously either way |
 | 9.2 | Correlation and trace context survive the wire | A publishes `ContextCaptureEvent` under a known `MessageContext` and `Activity`, B captures | Publish under a known MessageContext and Activity; assert MessageId, CausationId, ConversationId and traceparent arrive intact |
 
-### Totals (verified 2026-08-24)
+### Category 10: Shutdown with In-Flight Work
 
-Each transport's `Integration/` directory contains a baseline of **34 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8 plus the 2 self-published/wire-correlation methods in category 9. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **35**.
+Test class: `{Transport}ShutdownShould`
 
-Behavior-test methods across the four transports: 34 (RabbitMQ) + 34 (ASB) + 35 (SQS) + 34 (ActiveMQ) = **137 `[TestMethod]` integration tests**.
+Universal. Both send `ShutdownProbeCommand(Input, DelayMs)`, whose handler records itself on entry and then runs `DelayMs` ignoring cancellation. The container-free `BrokerTransportShutdownShould` in `Conduit.Tests` pins the same stop sequence on `FakeBrokerTransport` (plus a message delivered after stop began is abandoned, not dispatched); these prove it holds against the real broker.
+
+| # | Test Method | Hosts | Assert |
+|---|---|---|---|
+| 10.1 | `CompleteAnInFlightHandlerBeforeClosing` | A sends (2 s handler), B1 + B2 (same app name) compete; the one that takes it is disposed 0.5 s into the handler | Disposal took more than 1 s (stop waited), A gets the handler's reply, and after a redelivery window (immediate for RabbitMQ/ActiveMQ, the visibility timeout — set to 5 s — for SQS) the standby has received nothing: the message was acknowledged once |
+| 10.2 | `StopWhenTheHostTokenExpires` | A sends (10 s handler), B handles; `TestHost.StopAsync` with a 1 s token | Stop took at least ~1 s and well under the handler's 10 s; A's request then fails with `TimeoutException` |
+
+Azure Service Bus's 10.1 is `[Ignore]`d for now: stopping its processor cancels the token the transport still settles and replies with, so the drained handler's reply and completion fail. It is enabled with the fix that settles with `CancellationToken.None`.
+
+### Totals (verified 2026-11-09)
+
+Each transport's `Integration/` directory contains a baseline of **36 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **37**.
+
+Behavior-test methods across the four transports: 36 (RabbitMQ) + 36 (ASB) + 37 (SQS) + 36 (ActiveMQ) = **145 `[TestMethod]` integration tests**.
 
 ---
 
@@ -294,7 +307,7 @@ overload equivalence and de-duplication), and `TransportOptionsBindingShould`
 
 When adding a new broker transport, create a test project and implement:
 
-1. **All transport behavior tests** (Matrix 1 — 34 `[TestMethod]` tests per existing transport, categories 1–9) — copy the test class structure from an existing transport, adjust the fixture
+1. **All transport behavior tests** (Matrix 1 — 36 `[TestMethod]` tests per existing transport, categories 1–10) — copy the test class structure from an existing transport, adjust the fixture
 2. **All 16 universal topology manager tests** (Matrix 2, TM-1.x through TM-4.x) — verify resource naming, routing semantics, pool routing, and topology modes
 3. **Transport-specific topology tests** (Matrix 2, TM-S.x) — add tests for broker-specific features
 4. **Per-endpoint registration and configuration binding tests** (Matrix 3, R-1.x and C-1.x) — container-free `ServiceCollection` tests; R-1.x is non-negotiable, a transport that skips it can ship the silent shared-singleton bug all broker packages once had
@@ -318,6 +331,7 @@ tests/Conduit.Transport.{Name}.Tests/
         {Name}TopologyModeShould.cs
         {Name}DeadLetterShould.cs
         {Name}SelfPublishedEventShould.cs
+        {Name}ShutdownShould.cs
     Unit/
         TopologyManagerShould.cs
         {Name}EndpointRegistrationShould.cs

@@ -12,3 +12,4 @@ User guide: [`docs/transports/activemq.md`](../../docs/transports/activemq.md) �
 - `DefaultConcurrency` / `ReceiverPoolOptions.Concurrency` both map to the receiver link credit (prefetch count).
 - Type discovery via `ConduitTypeRegistry` (source-generated, compile-time verified) — no runtime DI scanning.
 - All configuration keys bind directly through `ConduitConfigurationBinder.BindTransportOptions` — no exclusions, no hand-mapping (`Username`/`Password` are plain strings).
+- Stop: `StopReceivingAsync` withdraws each consumer link's credit (`SetCredit(0, autoRestore: true)`, the mode `Start` set), keeping the links open so a drained handler can still `Accept` on its link; a message already in flight under the old credit is handed back by the base class. `StopConsumersAsync` closes the consumer links (the broker releases anything unsettled); the reply receiver, senders, session and connection close in `DisposeAsync`.

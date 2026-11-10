@@ -269,6 +269,29 @@ instance**, not load-balanced across replicas, because the inline run happens at
 the broker-delivered copy is the one that gets dropped. See
 [Core Concepts → Where an application's own listeners run](../core-concepts.md#where-an-applications-own-listeners-run).
 
+## Stopping a host with work in flight
+
+When the host stops (SIGTERM, `StopAsync`), a broker transport finishes the messages it is already
+handling before it closes anything those handlers need:
+
+1. **Stop receiving.** RabbitMQ cancels its consumers, ActiveMQ withdraws its links' credit, Amazon
+   SQS stops polling, and Azure Service Bus stops its processors. The channels, links and clients
+   stay open, and so does the reply consumer, since a handler may itself be awaiting a reply.
+2. **Drain.** The transport waits for every handler still running to finish, reply and acknowledge
+   its message, bounded by the host's shutdown deadline (`HostOptions.ShutdownTimeout`, 30 seconds
+   by default). A message the broker client still hands over during this step is returned to the
+   broker undispatched, for another instance to take.
+3. **Close.** Only then are the channels, links and receivers closed, and a request still awaiting
+   a reply fails with an `InvalidOperationException`.
+
+So a handler that finishes within the deadline runs once and its message is acknowledged once:
+stopping does not cause a redelivery. A handler still running at the deadline is left behind, not
+cancelled (handlers receive no shutdown token): it may run on until the process exits, and unless its
+acknowledgement still reaches the broker, the broker redelivers its message, so it may run twice
+(logged as `DrainAbandoned`, a Warning naming how many). If your handlers can outlast the deadline,
+raise `HostOptions.ShutdownTimeout` to cover them, or make them idempotent with the
+[inbox](../inbox.md).
+
 ## Ephemeral resource cleanup
 
 RabbitMQ, Azure Service Bus, and ActiveMQ auto-delete ephemeral resources via native broker TTLs.

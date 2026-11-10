@@ -12,6 +12,7 @@ public sealed class TestHost : IAsyncDisposable
 {
     private readonly IHost host;
     private readonly IServiceScope scope;
+    private bool stopped;
     private bool disposed;
 
     /// <summary>
@@ -63,6 +64,17 @@ public sealed class TestHost : IAsyncDisposable
     public T GetRequiredService<T>() where T : notnull
         => this.Services.GetRequiredService<T>();
 
+    /// <summary>
+    /// Stops the host's services with <paramref name="cancellationToken"/> as the shutdown deadline
+    /// (linked with the host's own <c>ShutdownTimeout</c>), as a host shutting down on SIGTERM does.
+    /// <see cref="DisposeAsync"/> then disposes without stopping again.
+    /// </summary>
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        this.stopped = true;
+        await this.host.StopAsync(cancellationToken);
+    }
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
@@ -73,7 +85,12 @@ public sealed class TestHost : IAsyncDisposable
 
         this.disposed = true;
         this.scope.Dispose();
-        await this.host.StopAsync();
+
+        if (!this.stopped)
+        {
+            this.stopped = true;
+            await this.host.StopAsync();
+        }
 
         // Use async disposal so IAsyncDisposable services (broker transports) are disposed
         // via their DisposeAsync. Calling the sync IHost.Dispose() wraps DisposeAsync in a
