@@ -617,8 +617,8 @@ namespace App.Events
         mediatorSource.Should().MatchRegex(@"DeserializeWire<(global::)?App\.Commands\.SignIn>\(payload\)");
         mediatorSource.Should().NotMatchRegex(@"CaptureAuditPayload\(ConduitRuntime\.DeserializeWire<(global::)?App\.Commands\.SignIn>");
 
-        // The wire event arm captures too (it reads with JsonSerializer, not DeserializeWire)
-        mediatorSource.Should().MatchRegex(@"ConduitRuntime\.CaptureAuditPayload\(JsonSerializer\.Deserialize<(global::)?App\.Events\.OrderCreated>\(payload, ConduitRuntime\.JsonOptions\)!\)");
+        // The wire event arm captures too (it reads with the lenient DeserializeWireEvent, not DeserializeWire)
+        mediatorSource.Should().MatchRegex(@"ConduitRuntime\.CaptureAuditPayload\(ConduitRuntime\.DeserializeWireEvent<(global::)?App\.Events\.OrderCreated>\(payload\)\)");
 
         // The in-process capture is guarded on an attached observer
         mediatorSource.Should().Contain("is { HasObserver: true } __auditContext");

@@ -16,5 +16,11 @@ public sealed class FakeBrokerMessage
 
     public bool Acknowledged { get; set; }
 
+    /// <summary>When set, every acknowledgement of this message throws it, as a closed channel would.</summary>
+    public Exception? AcknowledgeFailure { get; init; }
+
+    /// <summary>How many times the transport tried to acknowledge this message, failed attempts included.</summary>
+    public int AcknowledgeAttempts { get; set; }
+
     public bool Abandoned { get; set; }
 }

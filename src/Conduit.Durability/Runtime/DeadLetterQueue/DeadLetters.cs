@@ -71,8 +71,11 @@ public sealed class DeadLetters : IDeadLetters
             var envelope = new DispatchEnvelope(entry.MessageType, payload);
 
             // The replay carries the ids the message first arrived with, so its handling (and its
-            // audit trail) continues the original's lineage rather than starting a new conversation
-            var ids = string.IsNullOrEmpty(entry.MessageId)
+            // audit trail) continues the original's lineage rather than starting a new conversation.
+            // A capture records all three or none (none when it ran outside a context): none mints fresh ones.
+            var ids = string.IsNullOrWhiteSpace(entry.MessageId)
+                || string.IsNullOrWhiteSpace(entry.CausationId)
+                || string.IsNullOrWhiteSpace(entry.ConversationId)
                 ? null
                 : new RedeliveryIds(entry.MessageId, entry.CausationId, entry.ConversationId);
 

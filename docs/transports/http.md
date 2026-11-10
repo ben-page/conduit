@@ -134,7 +134,7 @@ app.MapConduitEndpoint(); // defaults to /api/conduit
 This registers two POST endpoints:
 
 - **POST /api/conduit/dispatch** — commands and queries. Returns `DispatchResult` envelope. A request an inbound gate discards (the [inbox](../inbox.md)'s duplicate) is answered `200` with an empty success (`DispatchResult.Ok(null)`), as if it had run.
-- **POST /api/conduit/publish** — events. Returns 200 OK, or, for a refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type), the `DispatchResult` envelope status-coded as `/dispatch` answers a refusal.
+- **POST /api/conduit/publish** — events. Returns 200 OK, or, for a refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type, a body the event type cannot read), the `DispatchResult` envelope status-coded as `/dispatch` answers a refusal.
 
 The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the wire format used by broker transports (type in transport-native properties, body is the raw message).
 

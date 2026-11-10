@@ -317,22 +317,21 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <param name="ids">The original correlation ids, or null.</param>
     protected static IReadOnlyDictionary<string, string> BuildRedeliveryHeaders(RedeliveryIds? ids)
     {
-        var headers = new Dictionary<string, string>(StringComparer.Ordinal)
+        if (ids is null)
         {
-            [ConduitHeaders.MessageId] = ids?.MessageId ?? Guid.NewGuid().ToString("N"),
+            // The receiver defaults the causation and conversation ids to a message id that comes alone
+            return new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [ConduitHeaders.MessageId] = Guid.NewGuid().ToString("N"),
+            };
+        }
+
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ConduitHeaders.MessageId] = ids.MessageId,
+            [ConduitHeaders.CausationId] = ids.CausationId,
+            [ConduitHeaders.ConversationId] = ids.ConversationId,
         };
-
-        if (ids?.CausationId is { } causationId)
-        {
-            headers[ConduitHeaders.CausationId] = causationId;
-        }
-
-        if (ids?.ConversationId is { } conversationId)
-        {
-            headers[ConduitHeaders.ConversationId] = conversationId;
-        }
-
-        return headers;
     }
 
     // -----------------------------------------------------------------------
@@ -617,10 +616,20 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             LogMessageAbandoned(this.Logger, messageType, ex);
             await this.AbandonAsync(message);
         }
+        catch (ConduitException ex) when (ex is BadRequestException or ContractMismatchException)
+        {
+            // An event this host cannot read (an unknown type, a body its type cannot read) refuses no one: it is a
+            // message no redelivery could dispatch. Dead-letter it, else acknowledge it, as a message that failed
+            // before dispatch is. HandleWireEvent has logged it.
+            if (!await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, ex, reference: null))
+            {
+                await this.AcknowledgeAsync(message);
+            }
+        }
         catch (ConduitException)
         {
-            // A refusal (the type filter, an unknown type) is final, since a redelivery would be refused again, and
-            // HandleWireEvent has logged it: acknowledge, as when the runtime swallowed it.
+            // Any other refusal (the type filter's Forbidden, a gate's own) is final, since a redelivery would be
+            // refused again, and HandleWireEvent has logged it: acknowledge.
             await this.AcknowledgeAsync(message);
         }
     }
@@ -696,32 +705,39 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     {
         LogMessageProcessingError(this.Logger, messageType, exception);
 
-        bool captured;
+        AsyncServiceScope captureScope;
         try
         {
-            await using var captureScope = this.ServiceProvider.CreateAsyncScope();
-            captured = await this.TryCaptureErrorAsync(
-                captureScope.ServiceProvider, message, messageType, exception, reference: null);
+            captureScope = this.ServiceProvider.CreateAsyncScope();
         }
 #pragma warning disable CA1031
         catch (Exception scopeException)
 #pragma warning restore CA1031
         {
             LogDeadLetterStoreFailed(this.Logger, scopeException);
-            captured = false;
+            await this.AcknowledgeAsync(message);
+            return;
         }
 
-        if (!captured)
+        // Only the scope's creation is guarded: a capture's own acknowledgement must not fail into a second one
+        await using (captureScope)
         {
-            await this.AcknowledgeAsync(message);
+            if (await this.TryCaptureErrorAsync(captureScope.ServiceProvider, message, messageType, exception, reference: null))
+            {
+                return;
+            }
         }
+
+        await this.AcknowledgeAsync(message);
     }
 
     /// <summary>
     /// Attempts to capture a failed message via a registered <see cref="IInboundErrorInterceptor"/>
     /// (e.g., the dead letter queue). Returns true if captured and acknowledged, false if no
     /// interceptor is registered or capture failed (the caller falls back: abandon a failed dispatch,
-    /// acknowledge a message that never reached one).
+    /// acknowledge a message that never reached one). The acknowledgement after a capture is outside the
+    /// guard: one that throws propagates to the broker client rather than returning false, which would have
+    /// the caller settle the message a second time (and the redelivery store it twice).
     /// </summary>
     private async Task<bool> TryCaptureErrorAsync(
         IServiceProvider services,
@@ -745,10 +761,6 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             {
                 return false;
             }
-
-            await this.AcknowledgeAsync(message);
-            LogDeadLetterCaptured(this.Logger, null);
-            return true;
         }
 #pragma warning disable CA1031
         catch (Exception interceptorException)
@@ -757,6 +769,10 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             LogDeadLetterStoreFailed(this.Logger, interceptorException);
             return false;
         }
+
+        await this.AcknowledgeAsync(message);
+        LogDeadLetterCaptured(this.Logger, null);
+        return true;
     }
 
     // -----------------------------------------------------------------------

@@ -268,9 +268,9 @@ public static partial class ConduitRuntime
     /// generated mediator's wire dispatch; only the READ is mapped, so a handler's own serializer failure stays a 500.
     /// </summary>
     /// <remarks>
-    /// Event wire paths (<c>DispatchEventAsync</c>, <c>PublishLocalEnvelopeAsync</c>) still read the payload raw, so an
-    /// unreadable event payload is a logged <see cref="JsonException"/>, not a 400. <c>PublishLocalEnvelopeAsync</c> reads inside an
-    /// observed dispatch that keeps no body, so its failed read is a failed delivery record.
+    /// A wire event reads through <see cref="DeserializeWireEvent{T}"/> instead, which maps the same failures but stays
+    /// lenient about missing members. <c>PublishLocalEnvelopeAsync</c> (the outbox's own envelope) still reads the
+    /// payload raw, inside an observed dispatch that keeps no body, so its failed read is a failed delivery record.
     /// </remarks>
     public static T DeserializeWire<T>(JsonElement payload)
     {
@@ -297,6 +297,32 @@ public static partial class ConduitRuntime
 
         // A JSON null deserializes to null; the handler would NRE on it and answer InternalError. It is the caller's fault.
         return result ?? throw new BadRequestException("The request could not be read.");
+    }
+
+    /// <summary>
+    /// Reads a wire event's payload into its type. Lenient as every event read is (<see cref="JsonOptions"/>: a member
+    /// the publisher's older contract lacks takes its default), but a payload the type cannot read at all -- a wrong-typed
+    /// field, malformed JSON, a JSON null -- is a <see cref="BadRequestException"/> naming the JSON path, as a request's
+    /// is (<see cref="DeserializeWire{T}"/>). <see cref="HandleWireEvent"/> lets it reach the edge: HTTP and SignalR answer
+    /// the publisher with it, a broker transport dead-letters the event (no redelivery could read it). It used to be a
+    /// <see cref="JsonException"/> that <see cref="HandleWireEvent"/> logged and swallowed, so a broker acknowledged
+    /// the event as handled. Called by the generated mediator's wire event dispatch; only the READ is mapped.
+    /// </summary>
+    public static T DeserializeWireEvent<T>(JsonElement payload)
+    {
+        T? result;
+        try
+        {
+            result = JsonSerializer.Deserialize<T>(payload, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            throw new BadRequestException(string.IsNullOrEmpty(ex.Path)
+                ? "The event could not be read."
+                : $"The event could not be read at '{ex.Path}'.");
+        }
+
+        return result ?? throw new BadRequestException("The event could not be read.");
     }
 
     /// <summary>

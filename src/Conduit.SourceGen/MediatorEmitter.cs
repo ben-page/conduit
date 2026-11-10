@@ -731,7 +731,9 @@ public static class MediatorEmitter
 
         foreach (var evt in events)
         {
-            var read = $"JsonSerializer.Deserialize<{EmitConstants.ToCSharpTypeRef(evt.FullTypeName)}>(payload, ConduitRuntime.JsonOptions)!";
+            // A payload the type cannot read is a refusal (BadRequestException), as a request's is, never a JsonException
+            // HandleWireEvent would swallow: a broker transport dead-letters it, HTTP and SignalR answer the publisher
+            var read = $"ConduitRuntime.DeserializeWireEvent<{EmitConstants.ToCSharpTypeRef(evt.FullTypeName)}>(payload)";
             var arm = evt.IsDoNotAudit ? read : $"ConduitRuntime.CaptureAuditPayload({read})";
             sb.AppendLine($"                \"{evt.FullTypeName}\" => {arm},");
         }

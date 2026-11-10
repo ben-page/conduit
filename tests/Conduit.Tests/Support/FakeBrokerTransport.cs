@@ -92,6 +92,12 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
 
     protected override Task AcknowledgeAsync(FakeBrokerMessage message)
     {
+        message.AcknowledgeAttempts++;
+        if (message.AcknowledgeFailure is { } failure)
+        {
+            throw failure;
+        }
+
         message.Acknowledged = true;
         this.lifecycle.Enqueue("acknowledged");
         return Task.CompletedTask;

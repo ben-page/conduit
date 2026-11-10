@@ -77,7 +77,7 @@ needs the id necessarily connects to the new pod.
 
 A single SignalR connection carries traffic in both directions.
 
-**Client to server.** Commands and queries go through the hub's `Dispatch` method. Events go through `Publish`. Both delegate to `IWireMediator`. A refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type) fails the `Publish` invocation with a `HubException` carrying the refusal's message.
+**Client to server.** Commands and queries go through the hub's `Dispatch` method. Events go through `Publish`. Both delegate to `IWireMediator`. A refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type, a payload the event type cannot read) fails the `Publish` invocation with a `HubException` carrying the refusal's message.
 
 **Server to client.** When a handler calls `mediator.PublishAsync(event)`, the server-mode `SignalRTransport` pushes a `[ClientVisible]` event to all connected clients via `Clients.All.SendAsync`. An event without `[ClientVisible]` is not pushed to any client by default; register an [`IEventRecipientResolver`](#who-receives-an-event) to decide otherwise, or to send an event to some clients only.
 

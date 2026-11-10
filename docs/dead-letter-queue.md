@@ -48,22 +48,23 @@ The dead letter queue has four operations: **capture**, **browse**, **replay**, 
 
 ### Capture
 
-When a message fails during inbound handling (after any `Conduit.Resilience` retries), the transport writes it to the dead letter store with full metadata — the message body, type, exception details, and MessageContext — then acknowledges the original on the broker. It's no longer the broker's concern; Conduit owns the failure now.
+When an inbound message cannot be handled (after any `Conduit.Resilience` retries), the transport writes it to the dead letter store with full metadata — the message body, type, exception details, and MessageContext — then acknowledges the original on the broker. It's no longer the broker's concern; Conduit owns the failure now.
 
 ```
 Message arrives → Handler fails → Write to dead letter store → Acknowledge on broker
 ```
 
-If the dead letter store write fails (database down), the message is abandoned back to the broker for redelivery instead. If the dead letter queue is not enabled at all, the transport simply abandons the message and the broker redelivers per its own configuration. No silent message loss.
+What counts is what could not be handled, never what was refused. The last column is what happens when nothing captures the message: no dead letter queue is registered, or the store write fails (database down).
 
-What counts as a failure is what could not be handled, never what was refused:
-
-| Outcome | Captured? |
-|---|---|
-| The message fails **before dispatch**: its body is not JSON, or its DI scope or the mediator cannot be built | Yes. Without a dead letter queue (or if the write fails) it is acknowledged instead of abandoned: it never reached a handler, and a redelivery would fail the same way, forever. |
-| An event listener throws | Yes |
-| A request's handler fails **unexpectedly** (the caller is answered `InternalError`) | Yes, with the answer's support reference in `Reference` |
-| A request is **refused** — the handler (or a gate, or a translator) throws a `ConduitException`: `NotFoundException` (404), `ConflictException` (409), `PreconditionFailedException` (412), `ForbiddenException`, `BadRequestException`, ... | No. A refusal is the handler's answer, already delivered to the caller, and a replay would be refused again. |
+| Outcome | Captured? | When not captured |
+|---|---|---|
+| The message fails **before dispatch**: its body is not JSON, or its DI scope or the mediator cannot be built | Yes | Acknowledged, logged at Error: it never reached a handler, and a redelivery would fail the same way, forever |
+| An **event this host cannot read**: valid JSON its type cannot read (a wrong-typed field, a JSON `null`), or a type it does not know (`BadRequestException`, `ContractMismatchException`) | Yes | Acknowledged, logged at Warning as a refused event, for the same reason |
+| An event listener throws | Yes | Abandoned: the broker redelivers it per its own configuration |
+| A request's handler fails **unexpectedly** (the caller is answered `InternalError`) | Yes, with the answer's support reference in `Reference` | Acknowledged: the caller already has its error reply |
+| A request is **refused**: the handler (or a gate, or a translator) throws a `ConduitException` — `NotFoundException` (404), `ConflictException` (409), `PreconditionFailedException` (412), `ForbiddenException`, `BadRequestException`, ... | No: a refusal is the handler's answer, already delivered to the caller, and a replay would be refused again | Acknowledged |
+| An event is **refused by a gate**: the type filter's `ForbiddenException`, or another gate's refusal that is not a bad request | No: a replay would be refused again | Acknowledged |
+| A `[FireAndForget]` command's handler fails | No — a known limitation | Logged at Error and acknowledged |
 
 For a request that failed unexpectedly, the runtime logs the real exception under a support reference and answers the caller with that reference rather than the exception. The entry's `ExceptionType`/`ExceptionMessage` therefore name the answer (`[InternalError] An unexpected error occurred.`), and its `Reference` is the value the caller saw and the logged exception carries — search your logs for it.
 
@@ -155,10 +156,10 @@ Bulk replay processes messages sequentially — the broker handles distribution 
 1. Read the dead letter entry from the store
 2. Build a `DispatchEnvelope` from the stored body and type
 3. Resolve the transport by the entry's `SourceEndpoint`
-4. Call `RedeliverAsync` on the transport with the entry's `MessageId`, `CausationId` and `ConversationId` — it publishes directly to the service's inbound queue, those ids in the broker's native properties (an entry with no `MessageId` is sent with a fresh one)
+4. Call `RedeliverAsync` on the transport with the entry's `MessageId`, `CausationId` and `ConversationId` — it publishes directly to the service's inbound queue, those ids in the broker's native properties (an entry missing any of the three, captured outside a context, is sent with a fresh message id)
 5. Remove the entry from the dead letter store
 
-The message enters the normal inbound processing path. Any available instance of the handling service picks it up. If the handler fails again, the message is captured as a new dead letter entry through the normal flow, under the same ids.
+The message enters the normal inbound processing path. Any available instance of the handling service picks it up. A replayed **event** whose listener fails again is captured as a new dead letter entry through the normal flow, under the same ids. A replayed **command or query** arrives without a reply address, so it runs as a `[FireAndForget]` command does: its result goes nowhere, and a handler that fails again is logged and acknowledged, not captured — the same known limitation (see [Limitations](#limitations)).
 
 ### Interaction with inbox
 
@@ -249,7 +250,8 @@ Note that the broker's own DLQ still functions as an infrastructure safety net: 
 ## Limitations
 
 - **Requires a database.** The DLQ shares the durability database. A stateless service with no database can't use it (use broker-native redelivery/DLQ at the infrastructure level instead).
-- **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response. The response is returned in `ReplayResult` for logging but is not delivered anywhere.
+- **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response, and nothing receives it. `ReplayResult.Success` says the message was re-published, not that it was handled.
+- **Fire-and-forget failures are not captured.** A `[FireAndForget]` command whose handler fails, and a replayed command or query that fails again, are logged at Error and acknowledged: the transport does not dead-letter them.
 - **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and a replay carries the original one (see [Interaction with inbox](#interaction-with-inbox)).
 - **Refusals are not captured.** A request answered with a `ConduitException` (404, 409, 412, ...) is final: the caller has its answer, and nothing is stored to replay.
 - **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.
