@@ -23,6 +23,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Conduit\Conduit.csproj" />
     <ProjectReference Include="..\..\src\Conduit.TypeGen\Conduit.TypeGen.csproj" />
+    <!-- Named here because Conduit.TypeGen references it privately; the tests build its type model by hand. -->
+    <ProjectReference Include="..\..\src\Conduit.Analysis\Conduit.Analysis.csproj" />
     <!-- Built and copied next to the tests, never referenced: it declares its own Conduit.Messages.IQuery<T>, which would
          collide with Conduit.Contracts' at compile time. The tests load it by path into a MetadataLoadContext. -->
     <ProjectReference Include="..\Conduit.TypeGen.Tests.NetStandardContracts\Conduit.TypeGen.Tests.NetStandardContracts.csproj"

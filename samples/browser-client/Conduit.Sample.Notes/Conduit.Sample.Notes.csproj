@@ -19,10 +19,18 @@
 
   <Import Project="..\..\..\src\Conduit.TypeGen\Conduit.TypeGen.targets" />
 
-  <Target Name="BuildClientApp" AfterTargets="ConduitTypeGen">
-    <PropertyGroup>
-      <ClientAppDir>$(MSBuildProjectDirectory)\ClientApp</ClientAppDir>
-    </PropertyGroup>
+  <PropertyGroup>
+    <ClientAppDir>$(MSBuildProjectDirectory)\ClientApp</ClientAppDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- What vite builds from. TypeGen rewrites generated/*.ts only when their content changed, so a build that changed
+         nothing skips the npm build. -->
+    <ClientAppInput Include="ClientApp\src\**\*;ClientApp\generated\*.ts;ClientApp\index.html;ClientApp\package.json;ClientApp\tsconfig.json;ClientApp\vite.config.ts" />
+  </ItemGroup>
+
+  <Target Name="BuildClientApp" AfterTargets="ConduitTypeGen"
+          Inputs="@(ClientAppInput)" Outputs="$(MSBuildProjectDirectory)\wwwroot\index.html">
     <Exec Command="npm install" WorkingDirectory="$(ClientAppDir)" Condition="!Exists('$(ClientAppDir)\node_modules')" />
     <Exec Command="npm run build" WorkingDirectory="$(ClientAppDir)" />
   </Target>

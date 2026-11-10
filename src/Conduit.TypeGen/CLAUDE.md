@@ -83,7 +83,23 @@
 - `ConduitClient` resolves a server's refusal as `DispatchResult<T>.error` — consumers decide error handling strategy —
   and rejects on a transport failure (no connection, an abort, a reconnect wait that ran out, a non-refusal HTTP
   failure such as a 401)
-- `Conduit.TypeGen.targets` — MSBuild targets file with opt-in via `<ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>`, configurable output dir (`ConduitTypeGenOutput`, default `ClientApp/generated`) and transports (`ConduitTransports`, default `Http;SignalR`)
+- `Conduit.TypeGen.targets` — MSBuild targets file with opt-in via `<ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>`, configurable output dir (`ConduitTypeGenOutput`, default `ClientApp/generated`), transports (`ConduitTransports`, default `Http;SignalR`) and paths (`ConduitBasePath`, `ConduitHubPath`). The ONE targets file: packed to `build/` (the csproj's `None … PackagePath="build"`); a stale unpacked `build/Conduit.TypeGen.targets` was deleted.
+  - **Paths are absolute when they reach the task**: the target passes `AssemblyPath`/`OutputDirectory` through
+    `$([MSBuild]::NormalizePath/NormalizeDirectory('$(MSBuildProjectDirectory)', …))`, because the task's
+    `Path.GetFullPath` resolves a relative one against the process CWD (wherever `dotnet build` was started).
+  - **Incremental by content, not `Inputs`/`Outputs`**: the target runs after every build and `WriteIfChanged`
+    writes a file only when its bytes differ, so a no-op build leaves both files and their mtimes alone (the Notes
+    sample's `BuildClientApp` lists `generated/*.ts` as `Inputs` and skips `npm run build`). Chosen over
+    `Inputs="@(ReferencePath);$(TargetPath)"` because a timestamp check misses a change to the task DLL (the embedded
+    transport is `conduit.ts`) and to `ConduitTransports`/`ConduitBasePath`/`ConduitHubPath`. Pinned by
+    `TypeGenTaskShould.RewriteOnlyAFileWhoseContentChanged`.
+  - **A referenced assembly that fails to load** is skipped and logged at Normal (`DiscoverApplicationAssemblies`:
+    its full name, the exception type and message); generation goes on. Pinned by
+    `TypeGenTaskShould.LogWhenAReferencedAssemblyFailsToLoad` (this assembly's output copied without
+    `AwesomeAssertions.dll`, which only method bodies use; `Support/FakeBuildEngine` records messages).
+  - **dotnet CLI only**: the task is net10.0, so Visual Studio's .NET Framework `msbuild.exe` cannot load it
+    (documented in `typescript-client.md`; multi-targeting deferred). `Conduit.Analysis` is a `PrivateAssets="all"`
+    project reference (bundled into `tasks/`), so `Conduit.TypeGen.Tests` references it directly.
 - **Multi-project support**: For Clean Architecture projects where `[ClientVisible]` types are in a library assembly (not the Web host), consumers can override `AssemblyPath` in the target to point at the library DLL. Example: `AssemblyPath="$(MSBuildProjectDirectory)\bin\$(Configuration)\net10.0\MyApp.Application.dll"`
 - TypeScript transport interface mirrors C#: `sendRequest` (SendRequestAsync), `sendEvent` (SendEventAsync), `subscribe` (browser-only)
 - `HttpTransport(baseUrl, basePath = '/api/conduit', options?: HttpTransportOptions)` uses native `fetch`, zero npm

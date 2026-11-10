@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Build.Framework;
 
 namespace Conduit.TypeGen;
@@ -17,7 +18,8 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
     public string AssemblyPath { get; set; } = "";
 
     /// <summary>
-    /// The directory where generated TypeScript files will be written.
+    /// The directory where generated TypeScript files will be written. The targets pass an absolute path, anchored to
+    /// <c>$(MSBuildProjectDirectory)</c>: a relative one here resolves against the process's working directory.
     /// </summary>
     [Required]
     public string OutputDirectory { get; set; } = "";
@@ -67,7 +69,7 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
             var primaryAssembly = metadataContext.LoadFromAssemblyPath(
                 Path.GetFullPath(this.AssemblyPath));
 
-            var assemblies = DiscoverApplicationAssemblies(primaryAssembly, metadataContext);
+            var assemblies = this.DiscoverApplicationAssemblies(primaryAssembly, metadataContext);
 
             var types = ReflectionScanner.ScanClientVisible(assemblies);
             var transports = this.ParseTransports();
@@ -79,16 +81,24 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
             // Normalize to LF so Windows and Linux builds produce identical
             // content — avoids phantom working-tree diffs on consumers whose
             // .gitattributes normalize committed TS to LF.
-            File.WriteAllText(
+            var written = new List<string>();
+            if (WriteIfChanged(
                 Path.Combine(outputDir, "conduit.ts"),
-                BaseFileEmitter.Emit(transports, this.BasePath, this.HubPath).ReplaceLineEndings("\n"));
+                BaseFileEmitter.Emit(transports, this.BasePath, this.HubPath).ReplaceLineEndings("\n")))
+            {
+                written.Add("conduit.ts");
+            }
 
-            File.WriteAllText(
+            if (WriteIfChanged(
                 Path.Combine(outputDir, "conduit.generated.ts"),
-                MergeFileEmitter.Emit(types, assemblies, includeSignalR).ReplaceLineEndings("\n"));
+                MergeFileEmitter.Emit(types, assemblies, includeSignalR).ReplaceLineEndings("\n")))
+            {
+                written.Add("conduit.generated.ts");
+            }
 
-            this.Log.LogMessage(MessageImportance.Normal,
-                $"Conduit TypeGen: generated 2 files ({types.Count} types)");
+            this.Log.LogMessage(MessageImportance.Normal, written.Count == 0
+                ? $"Conduit TypeGen: {types.Count} types; both files were already current"
+                : $"Conduit TypeGen: {types.Count} types; wrote {string.Join(", ", written)}");
 
             return true;
         }
@@ -103,10 +113,33 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
     }
 
     /// <summary>
+    /// Writes <paramref name="content"/> as UTF-8 (no BOM) unless the file already holds exactly those bytes, so a build
+    /// that changed nothing leaves the file and its timestamp alone: a dev server watching it does not reload, and a
+    /// target with it as an input (the Notes sample's <c>BuildClientApp</c>) stays up to date. Comparing content rather
+    /// than declaring <c>Inputs</c>/<c>Outputs</c> on the target keeps the output correct when only the task (whose
+    /// embedded transport is <c>conduit.ts</c>) or a <c>ConduitTransports</c>/<c>ConduitBasePath</c>/<c>ConduitHubPath</c>
+    /// value changed, none of which an assembly timestamp would show.
+    /// </summary>
+    /// <returns>Whether the file was written.</returns>
+    private static bool WriteIfChanged(string path, string content)
+    {
+        var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(content);
+        if (File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes))
+        {
+            return false;
+        }
+
+        File.WriteAllBytes(path, bytes);
+        return true;
+    }
+
+    /// <summary>
     /// Walks the referenced assembly graph from the primary assembly, loading all
     /// non-framework assemblies. Mirrors the source generator's cross-assembly discovery.
+    /// A reference that cannot be loaded (not beside the assembly, nor in the shared framework; a native image) is
+    /// skipped, and the build log names it and the reason at Normal importance: its types are not generated.
     /// </summary>
-    private static List<Assembly> DiscoverApplicationAssemblies(
+    private List<Assembly> DiscoverApplicationAssemblies(
         Assembly primaryAssembly, MetadataLoadContext metadataContext)
     {
         var result = new List<Assembly> { primaryAssembly };
@@ -137,11 +170,13 @@ public class TypeGenTask : Microsoft.Build.Utilities.Task
                     result.Add(referencedAssembly);
                     queue.Enqueue(referencedAssembly);
                 }
-#pragma warning disable CA1031
-                catch
+#pragma warning disable CA1031 // any load failure skips that one reference; generation goes on without it
+                catch (Exception ex)
 #pragma warning restore CA1031
                 {
-                    // Assembly not loadable — skip (e.g., native dependencies)
+                    this.Log.LogMessage(MessageImportance.Normal,
+                        $"Conduit TypeGen: skipped referenced assembly {referencedName.FullName}, which could not be "
+                        + $"loaded ({ex.GetType().Name}: {ex.Message}); its types are not generated.");
                 }
             }
         }

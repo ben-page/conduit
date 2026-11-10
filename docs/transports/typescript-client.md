@@ -94,21 +94,25 @@ Every generated key of a command or query interface is **required** on the wire:
 </Project>
 ```
 
-TypeGen runs as a post-build MSBuild task. It scans the compiled assembly for `[ClientVisible]` types and emits TypeScript into the configured output directory.
+TypeGen runs as a post-build MSBuild task. It scans the compiled assembly for `[ClientVisible]` types and emits TypeScript into the configured output directory. It writes a file only when its content changed, so a build that changed nothing leaves both files, and their timestamps, as they were: a dev server watching them does not reload, and a target that lists them as `Inputs` (an `npm run build` step, say) stays up to date. A referenced assembly it cannot load is skipped, and the build log names it and the reason (`dotnet build -v n`).
 
 | Property | Default | Description |
 |---|---|---|
 | `ConduitTypeGenEnabled` | (required) | Set to `true` to enable generation |
-| `ConduitTypeGenOutput` | `ClientApp/generated` | Output directory for `.ts` files |
+| `ConduitTypeGenOutput` | `ClientApp/generated` | Output directory for `.ts` files. A relative path is relative to the project directory, wherever the build is started from |
 | `ConduitTransports` | `Http;SignalR` | Transports to include in `conduit.ts` |
+| `ConduitBasePath` | `/api/conduit` | The default `basePath` of the generated `HttpTransport`: where the host maps `MapConduitEndpoint` |
+| `ConduitHubPath` | `/conduit` | The default hub path of the generated `SignalRTransport`: where the host maps `ConduitHub` |
+
+**Build with the `dotnet` CLI** (`dotnet build`, or an IDE that builds through it, such as Rider or VS Code). The task targets .NET 10, and Visual Studio's own `msbuild.exe` runs on .NET Framework, which cannot load it: a Visual Studio build of a project with `ConduitTypeGenEnabled` fails to load the task.
 
 ## Generated output
 
 TypeGen emits two files.
 
-**`conduit.ts`** is the stable runtime. It contains `DispatchResult<T>`, `ConduitError`, the `ConduitTransport` interface, `HttpTransport`, and `SignalRTransport`. This file does not change between builds unless you change `ConduitTransports`. Its source is real TypeScript — `src/Conduit.TypeGen/Transport/` — embedded in `Conduit.TypeGen`.
+**`conduit.ts`** is the stable runtime. It contains `DispatchResult<T>`, `ConduitError`, the `ConduitTransport` interface, `HttpTransport`, and `SignalRTransport`. This file does not change between builds unless you change `ConduitTransports`, `ConduitBasePath` or `ConduitHubPath`, or take a `Conduit.TypeGen` with a different transport. Its source is real TypeScript — `src/Conduit.TypeGen/Transport/` — embedded in `Conduit.TypeGen`.
 
-**`conduit.generated.ts`** is regenerated on every build. It contains TypeScript interfaces for every `[ClientVisible]` type, the type maps, and the `ConduitClient` class.
+**`conduit.generated.ts`** is regenerated on every build, and rewritten when your types changed. It contains TypeScript interfaces for every `[ClientVisible]` type, the type maps, and the `ConduitClient` class.
 
 The type maps use full C# namespaces as keys:
 

@@ -7,7 +7,8 @@
   </PropertyGroup>
 
   <!-- NuGet package layout: task DLL lives under tasks/net10.0/ next to the
-       targets file's parent. -->
+       targets file's parent. The task targets net10.0, so it loads only in the
+       dotnet CLI's MSBuild, never in Visual Studio's .NET Framework msbuild.exe. -->
   <UsingTask TaskName="Conduit.TypeGen.TypeGenTask"
              AssemblyFile="$(MSBuildThisFileDirectory)..\tasks\net10.0\Conduit.TypeGen.dll"
              Condition="'$(ConduitTypeGenTaskAssembly)' == ''" />
@@ -18,6 +19,10 @@
              AssemblyFile="$(ConduitTypeGenTaskAssembly)"
              Condition="'$(ConduitTypeGenTaskAssembly)' != ''" />
 
+  <!-- Runs after every build, and is incremental by content rather than by Inputs/Outputs: the task writes a file only
+       when its content changed, so a build that changed nothing leaves both files and their timestamps alone. A
+       timestamp check could not see a change to the task itself (conduit.ts is its embedded transport) or to
+       ConduitTransports, ConduitBasePath or ConduitHubPath. -->
   <Target Name="ConduitTypeGen" AfterTargets="Build"
           Condition="'$(ConduitTypeGenEnabled)' == 'true'">
     <!-- Defaulted inside the target so $(TargetPath) is fully resolved (it's
@@ -25,9 +30,11 @@
     <PropertyGroup>
       <ConduitTypeGenAssemblyPath Condition="'$(ConduitTypeGenAssemblyPath)' == ''">$(TargetPath)</ConduitTypeGenAssemblyPath>
     </PropertyGroup>
+    <!-- Both paths absolute, a relative one anchored to the project directory: the task would resolve it against the
+         process's working directory, which is wherever the build was started from. -->
     <TypeGenTask
-      AssemblyPath="$(ConduitTypeGenAssemblyPath)"
-      OutputDirectory="$(ConduitTypeGenOutput)"
+      AssemblyPath="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(ConduitTypeGenAssemblyPath)'))"
+      OutputDirectory="$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(ConduitTypeGenOutput)'))"
       Transports="$(ConduitTransports)"
       BasePath="$(ConduitBasePath)"
       HubPath="$(ConduitHubPath)" />

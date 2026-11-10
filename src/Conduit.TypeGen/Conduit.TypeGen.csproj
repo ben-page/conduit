@@ -32,7 +32,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" />
+    <!-- Private: bundled into tasks/ (below), never a dependency of whatever references this project. -->
+    <ProjectReference Include="..\Conduit.Analysis\Conduit.Analysis.csproj" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
