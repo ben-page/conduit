@@ -774,7 +774,7 @@ public abstract class PersistenceEngineTestBase
         var claimed = await store.ClaimDueAsync(
             "worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
         await store.CompleteAsync(
-            claimed[0], "nightly", claimed[0].Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+            claimed[0], claimed[0].ClaimToken!, "nightly", claimed[0].Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
             CancellationToken.None);
 
         // Assert — the delete and the cursor advance land together, on the live engine
@@ -797,7 +797,7 @@ public abstract class PersistenceEngineTestBase
 
         // Act
         await store.CompleteAsync(
-            claimed[0], null, null, retainRunKey: true, now, CancellationToken.None);
+            claimed[0], claimed[0].ClaimToken!, null, null, retainRunKey: true, now, CancellationToken.None);
         var redelivered = await store.InsertClaimedAsync(
             NewJobRun("event@msg-1", now), "other-host", now, CancellationToken.None);
         var purgedEarly = await store.PurgeCompletedAsync(now.AddMinutes(-2), CancellationToken.None);
@@ -914,18 +914,18 @@ public abstract class PersistenceEngineTestBase
         await store.TryMaterializeAsync(NewJobRun("nightly@failed", now), CancellationToken.None);
         var failedClaim = await store.ClaimDueAsync("worker-failed", now, 10, CancellationToken.None);
         await store.MarkTerminalAsync(
-            failedClaim[0], JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, now,
+            failedClaim[0], failedClaim[0].ClaimToken!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, now,
             CancellationToken.None);
 
         await store.TryMaterializeAsync(NewJobRun("nightly@completed", now), CancellationToken.None);
         var completedClaim = await store.ClaimDueAsync("worker-completed", now, 10, CancellationToken.None);
         await store.CompleteAsync(
-            completedClaim[0], null, null, retainRunKey: false, now.AddMinutes(1), CancellationToken.None);
+            completedClaim[0], completedClaim[0].ClaimToken!, null, null, retainRunKey: false, now.AddMinutes(1), CancellationToken.None);
 
         await store.TryMaterializeAsync(NewJobRun("nightly@old", now), CancellationToken.None);
         var oldClaim = await store.ClaimDueAsync("worker-old", now, 10, CancellationToken.None);
         await store.CompleteAsync(
-            oldClaim[0], null, null, retainRunKey: false, now.AddDays(-60), CancellationToken.None);
+            oldClaim[0], oldClaim[0].ClaimToken!, null, null, retainRunKey: false, now.AddDays(-60), CancellationToken.None);
 
         // Act — filter by outcome, comparing a bound int parameter against the real SMALLINT column
         var failedOnly = await store.QueryHistoryAsync(
@@ -1042,7 +1042,7 @@ public abstract class PersistenceEngineTestBase
             // Act — the running run completes (cursor, history, delete) while the next occurrence
             // and manual triggers materialize; a deadlock victim on either side fails the round
             var completion = Task.Run(() => store.CompleteAsync(
-                running, "nightly", running.Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+                running, running.ClaimToken!, "nightly", running.Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
                 CancellationToken.None));
             var materializations = Enumerable.Range(0, 4)
                 .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
@@ -1137,7 +1137,7 @@ public abstract class PersistenceEngineTestBase
         await store.TryMaterializeWithoutOverlapAsync(NewJobRun("nightly@done", occurrence), CancellationToken.None);
         var claimed = await store.ClaimDueAsync("worker", DateTimeOffset.UtcNow, 10, CancellationToken.None);
         await store.CompleteAsync(
-            claimed[0], "nightly", claimed[0].Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+            claimed[0], claimed[0].ClaimToken!, "nightly", claimed[0].Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
             CancellationToken.None);
 
         // Act — a late replica for the same occurrence (the cursor's own sub-millisecond value, read back
@@ -1171,7 +1171,7 @@ public abstract class PersistenceEngineTestBase
 
             // Act — the occurrence completes while four late replicas materialize it
             var completion = Task.Run(() => store.CompleteAsync(
-                claimed, "nightly", claimed.Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
+                claimed, claimed.ClaimToken!, "nightly", claimed.Occurrence, retainRunKey: false, DateTimeOffset.UtcNow,
                 CancellationToken.None));
             var late = Enumerable.Range(0, 4)
                 .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
@@ -1205,11 +1205,11 @@ public abstract class PersistenceEngineTestBase
 
         // Act — later completes, then earlier goes terminal, then a misfire skip names a past occurrence
         await store.CompleteAsync(
-            claimed.Single(run => run.JobKey == "nightly@later"), "nightly", later, retainRunKey: false,
+            claimed.Single(run => run.JobKey == "nightly@later"), "worker", "nightly", later, retainRunKey: false,
             DateTimeOffset.UtcNow, CancellationToken.None);
         await store.MarkTerminalAsync(
-            claimed.Single(run => run.JobKey == "nightly@earlier"), JobRunStatus.Failed, "late", "nightly",
-            earlier, DateTimeOffset.UtcNow, CancellationToken.None);
+            claimed.Single(run => run.JobKey == "nightly@earlier"), "worker", JobRunStatus.Failed, "late",
+            "nightly", earlier, DateTimeOffset.UtcNow, CancellationToken.None);
         await store.AdvanceCursorAsync("nightly", earlier, CancellationToken.None);
 
         // Assert

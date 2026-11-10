@@ -73,30 +73,37 @@ public sealed class ContendedJobStore : IJobStore
         => this.inner.HeartbeatAsync(id, claimToken, now, cancellationToken);
 
     /// <inheritdoc/>
-    public Task CompleteAsync(
-        JobRun run, string? scheduleName, DateTimeOffset? occurrence, bool retainRunKey, DateTimeOffset now,
+    public Task<bool> CompleteAsync(
+        JobRun run,
+        string claimToken,
+        string? scheduleName,
+        DateTimeOffset? occurrence,
+        bool retainRunKey,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
-        => this.inner.CompleteAsync(run, scheduleName, occurrence, retainRunKey, now, cancellationToken);
+        => this.inner.CompleteAsync(run, claimToken, scheduleName, occurrence, retainRunKey, now, cancellationToken);
 
     /// <inheritdoc/>
     public Task ReleaseAsync(long id, string claimToken, CancellationToken cancellationToken)
         => this.inner.ReleaseAsync(id, claimToken, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<int> IncrementAttemptAsync(
-        long id, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken)
-        => this.inner.IncrementAttemptAsync(id, nextRunAt, error, cancellationToken);
+    public Task<bool> IncrementAttemptAsync(
+        long id, string claimToken, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken)
+        => this.inner.IncrementAttemptAsync(id, claimToken, nextRunAt, error, cancellationToken);
 
     /// <inheritdoc/>
-    public Task MarkTerminalAsync(
+    public Task<bool> MarkTerminalAsync(
         JobRun run,
+        string claimToken,
         JobRunStatus status,
         string? error,
         string? scheduleName,
         DateTimeOffset? occurrence,
         DateTimeOffset now,
         CancellationToken cancellationToken)
-        => this.inner.MarkTerminalAsync(run, status, error, scheduleName, occurrence, now, cancellationToken);
+        => this.inner.MarkTerminalAsync(
+            run, claimToken, status, error, scheduleName, occurrence, now, cancellationToken);
 
     /// <inheritdoc/>
     public Task AdvanceCursorAsync(

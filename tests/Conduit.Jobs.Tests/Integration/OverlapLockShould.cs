@@ -74,7 +74,7 @@ public class OverlapLockShould
         await database.Store.TryMaterializeAsync(OccurrenceRun(Now), CancellationToken.None);
         var claimed = await database.Store.ClaimDueAsync("worker", Now, 10, CancellationToken.None);
         await database.Store.MarkTerminalAsync(
-            claimed[0], JobRunStatus.Failed, "gave up", "nightly", claimed[0].Occurrence, Now,
+            claimed[0], claimed[0].ClaimToken!, JobRunStatus.Failed, "gave up", "nightly", claimed[0].Occurrence, Now,
             CancellationToken.None);
         await database.Store.TryMaterializeAsync(
             OccurrenceRun(Now, scheduleName: "hourly"), CancellationToken.None);
@@ -170,7 +170,7 @@ public class OverlapLockShould
         await store.TryMaterializeWithoutOverlapAsync(OccurrenceRun(Now), CancellationToken.None);
         var claimed = await store.ClaimDueAsync("worker", Now, 10, CancellationToken.None);
         await store.CompleteAsync(
-            claimed[0], "nightly", claimed[0].Occurrence, retainRunKey: false, Now, CancellationToken.None);
+            claimed[0], claimed[0].ClaimToken!, "nightly", claimed[0].Occurrence, retainRunKey: false, Now, CancellationToken.None);
 
         // Act — replicas whose timers fired late, for that occurrence and an earlier one; then the next
         var late = await store.TryMaterializeWithoutOverlapAsync(OccurrenceRun(Now), CancellationToken.None);
@@ -202,7 +202,7 @@ public class OverlapLockShould
             // Act — the occurrence completes while three late replicas materialize it, each on a thread
             // of its own (Microsoft.Data.Sqlite's async methods run synchronously)
             var completion = Task.Run(() => store.CompleteAsync(
-                claimed, "nightly", claimed.Occurrence, retainRunKey: false, occurrence, CancellationToken.None));
+                claimed, claimed.ClaimToken!, "nightly", claimed.Occurrence, retainRunKey: false, occurrence, CancellationToken.None));
             var late = Enumerable.Range(0, 3)
                 .Select(_ => Task.Run(() => store.TryMaterializeWithoutOverlapAsync(
                     OccurrenceRun(occurrence), CancellationToken.None)))
@@ -232,7 +232,7 @@ public class OverlapLockShould
             foreach (var claim in claimed)
             {
                 await store.CompleteAsync(
-                    claim, "nightly", claim.Occurrence, retainRunKey: false, run.RunAt, CancellationToken.None);
+                    claim, claim.ClaimToken!, "nightly", claim.Occurrence, retainRunKey: false, run.RunAt, CancellationToken.None);
             }
         }
     }

@@ -301,8 +301,13 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
-    public async Task CompleteAsync(
-        JobRun run, string? scheduleName, DateTimeOffset? occurrence, bool retainRunKey, DateTimeOffset now,
+    public async Task<bool> CompleteAsync(
+        JobRun run,
+        string claimToken,
+        string? scheduleName,
+        DateTimeOffset? occurrence,
+        bool retainRunKey,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(run);
@@ -330,15 +335,16 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             connection, transaction, run, JobRunOutcome.Completed, error: null, now, cancellationToken);
 
         // A kept row drops its claim, so it is invisible to every query that looks for live work —
-        // all of them filter on Pending or Claiming — and visible only to the unique key.
-        await ExecuteNonQueryOnAsync(
+        // all of them filter on Pending or Claiming — and visible only to the unique key. Guarded on the
+        // claim like every terminal write (see ClaimGuard).
+        var resolved = await ExecuteNonQueryOnAsync(
             connection,
             retainRunKey
-                ? $"UPDATE {JobTableSchema.RunsTable} SET Status = @Completed, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id"
-                : $"DELETE FROM {JobTableSchema.RunsTable} WHERE Id = @Id",
+                ? $"UPDATE {JobTableSchema.RunsTable} SET Status = @Completed, ClaimToken = NULL, ClaimedAt = NULL WHERE {ClaimGuard}"
+                : $"DELETE FROM {JobTableSchema.RunsTable} WHERE {ClaimGuard}",
             command =>
             {
-                DbParameterHelper.Add(command, "@Id", run.Id);
+                AddClaimGuardParameters(command, run.Id, claimToken);
                 if (retainRunKey)
                 {
                     DbParameterHelper.Add(command, "@Completed", (int)JobRunStatus.Completed);
@@ -347,7 +353,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             cancellationToken,
             transaction);
 
-        await transaction.CommitAsync(cancellationToken);
+        return await CommitIfResolvedAsync(transaction, resolved, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -367,36 +373,32 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             cancellationToken);
 
     /// <inheritdoc/>
-    public async Task<int> IncrementAttemptAsync(
-        long id, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken)
+    public async Task<bool> IncrementAttemptAsync(
+        long id, string claimToken, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken)
     {
-        await this.ExecuteNonQueryAsync(
+        var resolved = await this.ExecuteNonQueryAsync(
             $"""
             UPDATE {JobTableSchema.RunsTable}
             SET AttemptCount = AttemptCount + 1, Status = @Pending, RunAt = @RunAt, LastError = @LastError,
                 ClaimToken = NULL, ClaimedAt = NULL, StartedAt = NULL
-            WHERE Id = @Id
+            WHERE {ClaimGuard}
             """,
             command =>
             {
                 DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending);
                 DbParameterHelper.Add(command, "@RunAt", FormatTimestamp(nextRunAt));
                 DbParameterHelper.Add(command, "@LastError", Truncate(error));
-                DbParameterHelper.Add(command, "@Id", id);
+                AddClaimGuardParameters(command, id, claimToken);
             },
             cancellationToken);
 
-        var attempts = await this.ExecuteScalarAsync(
-            $"SELECT AttemptCount FROM {JobTableSchema.RunsTable} WHERE Id = @Id",
-            command => DbParameterHelper.Add(command, "@Id", id),
-            cancellationToken);
-
-        return attempts is null ? 0 : Convert.ToInt32(attempts, CultureInfo.InvariantCulture);
+        return resolved == 1;
     }
 
     /// <inheritdoc/>
-    public async Task MarkTerminalAsync(
+    public async Task<bool> MarkTerminalAsync(
         JobRun run,
+        string claimToken,
         JobRunStatus status,
         string? error,
         string? scheduleName,
@@ -415,19 +417,19 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         await WriteHistoryAsync(
             connection, transaction, run, ToOutcome(status), error, now, cancellationToken);
 
-        await ExecuteNonQueryOnAsync(
+        var resolved = await ExecuteNonQueryOnAsync(
             connection,
             MarkTerminalSql,
             command =>
             {
                 DbParameterHelper.Add(command, "@Status", (int)status);
                 DbParameterHelper.Add(command, "@LastError", error is null ? DBNull.Value : Truncate(error));
-                DbParameterHelper.Add(command, "@Id", run.Id);
+                AddClaimGuardParameters(command, run.Id, claimToken);
             },
             cancellationToken,
             transaction);
 
-        await transaction.CommitAsync(cancellationToken);
+        return await CommitIfResolvedAsync(transaction, resolved, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -1001,8 +1003,16 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         $"SELECT COUNT(*) FROM {JobTableSchema.RunsTable} " +
         "WHERE ScheduleName = @ScheduleName AND Status IN (@Pending, @Claiming) AND JobKey <> @JobKey";
 
+    // Every terminal write of a run (complete, count a failed attempt, mark terminal) resolves only the
+    // claim it was given. Host A's claim goes stale past ClaimTimeout (a pause, a partition), host B
+    // re-claims under a new token, and A's job then finishes: unguarded, A's completion deleted the row
+    // B was running and advanced the cursor, and A's failed attempt released it to Pending for a third
+    // host. Status = Claiming also keeps a second resolution under one claim from rewriting a row the
+    // first already resolved. Identical on every engine, as the outbox's resolutions are.
+    private const string ClaimGuard = "Id = @Id AND Status = @Claiming AND ClaimToken = @ClaimToken";
+
     private static string MarkTerminalSql =>
-        $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
+        $"UPDATE {JobTableSchema.RunsTable} SET Status = @Status, LastError = @LastError, ClaimToken = NULL, ClaimedAt = NULL WHERE {ClaimGuard}";
 
     // Forward only. Runs of an AllowOverlap() schedule can finish out of order, and an unconditional SET
     // let the earlier one move the cursor back behind the later — after which a replica late for the
@@ -1065,6 +1075,31 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
             },
             cancellationToken,
             transaction);
+
+    private static void AddClaimGuardParameters(DbCommand command, long id, string claimToken)
+    {
+        DbParameterHelper.Add(command, "@Id", id);
+        DbParameterHelper.Add(command, "@Claiming", (int)JobRunStatus.Claiming);
+        DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+    }
+
+    /// <summary>
+    /// Commits a terminal write whose guarded run-row statement resolved exactly the claimed row, and
+    /// otherwise rolls back the cursor advance and history row written before it: the claim moved on,
+    /// so the run belongs to the host now holding it, and that host records its outcome.
+    /// </summary>
+    private static async Task<bool> CommitIfResolvedAsync(
+        DbTransaction transaction, int resolved, CancellationToken cancellationToken)
+    {
+        if (resolved != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
 
     private static JobRunOutcome ToOutcome(JobRunStatus status) => status switch
     {

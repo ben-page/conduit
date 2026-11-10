@@ -112,9 +112,15 @@ public interface IJobStore
     /// row (or keeps it as <see cref="JobRunStatus.Completed"/>), and — for a schedule run — advances
     /// the cursor, all in one transaction. A deleted row can never be re-materialized by a host that
     /// has not yet seen the new cursor, and the history row cannot be written without the ledger
-    /// transition landing alongside it.
+    /// transition landing alongside it. Conditional on the claim: when the row is no longer
+    /// <see cref="JobRunStatus.Claiming"/> under <paramref name="claimToken"/>, nothing is written.
     /// </summary>
     /// <param name="run">The completed run, read before this call.</param>
+    /// <param name="claimToken">
+    /// The token this host claimed under. Another host that took the claim over after
+    /// <see cref="Configuration.JobsOptions.ClaimTimeout"/> now owns the row, and this host's outcome
+    /// must not overwrite its work.
+    /// </param>
     /// <param name="scheduleName">The schedule to advance, or <see langword="null"/> for a trigger run.</param>
     /// <param name="occurrence">The occurrence to advance the cursor to.</param>
     /// <param name="retainRunKey">
@@ -124,9 +130,17 @@ public interface IJobStore
     /// </param>
     /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public Task CompleteAsync(
-        JobRun run, string? scheduleName, DateTimeOffset? occurrence, bool retainRunKey, DateTimeOffset now,
+    /// <returns>
+    /// <see langword="true"/> when the outcome was recorded; <see langword="false"/> when the claim had
+    /// moved on, and nothing was written.
+    /// </returns>
+    public Task<bool> CompleteAsync(
+        JobRun run,
+        string claimToken,
+        string? scheduleName,
+        DateTimeOffset? occurrence,
+        bool retainRunKey,
+        DateTimeOffset now,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -145,33 +159,44 @@ public interface IJobStore
 
     /// <summary>
     /// Records a failed attempt: increments the attempt count, reschedules to the backoff time and
-    /// releases the claim, so the retry survives a process restart.
+    /// releases the claim, so the retry survives a process restart. Conditional on the claim, as
+    /// <see cref="CompleteAsync"/> is.
     /// </summary>
     /// <param name="id">The run's primary key.</param>
+    /// <param name="claimToken">The token this host claimed under.</param>
     /// <param name="nextRunAt">When the next attempt becomes due.</param>
     /// <param name="error">The failure message.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>The new attempt count.</returns>
-    public Task<int> IncrementAttemptAsync(
-        long id, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken);
+    /// <returns>
+    /// <see langword="true"/> when the attempt was recorded; <see langword="false"/> when the claim had
+    /// moved on, and nothing was written.
+    /// </returns>
+    public Task<bool> IncrementAttemptAsync(
+        long id, string claimToken, DateTimeOffset nextRunAt, string error, CancellationToken cancellationToken);
 
     /// <summary>
     /// Writes a matching history row, moves a run to a terminal status, releases its claim and, for a
     /// schedule run, advances the cursor past the occurrence — all in one transaction. The cursor
     /// advance and the ledger transition are needed for the reasons <see cref="CompleteAsync"/>
     /// documents; the history row is needed so the outcome survives whatever later happens to the
-    /// ledger row (a coalescing pickup superseding it, or the retention purge).
+    /// ledger row (a coalescing pickup superseding it, or the retention purge). Conditional on the
+    /// claim, as <see cref="CompleteAsync"/> is.
     /// </summary>
     /// <param name="run">The run reaching this terminal status, read before this call.</param>
+    /// <param name="claimToken">The token this host claimed under.</param>
     /// <param name="status">The terminal status.</param>
     /// <param name="error">The failure message, when there is one.</param>
     /// <param name="scheduleName">The schedule to advance, or <see langword="null"/> for a trigger run.</param>
     /// <param name="occurrence">The occurrence to advance the cursor to.</param>
     /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public Task MarkTerminalAsync(
+    /// <returns>
+    /// <see langword="true"/> when the outcome was recorded; <see langword="false"/> when the claim had
+    /// moved on, and nothing was written.
+    /// </returns>
+    public Task<bool> MarkTerminalAsync(
         JobRun run,
+        string claimToken,
         JobRunStatus status,
         string? error,
         string? scheduleName,

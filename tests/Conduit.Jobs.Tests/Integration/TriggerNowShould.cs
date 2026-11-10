@@ -62,7 +62,7 @@ public class TriggerNowShould
         await store.TryMaterializeAsync(SeedRun(), CancellationToken.None);
         var claimed = await store.ClaimDueAsync("runner", Start, 10, CancellationToken.None);
         await store.MarkTerminalAsync(
-            claimed[0], JobRunStatus.Failed, "gave up", "warm", null, Start, CancellationToken.None);
+            claimed[0], claimed[0].ClaimToken!, JobRunStatus.Failed, "gave up", "warm", null, Start, CancellationToken.None);
 
         // Act
         var key = await host.GetRequiredService<IJobs>().TriggerNowAsync("warm", CancellationToken.None);

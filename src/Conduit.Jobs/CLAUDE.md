@@ -342,6 +342,31 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   runs the job while the first is still winding down.
 - **`ReleaseAsync` is conditional on the claim token**, so a drain never hands a claim back out from
   under a host that has since taken it.
+- **So is every terminal write.** `CompleteAsync`, `IncrementAttemptAsync` and `MarkTerminalAsync`
+  take the claim token, change the run row only `WHERE Id = @Id AND Status = @Claiming AND
+  ClaimToken = @ClaimToken` (`DbJobStore.ClaimGuard`, module-owned, identical on every engine, the
+  outbox's resolution guard), and return `Task<bool>` (rows affected == 1). The two transactional ones
+  keep the lock order (cursor first, then history, then the guarded run-row statement) and roll the
+  whole transaction back when the guard matches nothing (`CommitIfResolvedAsync`), so a lost claim
+  advances no cursor and writes no history. Why: host A's claim goes stale past `ClaimTimeout` (a GC
+  or VM pause, a partition), B re-claims under a new token, then A's job ends; unguarded, A's
+  completion deleted the row B was running (a late replica could then re-materialize the occurrence)
+  and A's failed attempt released it to `Pending` for a third host. `IncrementAttemptAsync` used to
+  return the new attempt count; nothing read it. On `false`, `ClaimedJobExecutor` logs `ClaimLost`
+  (EventId 410, Warning, the run's key) and writes nothing else: the retry and exhaustion logs now
+  follow a write that landed. It logs the same 410 for a run the heartbeat gave up. Tests:
+  `JobStoreShould.NotCompleteARunAnotherHostHolds` / `.NotMarkTerminalARunAnotherHostHolds` /
+  `.NotCountAnAttemptOnARunAnotherHostHolds`, `ClaimedJobExecutorShould.WriteNothingWhenTheClaimWasLost`.
+- **A heartbeat that cannot renew fences itself.** `ClaimHeartbeat` tracks the last renewal that
+  landed (`ClaimedAt`, then each successful beat's `now`); once a renewal fails at or after that plus
+  `ClaimTimeout`, the instant another host's sweep may re-claim, it sets `ClaimLost` and cancels the
+  job token (`LogClaimFenced`). Two details make "at" true rather than "a beat after": the wait before
+  a beat is clamped to the fence (the interval need not divide `ClaimTimeout`), and each renewal call
+  carries a token cancelled at the fence, so a hung connection counts as a failure there. A renewal
+  begun after the fence (the host woke late) carries no deadline: if it lands, nobody took the claim.
+  Fencing is time-based, not count-based, so a discontinuous test clock with a healthy store never
+  fences. Tests: `ClaimHeartbeatShould.FenceItselfAfterClaimTimeoutOfFailures` /
+  `.FenceItselfWhenARenewalOutlastsTheClaimTimeout` (support: `UnreachableJobStore`).
 - **`ClaimedJobExecutor` is shared** by the scheduler and by event triggers. They reach a claimed run
   from different directions but owe the ledger identical bookkeeping. Neither blocks on the job: the
   scheduler would delay the next occurrence and the next sweep, and a trigger would hold the

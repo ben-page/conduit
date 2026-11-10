@@ -118,7 +118,7 @@ public class JobsApiShould
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartHostAsync(database, new FakeTimeProvider(Start), new JobSpy());
         var store = JobsDatabaseProbe.StoreFor(database);
-        await store.TryMaterializeAsync(
+        var run = await store.InsertClaimedAsync(
             new JobRun
             {
                 JobKey = "warm@done",
@@ -126,12 +126,12 @@ public class JobsApiShould
                 MessageType = "Conduit.Jobs.Tests.Support.RecordedJob",
                 Payload = "{}",
                 RunAt = Start,
-                Status = JobRunStatus.Pending,
             },
+            "worker",
+            Start,
             CancellationToken.None);
-        var run = await store.GetRunAsync("warm@done", CancellationToken.None);
         await store.MarkTerminalAsync(
-            run!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
+            run!, "worker", JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
             CancellationToken.None);
 
         // Act
@@ -245,7 +245,7 @@ public class JobsApiShould
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartHostAsync(database, new FakeTimeProvider(Start), new JobSpy());
         var store = JobsDatabaseProbe.StoreFor(database);
-        await store.TryMaterializeAsync(
+        var stored = await store.InsertClaimedAsync(
             new JobRun
             {
                 JobKey = "warm@failed",
@@ -253,12 +253,12 @@ public class JobsApiShould
                 MessageType = "Conduit.Jobs.Tests.Support.RecordedJob",
                 Payload = "{}",
                 RunAt = Start,
-                Status = JobRunStatus.Pending,
             },
+            "worker",
+            Start,
             CancellationToken.None);
-        var stored = await store.GetRunAsync("warm@failed", CancellationToken.None);
         await store.MarkTerminalAsync(
-            stored!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
+            stored!, "worker", JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
             CancellationToken.None);
 
         // Act
@@ -357,12 +357,10 @@ public class JobsApiShould
             MessageType = "Tests.RecordedJob",
             Payload = """{"label":"job"}""",
             RunAt = Start,
-            Status = JobRunStatus.Pending,
         };
-        await store.TryMaterializeAsync(run, CancellationToken.None);
-        var stored = await store.GetRunAsync(run.JobKey, CancellationToken.None);
+        var stored = await store.InsertClaimedAsync(run, "worker", Start, CancellationToken.None);
         await store.IncrementAttemptAsync(
-            stored!.Id, Start.AddMinutes(1), "boom", CancellationToken.None);
+            stored!.Id, "worker", Start.AddMinutes(1), "boom", CancellationToken.None);
 
         // Act
         var pending = await store.GetPendingAsync(null, CancellationToken.None);

@@ -22,6 +22,12 @@ namespace Conduit.Jobs.Runtime;
 /// running host within one interval without a second query, a second connection, or a poll loop.
 /// <c>MaxRuntime</c> is enforced here too, since this loop already knows when the attempt began.
 /// </para>
+/// <para>
+/// A host that cannot renew at all (its database unreachable, its connection hung) cannot learn that
+/// the claim was taken, so it fences itself: once <c>ClaimTimeout</c> has passed since the last
+/// renewal that landed — the moment another host may take the claim over — it gives the run up as
+/// lost and cancels the job, rather than run on beside the host that took it.
+/// </para>
 /// </remarks>
 internal sealed partial class ClaimHeartbeat : IAsyncDisposable
 {
@@ -35,18 +41,21 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
         TimeSpan? maxRuntime,
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
-        TimeSpan interval,
+        JobsOptions options,
         CancellationTokenSource jobCancellation,
         ILogger logger)
     {
         this.loop = this.RunAsync(
-            run, maxRuntime, scopeFactory, timeProvider, interval, jobCancellation, logger);
+            run, maxRuntime, scopeFactory, timeProvider, options, jobCancellation, logger);
     }
 
     /// <summary>Whether an operator asked for this run to stop, or it outran its <c>MaxRuntime</c>.</summary>
     public bool CancellationRequested => Volatile.Read(ref this.cancellationRequested) != 0;
 
-    /// <summary>Whether another host has taken the claim, in which case this host owns nothing.</summary>
+    /// <summary>
+    /// Whether another host has taken the claim, or this host could not renew it for a whole
+    /// <c>ClaimTimeout</c>, after which another host may have. Either way this host owns nothing.
+    /// </summary>
     public bool ClaimLost => Volatile.Read(ref this.claimLost) != 0;
 
     /// <summary>Starts renewing the claim until the returned heartbeat is disposed.</summary>
@@ -62,8 +71,7 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(options);
 
         return new ClaimHeartbeat(
-            run, maxRuntime, scopeFactory, timeProvider, options.Value.HeartbeatInterval,
-            jobCancellation, logger);
+            run, maxRuntime, scopeFactory, timeProvider, options.Value, jobCancellation, logger);
     }
 
     /// <inheritdoc/>
@@ -79,17 +87,22 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
         TimeSpan? maxRuntime,
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
-        TimeSpan interval,
+        JobsOptions options,
         CancellationTokenSource jobCancellation,
         ILogger logger)
     {
         var startedAt = run.StartedAt ?? timeProvider.GetUtcNow();
 
+        // Another host may take the claim once ClaimedAt is ClaimTimeout old, and ClaimedAt is what the
+        // last renewal that landed wrote: the claim's own instant until the first one does.
+        var renewedAt = run.ClaimedAt ?? startedAt;
+
         while (!this.stop.IsCancellationRequested)
         {
+            var fenceAt = renewedAt + options.ClaimTimeout;
             try
             {
-                await Task.Delay(interval, timeProvider, this.stop.Token);
+                await Task.Delay(WaitBefore(fenceAt), timeProvider, this.stop.Token);
             }
             catch (OperationCanceledException)
             {
@@ -101,16 +114,30 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
             HeartbeatResult beat;
             try
             {
+                // A renewal still out at the fence counts as failed, so a hung connection cannot keep
+                // the job running past the moment another host may take the claim. One begun after it
+                // (this host woke late) runs unbounded: if it lands, the claim was still this host's.
+                using var deadline = fenceAt > now
+                    ? new CancellationTokenSource(fenceAt - now, timeProvider)
+                    : new CancellationTokenSource();
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
-                beat = await store.HeartbeatAsync(run.Id, run.ClaimToken!, now, CancellationToken.None);
+                beat = await store.HeartbeatAsync(run.Id, run.ClaimToken!, now, deadline.Token);
             }
-#pragma warning disable CA1031 // A missed beat is survivable; the claim only goes stale after several.
+#pragma warning disable CA1031 // A missed beat is survivable until the claim could have gone stale.
             catch (Exception exception)
 #pragma warning restore CA1031
             {
                 LogHeartbeatFailed(logger, run.JobKey, exception);
-                continue;
+                if (timeProvider.GetUtcNow() < fenceAt)
+                {
+                    continue;
+                }
+
+                LogClaimFenced(logger, run.JobKey, options.ClaimTimeout);
+                Volatile.Write(ref this.claimLost, 1);
+                await jobCancellation.CancelAsync();
+                return;
             }
 
             if (!beat.ClaimHeld)
@@ -120,6 +147,8 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
                 await jobCancellation.CancelAsync();
                 return;
             }
+
+            renewedAt = now;
 
             if (this.CancellationRequested)
             {
@@ -146,6 +175,17 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
                 await jobCancellation.CancelAsync();
             }
         }
+
+        // Renewals come every interval, but never later than the fence: with the interval not dividing
+        // ClaimTimeout, a host whose renewals keep failing would otherwise notice only a beat late. The
+        // fence is that close only after a failed renewal; a landed one puts it ClaimTimeout away.
+        TimeSpan WaitBefore(DateTimeOffset fenceAt)
+        {
+            var untilFence = fenceAt - timeProvider.GetUtcNow();
+            return untilFence < options.HeartbeatInterval
+                ? TimeSpan.FromTicks(Math.Max(untilFence.Ticks, 0))
+                : options.HeartbeatInterval;
+        }
     }
 
     [LoggerMessage(
@@ -157,6 +197,12 @@ internal sealed partial class ClaimHeartbeat : IAsyncDisposable
         Level = LogLevel.Warning,
         Message = "Claim on job run '{JobKey}' was taken by another host; stopping this one")]
     private static partial void LogClaimLost(ILogger logger, string jobKey);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Claim on job run '{JobKey}' could not be renewed for its ClaimTimeout of {ClaimTimeout}, after which " +
+            "another host may take it; stopping this one")]
+    private static partial void LogClaimFenced(ILogger logger, string jobKey, TimeSpan claimTimeout);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Heartbeat for job run '{JobKey}' failed")]
     private static partial void LogHeartbeatFailed(ILogger logger, string jobKey, Exception exception);

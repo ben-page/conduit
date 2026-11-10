@@ -363,6 +363,23 @@ the claim is still held (so a host that lost it stops rather than finishing work
 and it reads back the cancellation flag (so an operator's request reaches the running host without a
 second query or a poll loop).
 
+A host that cannot renew at all — its database unreachable, its connection hung — cannot learn that
+its claim was taken, so it **fences itself**: once `ClaimTimeout` has passed since its last renewal
+that landed, which is the moment another host may take the claim over, it cancels the job's
+`CancellationToken` and gives the run up. A renewal still outstanding at that moment counts as
+failed. A handler that honours its token stops before the other host's run is far along; one that
+ignores it runs on, but this host still records nothing for it.
+
+**An outcome is recorded only under the claim it ran with.** Completing a run, counting a failed
+attempt and marking it failed or cancelled each change the run row only while it is still claimed
+by this host (`Status = Claiming AND ClaimToken = <this host's token>`), and the cursor and history
+row written with them roll back when it is not. Should a host pause past `ClaimTimeout` and another
+take the run over, the first host's late outcome cannot delete the row the second is running, move
+the cursor past its occurrence, or release it to `Pending` for a third. The first host logs a Warning
+with `EventId` **410** (`ClaimLost`, the run's key as a structured field) and writes nothing; the
+host now holding the claim records the outcome. The same Warning follows a run the heartbeat gave
+up, whether another host took the claim or the heartbeat fenced itself.
+
 ## How an event-triggered job runs
 
 The event reaches exactly one host in every deployment shape — broker replicas share one

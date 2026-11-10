@@ -102,6 +102,7 @@ internal sealed partial class ClaimedJobExecutor
     {
         if (outcome == JobOutcome.ClaimLost)
         {
+            LogClaimLost(this.logger, run.JobKey);
             return;
         }
 
@@ -110,11 +111,15 @@ internal sealed partial class ClaimedJobExecutor
             await using var scope = this.scopeFactory.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IJobStore>();
 
+            // Every outcome write is conditional on this host's claim. When another host has taken the
+            // run over since the heartbeat last renewed, the write changes nothing and the outcome is
+            // that host's to record.
+            var recorded = true;
             switch (outcome)
             {
                 case JobOutcome.Completed:
-                    await store.CompleteAsync(
-                        run, this.CursorScheduleFor(run), run.Occurrence,
+                    recorded = await store.CompleteAsync(
+                        run, run.ClaimToken!, this.CursorScheduleFor(run), run.Occurrence,
                         retainRunKey: this.registry.IsMessageKeyedTrigger(run.ScheduleName),
                         this.timeProvider.GetUtcNow(), CancellationToken.None);
                     break;
@@ -123,8 +128,8 @@ internal sealed partial class ClaimedJobExecutor
                     // Terminal and never retried — retrying would defeat the cancellation. The cursor
                     // still advances, or the occurrence would be re-materialized and cancelling would
                     // loop forever.
-                    await store.MarkTerminalAsync(
-                        run, JobRunStatus.Cancelled, null,
+                    recorded = await store.MarkTerminalAsync(
+                        run, run.ClaimToken!, JobRunStatus.Cancelled, null,
                         this.CursorScheduleFor(run), run.Occurrence, this.timeProvider.GetUtcNow(),
                         CancellationToken.None);
                     break;
@@ -136,13 +141,18 @@ internal sealed partial class ClaimedJobExecutor
                     break;
 
                 case JobOutcome.Failed:
-                    await this.RecordFailureAsync(store, run, error);
+                    recorded = await this.RecordFailureAsync(store, run, error);
                     break;
 
                 case JobOutcome.ClaimLost:
                 default:
                     await store.ReleaseAsync(run.Id, run.ClaimToken!, CancellationToken.None);
                     break;
+            }
+
+            if (!recorded)
+            {
+                LogClaimLost(this.logger, run.JobKey);
             }
         }
 #pragma warning disable CA1031 // Losing the outcome write must not tear the host down; the claim goes
@@ -158,7 +168,8 @@ internal sealed partial class ClaimedJobExecutor
     /// about <i>this</i> attempt; the ledger decides whether there is <i>another</i> one, and only the
     /// ledger survives a restart.
     /// </summary>
-    private async Task RecordFailureAsync(IJobStore store, JobRun run, Exception? error)
+    /// <returns>Whether the failure was recorded, which it is only while this host holds the claim.</returns>
+    private async Task<bool> RecordFailureAsync(IJobStore store, JobRun run, Exception? error)
     {
         var message = error?.Message ?? "The job failed without an exception message.";
         var attempts = run.AttemptCount + 1;
@@ -167,17 +178,26 @@ internal sealed partial class ClaimedJobExecutor
         {
             // The cursor advances even though the occurrence never succeeded: one permanently broken
             // occurrence must not block every later one, and the failed row keeps it visible.
-            LogAttemptsExhausted(this.logger, run.JobKey, attempts);
-            await store.MarkTerminalAsync(
-                run, JobRunStatus.Failed, message,
+            if (!await store.MarkTerminalAsync(
+                run, run.ClaimToken!, JobRunStatus.Failed, message,
                 this.CursorScheduleFor(run), run.Occurrence, this.timeProvider.GetUtcNow(),
-                CancellationToken.None);
-            return;
+                CancellationToken.None))
+            {
+                return false;
+            }
+
+            LogAttemptsExhausted(this.logger, run.JobKey, attempts);
+            return true;
         }
 
         var nextRunAt = this.timeProvider.GetUtcNow() + BackoffFor(attempts);
+        if (!await store.IncrementAttemptAsync(run.Id, run.ClaimToken!, nextRunAt, message, CancellationToken.None))
+        {
+            return false;
+        }
+
         LogRetryScheduled(this.logger, run.JobKey, attempts, nextRunAt);
-        await store.IncrementAttemptAsync(run.Id, nextRunAt, message, CancellationToken.None);
+        return true;
     }
 
     /// <summary>Exponential backoff from thirty seconds: 1 minute, 2, 4, ...</summary>
@@ -199,8 +219,20 @@ internal sealed partial class ClaimedJobExecutor
 
     [LoggerMessage(
         Level = LogLevel.Error,
-        Message = "Job run '{JobKey}' failed on attempt {Attempts} and has no attempts left; marking it failed")]
+        Message = "Job run '{JobKey}' failed on attempt {Attempts} and has no attempts left; marked it failed")]
     private static partial void LogAttemptsExhausted(ILogger logger, string jobKey, int attempts);
+
+    /// <summary>
+    /// This host no longer held the run's claim when its attempt ended, so it recorded nothing: no
+    /// history, no cursor, no retry. EventId 410 is a contract: never renumber it.
+    /// </summary>
+    [LoggerMessage(
+        EventId = 410,
+        EventName = "ClaimLost",
+        Level = LogLevel.Warning,
+        Message = "Lost the claim on job run '{JobKey}': another host took it over after the claim timeout, or this " +
+            "host could not renew it for that long, so this attempt's outcome was not recorded")]
+    private static partial void LogClaimLost(ILogger logger, string jobKey);
 
     [LoggerMessage(
         Level = LogLevel.Error,

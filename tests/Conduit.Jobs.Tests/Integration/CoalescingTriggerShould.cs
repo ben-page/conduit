@@ -185,7 +185,7 @@ public class CoalescingTriggerShould
         var store = JobsDatabaseProbe.StoreFor(database);
         await store.EnsureTablesExistAsync(CancellationToken.None);
 
-        await store.TryMaterializeAsync(
+        var stuck = await store.InsertClaimedAsync(
             new JobRun
             {
                 JobKey = "rebuild@loc-1",
@@ -193,12 +193,12 @@ public class CoalescingTriggerShould
                 MessageType = "Conduit.Jobs.Tests.Support.RecomputeWorkstation",
                 Payload = """{"locationId":"loc-1","from":"2026-08-25T10:59:00+00:00"}""",
                 RunAt = Start,
-                Status = JobRunStatus.Pending,
             },
+            "worker",
+            Start,
             CancellationToken.None);
-        var stuck = await store.GetRunAsync("rebuild@loc-1", CancellationToken.None);
         await store.MarkTerminalAsync(
-            stuck!, JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
+            stuck!, "worker", JobRunStatus.Failed, "boom", scheduleName: null, occurrence: null, Start,
             CancellationToken.None);
 
         // Blocked, so the assertion below observes the new run in flight rather than racing its own
