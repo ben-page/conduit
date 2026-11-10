@@ -119,9 +119,11 @@ Test class: `{Transport}DeadLetterShould`
 | # | Test Method | Assert |
 |---|---|---|
 | 8.1 | `CaptureFailedEventToDeadLetterStore` | A failed inbound event is written to the dead-letter store |
-| 8.2 | `CaptureFailedRequestToDeadLetterStore` | A failed inbound request/command is written to the dead-letter store |
+| 8.2 | `NotCaptureABusinessRefusal` | A routed command refused with `NotFoundException` is not captured; a following command whose handler throws unexpectedly is, as the only entry, with the `Reference` its caller's `RemoteDispatchException` carried (the second capture is the barrier for the first's absence) |
 | 8.3 | `AcknowledgeFailedMessageAfterCapture` | After capture, the broker message is acknowledged (not redelivered) |
 | 8.4 | `ReplayDeadLetteredMessageBackToBroker` | A dead-lettered message can be replayed back through the transport |
+| 8.5 | `CaptureAMalformedBody` | A body that is not JSON, sent natively straight to the app queue, is captured before dispatch: its type, `JsonException`, the body byte for byte; no listener ran |
+| 8.6 | `ReplayWithTheOriginalIds` | An event published under a two-level context (three distinct ids) is captured, replayed from inside the test's own context, and recaptured with the original `MessageId`, `CausationId` and `ConversationId` |
 
 ### Category 9: Self-Published Event Delivery & Wire Correlation
 
@@ -149,9 +151,9 @@ Azure Service Bus's 10.1 is `[Ignore]`d for now: stopping its processor cancels 
 
 ### Totals (verified 2026-11-09)
 
-Each transport's `Integration/` directory contains a baseline of **36 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 4 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **37**.
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**.
 
-Behavior-test methods across the four transports: 36 (RabbitMQ) + 36 (ASB) + 37 (SQS) + 36 (ActiveMQ) = **145 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 38 (RabbitMQ) + 38 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **153 `[TestMethod]` integration tests**.
 
 ---
 

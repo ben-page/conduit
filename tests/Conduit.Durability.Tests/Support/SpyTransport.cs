@@ -20,7 +20,7 @@ internal sealed class SpyTransport : IConduitTransport
         return Task.CompletedTask;
     }
 
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
     {
         this.Redelivered.Add(envelope);
         return Task.CompletedTask;
@@ -39,7 +39,7 @@ internal sealed class ThrowingTransport : IConduitTransport
         throw new InvalidOperationException("Simulated transport failure");
     }
 
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
     {
         throw new InvalidOperationException("Simulated transport failure");
     }

@@ -314,6 +314,7 @@ public abstract class PersistenceEngineTestBase
                 SourceEndpoint = "self",
                 ExceptionType = "System.InvalidOperationException",
                 ExceptionMessage = $"boom {i}",
+                Reference = $"ref-{i}",
                 MessageId = $"msg-{i}",
                 DeadLetteredAt = baseTime.AddMinutes(i),
             }, CancellationToken.None);
@@ -340,6 +341,7 @@ public abstract class PersistenceEngineTestBase
         var fetched = await store.GetAsync(ids[0], CancellationToken.None);
         fetched.Should().NotBeNull();
         fetched!.ExceptionMessage.Should().Be("boom 0");
+        fetched.Reference.Should().Be("ref-0");
 
         await store.RemoveAsync(ids[0], CancellationToken.None);
         var afterDelete = await store.QueryAsync(new DeadLetterFilter { PageSize = 10 }, CancellationToken.None);

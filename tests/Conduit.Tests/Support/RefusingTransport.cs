@@ -11,6 +11,6 @@ public sealed class RefusingTransport : IConduitTransport
     public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw new InvalidOperationException("The remote refused the publish.");
 
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
         => throw new InvalidOperationException("The remote refused the redelivery.");
 }

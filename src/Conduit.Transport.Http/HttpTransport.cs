@@ -43,11 +43,11 @@ public class HttpTransport(
     /// <summary>
     /// Replays a message, its reply discarded (no caller is waiting), exactly as <see cref="SendEventAsync"/> sends it:
     /// with the current <see cref="MessageContext"/>'s ids, all three or none, never a lone message id a receiving edge
-    /// would ignore. A dead-letter replay runs outside a context, so the receiver mints a fresh message id and its inbox
-    /// does not discard the replay as the original.
+    /// would ignore; never <paramref name="ids"/>: only broker transports capture dead letters, so a dead-letter replay
+    /// never comes here.
     /// </summary>
     /// <inheritdoc />
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
         => this.SendEventAsync(envelope, cancellationToken);
 
     /// <inheritdoc />

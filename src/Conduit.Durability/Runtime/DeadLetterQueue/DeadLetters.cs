@@ -9,7 +9,7 @@ namespace Conduit.Durability.Runtime.DeadLetterQueue;
 /// <summary>
 /// Orchestrates dead letter operations: query, replay, and discard.
 /// Replay re-publishes messages to the broker via the source transport's
-/// <see cref="IConduitTransport.RedeliverAsync"/>.
+/// <see cref="IConduitTransport.RedeliverAsync"/>, under the entry's original correlation ids.
 /// </summary>
 public sealed class DeadLetters : IDeadLetters
 {
@@ -70,7 +70,13 @@ public sealed class DeadLetters : IDeadLetters
             var payload = JsonSerializer.Deserialize<JsonElement>(entry.Body, ConduitRuntime.JsonOptions);
             var envelope = new DispatchEnvelope(entry.MessageType, payload);
 
-            await transport.RedeliverAsync(envelope, cancellationToken);
+            // The replay carries the ids the message first arrived with, so its handling (and its
+            // audit trail) continues the original's lineage rather than starting a new conversation
+            var ids = string.IsNullOrEmpty(entry.MessageId)
+                ? null
+                : new RedeliveryIds(entry.MessageId, entry.CausationId, entry.ConversationId);
+
+            await transport.RedeliverAsync(envelope, ids, cancellationToken);
             await this.store.RemoveAsync(id, cancellationToken);
 
             LogReplaySucceeded(this.logger, entry.MessageType, null);

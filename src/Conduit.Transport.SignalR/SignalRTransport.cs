@@ -179,10 +179,12 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
 
     /// <summary>
     /// Client mode: replays a message to the remote hub as <see cref="SendEventAsync"/> sends it, the result discarded but
-    /// a refusal still thrown, so a failed replay is not reported as delivered.
+    /// a refusal still thrown, so a failed replay is not reported as delivered. It sends the current context's ids, as
+    /// every send does, never <paramref name="ids"/>: only broker transports capture dead letters, so a dead-letter replay
+    /// never comes here.
     /// </summary>
     /// <inheritdoc />
-    public async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public async Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 

@@ -28,7 +28,10 @@ public interface IConduitTransport
     /// and is picked up by any available handler instance.
     /// </summary>
     /// <param name="envelope">The dispatch envelope containing the type and payload.</param>
+    /// <param name="ids">The correlation ids the message first arrived with. A broker transport sends them in
+    /// its native properties, never the ambient <see cref="MessageContext"/>'s, and a fresh message id when
+    /// null. The HTTP and SignalR transports never send them: only broker transports capture dead letters.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken);
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken);
 }

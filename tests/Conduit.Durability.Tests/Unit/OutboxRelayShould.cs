@@ -338,7 +338,7 @@ file sealed class CapturingTransport : IConduitTransport
         return Task.CompletedTask;
     }
 
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
         => Task.CompletedTask;
 }
 
@@ -350,7 +350,7 @@ file sealed class ThrowingTransport(Exception exception) : IConduitTransport
     public Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
         => throw exception;
 
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
         => throw exception;
 }
 

@@ -23,6 +23,13 @@ public sealed class DeadLetterEntry
     /// <summary>Exception message text.</summary>
     public string? ExceptionMessage { get; init; }
 
+    /// <summary>
+    /// The support reference of a request that answered <c>InternalError</c> (<c>DispatchError.Reference</c>): the
+    /// value its caller was given and the log line holding the real exception carries. Null for any other capture,
+    /// whose exception is recorded itself.
+    /// </summary>
+    public string? Reference { get; init; }
+
     /// <summary>Original MessageContext.MessageId.</summary>
     public string? MessageId { get; init; }
 

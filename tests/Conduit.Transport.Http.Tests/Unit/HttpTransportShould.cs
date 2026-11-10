@@ -139,7 +139,7 @@ public class HttpTransportShould
         MessageContext.StartDispatchFromTransport("m-1", "p-1", "c-1");
 
         // Act
-        await transport.RedeliverAsync(envelope, CancellationToken.None);
+        await transport.RedeliverAsync(envelope, ids: null, CancellationToken.None);
 
         // Assert
         var headers = handler.RequestHeaders.Should().ContainSingle().Subject;
@@ -160,7 +160,7 @@ public class HttpTransportShould
         var envelope = new DispatchEnvelope("Test", JsonSerializer.SerializeToElement(new { }));
 
         // Act
-        await transport.RedeliverAsync(envelope, CancellationToken.None);
+        await transport.RedeliverAsync(envelope, ids: null, CancellationToken.None);
 
         // Assert
         var headers = handler.RequestHeaders.Should().ContainSingle().Subject;

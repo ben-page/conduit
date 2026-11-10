@@ -29,5 +29,5 @@ public sealed class RecordingTransport : IConduitTransport
     }
 
     /// <inheritdoc />
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken) => Task.CompletedTask;
 }

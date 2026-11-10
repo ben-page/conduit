@@ -488,7 +488,10 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     }
 
     /// <inheritdoc />
-    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public override async Task RedeliverAsync(
+        DispatchEnvelope envelope,
+        RedeliveryIds? ids,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
@@ -498,12 +501,10 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
                 "Transport has not been started. Ensure the host is running before redelivering messages.");
         }
 
-        // Replay builds its properties by hand and deliberately bypasses the base class's
-        // BuildOutboundHeaders — most importantly, it carries no conduit-source-app stamp. A
-        // replayed event is redelivered on behalf of whoever originally published it; stamping
-        // this host's ApplicationName would make the inbound self-published filter in
-        // BrokerTransportBase.ProcessInboundMessageAsync drop the replayed copy the moment it
-        // arrived, silently voiding the replay. Do not route replay through the base send path.
+        // Replay deliberately bypasses the base class's BuildOutboundHeaders: its metadata is the
+        // original ids only (BuildRedeliveryHeaders), with no conduit-source-app stamp, which would
+        // make the inbound self-published filter drop a replayed event the moment it arrived. Do
+        // not route replay through the base send path.
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
@@ -512,14 +513,17 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         var multicastAddress = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, "events", 256);
         var appEventQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 256);
         var fullyQualifiedQueueName = $"{multicastAddress}::{appEventQueueName}";
+        var headers = BuildRedeliveryHeaders(ids);
 
         using var message = new Message(body.ToArray())
         {
             Properties = new Properties
             {
                 Subject = envelope.Type,
-                MessageId = Guid.NewGuid().ToString("N"),
+                MessageId = headers[ConduitHeaders.MessageId],
+                CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
             },
+            ApplicationProperties = BuildOutboundApplicationProperties(headers),
         };
 
         var redeliverSender = new SenderLink(this.session, $"dlq-redeliver-{Guid.NewGuid():N}", fullyQualifiedQueueName);

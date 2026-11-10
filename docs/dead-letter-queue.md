@@ -56,6 +56,17 @@ Message arrives → Handler fails → Write to dead letter store → Acknowledge
 
 If the dead letter store write fails (database down), the message is abandoned back to the broker for redelivery instead. If the dead letter queue is not enabled at all, the transport simply abandons the message and the broker redelivers per its own configuration. No silent message loss.
 
+What counts as a failure is what could not be handled, never what was refused:
+
+| Outcome | Captured? |
+|---|---|
+| The message fails **before dispatch**: its body is not JSON, or its DI scope or the mediator cannot be built | Yes. Without a dead letter queue (or if the write fails) it is acknowledged instead of abandoned: it never reached a handler, and a redelivery would fail the same way, forever. |
+| An event listener throws | Yes |
+| A request's handler fails **unexpectedly** (the caller is answered `InternalError`) | Yes, with the answer's support reference in `Reference` |
+| A request is **refused** — the handler (or a gate, or a translator) throws a `ConduitException`: `NotFoundException` (404), `ConflictException` (409), `PreconditionFailedException` (412), `ForbiddenException`, `BadRequestException`, ... | No. A refusal is the handler's answer, already delivered to the caller, and a replay would be refused again. |
+
+For a request that failed unexpectedly, the runtime logs the real exception under a support reference and answers the caller with that reference rather than the exception. The entry's `ExceptionType`/`ExceptionMessage` therefore name the answer (`[InternalError] An unexpected error occurred.`), and its `Reference` is the value the caller saw and the logged exception carries — search your logs for it.
+
 ### Browse
 
 Dead-lettered messages are browsable — a non-destructive query over the store with optional filtering by message type, exception type, and date range, plus pagination.
@@ -64,7 +75,7 @@ Dead-lettered messages are browsable — a non-destructive query over the store 
 
 Replay re-publishes a dead-lettered message back into the broker for normal processing. The message enters the same inbound path as any new message — through the transport, the pipeline, and the handler. Any available instance of the handling service can pick it up.
 
-Replay mints a new `MessageId` and carries the original as `OriginalMessageId` for tracing. The inbox (if enabled) deduplicates by the new MessageId, so replay is never rejected as a duplicate.
+Replay carries the ids the message first arrived with — its `MessageId`, `CausationId` and `ConversationId` — so its handling, and its audit trail, continue the original's lineage instead of starting a conversation of their own. See [Interaction with inbox](#interaction-with-inbox) for what that means for deduplication.
 
 ### Discard
 
@@ -142,16 +153,16 @@ Bulk replay processes messages sequentially — the broker handles distribution 
 ### What happens during replay
 
 1. Read the dead letter entry from the store
-2. Build a `DispatchEnvelope` with a new `MessageId` (original carried as `OriginalMessageId`)
+2. Build a `DispatchEnvelope` from the stored body and type
 3. Resolve the transport by the entry's `SourceEndpoint`
-4. Call `RedeliverAsync` on the transport — publishes directly to the service's inbound queue
+4. Call `RedeliverAsync` on the transport with the entry's `MessageId`, `CausationId` and `ConversationId` — it publishes directly to the service's inbound queue, those ids in the broker's native properties (an entry with no `MessageId` is sent with a fresh one)
 5. Remove the entry from the dead letter store
 
-The message enters the normal inbound processing path. Any available instance of the handling service picks it up. If the handler fails again, the message is captured as a new dead letter entry through the normal flow.
+The message enters the normal inbound processing path. Any available instance of the handling service picks it up. If the handler fails again, the message is captured as a new dead letter entry through the normal flow, under the same ids.
 
 ### Interaction with inbox
 
-Replay mints a new `MessageId`, so the inbox will not reject it as a duplicate. The `OriginalMessageId` is preserved for correlation and tracing.
+The inbox deduplicates by `MessageId`, and a replay carries the original one. The inbox records a message's id when it admits the message, before its handler runs, so a failure that reached the handler leaves that id recorded until `InboxOptions.RetentionPeriod` (30 minutes by default) expires it: a replay inside that window is discarded as a duplicate, and the entry is still removed. On a host with the inbox, replay after the retention period. A message captured before dispatch (an unreadable body) never reached the inbox, so its replay is not affected.
 
 If the original message partially succeeded before failing (handler did some work, then threw), the replayed message is a new attempt. Idempotency at the handler level is the application's responsibility — same as any retry scenario.
 
@@ -197,6 +208,7 @@ Every dead-lettered message carries:
 | `SourceEndpoint` | Endpoint name the message arrived through |
 | `ExceptionType` | Full type name of the exception that caused the failure |
 | `ExceptionMessage` | Exception message text |
+| `Reference` | For a request that failed unexpectedly, the support reference its caller was answered with and the logged exception carries; null otherwise |
 | `MessageId` | Original MessageContext.MessageId |
 | `CausationId` | Original MessageContext.CausationId |
 | `ConversationId` | Original MessageContext.ConversationId |
@@ -207,7 +219,7 @@ Every dead-lettered message carries:
 
 Replay re-publishes through the source transport's `RedeliverAsync`, which targets the service's inbound queue directly so any available instance picks the message up.
 
-Every `RedeliverAsync` builds its message by hand and deliberately skips the base class's outbound header assembly, so a replayed message carries **no** `conduit-source-app` stamp. This is load-bearing: stamping the replaying host's `ApplicationName` would make the [self-published event filter](transports/index.md#self-published-events) drop the replayed event the moment it arrived back, silently voiding the replay. Do not "unify" replay onto the normal send path without addressing that.
+Every broker `RedeliverAsync` deliberately skips the base class's outbound header assembly: its metadata is the original correlation ids only, mapped onto the broker's native properties as any publish maps them, so a replayed message carries **no** `conduit-source-app` stamp. This is load-bearing: stamping the replaying host's `ApplicationName` would make the [self-published event filter](transports/index.md#self-published-events) drop the replayed event the moment it arrived back, silently voiding the replay. Do not "unify" replay onto the normal send path without addressing that.
 
 | Transport | Redeliver mechanism |
 |---|---|
@@ -215,8 +227,10 @@ Every `RedeliverAsync` builds its message by hand and deliberately skips the bas
 | **RabbitMQ** | Publishes to the app queue via the default exchange (routing key = queue name). |
 | **Amazon SQS** | `SendMessage` directly to the app queue URL. |
 | **ActiveMQ Artemis** | Sends directly to the app's anycast/multicast address. |
-| **HTTP** | POST to the dispatch/publish endpoint. |
-| **SignalR** | Invokes the hub's `Dispatch`/`Publish` method. |
+| **HTTP** | POST to the dispatch/publish endpoint, with the current context's ids, not the original ones. |
+| **SignalR** | Invokes the hub's `Dispatch`/`Publish` method, with the current context's ids, not the original ones. |
+
+Only broker transports capture dead letters, so a dead-letter replay always goes through one of the first four; the HTTP and SignalR rows describe `RedeliverAsync` called directly.
 
 ## Why database-backed only (for now)
 
@@ -236,5 +250,6 @@ Note that the broker's own DLQ still functions as an infrastructure safety net: 
 
 - **Requires a database.** The DLQ shares the durability database. A stateless service with no database can't use it (use broker-native redelivery/DLQ at the infrastructure level instead).
 - **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response. The response is returned in `ReplayResult` for logging but is not delivered anywhere.
-- **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and replayed messages carry a new `MessageId`.
+- **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox deduplicates by `MessageId`, and a replay carries the original one (see [Interaction with inbox](#interaction-with-inbox)).
+- **Refusals are not captured.** A request answered with a `ConduitException` (404, 409, 412, ...) is final: the caller has its answer, and nothing is stored to replay.
 - **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.

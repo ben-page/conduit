@@ -1,5 +1,10 @@
+using System.Text;
+using System.Text.Json;
 using AwesomeAssertions;
+using Azure.Messaging.ServiceBus;
+using Conduit.Configuration;
 using Conduit.Durability.DeadLetterQueue;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Transport.AzureServiceBus.Tests.Support.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -163,8 +168,11 @@ public class AsbDeadLetterShould : AsbTestBase
     }
 
     [TestMethod]
-    public async Task CaptureFailedRequestToDeadLetterStore()
+    public async Task NotCaptureABusinessRefusal()
     {
+        // Arrange — a routed command refused with NotFound (404), then one whose handler fails
+        // unexpectedly. The second capture is the barrier: by the time it is stored, a capture of
+        // the refusal, answered before the second command was even sent, would be stored too.
         var handlerName = UniqueAppName("dlq-h");
         var senderName = UniqueAppName("dlq-s");
         var dbPath = CreateDeadLetterDatabasePath();
@@ -183,21 +191,161 @@ public class AsbDeadLetterShould : AsbTestBase
             var deadLetters = handler.GetRequiredService<IDeadLetters>();
 
             // Act
-            var act = async () => await mediator.ExecuteAsync(new ThrowingCommand("bad-input"));
-            await act.Should().ThrowAsync<Exception>();
+            var refuse = async () => await mediator.ExecuteAsync(new ThrowingCommand("missing"));
+            await refuse.Should().ThrowAsync<RemoteDispatchException>();
+
+            var fail = async () => await mediator.ExecuteAsync(new UnexpectedThrowCommand("boom"));
+            var failure = await fail.Should().ThrowAsync<RemoteDispatchException>();
 
             await WaitForDeadLetterCountAsync(deadLetters, 1, TimeSpan.FromSeconds(15));
 
-            // Assert
+            // Assert — only the unexpected failure, under the reference its caller was given
             var page = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
-            page.Entries.Should().HaveCount(1);
-            page.Entries[0].MessageType.Should().Contain("ThrowingCommand");
-            page.Entries[0].SourceEndpoint.Should().Be("self");
+            var entry = page.Entries.Should().ContainSingle().Subject;
+            entry.MessageType.Should().Be(typeof(UnexpectedThrowCommand).FullName);
+            entry.SourceEndpoint.Should().Be("self");
+            entry.Reference.Should().NotBeNullOrEmpty();
+            entry.Reference.Should().Be(failure.Which.Reference);
         }
         finally
         {
             DeleteIfExists(dbPath);
         }
+    }
+
+    [TestMethod]
+    public async Task CaptureAMalformedBody()
+    {
+        // Arrange — a message whose body is not JSON fails before it can be dispatched
+        var handlerName = UniqueAppName("dlq-h");
+        var dbPath = CreateDeadLetterDatabasePath();
+        var body = Encoding.UTF8.GetBytes("{ this is not json");
+
+        try
+        {
+            await using var handler = await CreateHostWithDeadLettersAsync(
+                handlerName,
+                dbPath,
+                configureHandling: handling =>
+                {
+                    handling.ClearCommandHandlers();
+                    handling.ClearQueryHandlers();
+                });
+
+            // No second host here registers the prefix, and the emulator's entity quota needs it reaped
+            RegisterPrefixForCleanup(handler.TopologyPrefix!);
+
+            var handlerSpy = handler.GetRequiredService<SpyLog>();
+            var deadLetters = handler.GetRequiredService<IDeadLetters>();
+
+            // Act — sent straight to the app queue, as a foreign producer could
+            await SendRawToAppQueueAsync(
+                handler.GetRequiredService<ConduitOptions>(),
+                typeof(ThrowingTestEvent).FullName!,
+                body);
+
+            await WaitForDeadLetterCountAsync(deadLetters, 1, TimeSpan.FromSeconds(15));
+
+            // Assert — captured with its body as it arrived, and never dispatched
+            var page = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+            var entry = page.Entries.Should().ContainSingle().Subject;
+            entry.MessageType.Should().Be(typeof(ThrowingTestEvent).FullName);
+            entry.ExceptionType.Should().Be(typeof(JsonException).FullName);
+            entry.Body.ToArray().Should().Equal(body);
+            entry.SourceEndpoint.Should().Be("self");
+            handlerSpy.Count.Should().Be(0);
+        }
+        finally
+        {
+            DeleteIfExists(dbPath);
+        }
+    }
+
+    [TestMethod]
+    public async Task ReplayWithTheOriginalIds()
+    {
+        // Arrange — publish under a two-level context, so the event's MessageId, CausationId and
+        // ConversationId are three distinct values the replay must carry back.
+        var handlerName = UniqueAppName("dlq-h");
+        var publisherName = UniqueAppName("dlq-p");
+        var dbPath = CreateDeadLetterDatabasePath();
+
+        try
+        {
+            await using var handler = await CreateHostWithDeadLettersAsync(
+                handlerName,
+                dbPath,
+                configureHandling: handling =>
+                {
+                    handling.ClearCommandHandlers();
+                    handling.ClearQueryHandlers();
+                });
+
+            await using var publisher = await CreateHostAsync(
+                publisherName,
+                handler.TopologyPrefix!,
+                handling => handling.ClearAllHandlers());
+
+            var mediator = publisher.GetRequiredService<IMediator>();
+            var deadLetters = handler.GetRequiredService<IDeadLetters>();
+
+            MessageContext.StartDispatch();
+            var conversationRootId = MessageContext.Current!.MessageId;
+            MessageContext.StartDispatch();
+            var immediateCauseId = MessageContext.Current!.MessageId;
+            await mediator.PublishAsync(new ThrowingTestEvent("replay-ids"));
+
+            await WaitForDeadLetterCountAsync(deadLetters, 1, TimeSpan.FromSeconds(15));
+            var firstPage = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+            var original = firstPage.Entries.Should().ContainSingle().Subject;
+
+            // Act — the listener throws again, so the replayed delivery is captured anew. The
+            // replay runs inside this test's context, which a transport must not send instead.
+            var replay = await deadLetters.ReplayAsync(original.Id, CancellationToken.None);
+            var recaptured = await WaitForEntryOtherThanAsync(deadLetters, original.Id, TimeSpan.FromSeconds(15));
+
+            // Assert
+            replay.Success.Should().BeTrue();
+            original.CausationId.Should().Be(immediateCauseId);
+            original.ConversationId.Should().Be(conversationRootId);
+            original.MessageId.Should().NotBe(immediateCauseId);
+            recaptured.MessageId.Should().Be(original.MessageId);
+            recaptured.CausationId.Should().Be(original.CausationId);
+            recaptured.ConversationId.Should().Be(original.ConversationId);
+        }
+        finally
+        {
+            DeleteIfExists(dbPath);
+        }
+    }
+
+    private static async Task SendRawToAppQueueAsync(ConduitOptions options, string messageType, byte[] body)
+    {
+        await using var client = new ServiceBusClient(ConnectionString);
+        await using var sender = client.CreateSender(TopologyNaming.CreateAppResourceName(options, 260));
+        await sender.SendMessageAsync(new ServiceBusMessage(body) { Subject = messageType });
+    }
+
+    private static async Task<DeadLetterEntry> WaitForEntryOtherThanAsync(
+        IDeadLetters deadLetters,
+        Guid excludedId,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var page = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+            var entry = page.Entries.FirstOrDefault(candidate => candidate.Id != excludedId);
+            if (entry is not null)
+            {
+                return entry;
+            }
+
+            await Task.Delay(200);
+        }
+
+        throw new AssertFailedException(
+            $"Timed out waiting for a dead letter entry other than {excludedId} after {timeout.TotalSeconds}s");
     }
 
     private static async Task WaitForDeadLetterCountAsync(

@@ -13,12 +13,12 @@ namespace Conduit.Durability.Persistence.DeadLetterQueue;
 public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
 {
     private const string InsertSql = """
-        INSERT INTO conduit_dead_letters (Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt)
-        VALUES (@Id, @MessageType, @Body, @SourceEndpoint, @ExceptionType, @ExceptionMessage, @MessageId, @CausationId, @ConversationId, @AttemptCount, @DeadLetteredAt)
+        INSERT INTO conduit_dead_letters (Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, Reference, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt)
+        VALUES (@Id, @MessageType, @Body, @SourceEndpoint, @ExceptionType, @ExceptionMessage, @Reference, @MessageId, @CausationId, @ConversationId, @AttemptCount, @DeadLetteredAt)
         """;
 
     private const string SelectByIdSql = """
-        SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
+        SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, Reference, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
         FROM conduit_dead_letters WHERE Id = @Id
         """;
 
@@ -50,6 +50,7 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
                 SourceEndpoint {dialect.TextType} NOT NULL,
                 ExceptionType {dialect.NullableTextType},
                 ExceptionMessage {dialect.NullableTextType},
+                Reference {dialect.NullableTextType},
                 MessageId {dialect.NullableTextType},
                 CausationId {dialect.NullableTextType},
                 ConversationId {dialect.NullableTextType},
@@ -58,7 +59,7 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
             """);
 
         this.queryPageSql = $"""
-            SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
+            SELECT Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, Reference, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt
             FROM conduit_dead_letters
             WHERE (@MessageType IS NULL OR MessageType = @MessageType)
               AND (@ExceptionType IS NULL OR ExceptionType = @ExceptionType)
@@ -84,6 +85,7 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
                 DbParameterHelper.Add(command, "@SourceEndpoint", entry.SourceEndpoint);
                 DbParameterHelper.Add(command, "@ExceptionType", (object?)entry.ExceptionType ?? DBNull.Value);
                 DbParameterHelper.Add(command, "@ExceptionMessage", (object?)entry.ExceptionMessage ?? DBNull.Value);
+                DbParameterHelper.Add(command, "@Reference", (object?)entry.Reference ?? DBNull.Value);
                 DbParameterHelper.Add(command, "@MessageId", (object?)entry.MessageId ?? DBNull.Value);
                 DbParameterHelper.Add(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
                 DbParameterHelper.Add(command, "@ConversationId", (object?)entry.ConversationId ?? DBNull.Value);
@@ -198,6 +200,7 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
         SourceEndpoint = reader.GetString(reader.GetOrdinal("SourceEndpoint")),
         ExceptionType = reader.IsDBNull(reader.GetOrdinal("ExceptionType")) ? null : reader.GetString(reader.GetOrdinal("ExceptionType")),
         ExceptionMessage = reader.IsDBNull(reader.GetOrdinal("ExceptionMessage")) ? null : reader.GetString(reader.GetOrdinal("ExceptionMessage")),
+        Reference = reader.IsDBNull(reader.GetOrdinal("Reference")) ? null : reader.GetString(reader.GetOrdinal("Reference")),
         MessageId = reader.IsDBNull(reader.GetOrdinal("MessageId")) ? null : reader.GetString(reader.GetOrdinal("MessageId")),
         CausationId = reader.IsDBNull(reader.GetOrdinal("CausationId")) ? null : reader.GetString(reader.GetOrdinal("CausationId")),
         ConversationId = reader.IsDBNull(reader.GetOrdinal("ConversationId")) ? null : reader.GetString(reader.GetOrdinal("ConversationId")),

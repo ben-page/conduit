@@ -58,6 +58,7 @@ public sealed class DbDeadLetterStoreShould : IAsyncDisposable
         retrieved.SourceEndpoint.Should().Be("orders");
         retrieved.ExceptionType.Should().Be("System.InvalidOperationException");
         retrieved.ExceptionMessage.Should().Be("Something went wrong");
+        retrieved.Reference.Should().Be("ref-1");
         retrieved.MessageId.Should().Be("msg-1");
         retrieved.ConversationId.Should().Be("conv-1");
         retrieved.AttemptCount.Should().Be(1);
@@ -223,6 +224,7 @@ public sealed class DbDeadLetterStoreShould : IAsyncDisposable
             SourceEndpoint = "orders",
             ExceptionType = exceptionType,
             ExceptionMessage = "Something went wrong",
+            Reference = "ref-1",
             MessageId = "msg-1",
             CausationId = null,
             ConversationId = "conv-1",

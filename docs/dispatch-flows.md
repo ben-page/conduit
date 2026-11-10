@@ -269,7 +269,9 @@ result = await wireMediator.HandleWireRequestAsync(envelope, ct)   -- returns Di
   |  handler exceptions are converted to Fail results inside ConduitRuntime
 replyData = serialize(result)                  -- Ok(data) or Fail(code, message)
 await SendReplyAsync(message, replyData)       -- best-effort, point-to-point to reply queue
-if (handler failed): TryCaptureErrorAsync(...) -- DLQ capture; caller still got the error reply
+if (result is InternalError): TryCaptureErrorAsync(..., reference) -- DLQ capture (acknowledges); caller still
+                                                   got the error reply. A refusal (404/409/412...) is not captured.
+if (not captured): AcknowledgeAsync(message)    -- exactly one settlement either way
 ```
 
 On the outbound side, `BrokerTransportBase.SendRequestAsync` calls `PublishRequestAsync`, awaits

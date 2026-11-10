@@ -21,6 +21,6 @@ public class SpyTransport : IConduitTransport
         return Task.CompletedTask;
     }
 
-    public Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
         => Task.CompletedTask;
 }

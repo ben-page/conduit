@@ -33,6 +33,7 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
         BinaryData body,
         string sourceEndpoint,
         Exception exception,
+        string? reference,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(exception);
@@ -48,6 +49,7 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
                 SourceEndpoint = sourceEndpoint,
                 ExceptionType = exception.GetType().FullName,
                 ExceptionMessage = exception.Message,
+                Reference = reference,
                 MessageId = context?.MessageId,
                 CausationId = context?.CausationId,
                 ConversationId = context?.ConversationId,

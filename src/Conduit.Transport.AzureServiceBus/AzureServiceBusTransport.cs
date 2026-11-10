@@ -273,7 +273,10 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     }
 
     /// <inheritdoc />
-    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public override async Task RedeliverAsync(
+        DispatchEnvelope envelope,
+        RedeliveryIds? ids,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
@@ -283,12 +286,10 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
                 "Transport has not been started. Ensure the host is running before redelivering messages.");
         }
 
-        // Replay builds its message by hand and deliberately bypasses the base class's
-        // BuildOutboundHeaders — most importantly, it carries no conduit-source-app stamp. A
-        // replayed event is redelivered on behalf of whoever originally published it; stamping
-        // this host's ApplicationName would make the inbound self-published filter in
-        // BrokerTransportBase.ProcessInboundMessageAsync drop the replayed copy the moment it
-        // arrived, silently voiding the replay. Do not route replay through the base send path.
+        // Replay deliberately bypasses the base class's BuildOutboundHeaders: its metadata is the
+        // original ids only (BuildRedeliveryHeaders), with no conduit-source-app stamp, which would
+        // make the inbound self-published filter drop a replayed event the moment it arrived. Do
+        // not route replay through the base send path.
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
@@ -298,8 +299,9 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         {
             Subject = envelope.Type,
             ContentType = "application/json",
-            MessageId = Guid.NewGuid().ToString("N"),
         };
+
+        SeedOutboundMessageContext(serviceBusMessage, BuildRedeliveryHeaders(ids));
 
         // Send directly to the app queue — bypasses topic routing
         await using var sender = this.client.CreateSender(appQueueName);

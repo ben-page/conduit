@@ -353,7 +353,10 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
     }
 
     /// <inheritdoc />
-    public override async Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public override async Task RedeliverAsync(
+        DispatchEnvelope envelope,
+        RedeliveryIds? ids,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
@@ -363,13 +366,10 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 "Transport has not been started. Ensure the host is running before redelivering messages.");
         }
 
-        // Replay builds its attributes by hand and deliberately bypasses the base class's
-        // BuildOutboundHeaders/BuildOutboundAttributes — most importantly, it carries no
-        // conduit-source-app stamp. A replayed event is redelivered on behalf of whoever
-        // originally published it; stamping this host's ApplicationName would make the inbound
-        // self-published filter in BrokerTransportBase.ProcessInboundMessageAsync drop the
-        // replayed copy the moment it arrived, silently voiding the replay. Do not route replay
-        // through the base send path.
+        // Replay deliberately bypasses the base class's BuildOutboundHeaders: its metadata is the
+        // original ids only (BuildRedeliveryHeaders), with no conduit-source-app stamp, which would
+        // make the inbound self-published filter drop a replayed event the moment it arrived. Do
+        // not route replay through the base send path.
         var body = new BinaryData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
@@ -378,11 +378,7 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         {
             QueueUrl = this.appQueueAddress,
             MessageBody = body.ToString(),
-            MessageAttributes = new Dictionary<string, SqsMessageAttributeValue>
-            {
-                ["Type"] = new() { DataType = "String", StringValue = envelope.Type },
-                ["MessageId"] = new() { DataType = "String", StringValue = Guid.NewGuid().ToString("N") },
-            },
+            MessageAttributes = BuildOutboundAttributes(envelope.Type, BuildRedeliveryHeaders(ids)),
         };
 
         await this.sqsClient.SendMessageAsync(sendRequest, cancellationToken);

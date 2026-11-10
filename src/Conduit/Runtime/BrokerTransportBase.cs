@@ -49,7 +49,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
     private static readonly Action<ILogger, Exception?> LogDeadLetterStoreFailed =
         LoggerMessage.Define(LogLevel.Warning, new EventId(507, "DeadLetterStoreFailed"),
-            "Failed to write to dead letter store, falling back to abandon");
+            "Failed to write to dead letter store; abandoning a failed dispatch, acknowledging a message that never reached one");
 
     private static readonly Action<ILogger, int, Exception?> LogDrainAbandoned =
         LoggerMessage.Define<int>(LogLevel.Warning, new EventId(508, "DrainAbandoned"),
@@ -301,10 +301,38 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     }
 
     /// <inheritdoc />
-    public virtual Task RedeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    public virtual Task RedeliverAsync(DispatchEnvelope envelope, RedeliveryIds? ids, CancellationToken cancellationToken)
     {
         throw new NotSupportedException(
             $"{this.GetType().Name} does not support RedeliverAsync. Concrete broker transports must override this method.");
+    }
+
+    /// <summary>
+    /// The outbound metadata of a redelivery, keyed as <see cref="ConduitHeaders"/> for the transport's own
+    /// header mapping: the correlation ids the message first arrived with (<paramref name="ids"/>), or a fresh
+    /// message id when there are none. Nothing else, and above all no source-app stamp: a replayed event is
+    /// redelivered on behalf of whoever first published it, and this host's stamp would make its own
+    /// self-published filter drop the copy on arrival, silently voiding the replay.
+    /// </summary>
+    /// <param name="ids">The original correlation ids, or null.</param>
+    protected static IReadOnlyDictionary<string, string> BuildRedeliveryHeaders(RedeliveryIds? ids)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ConduitHeaders.MessageId] = ids?.MessageId ?? Guid.NewGuid().ToString("N"),
+        };
+
+        if (ids?.CausationId is { } causationId)
+        {
+            headers[ConduitHeaders.CausationId] = causationId;
+        }
+
+        if (ids?.ConversationId is { } conversationId)
+        {
+            headers[ConduitHeaders.ConversationId] = conversationId;
+        }
+
+        return headers;
     }
 
     // -----------------------------------------------------------------------
@@ -393,11 +421,10 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var previousContext = MessageContext.Current;
         try
         {
-            // Phase 1: Setup — extract context, create scope, deserialize.
-            // If this fails, acknowledge and bail (prevent poison loop).
-            DispatchEnvelope envelope;
-            IWireMediator wireMediator;
-            AsyncServiceScope scope;
+            // Phase 1: Setup — extract context, create scope, deserialize. A message that fails here
+            // never reached a handler, and a redelivery would fail the same way: it is dead-lettered
+            // when a store is registered, otherwise acknowledged, so it cannot loop.
+            bool selfPublished;
             try
             {
                 var (messageId, causationId, conversationId) = this.ExtractContext(message);
@@ -410,25 +437,44 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
                 // scope is created (a skipped message should cost neither scope nor deserialize).
                 var applicationName = this.ConduitOptions.ApplicationName;
                 var sourceApp = this.ExtractMessageHeader(message, ConduitHeaders.SourceApp);
-                if (!this.IsRequest(message)
+                selfPublished = !this.IsRequest(message)
                     && !string.IsNullOrEmpty(applicationName)
                     && string.Equals(sourceApp, applicationName, StringComparison.Ordinal)
-                    && this.IsEventType(messageType))
+                    && this.IsEventType(messageType);
+
+                if (selfPublished)
                 {
                     // The generated mediator attaches the host's observer, but a skipped message
                     // never reaches it — attach here so the skip is visible to the audit trail.
                     MessageContext.Current?.AttachObserver(
                         this.ServiceProvider.GetService<IConduitObserver>());
                     MessageContext.Observe(new SelfPublishedEventSkipped(messageType));
-                    await this.AcknowledgeAsync(message);
-
-                    // A deliberate skip is a healthy outcome, not a processing error.
-                    success = true;
-                    return;
                 }
+            }
+#pragma warning disable CA1031
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                await this.SettleUndispatchableAsync(message, messageType, ex);
+                return;
+            }
 
-                scope = this.ServiceProvider.CreateAsyncScope();
-                wireMediator = scope.ServiceProvider.GetRequiredService<IWireMediator>();
+            if (selfPublished)
+            {
+                await this.AcknowledgeAsync(message);
+
+                // A deliberate skip is a healthy outcome, not a processing error.
+                success = true;
+                return;
+            }
+
+            DispatchEnvelope envelope;
+            IWireMediator wireMediator;
+            AsyncServiceScope? dispatchScope = null;
+            try
+            {
+                dispatchScope = this.ServiceProvider.CreateAsyncScope();
+                wireMediator = dispatchScope.Value.ServiceProvider.GetRequiredService<IWireMediator>();
 
                 var body = this.GetMessageBody(message);
                 var payload = JsonSerializer.Deserialize<JsonElement>(body, ConduitRuntime.JsonOptions);
@@ -438,10 +484,16 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             catch (Exception ex)
 #pragma warning restore CA1031
             {
-                LogMessageProcessingError(this.Logger, messageType, ex);
-                await this.AcknowledgeAsync(message);
+                if (dispatchScope is { } failedScope)
+                {
+                    await failedScope.DisposeAsync();
+                }
+
+                await this.SettleUndispatchableAsync(message, messageType, ex);
                 return;
             }
+
+            var scope = dispatchScope.Value;
 
             // Phase 2: Dispatch and acknowledge.
             // Each branch owns its own ack/abandon — no shared catch can double-ack.
@@ -482,15 +534,20 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         // to Fail results inside ConduitRuntime, so we check the result for failure below.
         BinaryData replyData;
         Exception? handlerException = null;
+        string? reference = null;
         try
         {
             var result = await wireMediator.HandleWireRequestAsync(
                 envelope, CancellationToken.None);
 
-            if (result.Error is not null)
+            // Only an unexpected failure is dead-lettered. A refusal (not found, conflict, a failed
+            // precondition, ...) is the handler's answer, already on its way to the caller, and a
+            // replay would be refused again. The runtime logged the real exception under the
+            // reference the caller is given; the entry records it to find that line.
+            if (result.Error is { } error && error.Code == ErrorCode.InternalError.Value)
             {
-                handlerException = new InvalidOperationException(
-                    $"[{result.Error.Code}] {result.Error.Message}");
+                handlerException = new InvalidOperationException($"[{error.Code}] {error.Message}");
+                reference = error.Reference;
             }
 
             replyData = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
@@ -521,14 +578,18 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
 
         // Capture to DLQ if the handler failed — the caller already got an error reply,
-        // but the message is preserved for inspection/replay.
-        if (handlerException is not null)
-        {
-            await this.TryCaptureErrorAsync(scope, message, messageType, handlerException);
-        }
+        // but the message is preserved for inspection/replay. A capture acknowledges the
+        // message itself, and a second settlement is an error to the broker (RabbitMQ closes
+        // the channel over the unknown delivery tag), so acknowledge only what it did not take.
+        var captured = handlerException is not null
+            && await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, handlerException, reference);
 
         // Acknowledge exactly once
-        await this.AcknowledgeAsync(message);
+        if (!captured)
+        {
+            await this.AcknowledgeAsync(message);
+        }
+
         LogMessageCompleted(this.Logger, messageType, null);
     }
 
@@ -548,7 +609,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
         catch (EventListenerException ex)
         {
-            if (await this.TryCaptureErrorAsync(scope, message, messageType, ex))
+            if (await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, ex, reference: null))
             {
                 return;
             }
@@ -617,7 +678,7 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         {
             LogMessageProcessingError(this.Logger, messageType, ex);
 
-            if (await this.TryCaptureErrorAsync(scope, message, messageType, ex))
+            if (await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, ex, reference: null))
             {
                 return;
             }
@@ -627,27 +688,59 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     }
 
     /// <summary>
-    /// Attempts to capture a failed message via a registered <see cref="IInboundErrorInterceptor"/>
-    /// (e.g., the dead letter queue). Returns true if captured and acknowledged, false if no
-    /// interceptor is registered or capture failed (caller should fall back to abandon).
+    /// Settles a message that failed before it could be dispatched (unreadable body, a scope or mediator
+    /// that could not be built): captured through a fresh scope when an <see cref="IInboundErrorInterceptor"/>
+    /// takes it, otherwise acknowledged, never abandoned — a redelivery would fail the same way, forever.
     /// </summary>
-    private async Task<bool> TryCaptureErrorAsync(
-        AsyncServiceScope scope,
-        TMessage message,
-        string messageType,
-        Exception exception)
+    private async Task SettleUndispatchableAsync(TMessage message, string messageType, Exception exception)
     {
-        var interceptor = scope.ServiceProvider.GetService<IInboundErrorInterceptor>();
-        if (interceptor is null)
-        {
-            return false;
-        }
+        LogMessageProcessingError(this.Logger, messageType, exception);
 
+        bool captured;
         try
         {
+            await using var captureScope = this.ServiceProvider.CreateAsyncScope();
+            captured = await this.TryCaptureErrorAsync(
+                captureScope.ServiceProvider, message, messageType, exception, reference: null);
+        }
+#pragma warning disable CA1031
+        catch (Exception scopeException)
+#pragma warning restore CA1031
+        {
+            LogDeadLetterStoreFailed(this.Logger, scopeException);
+            captured = false;
+        }
+
+        if (!captured)
+        {
+            await this.AcknowledgeAsync(message);
+        }
+    }
+
+    /// <summary>
+    /// Attempts to capture a failed message via a registered <see cref="IInboundErrorInterceptor"/>
+    /// (e.g., the dead letter queue). Returns true if captured and acknowledged, false if no
+    /// interceptor is registered or capture failed (the caller falls back: abandon a failed dispatch,
+    /// acknowledge a message that never reached one).
+    /// </summary>
+    private async Task<bool> TryCaptureErrorAsync(
+        IServiceProvider services,
+        TMessage message,
+        string messageType,
+        Exception exception,
+        string? reference)
+    {
+        try
+        {
+            var interceptor = services.GetService<IInboundErrorInterceptor>();
+            if (interceptor is null)
+            {
+                return false;
+            }
+
             var body = this.GetMessageBody(message);
             var captured = await interceptor.TryCaptureAsync(
-                messageType, body, this.EndpointName, exception, CancellationToken.None);
+                messageType, body, this.EndpointName, exception, reference, CancellationToken.None);
             if (!captured)
             {
                 return false;
