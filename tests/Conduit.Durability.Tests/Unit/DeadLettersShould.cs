@@ -103,6 +103,63 @@ public sealed class DeadLettersShould
     }
 
     [TestMethod]
+    public async Task ReleaseItsClaimWhenTheRedeliveryFails()
+    {
+        // Arrange — a transport that refuses the redelivery
+        var entry = CreateEntry("Test.Command", "orders");
+        await this.store.WriteAsync(entry, CancellationToken.None);
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IConduitTransport>("orders", new ThrowingTransport());
+        await using var serviceProvider = services.BuildServiceProvider();
+        var deadLetters = new DeadLetters(this.store, serviceProvider, NullLogger<DeadLetters>.Instance);
+
+        // Act
+        var result = await deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
+
+        // Assert — the entry stays, and the next replay can claim it at once
+        result.Success.Should().BeFalse();
+        this.store.Entries.Should().ContainSingle();
+        (await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None)).Should().NotBeNull();
+    }
+
+    [TestMethod]
+    public async Task RefuseToReplayAnEntryAnotherReplayHolds()
+    {
+        // Arrange — another replay has claimed the entry and is redelivering it
+        var entry = CreateEntry("Test.Command", "orders");
+        await this.store.WriteAsync(entry, CancellationToken.None);
+        await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+
+        // Act
+        var result = await this.deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
+
+        // Assert — refused, not redelivered a second time, and the entry is left to the replay that holds it
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("already being replayed");
+        this.transport.Redelivered.Should().BeEmpty();
+        this.store.Entries.Should().ContainSingle();
+    }
+
+    [TestMethod]
+    public async Task ReportAReplayRedeliveredWhenOnlyTheRemovalFails()
+    {
+        // Arrange — a store that cannot remove the entry once it is redelivered
+        var entry = CreateEntry("Test.Command", "orders");
+        await this.store.WriteAsync(entry, CancellationToken.None);
+        this.store.FailRemoval = true;
+
+        // Act
+        var result = await this.deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
+
+        // Assert — the message was re-published; the entry stays claimed, so no replay re-publishes it until the claim
+        // times out
+        result.Success.Should().BeTrue();
+        this.transport.Redelivered.Should().ContainSingle();
+        this.store.Entries.Should().ContainSingle();
+        (await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None)).Should().BeNull();
+    }
+
+    [TestMethod]
     public async Task ReplayMultipleMessagesSequentially()
     {
         // Arrange

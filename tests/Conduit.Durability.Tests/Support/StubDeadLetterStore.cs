@@ -7,7 +7,13 @@ internal sealed class StubDeadLetterStore : IDeadLetterStore
 {
     private readonly List<DeadLetterEntry> entries = [];
 
+    // The replay claim each held entry is under. A claim here never times out.
+    private readonly Dictionary<Guid, string> replayClaims = [];
+
     public IReadOnlyList<DeadLetterEntry> Entries => this.entries;
+
+    /// <summary>When true, removing an entry throws, as a store whose database went away mid-replay would.</summary>
+    public bool FailRemoval { get; set; }
 
     public Task WriteAsync(DeadLetterEntry entry, CancellationToken cancellationToken)
     {
@@ -45,9 +51,37 @@ internal sealed class StubDeadLetterStore : IDeadLetterStore
         });
     }
 
+    public Task<string?> ClaimForReplayAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (!this.entries.Any(e => e.Id == id) || this.replayClaims.ContainsKey(id))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        var claimToken = Guid.NewGuid().ToString("N");
+        this.replayClaims[id] = claimToken;
+        return Task.FromResult<string?>(claimToken);
+    }
+
+    public Task ReleaseReplayClaimAsync(Guid id, string claimToken, CancellationToken cancellationToken)
+    {
+        if (this.replayClaims.TryGetValue(id, out var held) && held == claimToken)
+        {
+            this.replayClaims.Remove(id);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task RemoveAsync(Guid id, CancellationToken cancellationToken)
     {
+        if (this.FailRemoval)
+        {
+            throw new InvalidOperationException("The dead-letter store is unreachable.");
+        }
+
         this.entries.RemoveAll(e => e.Id == id);
+        this.replayClaims.Remove(id);
         return Task.CompletedTask;
     }
 
@@ -55,6 +89,11 @@ internal sealed class StubDeadLetterStore : IDeadLetterStore
     {
         var idSet = new HashSet<Guid>(ids);
         this.entries.RemoveAll(e => idSet.Contains(e.Id));
+        foreach (var id in idSet)
+        {
+            this.replayClaims.Remove(id);
+        }
+
         return Task.CompletedTask;
     }
 

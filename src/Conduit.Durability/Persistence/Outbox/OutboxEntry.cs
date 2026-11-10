@@ -19,7 +19,11 @@ public sealed class OutboxEntry
     public required string Payload { get; init; }
     /// <summary>Current status of the entry.</summary>
     public OutboxEntryStatus Status { get; init; }
-    /// <summary>When the entry was created.</summary>
+    /// <summary>
+    /// When the entry was created. The store writes it as its UTC instant: a <see cref="DateTimeKind.Local"/> value is
+    /// converted, an <see cref="DateTimeKind.Unspecified"/> one is taken as UTC already. Read back with
+    /// <see cref="DateTimeKind.Utc"/>.
+    /// </summary>
     public DateTime CreatedAt { get; init; }
     /// <summary>When the entry was successfully sent. Null if not yet sent.</summary>
     public DateTime? SentAt { get; init; }

@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 
 namespace Conduit.Persistence;
 
@@ -96,7 +97,32 @@ public interface ISqlDialect
         string columnDefinitions,
         IReadOnlyList<TableIndex> indexes);
 
+    /// <summary>
+    /// Whether <paramref name="exception"/> is the engine's refusal to create a table or an index because one of that
+    /// name already exists. A create-if-absent statement checks and then creates, so two replicas starting on an empty
+    /// database can both find the object absent and both create it; the one that loses gets this error, and the object
+    /// it was creating exists. SQL Server reports 2714 for a table and 1913 for an index; PostgreSQL reports 42P07 or
+    /// 42710, or a unique violation (23505) in its own catalog (<c>pg_catalog</c>) when the two creates overlap; MySQL
+    /// reports 1050 for a table and 1061 for an index. SQLite never does: it runs one writer at a time, so its
+    /// <c>IF NOT EXISTS</c> is atomic. <see cref="DbStoreBase"/>'s <c>EnsureCreatedAsync</c> passes over a statement
+    /// that fails so and runs the next.
+    /// </summary>
+    /// <param name="exception">The exception a create-if-absent statement threw.</param>
+    /// <returns><see langword="true"/> when the object the statement was creating exists.</returns>
+    public bool IsAlreadyExists(DbException exception);
+
     // Query idiom helpers ------------------------------------------------------------------------
+
+    /// <summary>
+    /// Builds <paramref name="statement"/> to run at READ COMMITTED whatever isolation level the session carries, for an
+    /// update that concurrent callers race on one row and that must wait for the winner and re-check its <c>WHERE</c>
+    /// rather than fail. SQL Server prefixes <c>SET TRANSACTION ISOLATION LEVEL READ COMMITTED;</c>: a pooled session
+    /// keeps the level its last transaction set, and at Snapshot the second of two updates of one row fails with 3960.
+    /// SQLite, PostgreSQL and MySQL return the statement as it is (no session level to carry, or a driver that resets it).
+    /// </summary>
+    /// <param name="statement">The statement, parameterized or not.</param>
+    /// <returns>The statement to execute.</returns>
+    public string BuildReadCommittedSql(string statement);
 
     /// <summary>
     /// Builds an insert-or-ignore statement (no error and no row written on a primary-key conflict).

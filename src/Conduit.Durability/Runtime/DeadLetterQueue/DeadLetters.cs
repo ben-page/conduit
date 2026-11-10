@@ -11,6 +11,12 @@ namespace Conduit.Durability.Runtime.DeadLetterQueue;
 /// Replay re-publishes messages to the broker via the source transport's
 /// <see cref="IConduitTransport.RedeliverAsync"/>, under the entry's original correlation ids.
 /// </summary>
+/// <remarks>
+/// A replay claims its entry (<see cref="IDeadLetterStore.ClaimForReplayAsync"/>), redelivers it, then removes it; a
+/// failed redelivery releases the claim. The claim is the guard against a second replay of the same entry, which is
+/// refused while the first holds it. Delivery is at least once: a process that stops after the redelivery and before
+/// the removal leaves the entry claimed, and the first replay after the claim times out re-publishes it once more.
+/// </remarks>
 public sealed class DeadLetters : IDeadLetters
 {
     private readonly IDeadLetterStore store;
@@ -28,6 +34,18 @@ public sealed class DeadLetters : IDeadLetters
             LogLevel.Warning,
             new EventId(302, "DlqReplayFailed"),
             "Failed to replay dead letter '{MessageType}'");
+
+    private static readonly Action<ILogger, string, Guid, Exception?> LogReplayedEntryNotRemoved =
+        LoggerMessage.Define<string, Guid>(
+            LogLevel.Warning,
+            new EventId(303, "DlqReplayedEntryNotRemoved"),
+            "Replayed dead letter '{MessageType}', but could not remove entry {DeadLetterId}: it stays claimed, and a replay after its claim times out re-publishes it again");
+
+    private static readonly Action<ILogger, string, Guid, Exception?> LogReplayClaimNotReleased =
+        LoggerMessage.Define<string, Guid>(
+            LogLevel.Warning,
+            new EventId(304, "DlqReplayClaimNotReleased"),
+            "Could not release the replay claim on dead letter '{MessageType}' entry {DeadLetterId}: it can be replayed again once the claim times out");
 
     /// <summary>
     /// Initializes a new instance of <see cref="DeadLetters"/>.
@@ -62,12 +80,15 @@ public sealed class DeadLetters : IDeadLetters
         var entry = await this.store.GetAsync(id, cancellationToken);
         if (entry is null)
         {
-            return new ReplayResult
-            {
-                DeadLetterId = id,
-                Success = false,
-                ErrorMessage = "Dead letter entry not found",
-            };
+            return Failed(id, "Dead letter entry not found");
+        }
+
+        // The claim is the guard: one replay at a time redelivers an entry, so a second replay of it (another operator,
+        // another host) is refused instead of publishing the message twice.
+        var claimToken = await this.store.ClaimForReplayAsync(id, cancellationToken);
+        if (claimToken is null)
+        {
+            return Failed(id, "Dead letter entry is already being replayed, or was removed");
         }
 
         try
@@ -86,29 +107,38 @@ public sealed class DeadLetters : IDeadLetters
                 : new RedeliveryIds(entry.MessageId, entry.CausationId, entry.ConversationId);
 
             await transport.RedeliverAsync(envelope, ids, cancellationToken);
-            await this.store.RemoveAsync(id, cancellationToken);
-
-            LogReplaySucceeded(this.logger, entry.MessageType, null);
-            ConduitTelemetry.RecordReplayed(entry.MessageType);
-            return new ReplayResult
-            {
-                DeadLetterId = id,
-                Success = true,
-                ErrorMessage = null,
-            };
         }
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031
         {
             LogReplayFailed(this.logger, entry.MessageType, ex);
-            return new ReplayResult
-            {
-                DeadLetterId = id,
-                Success = false,
-                ErrorMessage = ex.Message,
-            };
+            await this.ReleaseClaimAsync(entry, claimToken);
+            return Failed(id, ex.Message);
         }
+
+        // Redelivered, so the replay succeeded whatever happens to the entry now; the removal settles it even if the
+        // caller has since cancelled. A removal that fails (or a process that stops before it) leaves the entry claimed,
+        // and the first replay after the claim times out re-publishes it once more: at least once, never lost.
+        try
+        {
+            await this.store.RemoveAsync(id, CancellationToken.None);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogReplayedEntryNotRemoved(this.logger, entry.MessageType, id, ex);
+        }
+
+        LogReplaySucceeded(this.logger, entry.MessageType, null);
+        ConduitTelemetry.RecordReplayed(entry.MessageType);
+        return new ReplayResult
+        {
+            DeadLetterId = id,
+            Success = true,
+            ErrorMessage = null,
+        };
     }
 
     /// <inheritdoc/>
@@ -166,4 +196,27 @@ public sealed class DeadLetters : IDeadLetters
     /// <inheritdoc/>
     public Task DiscardAsync(IEnumerable<Guid> ids, CancellationToken cancellationToken)
         => this.store.RemoveAsync(ids, cancellationToken);
+
+    private static ReplayResult Failed(Guid id, string errorMessage) => new()
+    {
+        DeadLetterId = id,
+        Success = false,
+        ErrorMessage = errorMessage,
+    };
+
+    // Frees the entry for the next replay after a failed redelivery, even if the caller has cancelled. A release that
+    // fails is logged: the claim then times out instead.
+    private async Task ReleaseClaimAsync(DeadLetterEntry entry, string claimToken)
+    {
+        try
+        {
+            await this.store.ReleaseReplayClaimAsync(entry.Id, claimToken, CancellationToken.None);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogReplayClaimNotReleased(this.logger, entry.MessageType, entry.Id, ex);
+        }
+    }
 }

@@ -63,6 +63,16 @@ public class MySqlDialectShould
             "CREATE TABLE IF NOT EXISTS conduit_outbox (\n    Status TINYINT NOT NULL,\n    NextAttemptAt VARCHAR(255) NOT NULL,\n    ClaimToken VARCHAR(255),\n    INDEX ix_conduit_outbox_status_next_attempt (Status, NextAttemptAt),\n    INDEX ix_conduit_outbox_claim (ClaimToken)\n)");
     }
 
+    [TestMethod]
+    public void RunAReadCommittedStatementAsItIs()
+    {
+        // Act — MySqlConnector resets a pooled session, so it carries no level a statement must pin
+        var sql = this.dialect.BuildReadCommittedSql("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+
+        // Assert
+        sql.Should().Be("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+    }
+
     // Insert-or-ignore
 
     [TestMethod]

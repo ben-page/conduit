@@ -5,6 +5,7 @@ using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Audit.Tests.Integration;
 
@@ -20,6 +21,30 @@ public sealed class AuditBatchPublisherShould
     public void Cleanup()
     {
         MessageContext.RestoreContext(null);
+    }
+
+    [TestMethod]
+    public async Task StampABatchAndItsRecordsWithTheHostsClock()
+    {
+        // Arrange — a host whose clock is years away from the machine's
+        var now = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await using var host = await TestHost.StartAsync(builder =>
+        {
+            builder.Services.AddSingleton<TimeProvider>(new FakeTimeProvider(now));
+            builder.Services.AddSingleton<MessageIdCapture>();
+            builder.Services.AddSingleton<PublishedAuditBatches>();
+            builder.Services.AddConduit(conduit => conduit.AddAudit(audit => audit.BatchSize = 1));
+        });
+        var published = host.GetRequiredService<PublishedAuditBatches>();
+
+        // Act
+        await host.GetRequiredService<IMediator>().ExecuteAsync(new AuditTestCommand("stamped"));
+        await published.WaitForFirstAsync();
+
+        // Assert
+        var batch = published.Batches[0];
+        batch.BatchTimestamp.Should().Be(now.UtcDateTime);
+        batch.Records.Should().ContainSingle().Which.Timestamp.Should().Be(now.UtcDateTime);
     }
 
     [TestMethod]

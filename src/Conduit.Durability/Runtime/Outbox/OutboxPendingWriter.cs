@@ -11,29 +11,39 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// <see cref="OutboxBehavior{TRequest,TResult}"/> runs at the end of every pipeline
 /// (<see cref="WriteUnwrittenAsync"/>), so the two cannot drift. <paramref name="options"/> names
 /// the dispatch properties each entry carries (<see cref="OutboxOptions.PersistedProperties"/>);
-/// null carries none.
+/// null carries none. <paramref name="timeProvider"/> stamps each entry's <see cref="OutboxEntry.CreatedAt"/>;
+/// null is <see cref="TimeProvider.System"/>.
 /// </summary>
 public sealed class OutboxPendingWriter(
     OutboxCapture capture,
     IOutboxStore store,
     IConduitConnectionFactory connectionFactory,
-    IOptions<OutboxOptions>? options = null) : IOutboxPendingWriter
+    IOptions<OutboxOptions>? options = null,
+    TimeProvider? timeProvider = null) : IOutboxPendingWriter
 {
     /// <inheritdoc />
     public Task WritePendingAsync(CancellationToken cancellationToken = default)
-        => WriteUnwrittenAsync(capture, store, connectionFactory, options?.Value.PersistedProperties, cancellationToken);
+        => WriteUnwrittenAsync(
+            capture,
+            store,
+            connectionFactory,
+            options?.Value.PersistedProperties,
+            timeProvider ?? TimeProvider.System,
+            cancellationToken);
 
     /// <summary>
     /// Writes <paramref name="capture"/>'s unwritten envelopes through the current transaction and
     /// records them as written (<see cref="OutboxCapture.AddWrittenMessages"/>) once the save has
     /// succeeded. Nothing happens when nothing is unwritten or no transaction is active. Each entry
-    /// carries the current context's values for the <paramref name="persistedProperties"/> keys.
+    /// carries the current context's values for the <paramref name="persistedProperties"/> keys, and
+    /// <paramref name="timeProvider"/>'s current instant as its creation time.
     /// </summary>
     internal static async Task WriteUnwrittenAsync(
         OutboxCapture capture,
         IOutboxStore store,
         IConduitConnectionFactory connectionFactory,
         IDictionary<string, Type>? persistedProperties,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         var captured = capture.Unwritten;
@@ -65,6 +75,7 @@ public sealed class OutboxPendingWriter(
         var properties = OutboxProperties.Write(context?.Properties, persistedProperties);
         var restoredProperties = OutboxProperties.Read(properties, persistedProperties);
 
+        var createdAt = timeProvider.GetUtcNow().UtcDateTime;
         var entries = new List<OutboxEntry>(captured.Count);
         foreach (var envelope in captured)
         {
@@ -75,7 +86,7 @@ public sealed class OutboxPendingWriter(
                 CausationId = causationId,
                 Type = envelope.Type,
                 Payload = envelope.Payload.GetRawText(),
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = createdAt,
                 Properties = properties,
             });
         }

@@ -11,6 +11,7 @@ using Conduit.Persistence.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -172,6 +173,26 @@ public sealed class DurabilityBuilderShould
         await using var scope = provider.CreateAsyncScope();
         scope.ServiceProvider.GetServices<IOutboxFlusher>().Should().ContainSingle()
             .Which.Should().BeOfType<OutboxCapture>();
+    }
+
+    [TestMethod]
+    public void RegisterTheSystemClockUnlessTheHostHasOne()
+    {
+        // Arrange — one host registers no clock, the other its own (a test's fake, say)
+        var hostClock = new FakeTimeProvider();
+        var withoutAClock = NewServices();
+        var withAClock = NewServices();
+        withAClock.AddSingleton<TimeProvider>(hostClock);
+
+        // Act
+        withoutAClock.AddConduit(conduit => conduit.AddDurability(durability => durability.AddInbox()));
+        withAClock.AddConduit(conduit => conduit.AddDurability(durability => durability.AddInbox()));
+
+        // Assert
+        using var withoutAClockProvider = withoutAClock.BuildServiceProvider();
+        using var withAClockProvider = withAClock.BuildServiceProvider();
+        withoutAClockProvider.GetRequiredService<TimeProvider>().Should().BeSameAs(TimeProvider.System);
+        withAClockProvider.GetRequiredService<TimeProvider>().Should().BeSameAs(hostClock);
     }
 
     private static void AskForCaptureOnlyWhen(bool asks, OutboxOptions options)

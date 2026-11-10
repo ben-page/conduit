@@ -8,10 +8,32 @@ namespace Conduit.Durability.Persistence.DeadLetterQueue;
 
 /// <summary>
 /// ADO.NET dead letter store. SQL identifiers are module-owned; engine-specific idioms
-/// (pagination, type names) come from <see cref="ISqlDialect"/>.
+/// (pagination, type names) come from <see cref="ISqlDialect"/>. Timestamps are written, and the
+/// <see cref="DeadLetterFilter.Since"/>/<see cref="DeadLetterFilter.Until"/> bounds bound, as UTC text, so the
+/// text comparison orders instants whatever offset the caller used.
 /// </summary>
 public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
 {
+    /// <summary>
+    /// How old a replay claim must be before another replay may take the entry over: the replay that made it is taken to
+    /// have stopped between its claim and its removal. A replay is one broker publish and a delete, so five minutes is
+    /// long past any live one.
+    /// </summary>
+    internal static readonly TimeSpan ReplayClaimTimeout = TimeSpan.FromMinutes(5);
+
+    // A claim is one statement on every engine: it changes the row only when no live claim holds it, and the rows it
+    // changed (1 or 0) say whether this replay holds the entry now.
+    private const string ClaimForReplaySql = """
+        UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken, ReplayClaimedAt = @ClaimedAt
+        WHERE Id = @Id AND (ReplayClaimToken IS NULL OR ReplayClaimedAt <= @ClaimCutoff)
+        """;
+
+    // Only the holder's own claim: a replay whose claim was taken over must not free the entry under the new holder.
+    private const string ReleaseReplayClaimSql = """
+        UPDATE conduit_dead_letters SET ReplayClaimToken = NULL, ReplayClaimedAt = NULL
+        WHERE Id = @Id AND ReplayClaimToken = @ClaimToken
+        """;
+
     private const string InsertSql = """
         INSERT INTO conduit_dead_letters (Id, MessageType, Body, SourceEndpoint, ExceptionType, ExceptionMessage, Reference, MessageId, CausationId, ConversationId, AttemptCount, DeadLetteredAt)
         VALUES (@Id, @MessageType, @Body, @SourceEndpoint, @ExceptionType, @ExceptionMessage, @Reference, @MessageId, @CausationId, @ConversationId, @AttemptCount, @DeadLetteredAt)
@@ -32,15 +54,34 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
 
     private const string DeleteByIdSql = "DELETE FROM conduit_dead_letters WHERE Id = @Id";
 
+    private readonly ISqlDialect dialect;
     private readonly string createTableSql;
     private readonly string queryPageSql;
+    private readonly string claimForReplaySql;
+    private readonly string releaseReplayClaimSql;
+    private readonly TimeProvider timeProvider;
 
     /// <summary>Initializes a new instance of <see cref="DbDeadLetterStore"/>.</summary>
-    public DbDeadLetterStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+    /// <param name="connectionFactory">The engine's connection factory.</param>
+    /// <param name="dialect">The engine's SQL dialect.</param>
+    /// <param name="timeProvider">
+    /// The clock a replay claim's time and its abandonment cutoff read; null is <see cref="TimeProvider.System"/>.
+    /// </param>
+    public DbDeadLetterStore(
+        IConduitConnectionFactory connectionFactory,
+        ISqlDialect dialect,
+        TimeProvider? timeProvider = null)
         : base(connectionFactory)
     {
         ArgumentNullException.ThrowIfNull(dialect);
 
+        this.dialect = dialect;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
+
+        // Replays race on one row: the loser must wait for the winner's update and find the claim taken, not fail as it
+        // would at a Snapshot level a SQL Server session can carry.
+        this.claimForReplaySql = dialect.BuildReadCommittedSql(ClaimForReplaySql);
+        this.releaseReplayClaimSql = dialect.BuildReadCommittedSql(ReleaseReplayClaimSql);
         this.createTableSql = dialect.BuildCreateTableIfNotExistsSql(
             "conduit_dead_letters",
             $"""
@@ -55,7 +96,9 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
                 CausationId {dialect.NullableTextType},
                 ConversationId {dialect.NullableTextType},
                 AttemptCount {dialect.IntegerType} NOT NULL DEFAULT 1,
-                DeadLetteredAt {dialect.TimestampType} NOT NULL
+                DeadLetteredAt {dialect.TimestampType} NOT NULL,
+                ReplayClaimToken {dialect.NullableTextType},
+                ReplayClaimedAt {dialect.NullableTimestampType}
             """);
 
         this.queryPageSql = $"""
@@ -90,7 +133,7 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
                 DbParameterHelper.Add(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
                 DbParameterHelper.Add(command, "@ConversationId", (object?)entry.ConversationId ?? DBNull.Value);
                 DbParameterHelper.Add(command, "@AttemptCount", entry.AttemptCount);
-                DbParameterHelper.Add(command, "@DeadLetteredAt", entry.DeadLetteredAt.ToString("O", CultureInfo.InvariantCulture));
+                DbParameterHelper.Add(command, "@DeadLetteredAt", StoredTimestamp.Format(entry.DeadLetteredAt));
             },
             cancellationToken);
     }
@@ -152,6 +195,42 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
     }
 
     /// <inheritdoc/>
+    /// <remarks>A claim older than five minutes (<see cref="ReplayClaimTimeout"/>) is abandoned.</remarks>
+    public async Task<string?> ClaimForReplayAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var now = this.timeProvider.GetUtcNow();
+        var claimToken = Guid.NewGuid().ToString("N");
+
+        var claimed = await this.ExecuteNonQueryAsync(
+            this.claimForReplaySql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", id.ToString("D"));
+                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                DbParameterHelper.Add(command, "@ClaimedAt", StoredTimestamp.Format(now));
+                DbParameterHelper.Add(command, "@ClaimCutoff", StoredTimestamp.Format(now - ReplayClaimTimeout));
+            },
+            cancellationToken);
+
+        return claimed == 1 ? claimToken : null;
+    }
+
+    /// <inheritdoc/>
+    public Task ReleaseReplayClaimAsync(Guid id, string claimToken, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+
+        return this.ExecuteNonQueryAsync(
+            this.releaseReplayClaimSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", id.ToString("D"));
+                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+            },
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public Task RemoveAsync(Guid id, CancellationToken cancellationToken)
         => this.ExecuteNonQueryAsync(
             DeleteByIdSql,
@@ -194,7 +273,7 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
 
     /// <inheritdoc/>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
+        => this.EnsureCreatedAsync(this.dialect, [this.createTableSql], cancellationToken);
 
     private static DeadLetterEntry ReadEntry(DbDataReader reader) => new()
     {
@@ -225,14 +304,16 @@ public sealed class DbDeadLetterStore : DbStoreBase, IDeadLetterStore
         // All four filter values are text (message/exception type names, ISO 8601 timestamps). Bind
         // them with an explicit string DbType so a null filter still carries a resolvable type — some
         // providers (Npgsql) cannot infer the type of an untyped DBNull used in an `IS NULL` predicate
-        // and fail with "could not determine data type of parameter".
+        // and fail with "could not determine data type of parameter". The bounds are compared as text
+        // with the stored UTC values, so they are written in UTC too: a caller's own offset would compare
+        // by its wall-clock digits.
         DbParameterHelper.Add(command, "@MessageType", (object?)filter.MessageType ?? DBNull.Value, DbType.String);
         DbParameterHelper.Add(command, "@ExceptionType", (object?)filter.ExceptionType ?? DBNull.Value, DbType.String);
         DbParameterHelper.Add(command, "@Since", filter.Since.HasValue
-            ? filter.Since.Value.ToString("O", CultureInfo.InvariantCulture)
+            ? StoredTimestamp.Format(filter.Since.Value)
             : DBNull.Value, DbType.String);
         DbParameterHelper.Add(command, "@Until", filter.Until.HasValue
-            ? filter.Until.Value.ToString("O", CultureInfo.InvariantCulture)
+            ? StoredTimestamp.Format(filter.Until.Value)
             : DBNull.Value, DbType.String);
     }
 }

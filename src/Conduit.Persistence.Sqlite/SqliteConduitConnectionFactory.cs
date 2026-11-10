@@ -13,21 +13,36 @@ namespace Conduit.Persistence.Sqlite;
 public sealed class SqliteConduitConnectionFactory
     : IConduitConnectionFactory, INonTransactionalConnectionFactory
 {
-    private readonly string connectionString;
+    private readonly Func<SqliteConnection> createConnection;
 
     /// <summary>Initializes a new instance of <see cref="SqliteConduitConnectionFactory"/>.</summary>
     /// <param name="connectionString">The SQLite connection string.</param>
     public SqliteConduitConnectionFactory(string connectionString)
+        : this(() => new SqliteConnection(connectionString))
     {
-        this.connectionString = connectionString;
+    }
+
+    // The seam a test uses to see the connection the factory creates.
+    internal SqliteConduitConnectionFactory(Func<SqliteConnection> createConnection)
+    {
+        this.createConnection = createConnection;
     }
 
     /// <inheritdoc/>
     public async Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
     {
-        var connection = new SqliteConnection(this.connectionString);
-        await connection.OpenAsync(cancellationToken);
-        return connection;
+        var connection = this.createConnection();
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            return connection;
+        }
+        catch
+        {
+            // The caller never receives a connection that failed to open, so it is disposed here.
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
     /// <inheritdoc/>

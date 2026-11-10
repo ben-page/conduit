@@ -1,5 +1,7 @@
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
+using MySqlConnector;
 
 namespace Conduit.Persistence.MySql;
 
@@ -83,6 +85,18 @@ public sealed class MySqlDialect : ISqlDialect
 
         return [this.BuildCreateTableIfNotExistsSql(tableName, columnDefinitions + indexDefinitions)];
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// MySQL serializes two <c>CREATE TABLE IF NOT EXISTS</c> on the table's metadata lock, so the second finds the table
+    /// and only warns; 1050 (the table exists) and 1061 (an index of that name exists) are recognized for any create
+    /// that does reach the engine twice.
+    /// </remarks>
+    public bool IsAlreadyExists(DbException exception)
+        => exception is MySqlException { ErrorCode: MySqlErrorCode.TableExists or MySqlErrorCode.DuplicateKeyName };
+
+    /// <inheritdoc/>
+    public string BuildReadCommittedSql(string statement) => statement;
 
     /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)

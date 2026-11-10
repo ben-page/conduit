@@ -45,6 +45,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         "JobKey, ScheduleName, MessageType, Outcome, RunAt, StartedAt, CompletedAt, AttemptCount, LastError";
 
     private readonly IOptions<JobsOptions> options;
+    private readonly ISqlDialect dialect;
     private readonly string createRunsTableSql;
     private readonly string createSchedulesTableSql;
     private readonly string claimDueSql;
@@ -72,6 +73,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
         ArgumentNullException.ThrowIfNull(options);
 
         this.options = options;
+        this.dialect = dialect;
 
         this.createRunsTableSql = BuildCreateRunsTableSql(dialect);
         this.createSchedulesTableSql = BuildCreateSchedulesTableSql(dialect);
@@ -104,13 +106,11 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     }
 
     /// <inheritdoc/>
-    public async Task EnsureTablesExistAsync(CancellationToken cancellationToken)
-    {
-        await this.ExecuteNonQueryAsync(this.createSchedulesTableSql, configureParameters: null, cancellationToken);
-        await this.ExecuteNonQueryAsync(this.createRunsTableSql, configureParameters: null, cancellationToken);
-        await this.ExecuteNonQueryAsync(this.createScopesTableSql, configureParameters: null, cancellationToken);
-        await this.ExecuteNonQueryAsync(this.createHistoryTableSql, configureParameters: null, cancellationToken);
-    }
+    public Task EnsureTablesExistAsync(CancellationToken cancellationToken)
+        => this.EnsureCreatedAsync(
+            this.dialect,
+            [this.createSchedulesTableSql, this.createRunsTableSql, this.createScopesTableSql, this.createHistoryTableSql],
+            cancellationToken);
 
     /// <inheritdoc/>
     public async Task ReconcileSchedulesAsync(

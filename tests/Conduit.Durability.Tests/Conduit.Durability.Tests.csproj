@@ -13,6 +13,7 @@
     <PackageReference Include="MSTest" />
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />

@@ -6,6 +6,7 @@ using Conduit.Durability.Tests.Support;
 using Conduit.TestUtils;
 using Conduit.Durability.Configuration;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -679,6 +680,93 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         DateTime.Parse(failedAt!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
             .Should().BeOnOrAfter(before).And.BeOnOrBefore(DateTime.UtcNow);
         failedAtAfterRetry.Should().BeNull("a retried entry is pending again");
+    }
+
+    [TestMethod]
+    public async Task ClaimByTheInjectedClock()
+    {
+        // Arrange — the store's clock stands at the entry's creation, years away from the machine's
+        var createdAt = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(createdAt);
+        var store = new DbConnectionOutboxStore(this.connectionFactory, new SqliteDialect(), options: null, clock);
+        await this.SaveEntryAsync("msg-clock", createdAt.UtcDateTime);
+
+        // Act — inside the grace period, then past it
+        var withinGrace = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.FromSeconds(10), CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var pastGrace = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        // Act — the claim held a tick short of the five-minute claim timeout, then outlasting it
+        clock.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromTicks(1));
+        var whileHeld = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        clock.Advance(TimeSpan.FromTicks(1));
+        var onceStale = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Act — a failed send backs off for a minute
+        await store.IncrementRetryAsync(onceStale[0].Id, onceStale[0].ClaimToken!, TimeSpan.FromMinutes(1), CancellationToken.None);
+        var backingOff = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var dueAgain = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        withinGrace.Should().BeEmpty();
+        pastGrace.Should().ContainSingle();
+        whileHeld.Should().BeEmpty();
+        onceStale.Should().ContainSingle();
+        backingOff.Should().BeEmpty();
+        dueAgain.Should().ContainSingle();
+    }
+
+    [TestMethod]
+    public async Task StampAndRetainByTheInjectedClock()
+    {
+        // Arrange — one entry sent and one failed, at the store's clock
+        var now = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var store = new DbConnectionOutboxStore(this.connectionFactory, new SqliteDialect(), options: null, clock);
+        await this.SaveEntryAsync("msg-sent", now.UtcDateTime);
+        await this.SaveEntryAsync("msg-failed", now.UtcDateTime);
+        var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        var sent = claimed.Single(entry => entry.MessageId == "msg-sent");
+        var failed = claimed.Single(entry => entry.MessageId == "msg-failed");
+        await store.MarkSentAsync(sent.Id, sent.ClaimToken!, CancellationToken.None);
+        await store.MarkFailedAsync(failed.Id, failed.ClaimToken!, CancellationToken.None);
+        var failedAt = await this.ReadFailedAtAsync(failed.Id);
+
+        // Act — the seven-day retentions, a tick short of a week on, then a week on
+        clock.Advance(TimeSpan.FromDays(7) - TimeSpan.FromTicks(1));
+        await store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+        await store.DeleteFailedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+        var keptForTheWeek = (await this.CountAsync("msg-sent"), await this.CountAsync("msg-failed"));
+        clock.Advance(TimeSpan.FromTicks(1));
+        await store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+        await store.DeleteFailedAsync(TimeSpan.FromDays(7), CancellationToken.None);
+        var keptAfterTheWeek = (await this.CountAsync("msg-sent"), await this.CountAsync("msg-failed"));
+
+        // Assert
+        failedAt.Should().Be(now.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+        keptForTheWeek.Should().Be((1L, 1L));
+        keptAfterTheWeek.Should().Be((0L, 0L));
+    }
+
+    [TestMethod]
+    public async Task WriteALocalCreatedAtAsItsUtcInstant()
+    {
+        // Arrange — an entry a caller stamped with this host's local time
+        var createdAt = DateTime.Now.AddMinutes(-1);
+
+        // Act
+        await this.SaveEntryAsync("msg-local", createdAt);
+
+        // Assert — stored as the UTC instant, as every timestamp the store writes itself is: the claim compares them as
+        // text, so a local offset would make the entry look hours older or younger than it is
+        var expected = createdAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "SELECT CreatedAt, NextAttemptAt FROM conduit_outbox WHERE MessageId = 'msg-local'";
+        using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        reader.GetString(0).Should().Be(expected);
+        reader.GetString(1).Should().Be(expected);
     }
 
     private async Task SaveEntryAsync(string messageId, DateTime? createdAt = null)

@@ -13,6 +13,7 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
 {
     private readonly IDeadLetterStore store;
     private readonly ILogger<DeadLetterErrorInterceptor> logger;
+    private readonly TimeProvider timeProvider;
 
     private static readonly Action<ILogger, string, Exception?> LogCaptureFailed =
         LoggerMessage.Define<string>(
@@ -22,10 +23,12 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
 
     public DeadLetterErrorInterceptor(
         IDeadLetterStore store,
-        ILogger<DeadLetterErrorInterceptor> logger)
+        ILogger<DeadLetterErrorInterceptor> logger,
+        TimeProvider? timeProvider = null)
     {
         this.store = store;
         this.logger = logger;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<bool> TryCaptureAsync(
@@ -54,7 +57,7 @@ internal sealed class DeadLetterErrorInterceptor : IInboundErrorInterceptor
                 CausationId = context?.CausationId,
                 ConversationId = context?.ConversationId,
                 AttemptCount = 1,
-                DeadLetteredAt = DateTimeOffset.UtcNow,
+                DeadLetteredAt = this.timeProvider.GetUtcNow(),
             };
 
             await this.store.WriteAsync(entry, cancellationToken);

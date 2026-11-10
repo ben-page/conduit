@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
 
 namespace Conduit.Persistence.Sqlite;
@@ -75,6 +76,16 @@ public sealed class SqliteDialect : ISqlDialect
                 string.Join(", ", index.Columns))),
         ];
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Never: SQLite runs one writer at a time, so a <c>CREATE ... IF NOT EXISTS</c> checks and creates under the same
+    /// write lock, and a second replica's waits for it and then finds the object.
+    /// </remarks>
+    public bool IsAlreadyExists(DbException exception) => false;
+
+    /// <inheritdoc/>
+    public string BuildReadCommittedSql(string statement) => statement;
 
     /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)

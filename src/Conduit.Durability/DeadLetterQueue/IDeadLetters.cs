@@ -15,7 +15,12 @@ public interface IDeadLetters
     /// <summary>Get a single dead letter entry by ID.</summary>
     public Task<DeadLetterEntry?> GetAsync(Guid id, CancellationToken cancellationToken);
 
-    /// <summary>Replay a single message: re-publish to the broker via the source transport.</summary>
+    /// <summary>
+    /// Replay a single message: re-publish to the broker via the source transport, then remove the entry. The entry is
+    /// claimed first, so a replay of an entry another replay holds fails instead of re-publishing it twice; a failed
+    /// re-publish frees it for the next replay. At least once: a process that stops between the re-publish and the
+    /// removal leaves the entry claimed, and a replay after the claim times out (five minutes) re-publishes it again.
+    /// </summary>
     public Task<ReplayResult> ReplayAsync(Guid id, CancellationToken cancellationToken);
 
     /// <summary>Replay multiple messages sequentially.</summary>

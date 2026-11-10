@@ -32,6 +32,12 @@ internal sealed class RepeatingTokenDeadLetterStore(DeadLetterEntry entry) : IDe
         });
     }
 
+    public Task<string?> ClaimForReplayAsync(Guid id, CancellationToken cancellationToken)
+        => Task.FromResult<string?>(id == entry.Id && !this.Removed ? "claim" : null);
+
+    public Task ReleaseReplayClaimAsync(Guid id, string claimToken, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+
     public Task RemoveAsync(Guid id, CancellationToken cancellationToken)
     {
         this.Removed |= id == entry.Id;

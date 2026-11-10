@@ -19,20 +19,24 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// constructor-inject a scoped service — Development-mode scope validation
 /// (<c>ValidateScopes = true</c>, e.g. the consuming app's <c>WebApplicationFactory</c> tests)
 /// rejects the host at startup otherwise. Scope-per-sweep is a hard prerequisite for adoption,
-/// not a style preference.
+/// not a style preference. The cleanup's cadence reads <paramref name="timeProvider"/> (null is
+/// <see cref="TimeProvider.System"/>); the wait between sweeps is <see cref="OutboxOptions.RelayInterval"/> of real time.
 /// </remarks>
 public sealed partial class OutboxRelay(
     IServiceScopeFactory scopeFactory,
     TransportDispatcher transportDispatcher,
     IOptions<OutboxOptions> options,
-    ILogger<OutboxRelay> logger) : BackgroundService
+    ILogger<OutboxRelay> logger,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Table creation is handled by DurabilityTableInitializer on startup,
         // which honors OutboxOptions.AutoCreateTable.
-        var lastCleanup = DateTime.UtcNow;
+        var lastCleanup = this.clock.GetUtcNow();
 
         // The exhaustion counter's series exists from the relay's first export, not from the first failure.
         ConduitTelemetry.InitializeOutboxRetriesExhausted();
@@ -44,10 +48,10 @@ public sealed partial class OutboxRelay(
                 await this.ProcessPendingAsync(stoppingToken);
 
                 if (HasCleanup(options.Value)
-                    && DateTime.UtcNow - lastCleanup >= options.Value.CleanupInterval)
+                    && this.clock.GetUtcNow() - lastCleanup >= options.Value.CleanupInterval)
                 {
                     await this.CleanupCompletedAsync(stoppingToken);
-                    lastCleanup = DateTime.UtcNow;
+                    lastCleanup = this.clock.GetUtcNow();
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

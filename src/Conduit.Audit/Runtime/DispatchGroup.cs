@@ -14,7 +14,8 @@ internal sealed class DispatchGroup
     private readonly int maxPayloadBytes;
     private bool payloadSuppressed;
 
-    internal DispatchGroup(MessageContext context, string serviceName, int maxPayloadBytes)
+    // createdAt is the observer's clock reading when the dispatch's first observation arrived (UTC).
+    internal DispatchGroup(MessageContext context, string serviceName, int maxPayloadBytes, DateTime createdAt)
     {
         this.messageId = context.MessageId;
         this.conversationId = context.ConversationId;
@@ -24,7 +25,7 @@ internal sealed class DispatchGroup
             ? new Dictionary<string, object?>(context.Properties, StringComparer.OrdinalIgnoreCase)
             : null;
         this.context = context;
-        this.CreatedAt = DateTime.UtcNow;
+        this.CreatedAt = createdAt;
         this.serviceName = serviceName;
         this.maxPayloadBytes = maxPayloadBytes;
     }

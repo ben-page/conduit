@@ -6,6 +6,7 @@ using Conduit.Persistence;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using System.Data;
 using System.Data.Common;
 using System.Text.Json;
@@ -80,6 +81,30 @@ public class OutboxPendingWriterShould
         entry.CausationId.Should().Be("trigger-msg-id");
         entry.ConversationId.Should().Be("conv-7");
         entry.Payload.Should().Be("{}");
+    }
+
+    [TestMethod]
+    public async Task StampEntriesWithTheInjectedClock()
+    {
+        // Arrange — the behavior writes one envelope and the writer the one captured after it, both on a clock years
+        // away from the machine's
+        var now = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var capture = CreateCapture();
+        var store = new StubOutboxStore();
+        var factory = new TransactionFactory(hasTransaction: true);
+        var behavior = new OutboxBehavior<string, string>(capture, store, factory, options: null, clock);
+        var writer = new OutboxPendingWriter(capture, store, factory, options: null, clock);
+
+        capture.Intercept(Envelope("Test.InPipeline"));
+        await behavior.HandleAsync("request", () => Task.FromResult("response"), CancellationToken.None);
+        capture.Intercept(Envelope("Test.AfterPipeline"));
+
+        // Act
+        await writer.WritePendingAsync(CancellationToken.None);
+
+        // Assert
+        store.SavedEntries.Select(entry => entry.CreatedAt).Should().Equal(now.UtcDateTime, now.UtcDateTime);
     }
 
     [TestMethod]

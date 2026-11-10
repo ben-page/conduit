@@ -18,14 +18,18 @@ namespace Conduit.Audit.Runtime;
 /// logs that failure, drops the batch, and drains the next one: audit is best-effort, and escaping, the failure would
 /// end the service, and with the host's default <c>BackgroundServiceExceptionBehavior</c> (<c>StopHost</c>) the host
 /// with it. A publish that throws while the host is stopping ends the loop quietly, whatever the exception: that is
-/// the stop's cancellation.
+/// the stop's cancellation. A batch's <see cref="AuditBatch.BatchTimestamp"/> and the stale-group sweep's "now" read
+/// <paramref name="timeProvider"/> (null is <see cref="TimeProvider.System"/>); the sweep's cadence is real time.
 /// </remarks>
 public sealed partial class AuditBatchPublisher(
     ChannelReader<DispatchAuditRecord> channel,
     IServiceProvider serviceProvider,
     IOptions<AuditOptions> options,
-    ILogger<AuditBatchPublisher> logger) : BackgroundService
+    ILogger<AuditBatchPublisher> logger,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -54,7 +58,7 @@ public sealed partial class AuditBatchPublisher(
                 await mediator.PublishAsync(new AuditBatch(
                     SourceService: options.Value.ServiceName ?? "unknown",
                     SourceHost: Environment.MachineName,
-                    BatchTimestamp: DateTime.UtcNow,
+                    BatchTimestamp: this.clock.GetUtcNow().UtcDateTime,
                     Records: batch), stoppingToken);
             }
 #pragma warning disable CA1031 // While stopping, any exception is the stop's cancellation: SqlClient reports it as a SqlException.
@@ -87,7 +91,7 @@ public sealed partial class AuditBatchPublisher(
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                observer.EvictStaleGroups(DateTime.UtcNow, staleTimeout);
+                observer.EvictStaleGroups(this.clock.GetUtcNow().UtcDateTime, staleTimeout);
             }
         }
         catch (OperationCanceledException)

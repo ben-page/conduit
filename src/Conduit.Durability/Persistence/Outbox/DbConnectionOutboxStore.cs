@@ -113,6 +113,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         new("ix_conduit_outbox_status_sent", ["Status", "SentAt"]),
     ];
 
+    private readonly ISqlDialect dialect;
     private readonly IReadOnlyList<string> createTableSql;
     private readonly string claimPendingSql;
     private readonly string claimByMessageIdsSql;
@@ -121,6 +122,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
     // A claim older than this counts as abandoned: the pending and the by-id claim both take its row over.
     private readonly TimeSpan claimTimeout;
+
+    // "Now" for every timestamp the store writes and every cutoff it compares against.
+    private readonly TimeProvider timeProvider;
 
     /// <summary>Initializes a new instance of <see cref="DbConnectionOutboxStore"/>.</summary>
     /// <param name="connectionFactory">The engine's connection factory.</param>
@@ -131,10 +135,15 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     /// <see cref="OutboxOptions.ClaimTimeout"/> is how old a claim must be for another worker to take its entry
     /// over; null keeps the default.
     /// </param>
+    /// <param name="timeProvider">
+    /// The clock the claims, the backoff, the outcome stamps and the retention cutoffs read; null is
+    /// <see cref="TimeProvider.System"/>.
+    /// </param>
     public DbConnectionOutboxStore(
         IConduitConnectionFactory connectionFactory,
         ISqlDialect dialect,
-        IOptions<OutboxOptions>? options = null)
+        IOptions<OutboxOptions>? options = null,
+        TimeProvider? timeProvider = null)
         : base(connectionFactory)
     {
         ArgumentNullException.ThrowIfNull(dialect);
@@ -142,7 +151,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         var outboxOptions = options?.Value ?? new OutboxOptions();
         this.persistsProperties = outboxOptions.PersistedProperties.Count > 0;
         this.claimTimeout = outboxOptions.ClaimTimeout;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
 
+        this.dialect = dialect;
         this.createTableSql = BuildCreateTableSql(dialect);
         this.claimPendingSql = dialect.BuildClaimPendingSql(Schema);
         this.claimByMessageIdsSql = dialect.BuildClaimByIdsSql(Schema);
@@ -180,7 +191,8 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                     DbParameterHelper.Add(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
                     DbParameterHelper.Add(command, "@Type", entry.Type);
                     DbParameterHelper.Add(command, "@Payload", entry.Payload);
-                    var createdAt = entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture);
+                    // In UTC whatever the caller stamped it with: the claim compares it as text with UTC cutoffs.
+                    var createdAt = StoredTimestamp.Format(entry.CreatedAt);
                     DbParameterHelper.Add(command, "@CreatedAt", createdAt);
                     DbParameterHelper.Add(command, "@NextAttemptAt", createdAt);
                     if (this.persistsProperties)
@@ -198,10 +210,10 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         TimeSpan gracePeriod,
         CancellationToken cancellationToken)
     {
-        var now = DateTime.UtcNow;
-        var graceCutoff = now.Subtract(gracePeriod).ToString("O", CultureInfo.InvariantCulture);
-        var claimCutoff = now.Subtract(this.claimTimeout).ToString("O", CultureInfo.InvariantCulture);
-        var claimedAt = now.ToString("O", CultureInfo.InvariantCulture);
+        var now = this.timeProvider.GetUtcNow();
+        var graceCutoff = StoredTimestamp.Format(now.Subtract(gracePeriod));
+        var claimCutoff = StoredTimestamp.Format(now.Subtract(this.claimTimeout));
+        var claimedAt = StoredTimestamp.Format(now);
         var claimToken = Guid.NewGuid().ToString("N");
 
         // Atomically claim the rows for this worker (Pending or stale-Claiming → Claiming, tagged
@@ -237,7 +249,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             MarkSentSql,
             entryId,
             claimToken,
-            command => DbParameterHelper.Add(command, "@SentAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)),
+            command => DbParameterHelper.Add(command, "@SentAt", this.Now()),
             cancellationToken);
 
     /// <inheritdoc/>
@@ -253,7 +265,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             command => DbParameterHelper.Add(
                 command,
                 "@NextAttemptAt",
-                DateTime.UtcNow.Add(retryDelay).ToString("O", CultureInfo.InvariantCulture)),
+                StoredTimestamp.Format(this.timeProvider.GetUtcNow().Add(retryDelay))),
             cancellationToken);
 
     /// <inheritdoc/>
@@ -262,7 +274,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             MarkFailedSql,
             entryId,
             claimToken,
-            command => DbParameterHelper.Add(command, "@FailedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)),
+            command => DbParameterHelper.Add(command, "@FailedAt", this.Now()),
             cancellationToken);
 
     /// <inheritdoc/>
@@ -312,7 +324,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             command =>
             {
                 DbParameterHelper.Add(command, "@Id", entryId);
-                DbParameterHelper.Add(command, "@NextAttemptAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+                DbParameterHelper.Add(command, "@NextAttemptAt", this.Now());
             },
             cancellationToken) > 0;
 
@@ -326,7 +338,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             command =>
             {
                 DbParameterHelper.Add(command, "@MessageType", messageType);
-                DbParameterHelper.Add(command, "@NextAttemptAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+                DbParameterHelper.Add(command, "@NextAttemptAt", this.Now());
             },
             cancellationToken);
     }
@@ -341,12 +353,15 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
     private async Task DeleteOlderThanAsync(string sql, TimeSpan retentionPeriod, CancellationToken cancellationToken)
     {
-        var retentionCutoff = DateTime.UtcNow.Subtract(retentionPeriod).ToString("O", CultureInfo.InvariantCulture);
+        var retentionCutoff = StoredTimestamp.Format(this.timeProvider.GetUtcNow().Subtract(retentionPeriod));
         await this.ExecuteNonQueryAsync(
             sql,
             command => DbParameterHelper.Add(command, "@RetentionCutoff", retentionCutoff),
             cancellationToken);
     }
+
+    // The clock's current instant as stored text.
+    private string Now() => StoredTimestamp.Format(this.timeProvider.GetUtcNow());
 
     // Runs one of the claim-guarded resolutions (MarkSentSql, IncrementRetrySql, MarkFailedSql): true when it changed
     // the row, false when the claim no longer holds it.
@@ -373,14 +388,10 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     }
 
     /// <inheritdoc/>
-    public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-    {
-        // The table, then its indexes (where the engine creates them separately), in order.
-        foreach (var statement in this.createTableSql)
-        {
-            await this.ExecuteNonQueryAsync(statement, configureParameters: null, cancellationToken);
-        }
-    }
+    // The table, then its indexes (where the engine creates them separately), in order; one another replica created
+    // first is passed over.
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
+        => this.EnsureCreatedAsync(this.dialect, this.createTableSql, cancellationToken);
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(
@@ -394,9 +405,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             return [];
         }
 
-        var now = DateTime.UtcNow;
-        var claimCutoff = now.Subtract(this.claimTimeout).ToString("O", CultureInfo.InvariantCulture);
-        var claimedAt = now.ToString("O", CultureInfo.InvariantCulture);
+        var now = this.timeProvider.GetUtcNow();
+        var claimCutoff = StoredTimestamp.Format(now.Subtract(this.claimTimeout));
+        var claimedAt = StoredTimestamp.Format(now);
         var claimToken = Guid.NewGuid().ToString("N");
 
         var paramNames = new string[messageIds.Count];

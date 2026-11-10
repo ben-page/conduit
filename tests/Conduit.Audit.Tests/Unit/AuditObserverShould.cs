@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using AwesomeAssertions;
 using Conduit.Audit.Runtime;
 using Conduit.Runtime;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Audit.Tests.Unit;
 
@@ -14,6 +15,39 @@ public sealed class AuditObserverShould
     public void Cleanup()
     {
         MessageContext.RestoreContext(null);
+    }
+
+    [TestMethod]
+    public void StampARecordAndAgeItsGroupByTheInjectedClock()
+    {
+        // Arrange — a clock years away from the machine's
+        var now = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(
+            channel.Writer,
+            "TestService",
+            new HashSet<string>(),
+            new HashSet<string>(),
+            Configuration.AuditOptions.DefaultMaxPayloadBytes,
+            clock);
+        var completed = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.DoThing", "Command"), completed);
+        observer.OnObservation(new DispatchCompleted(1.0), completed);
+        var inFlight = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Commands.InFlight", "Command"), inFlight);
+
+        // Act — the in-flight group is swept at the clock's time a tick short of the timeout, then at the timeout
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        observer.EvictStaleGroups(now.UtcDateTime + TimeSpan.FromMinutes(5) - TimeSpan.FromTicks(1), TimeSpan.FromMinutes(5));
+        var evictedEarly = channel.Reader.TryRead(out _);
+        observer.EvictStaleGroups(now.UtcDateTime + TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+        var evictedAtTheTimeout = channel.Reader.TryRead(out _);
+
+        // Assert
+        record!.Timestamp.Should().Be(now.UtcDateTime);
+        evictedEarly.Should().BeFalse();
+        evictedAtTheTimeout.Should().BeTrue();
     }
 
     [TestMethod]

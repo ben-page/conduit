@@ -1,5 +1,7 @@
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
+using Npgsql;
 
 namespace Conduit.Persistence.Postgres;
 
@@ -83,6 +85,21 @@ public sealed class PostgresDialect : ISqlDialect
                 string.Join(", ", index.Columns))),
         ];
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// 42P07 (<c>duplicate_table</c>) covers tables and indexes alike, both being relations, and 42710
+    /// (<c>duplicate_object</c>) the row type a table brings with it. Two overlapping <c>CREATE ... IF NOT EXISTS</c>
+    /// statements both pass the check, and the second then fails with one of those or on the catalog's own unique index
+    /// (<c>pg_class_relname_nsp_index</c>, <c>pg_type_typname_nsp_index</c>) once the first commits: a unique violation
+    /// in <c>pg_catalog</c> is only ever that, while one in an application table is a data error.
+    /// </remarks>
+    public bool IsAlreadyExists(DbException exception)
+        => exception is PostgresException { SqlState: PostgresErrorCodes.DuplicateTable or PostgresErrorCodes.DuplicateObject }
+            or PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, SchemaName: "pg_catalog" };
+
+    /// <inheritdoc/>
+    public string BuildReadCommittedSql(string statement) => statement;
 
     /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)

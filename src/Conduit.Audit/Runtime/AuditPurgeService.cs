@@ -15,12 +15,20 @@ namespace Conduit.Audit.Runtime;
 public sealed class AuditPurgeService : PeriodicCleanupServiceBase
 {
     private readonly IOptions<AuditOptions> options;
+    private readonly TimeProvider timeProvider;
 
     /// <summary>Initializes a new instance of <see cref="AuditPurgeService"/>.</summary>
-    public AuditPurgeService(IServiceScopeFactory scopeFactory, IOptions<AuditOptions> options)
+    /// <param name="scopeFactory">Factory used to scope each purge.</param>
+    /// <param name="options">The audit options holding the retention and the purge interval.</param>
+    /// <param name="timeProvider">The clock the retention cutoff counts back from; null is <see cref="TimeProvider.System"/>.</param>
+    public AuditPurgeService(
+        IServiceScopeFactory scopeFactory,
+        IOptions<AuditOptions> options,
+        TimeProvider? timeProvider = null)
         : base(scopeFactory)
     {
         this.options = options;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc/>
@@ -30,7 +38,7 @@ public sealed class AuditPurgeService : PeriodicCleanupServiceBase
     protected override Task CleanupAsync(IServiceProvider scopedProvider, CancellationToken cancellationToken)
     {
         var store = scopedProvider.GetRequiredService<IAuditStore>();
-        var cutoff = DateTime.UtcNow - this.options.Value.RetentionPeriod;
+        var cutoff = this.timeProvider.GetUtcNow().UtcDateTime - this.options.Value.RetentionPeriod;
         return store.PurgeExpiredAsync(cutoff, cancellationToken);
     }
 }

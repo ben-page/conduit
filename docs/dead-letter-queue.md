@@ -80,6 +80,8 @@ Replay re-publishes a dead-lettered message back into the broker for normal proc
 
 Replay carries the ids the message first arrived with — its `MessageId`, `CausationId` and `ConversationId` — so its handling, and its audit trail, continue the original's lineage instead of starting a conversation of their own. See [Interaction with inbox](#interaction-with-inbox) for what that means for deduplication.
 
+One replay at a time holds an entry: two operators, or two hosts, replaying the same entry at once re-publish it once, and the second is told it is already being replayed. Replay is at least once, never lost: see [What happens during replay](#what-happens-during-replay).
+
 ### Discard
 
 Discard removes a message from the dead letter store without replaying. Use this for messages that are permanently invalid — malformed data, obsolete operations, or messages for handlers that no longer exist.
@@ -99,7 +101,7 @@ services.AddConduit(conduit =>
 });
 ```
 
-The dead letter table (`conduit_dead_letters`) is created automatically on startup. Disable with `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)` if you manage schemas through migrations.
+The dead letter table (`conduit_dead_letters`) is created automatically on startup. Disable with `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)` if you manage schemas through migrations. A table an earlier pre-release build created lacks the two columns replay claims an entry with; see [The dead-letter table](persistence.md#the-dead-letter-table).
 
 ### Database dialects
 
@@ -156,10 +158,13 @@ Bulk replay processes messages sequentially — the broker handles distribution 
 ### What happens during replay
 
 1. Read the dead letter entry from the store
-2. Build a `DispatchEnvelope` from the stored body and type
-3. Resolve the transport by the entry's `SourceEndpoint`
-4. Call `RedeliverAsync` on the transport with the entry's `MessageId`, `CausationId` and `ConversationId` — it publishes directly to the service's inbound queue, those ids in the broker's native properties (an entry missing any of the three, captured outside a context, is sent with a fresh message id)
-5. Remove the entry from the dead letter store
+2. Claim the entry for this replay: one `UPDATE` that succeeds only when no other replay holds it. When one does, the replay stops here and its result says the entry is already being replayed
+3. Build a `DispatchEnvelope` from the stored body and type
+4. Resolve the transport by the entry's `SourceEndpoint`
+5. Call `RedeliverAsync` on the transport with the entry's `MessageId`, `CausationId` and `ConversationId` — it publishes directly to the service's inbound queue, those ids in the broker's native properties (an entry missing any of the three, captured outside a context, is sent with a fresh message id). When steps 3 to 5 fail, the claim is released, so the next replay can take the entry at once, and the result reports the failure
+6. Remove the entry from the dead letter store
+
+Replay is **at least once**. The claim makes a concurrent replay of the same entry a refusal rather than a second publish, but a process that stops after step 5 and before step 6 (or a removal that fails, logged at Warning, `DlqReplayedEntryNotRemoved`) leaves the entry in the store, still claimed. A claim older than five minutes is taken as abandoned, so the first replay after that re-publishes the message once more. The result of a replay whose removal failed is still a success: the message was re-published. A claim that could not be released after a failed re-publish (logged at Warning, `DlqReplayClaimNotReleased`) likewise holds the entry for those five minutes.
 
 The message enters the normal inbound processing path. Any available instance of the handling service picks it up. A replayed **event** whose listener fails again is captured as a new dead letter entry through the normal flow, under the same ids. A replayed **command or query** arrives without a reply address, so it is settled as a `[FireAndForget]` command is: its result reaches no one, a handler that fails unexpectedly again is captured as a new entry under the same ids, and a refusal is acknowledged.
 
@@ -205,7 +210,7 @@ if (page.NextPageToken is not null)
 }
 ```
 
-`DeadLetterFilter` supports `MessageType`, `ExceptionType`, `Since`, `Until`, `PageSize` (default 25; 1 to `DeadLetterFilter.MaxPageSize`, 1000, or the query throws `ArgumentOutOfRangeException`), and `PageToken`. All filters are applied in SQL. `ReplayByTypeAsync` reads every page of its type before it replays the first entry.
+`DeadLetterFilter` supports `MessageType`, `ExceptionType`, `Since`, `Until`, `PageSize` (default 25; 1 to `DeadLetterFilter.MaxPageSize`, 1000, or the query throws `ArgumentOutOfRangeException`), and `PageToken`. All filters are applied in SQL. `Since` and `Until` are instants, whatever offset they are written in: `DateTimeOffset.Now` on a UTC+1 host and `DateTimeOffset.UtcNow` filter alike, because the store compares both, and every `DeadLetteredAt`, in UTC (see [Timestamps](persistence.md#timestamps)). `ReplayByTypeAsync` reads every page of its type before it replays the first entry.
 
 ## Metadata
 
@@ -224,7 +229,7 @@ Every dead-lettered message carries:
 | `CausationId` | Original MessageContext.CausationId |
 | `ConversationId` | Original MessageContext.ConversationId |
 | `AttemptCount` | Number of times this message has been dead-lettered |
-| `DeadLetteredAt` | Timestamp when the message was captured |
+| `DeadLetteredAt` | When the message was captured, by the host's `TimeProvider` ([the clock](persistence.md#the-clock)); read back in UTC |
 
 ## Replay by transport
 
@@ -261,6 +266,7 @@ Note that the broker's own DLQ still functions as an infrastructure safety net: 
 
 - **Requires a database.** The DLQ shares the durability database. A stateless service with no database can't use it (use broker-native redelivery/DLQ at the infrastructure level instead).
 - **Replay is fire-and-forget.** For request/response messages (commands with results, queries), the handler executes for side effects — there is no caller waiting for the response, and nothing receives it. `ReplayResult.Success` says the message was re-published, not that it was handled.
+- **Replay is at least once.** A process that stops between re-publishing an entry and removing it leaves the entry claimed, and a replay after the five-minute claim timeout re-publishes it again (see [What happens during replay](#what-happens-during-replay)).
 - **Replay does not guarantee idempotency.** If the original handler partially succeeded before failing, the replayed attempt is a new execution. Application-level idempotency is the handler's responsibility. The inbox does not stand in for it: the failed attempt released its record, so the replay runs (see [Interaction with inbox](#interaction-with-inbox)).
 - **Refusals are not captured.** A request answered with a `ConduitException` (404, 409, 412, ...) is final: the caller has its answer, and nothing is stored to replay. A refused `[FireAndForget]` command is just as final, although no one hears the refusal but the log.
 - **No auto-replay.** Replay is always triggered explicitly via `IDeadLetters`. Automatic retry-from-DLQ (with backoff) is a potential future feature.

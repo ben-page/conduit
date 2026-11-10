@@ -12,7 +12,9 @@ has **no** direct database-driver dependency. The engine is resolved from DI —
 (`conduit.UseSqlite(cs)` / `UsePostgres` / `UseSqlServer` / `UseMySql`).
 
 `DbJobStore` extends `DbStoreBase`; `JobTableInitializer` extends `TableInitializerBase`;
-`JobCleanup` extends `PeriodicCleanupServiceBase`.
+`JobCleanup` extends `PeriodicCleanupServiceBase`. `EnsureTablesExistAsync` runs its four creates through
+`DbStoreBase.EnsureCreatedAsync`, so replicas starting together on an empty database all start (see
+`src/Conduit.Persistence/CLAUDE.md`).
 
 **Ordering is load-bearing.** `AddJobs` inspects `builder.Services` for the engine to decide durable
 vs non-durable, so `UseSqlite(...)` must be called **before** `AddJobs(...)`. Getting it wrong is

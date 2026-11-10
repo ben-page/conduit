@@ -11,6 +11,7 @@ using Conduit.Durability.Runtime.Outbox;
 using Conduit.Jobs;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Conduit.Persistence;
 using Conduit.Runtime;
@@ -125,23 +126,63 @@ public abstract class PersistenceEngineTestBase
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
         // Assert
-        var indexNames = new List<string>();
-        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
-        await using var command = connection.CreateCommand();
-        command.CommandText = this.OutboxIndexNamesSql;
-        await using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
-        {
-            while (await reader.ReadAsync(CancellationToken.None))
-            {
-                indexNames.Add(reader.GetString(0));
-            }
-        }
-
-        indexNames.Should().BeEquivalentTo(
+        (await this.ReadOutboxIndexNamesAsync(factory)).Should().BeEquivalentTo(
             "ix_conduit_outbox_status_next_attempt",
             "ix_conduit_outbox_claim",
             "ix_conduit_outbox_message_id",
             "ix_conduit_outbox_status_sent");
+    }
+
+    [TestMethod]
+    public async Task TolerateAConcurrentCreate()
+    {
+        // Arrange — replicas of one deployment, each running every durable feature, starting together on an empty
+        // database: each checks for a table, finds none, and creates it
+        var factory = await this.CreateIsolatedFactoryAsync();
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = Enumerable.Range(0, 8)
+            .Select(_ => new EveryStoreTableInitializer(provider, factory, this.Dialect))
+            .Select(async replica =>
+            {
+                await go.Task;
+                await replica.StartAsync(CancellationToken.None);
+            })
+            .ToList();
+
+        // Act
+        go.SetResult();
+        var act = () => Task.WhenAll(starts);
+
+        // Assert — every replica starts, and the outbox has every index, whichever replica created the table
+        await act.Should().NotThrowAsync();
+        (await this.ReadOutboxIndexNamesAsync(factory)).Should().BeEquivalentTo(
+            "ix_conduit_outbox_status_next_attempt",
+            "ix_conduit_outbox_claim",
+            "ix_conduit_outbox_message_id",
+            "ix_conduit_outbox_status_sent");
+    }
+
+    [TestMethod]
+    public async Task RecognizeItsAlreadyExistsErrors()
+    {
+        // Arrange — a table with an index and a row
+        var factory = await this.CreateIsolatedFactoryAsync();
+        const string createTable = "CREATE TABLE conduit_probe (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50))";
+        const string createIndex = "CREATE INDEX ix_conduit_probe_name ON conduit_probe (Name)";
+        await RunAsync(factory, createTable);
+        await RunAsync(factory, createIndex);
+        await RunAsync(factory, "INSERT INTO conduit_probe (Id, Name) VALUES (1, 'first')");
+
+        // Act — the table and the index created again, as by a replica that lost the race, and the row inserted again
+        var tableExists = await FailureOfAsync(factory, createTable);
+        var indexExists = await FailureOfAsync(factory, createIndex);
+        var duplicateRow = await FailureOfAsync(factory, "INSERT INTO conduit_probe (Id, Name) VALUES (1, 'second')");
+
+        // Assert
+        this.Dialect.IsAlreadyExists(tableExists).Should().BeTrue();
+        this.Dialect.IsAlreadyExists(indexExists).Should().BeTrue();
+        this.Dialect.IsAlreadyExists(duplicateRow).Should().BeFalse("a duplicate key in a table is the data's error, not a concurrent create");
     }
 
     // 2) Outbox round-trip + atomic claim -------------------------------------------------------
@@ -555,6 +596,35 @@ public abstract class PersistenceEngineTestBase
         // Assert
         afterDelete.TotalCount.Should().Be(4);
         afterDelete.Entries.Select(e => e.Id).Should().NotContain(ids[0]);
+    }
+
+    [TestMethod]
+    public async Task ClaimADeadLetterForOneReplayUnderConcurrency()
+    {
+        // Arrange
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbDeadLetterStore(factory, this.Dialect);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var id = Guid.NewGuid();
+        await store.WriteAsync(new DeadLetterEntry
+        {
+            Id = id,
+            MessageType = "Test.Failed",
+            Body = new BinaryData(new byte[] { 0x01 }),
+            SourceEndpoint = "self",
+            DeadLetteredAt = DateTimeOffset.UtcNow,
+        }, CancellationToken.None);
+
+        // Act — twenty replays of the entry claim it at once, then the holder releases its claim
+        var claims = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
+            store.ClaimForReplayAsync(id, CancellationToken.None)));
+        var holder = claims.Single(claim => claim is not null)!;
+        await store.ReleaseReplayClaimAsync(id, holder, CancellationToken.None);
+        var afterRelease = await store.ClaimForReplayAsync(id, CancellationToken.None);
+
+        // Assert — one replay holds the entry; once it lets go, the next can take it
+        claims.Count(claim => claim is not null).Should().Be(1);
+        afterRelease.Should().NotBeNull();
     }
 
     // 5) Audit store ----------------------------------------------------------------------------
@@ -1210,6 +1280,50 @@ public abstract class PersistenceEngineTestBase
 #pragma warning restore CA2100
         bind(command);
         await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Security",
+        "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "The catalog query is a constant of the engine's test class, not user input.")]
+    private async Task<List<string>> ReadOutboxIndexNamesAsync(IConduitConnectionFactory factory)
+    {
+        var indexNames = new List<string>();
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = this.OutboxIndexNamesSql;
+        await using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+        while (await reader.ReadAsync(CancellationToken.None))
+        {
+            indexNames.Add(reader.GetString(0));
+        }
+
+        return indexNames;
+    }
+
+    private static async Task RunAsync(IConduitConnectionFactory factory, string sql)
+    {
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+#pragma warning disable CA2100 // Test-owned constant SQL.
+        command.CommandText = sql;
+#pragma warning restore CA2100
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    // The engine's exception for a statement that must fail.
+    private static async Task<System.Data.Common.DbException> FailureOfAsync(IConduitConnectionFactory factory, string sql)
+    {
+        try
+        {
+            await RunAsync(factory, sql);
+        }
+        catch (System.Data.Common.DbException exception)
+        {
+            return exception;
+        }
+
+        throw new AssertFailedException($"Expected the engine to refuse: {sql}");
     }
 
     private static async Task<int> CountOutstandingAsync(IConduitConnectionFactory factory)

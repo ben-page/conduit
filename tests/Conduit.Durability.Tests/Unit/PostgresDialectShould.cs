@@ -65,6 +65,16 @@ public class PostgresDialectShould
             "CREATE INDEX IF NOT EXISTS ix_conduit_outbox_claim ON conduit_outbox (ClaimToken)");
     }
 
+    [TestMethod]
+    public void RunAReadCommittedStatementAsItIs()
+    {
+        // Act — Npgsql resets a pooled session, so it carries no level a statement must pin
+        var sql = this.dialect.BuildReadCommittedSql("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+
+        // Assert
+        sql.Should().Be("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+    }
+
     // Insert-or-ignore
 
     [TestMethod]

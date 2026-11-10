@@ -4,6 +4,7 @@ using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Tests.Support;
 using Conduit.TestUtils;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -176,6 +177,86 @@ public sealed class DbDeadLetterStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task FilterByInstantRegardlessOfOffset()
+    {
+        // Arrange — captured at noon UTC, the instant expressed in a UTC+2 offset
+        var instant = new DateTimeOffset(2026, 11, 10, 12, 0, 0, TimeSpan.Zero);
+        var entry = CreateEntry("Test.Command", deadLetteredAt: instant.ToOffset(TimeSpan.FromHours(2)));
+        await this.store.WriteAsync(entry, CancellationToken.None);
+
+        // Act — the same instant as both bounds, written as a UTC+1 and a UTC-5 caller would write it
+        var page = await this.store.QueryAsync(
+            new DeadLetterFilter
+            {
+                Since = instant.ToOffset(TimeSpan.FromHours(1)),
+                Until = instant.ToOffset(TimeSpan.FromHours(-5)),
+            },
+            CancellationToken.None);
+
+        // Assert — the bounds are instants: the entry captured at that instant is within both
+        page.Entries.Should().ContainSingle().Which.DeadLetteredAt.Should().Be(instant);
+    }
+
+    [TestMethod]
+    public async Task ClaimAnEntryForOneReplayAtATime()
+    {
+        // Arrange
+        var entry = CreateEntry("Test.Command");
+        await this.store.WriteAsync(entry, CancellationToken.None);
+
+        // Act — two replays claim it, the first releases its claim, and a third claims it again
+        var first = await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+        var second = await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+        await this.store.ReleaseReplayClaimAsync(entry.Id, first!, CancellationToken.None);
+        var third = await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+        var missing = await this.store.ClaimForReplayAsync(Guid.NewGuid(), CancellationToken.None);
+
+        // Assert
+        first.Should().NotBeNullOrEmpty();
+        second.Should().BeNull("the first replay holds the entry");
+        third.Should().NotBeNullOrEmpty().And.NotBe(first);
+        missing.Should().BeNull();
+    }
+
+    [TestMethod]
+    public async Task ReleaseOnlyTheClaimItIsGiven()
+    {
+        // Arrange — a replay holds the entry
+        var entry = CreateEntry("Test.Command");
+        await this.store.WriteAsync(entry, CancellationToken.None);
+        var holder = await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+
+        // Act — a release under another token, as a replay whose claim was taken over would make
+        await this.store.ReleaseReplayClaimAsync(entry.Id, "another-claim", CancellationToken.None);
+        var whileHeld = await this.store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+
+        // Assert
+        holder.Should().NotBeNullOrEmpty();
+        whileHeld.Should().BeNull("the holder's claim was not released");
+    }
+
+    [TestMethod]
+    public async Task TakeOverAReplayClaimOnceItIsAbandoned()
+    {
+        // Arrange — a replay claims the entry and its process stops before it releases or removes it
+        var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        var store = new DbDeadLetterStore(this.connectionFactory, new SqliteDialect(), clock);
+        var entry = CreateEntry("Test.Command");
+        await store.WriteAsync(entry, CancellationToken.None);
+        await store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+
+        // Act — a tick short of the five-minute claim timeout, then at it
+        clock.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromTicks(1));
+        var whileHeld = await store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+        clock.Advance(TimeSpan.FromTicks(1));
+        var onceAbandoned = await store.ClaimForReplayAsync(entry.Id, CancellationToken.None);
+
+        // Assert
+        whileHeld.Should().BeNull();
+        onceAbandoned.Should().NotBeNullOrEmpty();
+    }
+
+    [TestMethod]
     public async Task RemoveSingleEntry()
     {
         // Arrange
@@ -227,7 +308,8 @@ public sealed class DbDeadLetterStoreShould : IAsyncDisposable
     private static DeadLetterEntry CreateEntry(
         string messageType,
         int offsetMs = 0,
-        string? exceptionType = "System.InvalidOperationException")
+        string? exceptionType = "System.InvalidOperationException",
+        DateTimeOffset? deadLetteredAt = null)
     {
         return new DeadLetterEntry
         {
@@ -242,7 +324,7 @@ public sealed class DbDeadLetterStoreShould : IAsyncDisposable
             CausationId = null,
             ConversationId = "conv-1",
             AttemptCount = 1,
-            DeadLetteredAt = DateTimeOffset.UtcNow.AddMilliseconds(offsetMs),
+            DeadLetteredAt = deadLetteredAt ?? DateTimeOffset.UtcNow.AddMilliseconds(offsetMs),
         };
     }
 }

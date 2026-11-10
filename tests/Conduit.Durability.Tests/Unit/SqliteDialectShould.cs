@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
 using Conduit.Persistence.Sqlite;
+using Microsoft.Data.Sqlite;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -64,6 +65,30 @@ public class SqliteDialectShould
             "CREATE TABLE IF NOT EXISTS conduit_outbox (\n    Status INTEGER NOT NULL,\n    NextAttemptAt TEXT NOT NULL,\n    ClaimToken TEXT\n)",
             "CREATE INDEX IF NOT EXISTS ix_conduit_outbox_status_next_attempt ON conduit_outbox (Status, NextAttemptAt)",
             "CREATE INDEX IF NOT EXISTS ix_conduit_outbox_claim ON conduit_outbox (ClaimToken)");
+    }
+
+    [TestMethod]
+    public void RunAReadCommittedStatementAsItIs()
+    {
+        // Act — SQLite has no session isolation level to pin
+        var sql = this.dialect.BuildReadCommittedSql("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+
+        // Assert
+        sql.Should().Be("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+    }
+
+    [TestMethod]
+    public void TakeNoErrorForAConcurrentCreate()
+    {
+        // Arrange — what a bare CREATE TABLE of an existing table raises; SQLite's one writer at a time makes IF NOT EXISTS
+        // atomic, so a create-if-absent never does
+        var exception = new SqliteException("SQLite Error 1: 'table conduit_inbox already exists'.", 1);
+
+        // Act
+        var alreadyExists = this.dialect.IsAlreadyExists(exception);
+
+        // Assert
+        alreadyExists.Should().BeFalse();
     }
 
     // Insert-or-ignore

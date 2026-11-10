@@ -19,12 +19,15 @@ namespace Conduit.Durability.Runtime.Outbox;
 /// <c>next()</c>) is written by <see cref="IOutboxPendingWriter"/>. When the pipeline faults, the
 /// unwritten envelopes it captured are dropped. Each entry carries the dispatch properties
 /// <paramref name="options"/> lists (<see cref="OutboxOptions.PersistedProperties"/>); null carries none.
+/// <paramref name="timeProvider"/> stamps each entry's <see cref="OutboxEntry.CreatedAt"/>; null is
+/// <see cref="TimeProvider.System"/>.
 /// </remarks>
 public sealed class OutboxBehavior<TRequest, TResult>(
     OutboxCapture capture,
     IOutboxStore store,
     IConduitConnectionFactory connectionFactory,
-    IOptions<OutboxOptions>? options = null) : IPipelineBehavior<TRequest, TResult>
+    IOptions<OutboxOptions>? options = null,
+    TimeProvider? timeProvider = null) : IPipelineBehavior<TRequest, TResult>
 {
     /// <inheritdoc />
     public async Task<TResult> HandleAsync(
@@ -44,7 +47,12 @@ public sealed class OutboxBehavior<TRequest, TResult>(
         {
             var result = await next();
             await OutboxPendingWriter.WriteUnwrittenAsync(
-                capture, store, connectionFactory, options?.Value.PersistedProperties, cancellationToken);
+                capture,
+                store,
+                connectionFactory,
+                options?.Value.PersistedProperties,
+                timeProvider ?? TimeProvider.System,
+                cancellationToken);
             return result;
         }
         catch

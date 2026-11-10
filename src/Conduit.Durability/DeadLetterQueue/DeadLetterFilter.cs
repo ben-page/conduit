@@ -15,10 +15,10 @@ public sealed class DeadLetterFilter
     /// <summary>Filter by exception type (exact match).</summary>
     public string? ExceptionType { get; init; }
 
-    /// <summary>Only entries dead-lettered at or after this time.</summary>
+    /// <summary>Only entries dead-lettered at or after this instant, whatever offset it is written in.</summary>
     public DateTimeOffset? Since { get; init; }
 
-    /// <summary>Only entries dead-lettered at or before this time.</summary>
+    /// <summary>Only entries dead-lettered at or before this instant, whatever offset it is written in.</summary>
     public DateTimeOffset? Until { get; init; }
 
     /// <summary>

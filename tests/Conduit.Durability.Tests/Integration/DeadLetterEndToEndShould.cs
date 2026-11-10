@@ -171,4 +171,43 @@ public sealed class DeadLetterEndToEndShould : IAsyncDisposable
         remaining.Entries.Should().HaveCount(1);
         remaining.Entries[0].MessageType.Should().Be("Orders.Commands.ShipOrder");
     }
+
+    [TestMethod]
+    public async Task RedeliverAnEntryOnceWhenTwoReplaysRace()
+    {
+        // Arrange — the first replay's redelivery is held open while a second replay of the same entry runs
+        var transport = new GatedRedeliveryTransport();
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IConduitTransport>("orders", transport);
+        await using var provider = services.BuildServiceProvider();
+        var deadLetters = new DeadLetters(this.store, provider, NullLogger<DeadLetters>.Instance);
+        var entry = new DeadLetterEntry
+        {
+            Id = Guid.NewGuid(),
+            MessageType = "Orders.Commands.CreateOrder",
+            Body = new BinaryData("""{"orderId":"race-1"}"""u8.ToArray()),
+            SourceEndpoint = "orders",
+            ExceptionType = "System.Exception",
+            ExceptionMessage = "Handler failed",
+            MessageId = Guid.NewGuid().ToString("N"),
+            CausationId = Guid.NewGuid().ToString("N"),
+            ConversationId = Guid.NewGuid().ToString("N"),
+            DeadLetteredAt = DateTimeOffset.UtcNow,
+        };
+        await this.store.WriteAsync(entry, CancellationToken.None);
+
+        // Act
+        var first = deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
+        await transport.FirstRedeliveryStarted;
+        var second = await deadLetters.ReplayAsync(entry.Id, CancellationToken.None);
+        transport.Release();
+        var firstResult = await first;
+
+        // Assert — one redelivery: the second replay finds the entry claimed and leaves it to the first, which removes it
+        transport.Redelivered.Should().ContainSingle();
+        firstResult.Success.Should().BeTrue();
+        second.Success.Should().BeFalse();
+        second.ErrorMessage.Should().Contain("already being replayed");
+        (await this.store.GetAsync(entry.Id, CancellationToken.None)).Should().BeNull();
+    }
 }

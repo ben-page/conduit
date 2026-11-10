@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Durability.Tests.Unit;
 
@@ -43,7 +44,8 @@ public class OutboxRelayShould
         IOutboxStore store,
         TransportDispatcher dispatcher,
         OutboxOptions? outboxOptions = null,
-        ILogger<OutboxRelay>? logger = null)
+        ILogger<OutboxRelay>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         // OutboxRelay resolves IOutboxStore scope-per-sweep (see its class remarks), so tests wire
         // the stub store through a real IServiceScopeFactory rather than constructor-injecting it.
@@ -55,7 +57,48 @@ public class OutboxRelayShould
             provider.GetRequiredService<IServiceScopeFactory>(),
             dispatcher,
             Options.Create(outboxOptions ?? new OutboxOptions { MaxRetries = 3 }),
-            logger ?? NullLogger<OutboxRelay>.Instance);
+            logger ?? NullLogger<OutboxRelay>.Instance,
+            timeProvider);
+    }
+
+    [TestMethod]
+    public async Task CleanUpOnceTheInjectedClockPassesTheCleanupInterval()
+    {
+        // Arrange — the relay sweeps every few milliseconds, and its clock alone says when the hour has passed
+        var store = new SweepCountingOutboxStore();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        var relay = BuildRelay(
+            store,
+            CreateDispatcher(),
+            new OutboxOptions { RelayInterval = TimeSpan.FromMilliseconds(5), CleanupInterval = TimeSpan.FromHours(1) },
+            timeProvider: clock);
+
+        // Act — sweeps while the clock stands still, then sweeps once it has moved the hour
+        await relay.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => store.Sweeps >= 3);
+        var cleanedWhileTheClockStood = store.DeletedRetentions.Count;
+        clock.Advance(TimeSpan.FromHours(1));
+        await WaitUntilAsync(() => store.DeletedRetentions.Count > 0);
+        await relay.StopAsync(CancellationToken.None);
+
+        // Assert — one cleanup: the clock moved one interval
+        cleanedWhileTheClockStood.Should().Be(0);
+        store.DeletedRetentions.Should().ContainSingle();
+    }
+
+    // Polls the relay's background loop for up to five seconds.
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException("The relay never reached the expected state.");
+            }
+
+            await Task.Delay(10);
+        }
     }
 
     [TestMethod]

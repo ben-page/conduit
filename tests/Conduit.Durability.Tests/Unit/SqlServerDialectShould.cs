@@ -34,7 +34,15 @@ public class SqlServerDialectShould
         this.dialect.TimestampDbType.Should().Be(System.Data.DbType.String);
     }
 
-    // Create-table-if-not-exists — SQL Server has no inline clause, so it guards with OBJECT_ID.
+    // Create-table-if-not-exists — SQL Server has no inline clause, so it guards with OBJECT_ID. Each create holds an
+    // exclusive application lock for its transaction, so replicas starting together create one at a time (two
+    // concurrent CREATE INDEX on one table deadlock, 1205), at READ COMMITTED (a pooled session carrying Snapshot fails
+    // a DDL statement that meets another replica's DDL, 3961).
+    private const string OneCreateAtATime =
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\n" +
+        "EXEC sp_getapplock @Resource = N'conduit_create_if_absent', @LockMode = N'Exclusive', @LockOwner = N'Transaction';\n";
+
+    private const string Commit = ";\nCOMMIT TRANSACTION;";
 
     [TestMethod]
     public void BuildCreateTableGuardedByObjectIdCheck()
@@ -43,7 +51,10 @@ public class SqlServerDialectShould
         var sql = this.dialect.BuildCreateTableIfNotExistsSql("conduit_inbox", "  MessageId NVARCHAR(450) PRIMARY KEY");
 
         // Assert
-        sql.Should().Be("IF OBJECT_ID(N'conduit_inbox', N'U') IS NULL\nCREATE TABLE conduit_inbox (\n  MessageId NVARCHAR(450) PRIMARY KEY\n)");
+        sql.Should().Be(
+            OneCreateAtATime +
+            "IF OBJECT_ID(N'conduit_inbox', N'U') IS NULL\nCREATE TABLE conduit_inbox (\n  MessageId NVARCHAR(450) PRIMARY KEY\n)" +
+            Commit);
     }
 
     [TestMethod]
@@ -61,9 +72,27 @@ public class SqlServerDialectShould
         // Assert — SQL Server has no CREATE INDEX IF NOT EXISTS; each index is guarded on its own, so an existing
         // table gains a missing one.
         statements.Should().Equal(
-            "IF OBJECT_ID(N'conduit_outbox', N'U') IS NULL\nCREATE TABLE conduit_outbox (\n    Status TINYINT NOT NULL,\n    NextAttemptAt NVARCHAR(450) NOT NULL,\n    ClaimToken NVARCHAR(450)\n)",
-            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_conduit_outbox_status_next_attempt' AND object_id = OBJECT_ID(N'conduit_outbox'))\nCREATE INDEX ix_conduit_outbox_status_next_attempt ON conduit_outbox (Status, NextAttemptAt)",
-            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_conduit_outbox_claim' AND object_id = OBJECT_ID(N'conduit_outbox'))\nCREATE INDEX ix_conduit_outbox_claim ON conduit_outbox (ClaimToken)");
+            OneCreateAtATime +
+            "IF OBJECT_ID(N'conduit_outbox', N'U') IS NULL\nCREATE TABLE conduit_outbox (\n    Status TINYINT NOT NULL,\n    NextAttemptAt NVARCHAR(450) NOT NULL,\n    ClaimToken NVARCHAR(450)\n)" +
+            Commit,
+            OneCreateAtATime +
+            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_conduit_outbox_status_next_attempt' AND object_id = OBJECT_ID(N'conduit_outbox'))\nCREATE INDEX ix_conduit_outbox_status_next_attempt ON conduit_outbox (Status, NextAttemptAt)" +
+            Commit,
+            OneCreateAtATime +
+            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_conduit_outbox_claim' AND object_id = OBJECT_ID(N'conduit_outbox'))\nCREATE INDEX ix_conduit_outbox_claim ON conduit_outbox (ClaimToken)" +
+            Commit);
+    }
+
+    [TestMethod]
+    public void PinAReadCommittedStatementAgainstTheSessionsCarriedLevel()
+    {
+        // Act — a pooled session can carry Snapshot, where the second of two updates of one row fails (3960) instead of
+        // waiting and re-checking its WHERE
+        var sql = this.dialect.BuildReadCommittedSql("UPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
+
+        // Assert
+        sql.Should().Be(
+            "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nUPDATE conduit_dead_letters SET ReplayClaimToken = @ClaimToken WHERE Id = @Id");
     }
 
     // Insert-or-ignore

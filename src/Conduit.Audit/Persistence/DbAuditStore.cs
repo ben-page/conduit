@@ -19,6 +19,7 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
 {
     private const string CausationIdColumnReader = AuditTableSchema.CausationIdColumn;
 
+    private readonly ISqlDialect dialect;
     private readonly string insertSql;
     private readonly string selectByMessageIdSql;
     private readonly string deleteExpiredSql;
@@ -31,6 +32,7 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
     {
         ArgumentNullException.ThrowIfNull(dialect);
 
+        this.dialect = dialect;
         this.CreateTableSql = dialect.BuildCreateTableIfNotExistsSql(
             AuditTableSchema.TableName,
             $"""
@@ -128,7 +130,7 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
 
     /// <inheritdoc/>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(this.CreateTableSql, configureParameters: null, cancellationToken);
+        => this.EnsureCreatedAsync(this.dialect, [this.CreateTableSql], cancellationToken);
 
     /// <summary>
     /// Formats a timestamp as round-trippable UTC ISO 8601 text. Local values are converted to UTC;

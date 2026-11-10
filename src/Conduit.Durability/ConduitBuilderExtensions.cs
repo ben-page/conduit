@@ -3,6 +3,7 @@ using Conduit.Durability.Configuration;
 using Conduit.Durability.Runtime;
 using Conduit.Durability.Runtime.Outbox;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Conduit.Durability;
 
@@ -29,6 +30,10 @@ public static class ConduitBuilderExtensions
         // the initializer's StartAsync returns only once its checks and its DDL are done, so the relay and the
         // cleanup never query a table that does not exist yet, nor start before a misconfiguration fails startup.
         builder.Services.AddHostedService<DurabilityTableInitializer>();
+
+        // Every time the stores write or compare (claims, backoff, outcomes, retention, captures) reads this clock, never
+        // the ambient one: a host that registers its own (a test's FakeTimeProvider) keeps it.
+        builder.Services.TryAddSingleton(TimeProvider.System);
 
         var durabilityBuilder = new DurabilityBuilder(builder.Services);
         configure(durabilityBuilder);

@@ -20,6 +20,7 @@ public sealed class AuditObserver : IConduitObserver
     private readonly IReadOnlySet<string> suppressedTypes;
     private readonly IReadOnlySet<string> suppressedPayloadTypes;
     private readonly int maxPayloadBytes;
+    private readonly TimeProvider timeProvider;
 
     /// <summary>
     /// Creates a new audit observer that writes sealed records to the specified channel.
@@ -58,6 +59,9 @@ public sealed class AuditObserver : IConduitObserver
     /// <param name="suppressedPayloadTypes">Full type names for which the payload body is omitted from the record.</param>
     /// <param name="maxPayloadBytes">The largest body, in UTF-8 bytes, a sealed record keeps (0 or less: no cap); see
     /// <see cref="Configuration.AuditOptions.MaxPayloadBytes"/>. The other constructors use the 64 KB default.</param>
+    /// <param name="timeProvider">The clock a dispatch's record is stamped with (its <see cref="DispatchAuditRecord.Timestamp"/>,
+    /// which is also the age <see cref="EvictStaleGroups"/> compares); null, as the other constructors pass, is
+    /// <see cref="TimeProvider.System"/>.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxPayloadBytes"/> is above 0 but below
     /// <see cref="Configuration.AuditOptions.MinimumMaxPayloadBytes"/>.</exception>
     public AuditObserver(
@@ -65,7 +69,8 @@ public sealed class AuditObserver : IConduitObserver
         string serviceName,
         IReadOnlySet<string> suppressedTypes,
         IReadOnlySet<string> suppressedPayloadTypes,
-        int maxPayloadBytes)
+        int maxPayloadBytes,
+        TimeProvider? timeProvider = null)
     {
         AuditPayloadCap.ThrowIfInvalid(maxPayloadBytes, nameof(maxPayloadBytes));
         ArgumentNullException.ThrowIfNull(suppressedTypes);
@@ -76,6 +81,7 @@ public sealed class AuditObserver : IConduitObserver
         this.suppressedTypes = suppressedTypes;
         this.suppressedPayloadTypes = suppressedPayloadTypes;
         this.maxPayloadBytes = maxPayloadBytes;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -103,7 +109,7 @@ public sealed class AuditObserver : IConduitObserver
 
         var group = this.activeGroups.GetOrAdd(
             context.MessageId,
-            _ => new DispatchGroup(context, this.serviceName, this.maxPayloadBytes));
+            _ => new DispatchGroup(context, this.serviceName, this.maxPayloadBytes, this.timeProvider.GetUtcNow().UtcDateTime));
 
         // If this dispatch's type opts out of payload capture, drop the body now that we know
         // the type (carried by DispatchInvoked, which is always the first observation).

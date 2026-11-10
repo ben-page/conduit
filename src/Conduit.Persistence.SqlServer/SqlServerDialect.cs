@@ -1,5 +1,7 @@
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
+using Microsoft.Data.SqlClient;
 
 namespace Conduit.Persistence.SqlServer;
 
@@ -56,13 +58,26 @@ public sealed class SqlServerDialect : ISqlDialect
     /// <inheritdoc/>
     public string PaginationSuffix => "OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
 
+    // Every create runs in a transaction holding one exclusive application lock (database-scoped, released at commit),
+    // so replicas starting together on an empty database create one at a time, each finding what the one before it
+    // made: two concurrent CREATE INDEX on one table otherwise deadlock (1205), each holding the table's shared lock and
+    // waiting for the schema-modification lock. It runs at READ COMMITTED, as the claims do: a pooled session can carry
+    // Snapshot from a host's own transaction, and DDL at Snapshot that meets another session's DDL on the same table
+    // fails with 3961 (metadata is not versioned). A create racing a process that takes no such lock still fails with
+    // 2714 or 1913, which IsAlreadyExists recognizes.
+    private const string OneCreateAtATime =
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\n" +
+        "EXEC sp_getapplock @Resource = N'conduit_create_if_absent', @LockMode = N'Exclusive', @LockOwner = N'Transaction';\n";
+
+    private const string Commit = ";\nCOMMIT TRANSACTION;";
+
     /// <inheritdoc/>
     public string BuildCreateTableIfNotExistsSql(string tableName, string columnDefinitions)
     {
         // SQL Server has no CREATE TABLE IF NOT EXISTS; guard the bare CREATE with an OBJECT_ID check.
         return string.Format(
             CultureInfo.InvariantCulture,
-            "IF OBJECT_ID(N'{0}', N'U') IS NULL\nCREATE TABLE {0} (\n{1}\n)",
+            OneCreateAtATime + "IF OBJECT_ID(N'{0}', N'U') IS NULL\nCREATE TABLE {0} (\n{1}\n)" + Commit,
             tableName,
             columnDefinitions);
     }
@@ -81,13 +96,32 @@ public sealed class SqlServerDialect : ISqlDialect
             this.BuildCreateTableIfNotExistsSql(tableName, columnDefinitions),
             .. indexes.Select(index => string.Format(
                 CultureInfo.InvariantCulture,
+                OneCreateAtATime +
                 "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{0}' AND object_id = OBJECT_ID(N'{1}'))\n" +
-                "CREATE INDEX {0} ON {1} ({2})",
+                "CREATE INDEX {0} ON {1} ({2})" +
+                Commit,
                 index.Name,
                 tableName,
                 string.Join(", ", index.Columns))),
         ];
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The <c>OBJECT_ID</c> and <c>sys.indexes</c> guards are checks, not locks: Conduit's own creates take an application
+    /// lock first, but a create racing a process that does not (a migration, an earlier build) can pass the check with it,
+    /// and then fails with 2714 (an object of that name exists) for a table or 1913 for an index.
+    /// </remarks>
+    public bool IsAlreadyExists(DbException exception)
+        => exception is SqlException { Number: 2714 or 1913 };
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// A parameterized command reaches the server through <c>sp_executesql</c>, so the SET holds for the statement and
+    /// reverts when it returns, leaving the session's carried level in place, as for the claims.
+    /// </remarks>
+    public string BuildReadCommittedSql(string statement)
+        => "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\n" + statement;
 
     /// <inheritdoc/>
     public string BuildExistsSql(string table, string whereColumn)

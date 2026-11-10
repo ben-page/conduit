@@ -1,4 +1,3 @@
-using System.Globalization;
 using Conduit.Persistence;
 
 namespace Conduit.Durability.Persistence.Inbox;
@@ -12,15 +11,28 @@ public sealed class DbConnectionInboxStore : DbStoreBase, IInboxStore
     private const string DeleteExpiredSql = "DELETE FROM conduit_inbox WHERE ProcessedAt < @Cutoff";
     private const string RemoveSql = "DELETE FROM conduit_inbox WHERE MessageId = @MessageId";
 
+    private readonly ISqlDialect dialect;
     private readonly string createTableSql;
     private readonly string insertSql;
     private readonly string existsSql;
+    private readonly TimeProvider timeProvider;
 
     /// <summary>Initializes a new instance of <see cref="DbConnectionInboxStore"/>.</summary>
-    public DbConnectionInboxStore(IConduitConnectionFactory connectionFactory, ISqlDialect dialect)
+    /// <param name="connectionFactory">The engine's connection factory.</param>
+    /// <param name="dialect">The engine's SQL dialect.</param>
+    /// <param name="timeProvider">
+    /// The clock a record's time and the retention cutoff read; null is <see cref="TimeProvider.System"/>.
+    /// </param>
+    public DbConnectionInboxStore(
+        IConduitConnectionFactory connectionFactory,
+        ISqlDialect dialect,
+        TimeProvider? timeProvider = null)
         : base(connectionFactory)
     {
         ArgumentNullException.ThrowIfNull(dialect);
+
+        this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.dialect = dialect;
 
         this.createTableSql = dialect.BuildCreateTableIfNotExistsSql(
             "conduit_inbox",
@@ -55,7 +67,7 @@ public sealed class DbConnectionInboxStore : DbStoreBase, IInboxStore
             command =>
             {
                 DbParameterHelper.Add(command, "@MessageId", messageId);
-                DbParameterHelper.Add(command, "@ProcessedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+                DbParameterHelper.Add(command, "@ProcessedAt", StoredTimestamp.Format(this.timeProvider.GetUtcNow()));
             },
             cancellationToken);
         return rowsAffected > 0;
@@ -75,10 +87,10 @@ public sealed class DbConnectionInboxStore : DbStoreBase, IInboxStore
             command => DbParameterHelper.Add(
                 command,
                 "@Cutoff",
-                (DateTime.UtcNow - retentionPeriod).ToString("O", CultureInfo.InvariantCulture)),
+                StoredTimestamp.Format(this.timeProvider.GetUtcNow() - retentionPeriod)),
             cancellationToken);
 
     /// <inheritdoc/>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
+        => this.EnsureCreatedAsync(this.dialect, [this.createTableSql], cancellationToken);
 }

@@ -26,8 +26,17 @@ public sealed class SqlServerConduitConnectionFactory
     public async Task<DbConnection> CreateConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqlConnection(this.connectionString);
-        await connection.OpenAsync(cancellationToken);
-        return connection;
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            return connection;
+        }
+        catch
+        {
+            // The caller never receives a connection that failed to open, so it is disposed here.
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
     /// <inheritdoc/>

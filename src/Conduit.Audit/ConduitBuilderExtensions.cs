@@ -3,6 +3,7 @@ using Conduit.Audit.Configuration;
 using Conduit.Audit.Runtime;
 using Conduit.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
 namespace Conduit.Audit;
@@ -52,6 +53,10 @@ public static class ConduitBuilderExtensions
         builder.Services.AddSingleton(channel.Writer);
         builder.Services.AddSingleton(channel.Reader);
 
+        // A record's and a batch's timestamps and the stale-group sweep read this clock, never the ambient one: a host
+        // that registers its own (a test's FakeTimeProvider) keeps it.
+        builder.Services.TryAddSingleton(TimeProvider.System);
+
         // A suppressed type's body must not reach the trail inside another message either: an [AuditAs] envelope member
         // holding one is left out of AuditJsonOptions' output. That lookup is process-wide (AuditJsonOptions is static).
         foreach (var type in auditBuilder.SuppressedTypes.Concat(auditBuilder.SuppressedPayloadTypes))
@@ -79,7 +84,12 @@ public static class ConduitBuilderExtensions
                 ?? serviceProvider.GetService<IHostEnvironment>()?.ApplicationName
                 ?? "unknown";
             return new AuditObserver(
-                channel.Writer, serviceName, suppressedTypes, suppressedPayloadTypes, auditBuilder.Options.MaxPayloadBytes);
+                channel.Writer,
+                serviceName,
+                suppressedTypes,
+                suppressedPayloadTypes,
+                auditBuilder.Options.MaxPayloadBytes,
+                serviceProvider.GetRequiredService<TimeProvider>());
         });
         builder.Services.AddSingleton<Conduit.Runtime.IConduitObserver>(
             serviceProvider => serviceProvider.GetRequiredService<AuditObserver>());
@@ -116,6 +126,9 @@ public static class ConduitBuilderExtensions
             options.RetentionPeriod = listenerBuilder.Options.RetentionPeriod;
             options.PurgeInterval = listenerBuilder.Options.PurgeInterval;
         });
+
+        // The purge counts its retention back from this clock, as AddAudit's capture stamps records with it.
+        builder.Services.TryAddSingleton(TimeProvider.System);
 
         return builder;
     }
