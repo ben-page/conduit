@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Description>ActiveMQ Artemis transport for Conduit: routes commands and queries and broadcasts events through Artemis addresses and queues over AMQP 1.0.</Description>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Description>MSBuild task that emits a typed TypeScript client, with its HTTP and SignalR transports, for the [ClientVisible] messages and types of a Conduit application.</Description>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -55,7 +56,9 @@
     <None Include="$(OutputPath)\Conduit.TypeGen.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
     <None Include="$(OutputPath)\Conduit.Analysis.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
     <None Include="$(OutputPath)\System.Reflection.MetadataLoadContext.dll" Pack="true" PackagePath="tasks/net10.0" Visible="false" />
-    <None Include="Conduit.TypeGen.targets" Pack="true" PackagePath="build" Visible="false" />
+    <!-- Named after the package id: NuGet imports only build/{PackageId}.targets, so under another
+         ConduitPackagePrefix a file kept as Conduit.TypeGen.targets would never be imported (NU5129). -->
+    <None Include="Conduit.TypeGen.targets" Pack="true" PackagePath="build/$(PackageId).targets" Visible="false" />
   </ItemGroup>
 
 </Project>

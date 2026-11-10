@@ -27,4 +27,25 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <!-- Package identity: every package id derives from ConduitPackagePrefix, so the published prefix is one property.
+       The core packs as the prefix itself and every Conduit.* project as the prefix plus the rest of its name:
+       `dotnet pack -p:ConduitPackagePrefix=Acme.Conduit` packs Conduit as Acme.Conduit and Conduit.Transport.Http as
+       Acme.Conduit.Transport.Http. Each package's Description is in its own project file. -->
+  <PropertyGroup>
+    <ConduitPackagePrefix Condition="'$(ConduitPackagePrefix)' == ''">Conduit</ConduitPackagePrefix>
+    <PackageId Condition="'$(MSBuildProjectName)' == 'Conduit'">$(ConduitPackagePrefix)</PackageId>
+    <PackageId Condition="$(MSBuildProjectName.StartsWith('Conduit.'))">$(ConduitPackagePrefix)$(MSBuildProjectName.Substring(7))</PackageId>
+    <Authors>Ben Page</Authors>
+    <Copyright>© Ben Page</Copyright>
+    <PackageProjectUrl>https://github.com/ben-page/conduit</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ben-page/conduit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>mediator;cqrs;messaging;signalr;source-generator;typescript</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
 </Project>

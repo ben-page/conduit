@@ -83,7 +83,7 @@
 - `ConduitClient` resolves a server's refusal as `DispatchResult<T>.error` — consumers decide error handling strategy —
   and rejects on a transport failure (no connection, an abort, a reconnect wait that ran out, a non-refusal HTTP
   failure such as a 401)
-- `Conduit.TypeGen.targets` — MSBuild targets file with opt-in via `<ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>`, configurable output dir (`ConduitTypeGenOutput`, default `ClientApp/generated`), transports (`ConduitTransports`, default `Http;SignalR`) and paths (`ConduitBasePath`, `ConduitHubPath`). The ONE targets file: packed to `build/` (the csproj's `None … PackagePath="build"`); a stale unpacked `build/Conduit.TypeGen.targets` was deleted.
+- `Conduit.TypeGen.targets` — MSBuild targets file with opt-in via `<ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>`, configurable output dir (`ConduitTypeGenOutput`, default `ClientApp/generated`), transports (`ConduitTransports`, default `Http;SignalR`) and paths (`ConduitBasePath`, `ConduitHubPath`). The ONE targets file: packed as `build/$(PackageId).targets` (the csproj's `None … PackagePath="build/$(PackageId).targets"`), because NuGet imports only the targets file named after the package id and the id follows `ConduitPackagePrefix` (`build/Conduit.TypeGen.targets` under the default; another prefix failed the pack with NU5129); a stale unpacked `build/Conduit.TypeGen.targets` was deleted.
   - **Paths are absolute when they reach the task**: the target passes `AssemblyPath`/`OutputDirectory` through
     `$([MSBuild]::NormalizePath/NormalizeDirectory('$(MSBuildProjectDirectory)', …))`, because the task's
     `Path.GetFullPath` resolves a relative one against the process CWD (wherever `dotnet build` was started).

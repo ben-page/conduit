@@ -21,6 +21,15 @@ Handlers implement `ICommandHandler<T>` or `IEventListener<T>` and receive messa
 
 At each step, the same message types and handler implementations work unchanged. Routing configuration determines where messages go.
 
+## Install
+
+```shell
+dotnet add package Conduit
+dotnet add package Conduit.SourceGen
+```
+
+`Conduit.SourceGen` must be referenced explicitly, from the host project. The generator deliberately does not ride along with the `Conduit` runtime package: a library that references `Conduit` for its messages and handlers runs no generator, and the one host that composes them emits the single mediator for the process (see [Modular Monolith](docs/modular-monolith.md)).
+
 ## Guide
 
 1. [Getting Started](docs/getting-started.md)

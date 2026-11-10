@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Description>SignalR transport for Conduit: an ASP.NET Core hub that serves browser and service clients and pushes events to browsers, and a client that routes commands and queries to a remote hub.</Description>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
