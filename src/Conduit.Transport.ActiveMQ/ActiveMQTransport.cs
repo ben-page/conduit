@@ -269,9 +269,6 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             return;
         }
 
-        var connection = this.CurrentConnection();
-        var replySender = await connection.ReplySenders.GetAsync(replyAddress);
-
         using var replyMessage = new Message(replyBody.ToArray())
         {
             Properties = new Properties
@@ -280,16 +277,22 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             },
         };
 
+        // Held for the send: the link is never evicted or closed under it
+        var lease = this.CurrentConnection().ReplySenders.Acquire(replyAddress);
         try
         {
             // AMQPNetLite gives up on a send the broker has not settled within a minute
-            await replySender.SendAsync(replyMessage);
+            await lease.Link.SendAsync(replyMessage);
         }
         catch (Exception)
         {
-            // The next reply to that address attaches a fresh link
-            await connection.ReplySenders.EvictAsync(replyAddress, replySender);
+            // The next reply to that address attaches a fresh link; other replies on this one finish first
+            lease.Discard();
             throw;
+        }
+        finally
+        {
+            lease.Release();
         }
     }
 
@@ -539,13 +542,30 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     /// </summary>
     private void MarkStarted()
     {
+        // Its close's callback may not have run yet, and once current moves on that callback reports nothing
+        if (this.MarkStartedUnderLock() is { } lostBeforeStarted)
+        {
+            this.ReportConnectionLost(lostBeforeStarted);
+        }
+    }
+
+    // Sets started, and starts rebuilding a connection lost before it was set; returns that connection
+    private ActiveMQConnection? MarkStartedUnderLock()
+    {
         lock (this.stateLock)
         {
             this.started = true;
-            if (this.current is { IsLost: true } lost && !this.stopRequested)
+            if (this.current is not { IsLost: true } lost)
+            {
+                return null;
+            }
+
+            if (!this.stopRequested)
             {
                 this.BeginReconnecting(lost);
             }
+
+            return lost;
         }
     }
 
@@ -555,20 +575,36 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     /// </summary>
     private void OnConnectionLost(ActiveMQConnection connection, Error? error)
     {
+        bool isCurrent;
         lock (this.stateLock)
         {
-            // A connection already replaced, or one a reconnection is still building (which then fails)
-            if (!ReferenceEquals(connection, this.current))
-            {
-                return;
-            }
-
-            if (this.started && !this.stopRequested)
+            // Not current: a connection already replaced, one a reconnection is still building (whose
+            // attempt then fails), or one MarkStarted already took over, which reported it
+            isCurrent = ReferenceEquals(connection, this.current);
+            if (isCurrent && this.started && !this.stopRequested)
             {
                 this.BeginReconnecting(connection);
             }
         }
 
+        if (isCurrent)
+        {
+            this.ReportConnectionLost(connection);
+        }
+    }
+
+    /// <summary>
+    /// Logs <c>ConnectionLost</c> and fails the requests waiting for a reply, once per lost connection,
+    /// whichever of <see cref="OnConnectionLost"/> and <see cref="MarkStarted"/> sees the loss first.
+    /// </summary>
+    private void ReportConnectionLost(ActiveMQConnection connection)
+    {
+        if (!connection.TryClaimLossReport())
+        {
+            return;
+        }
+
+        var error = connection.LostError;
         var reason = error is null
             ? "closed by the broker"
             : string.IsNullOrEmpty(error.Description) ? error.Condition.ToString() : $"{error.Condition}: {error.Description}";

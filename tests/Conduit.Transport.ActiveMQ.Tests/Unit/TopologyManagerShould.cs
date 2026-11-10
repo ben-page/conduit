@@ -174,7 +174,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
 
         // Act
         var anycastAddress = TopologyNaming.CreateSharedResourceName(conduitOptions, "commands", 256);
@@ -182,9 +182,9 @@ public class TopologyManagerShould
         var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 256);
 
         // Assert — developer prefix appears in all names
-        anycastAddress.Should().Be("bpage-conduit-commands");
-        multicastAddress.Should().Be("bpage-conduit-events");
-        appQueueName.Should().Be("bpage-conduit-orders");
+        anycastAddress.Should().Be("alice-conduit-commands");
+        multicastAddress.Should().Be("alice-conduit-events");
+        appQueueName.Should().Be("alice-conduit-orders");
     }
 
     [TestMethod]

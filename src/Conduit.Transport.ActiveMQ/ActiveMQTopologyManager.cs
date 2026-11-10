@@ -378,7 +378,12 @@ internal sealed class ActiveMQTopologyManager
         {
             LogResourceAlreadyExists(this.logger, queueName, null);
 
-            if (updateFilterIfExists)
+            // Only when it differs: every instance runs this at each start and reconnection
+            if (updateFilterIfExists
+                && !string.Equals(
+                    await ReadQueueFilterAsync(sender, receiver, replyAddress, queueName, cancellationToken),
+                    filterExpression,
+                    StringComparison.Ordinal))
             {
                 await this.UpdateQueueFilterAsync(sender, receiver, replyAddress, queueName, filterExpression, cancellationToken);
             }
@@ -386,10 +391,40 @@ internal sealed class ActiveMQTopologyManager
     }
 
     /// <summary>
+    /// The filter an existing queue has now (its <c>filter</c> attribute), or null when it has none.
+    /// </summary>
+    private static async Task<string?> ReadQueueFilterAsync(
+        SenderLink sender, ReceiverLink receiver, string replyAddress,
+        string queueName, CancellationToken cancellationToken)
+    {
+        using var request = new Message("[]")
+        {
+            Properties = new Properties(),
+            ApplicationProperties = new ApplicationProperties
+            {
+                ["_AMQ_ResourceName"] = $"queue.{queueName}",
+                ["_AMQ_Attribute"] = "filter",
+            },
+        };
+
+        // The answer is a JSON array holding the value; a queue with no filter answers no body
+        var body = await SendManagementRequestAsync(sender, receiver, replyAddress, request, cancellationToken);
+        if (string.IsNullOrEmpty(body))
+        {
+            return null;
+        }
+
+        using var answer = JsonDocument.Parse(body);
+        var filter = answer.RootElement[0];
+        return filter.ValueKind == JsonValueKind.String ? filter.GetString() : null;
+    }
+
+    /// <summary>
     /// Sets an existing event queue's filter to the event types this release subscribes: an event queue
     /// created by an earlier release keeps the filter of that release's types otherwise, and a type added
     /// since would never reach it. A partial <c>updateQueue</c> leaves every field it does not name alone,
-    /// except the filter, which it would clear.
+    /// except the filter, which it would clear. It leaves the queue's consumers attached, and they receive
+    /// the newly admitted types (probed against Artemis 2.44).
     /// </summary>
     private async Task UpdateQueueFilterAsync(
         SenderLink sender, ReceiverLink receiver, string replyAddress,
@@ -473,13 +508,15 @@ internal sealed class ActiveMQTopologyManager
     /// minute), and the wait also by <paramref name="cancellationToken"/>: a broker still starting can
     /// accept a connection and then answer nothing on it.
     /// </summary>
-    private static async Task SendManagementRequestAsync(
+    /// <returns>The answer's body: a JSON array holding the result, or null for none.</returns>
+    private static async Task<string?> SendManagementRequestAsync(
         SenderLink sender, ReceiverLink receiver, string replyAddress, Message request,
         CancellationToken cancellationToken)
     {
         request.Properties.ReplyTo = replyAddress;
         request.Properties.MessageId = $"mgmt-{Guid.NewGuid():N}";
-        var operation = request.ApplicationProperties?["_AMQ_OperationName"];
+        var operation = request.ApplicationProperties?["_AMQ_OperationName"]
+            ?? request.ApplicationProperties?["_AMQ_Attribute"];
 
         await sender.SendAsync(request, ManagementTimeout);
 
@@ -502,6 +539,8 @@ internal sealed class ActiveMQTopologyManager
                 throw new InvalidOperationException(errorBody);
             }
         }
+
+        return reply.Body as string;
     }
 
     /// <summary>

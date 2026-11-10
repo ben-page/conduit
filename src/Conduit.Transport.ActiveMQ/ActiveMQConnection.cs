@@ -31,7 +31,8 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
     private readonly Lock consumerLinksLock = new();
     private readonly List<ReceiverLink> consumerLinks = [];
     private volatile string? replyAddress;
-    private int lost;
+    private Loss? loss;
+    private int lossReported;
     private int closing;
 
     private ActiveMQConnection(Connection connection, Action<ActiveMQConnection, Error?> onLost)
@@ -64,7 +65,16 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
     public string? ReplyAddress => this.replyAddress;
 
     /// <summary>Whether something this connection holds closed without this object closing it.</summary>
-    public bool IsLost => Volatile.Read(ref this.lost) == 1;
+    public bool IsLost => Volatile.Read(ref this.loss) is not null;
+
+    /// <summary>The AMQP error the first unexpected close carried, if it carried one.</summary>
+    public Error? LostError => Volatile.Read(ref this.loss)?.Error;
+
+    /// <summary>
+    /// True the first time it is called for a lost connection: whoever gets true reports the loss, so it
+    /// is reported once, whether the close's callback or the end of the transport's start sees it first.
+    /// </summary>
+    public bool TryClaimLossReport() => this.IsLost && Interlocked.Exchange(ref this.lossReported, 1) == 0;
 
     /// <summary>Whether the connection can send requests and events and receive replies.</summary>
     public bool IsReady =>
@@ -266,8 +276,6 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
         {
             // Best-effort: a lost connection is already closed, and one that does not answer is abandoned
         }
-
-        this.ReplySenders.Dispose();
     }
 
     private static async Task CloseQuietlyAsync(ReceiverLink receiverLink)
@@ -322,7 +330,10 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
     {
         amqpObject.AddClosedCallback((closed, error) =>
         {
-            if (Volatile.Read(ref this.closing) == 0 && Interlocked.Exchange(ref this.lost, 1) == 0)
+            // The loss and its error are set together, before the callback, so a reader that sees the
+            // connection lost also sees why
+            if (Volatile.Read(ref this.closing) == 0
+                && Interlocked.CompareExchange(ref this.loss, new Loss(error), null) is null)
             {
                 this.onLost(this, error);
             }
@@ -330,4 +341,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
 
         return amqpObject;
     }
+
+    // The first unexpected close, with the AMQP error it carried
+    private sealed record Loss(Error? Error);
 }

@@ -130,6 +130,46 @@ public class ActiveMQEventRoutingShould : ActiveMQTestBase
     }
 
     [TestMethod]
+    public async Task DeliverAnEventTypeAddedSinceTheQueueWasCreated()
+    {
+        // Arrange — a first release listened for TestEvent alone and has stopped; its event queue stays
+        var listenerName = UniqueAppName("listener");
+        string prefix;
+        await using (var firstRelease = await CreateHostAsync(
+            listenerName,
+            configureHandling: handling => handling
+                .ClearAllHandlers()
+                .HandleEvent<TestEvent, TestEventListener>()))
+        {
+            prefix = firstRelease.TopologyPrefix!;
+        }
+
+        // Act — the next release, same name and prefix, also listens for FireAndForgetEvent
+        await using var secondRelease = await CreateHostAsync(
+            listenerName,
+            prefix,
+            handling => handling
+                .ClearAllHandlers()
+                .HandleEvent<TestEvent, TestEventListener>()
+                .HandleEvent<FireAndForgetEvent, FireAndForgetEventListener>());
+        await using var publisherHost = await CreateHostAsync(
+            UniqueAppName("pub"), prefix, handling => handling.ClearAllHandlers());
+        await publisherHost.GetRequiredService<IMediator>().PublishAsync(new FireAndForgetEvent("added"));
+
+        // Assert — the existing queue's filter was updated to take the added type, which reached the listener
+        var listenerSpy = secondRelease.GetRequiredService<SpyLog>();
+        await listenerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(15));
+        listenerSpy.Invocations.Should().ContainSingle().Which.Should().Be(new FireAndForgetEvent("added"));
+
+        var appEventQueueName = TopologyNaming.CreateAppResourceName(
+            secondRelease.GetRequiredService<ConduitOptions>(), 256);
+        await using var management = await ArtemisManagement.ConnectAsync(ConnectionString!);
+        (await management.FilterAsync(appEventQueueName)).Should()
+            .Contain($"'{typeof(TestEvent).FullName}'")
+            .And.Contain($"'{typeof(FireAndForgetEvent).FullName}'");
+    }
+
+    [TestMethod]
     public async Task DeliverFireAndForgetEventToSubscribingApp()
     {
         // Arrange — [FireAndForget] only affects local listener execution (background),

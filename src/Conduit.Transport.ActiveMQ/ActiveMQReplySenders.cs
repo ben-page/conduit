@@ -8,14 +8,22 @@ namespace Conduit.Transport.ActiveMQ;
 /// attach and detach a link of its own.
 /// </summary>
 /// <remarks>
-/// A reply address is whatever the requester put in <c>ReplyTo</c>, so the cache holds at most 64 links:
-/// a new address beyond that closes the least recently used link first, however recently it was used,
-/// so no number of distinct addresses opens more. Adding one also closes links unused for 5 minutes,
-/// since a requester that went away leaves its link attached (Artemis keeps a link to a deleted temporary
-/// address, and a send on it succeeds and goes nowhere). The next reply to a requester whose link was
-/// closed either way attaches a new one.
+/// <para>
+/// A reply address is whatever the requester put in <c>ReplyTo</c>, so the cache holds at most 64 links.
+/// A new address beyond that evicts the least recently used link that no send is using, and adding one
+/// also evicts links unused for 5 minutes, since a requester that went away leaves its link attached
+/// (Artemis keeps a link to a deleted temporary address, and a send on it succeeds and goes nowhere).
+/// When every cached link has a send in flight, the reply gets a link of its own, closed after its send.
+/// </para>
+/// <para>
+/// A link is never closed under a send: each reply holds a <see cref="Lease"/> for the length of its
+/// send, eviction claims only a link no lease holds, and a link discarded after a failed send closes once
+/// the last lease on it is released. A failed reply is never retried (the base class acknowledges the
+/// request), so closing a link under a send would lose that reply for good. Evicted links are closed after
+/// the attach lock is released, without waiting, so a broker slow to answer a detach holds no other reply.
+/// </para>
 /// </remarks>
-internal sealed class ActiveMQReplySenders : IDisposable
+internal sealed class ActiveMQReplySenders
 {
     /// <summary>The most sender links cached at once.</summary>
     internal const int Capacity = 64;
@@ -27,8 +35,8 @@ internal sealed class ActiveMQReplySenders : IDisposable
     private readonly TimeProvider timeProvider = TimeProvider.System;
     private readonly ConcurrentDictionary<string, CachedSender> senders = new(StringComparer.Ordinal);
 
-    // Serializes attaching a link, and the evictions that make room for it, so the cap holds
-    private readonly SemaphoreSlim attaching = new(1, 1);
+    // Serializes attaching a cached link and the evictions that make room for it, so the cap holds
+    private readonly Lock attaching = new();
     private long uses;
 
     public ActiveMQReplySenders(Session session)
@@ -40,95 +48,113 @@ internal sealed class ActiveMQReplySenders : IDisposable
     internal int Count => this.senders.Count;
 
     /// <summary>
-    /// The sender link for <paramref name="replyAddress"/>, attaching one if none is cached. Making room
-    /// for a new one closes the links it evicts first, waiting for the broker's answer (at most 10 seconds
-    /// each), as a management link's close does before the next attach on the session.
+    /// A sender link for one reply to <paramref name="replyAddress"/>, held until the lease is released:
+    /// the cached one, a newly attached and cached one, or, when every cached link has a send in flight,
+    /// one for this reply alone.
     /// </summary>
-    public async ValueTask<SenderLink> GetAsync(string replyAddress)
+    public Lease Acquire(string replyAddress)
     {
-        if (this.TryGetOpen(replyAddress, out var link))
+        if (this.TryLeaseCached(replyAddress) is { } leased)
         {
-            return link;
+            return leased;
         }
 
-        await this.attaching.WaitAsync();
+        List<CachedSender> evicted = [];
         try
         {
-            if (this.TryGetOpen(replyAddress, out link))
+            lock (this.attaching)
             {
-                return link;
-            }
-
-            var now = this.timeProvider.GetTimestamp();
-            var evicted = new List<SenderLink>();
-
-            foreach (var (cachedAddress, cached) in this.senders)
-            {
-                if (this.timeProvider.GetElapsedTime(cached.LastUsed, now) > IdleLifetime
-                    && this.senders.TryRemove(KeyValuePair.Create(cachedAddress, cached)))
+                if (this.TryLeaseCached(replyAddress) is { } leasedMeanwhile)
                 {
-                    evicted.Add(cached.Link);
+                    return leasedMeanwhile;
                 }
-            }
 
-            while (this.senders.Count >= Capacity)
-            {
-                var (leastRecentAddress, leastRecent) = this.senders.MinBy(entry => entry.Value.Recency);
-                if (this.senders.TryRemove(KeyValuePair.Create(leastRecentAddress, leastRecent)))
+                var now = this.timeProvider.GetTimestamp();
+                foreach (var (cachedAddress, cached) in this.senders)
                 {
-                    evicted.Add(leastRecent.Link);
+                    if (this.timeProvider.GetElapsedTime(cached.LastUsed, now) > IdleLifetime)
+                    {
+                        this.TryEvict(cachedAddress, cached, evicted);
+                    }
                 }
+
+                while (this.senders.Count >= Capacity)
+                {
+                    var claimed = this.senders
+                        .OrderBy(entry => entry.Value.Recency)
+                        .Any(entry => this.TryEvict(entry.Key, entry.Value, evicted));
+
+                    if (!claimed)
+                    {
+                        // Every cached link has a send in flight: none is closed under it
+                        return new Lease(this, replyAddress, cached: null, this.Attach(replyAddress));
+                    }
+                }
+
+                var created = new CachedSender(this.Attach(replyAddress), now, Interlocked.Increment(ref this.uses));
+                created.TryAcquire();
+                this.senders[replyAddress] = created;
+                return new Lease(this, replyAddress, created, created.Link);
             }
-
-            await Task.WhenAll(evicted.Select(CloseQuietlyAsync));
-
-            var created = new CachedSender(
-                new SenderLink(this.session, ActiveMQTopologyManager.LinkName("reply"), replyAddress),
-                now,
-                Interlocked.Increment(ref this.uses));
-            this.senders[replyAddress] = created;
-            return created.Link;
         }
         finally
         {
-            this.attaching.Release();
+            // After the lock is released: a broker slow to answer a detach holds no other reply's attach
+            foreach (var cached in evicted)
+            {
+                cached.CloseOnce();
+            }
         }
     }
 
-    /// <summary>Discards <paramref name="link"/>, a cached link a send failed on.</summary>
-    public async Task EvictAsync(string replyAddress, SenderLink link)
-    {
-        if (this.senders.TryGetValue(replyAddress, out var cached)
-            && ReferenceEquals(cached.Link, link)
-            && this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached)))
-        {
-            await CloseQuietlyAsync(link);
-        }
-    }
+    private SenderLink Attach(string replyAddress) =>
+        new(this.session, ActiveMQTopologyManager.LinkName("reply"), replyAddress);
 
-    /// <inheritdoc />
-    public void Dispose() => this.attaching.Dispose();
-
-    // A cached link that is still open, marked used; a closed one is dropped
-    private bool TryGetOpen(string replyAddress, out SenderLink link)
+    // A lease on the cached, open link that no eviction has claimed, marking it used; null if there is none
+    private Lease? TryLeaseCached(string replyAddress)
     {
-        link = null!;
         if (!this.senders.TryGetValue(replyAddress, out var cached))
         {
-            return false;
+            return null;
         }
 
         if (cached.Link.IsClosed)
         {
-            this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached));
-            return false;
+            // The broker closed it: the next reply attaches a new one
+            this.Discard(replyAddress, cached);
+            return null;
+        }
+
+        if (!cached.TryAcquire())
+        {
+            return null;
         }
 
         cached.Touch(this.timeProvider.GetTimestamp(), Interlocked.Increment(ref this.uses));
-        link = cached.Link;
+        return new Lease(this, replyAddress, cached, cached.Link);
+    }
+
+    // Removes a link no lease holds, to be closed once the attach lock is released
+    private bool TryEvict(string replyAddress, CachedSender cached, List<CachedSender> evicted)
+    {
+        if (!cached.TryClaimIdle())
+        {
+            return false;
+        }
+
+        this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached));
+        evicted.Add(cached);
         return true;
     }
 
+    // Takes a link out of the cache; it closes once the last lease on it is released
+    private void Discard(string replyAddress, CachedSender cached)
+    {
+        this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached));
+        cached.MarkEvicting();
+    }
+
+    // Detaches, waiting at most 10 seconds for the broker's answer; never throws
     private static async Task CloseQuietlyAsync(SenderLink link)
     {
         try
@@ -146,10 +172,78 @@ internal sealed class ActiveMQReplySenders : IDisposable
         }
     }
 
-    private sealed class CachedSender(SenderLink link, long lastUsed, long recency)
+    /// <summary>
+    /// A sender link held for one reply's send. Release it, in a <c>finally</c>, when the send is over;
+    /// call <see cref="Discard"/> first if the send failed, so the next reply gets a fresh link.
+    /// </summary>
+    internal sealed class Lease
     {
+        private readonly ActiveMQReplySenders owner;
+        private readonly string replyAddress;
+        private readonly CachedSender? cached;
+        private int released;
+
+        internal Lease(ActiveMQReplySenders owner, string replyAddress, CachedSender? cached, SenderLink link)
+        {
+            this.owner = owner;
+            this.replyAddress = replyAddress;
+            this.cached = cached;
+            this.Link = link;
+        }
+
+        /// <summary>The link to send the reply on.</summary>
+        public SenderLink Link { get; }
+
+        /// <summary>Whether the link is a cached one, rather than one for this reply alone.</summary>
+        internal bool IsCached => this.cached is not null;
+
+        /// <summary>
+        /// Takes a cached link a send failed on out of the cache; other replies still sending on it
+        /// finish first, and it closes when the last of them is done.
+        /// </summary>
+        public void Discard()
+        {
+            if (this.cached is not null)
+            {
+                this.owner.Discard(this.replyAddress, this.cached);
+            }
+        }
+
+        /// <summary>Ends the hold, once: an uncached link is closed, a cached one stays for the next reply.</summary>
+        public void Release()
+        {
+            if (Interlocked.Exchange(ref this.released, 1) == 1)
+            {
+                return;
+            }
+
+            if (this.cached is null)
+            {
+                _ = CloseQuietlyAsync(this.Link);
+            }
+            else
+            {
+                this.cached.Release();
+            }
+        }
+    }
+
+    /// <summary>
+    /// A cached link with the sends holding it and its eviction state. Acquiring increments the count
+    /// and then reads the state; claiming sets the state and then reads the count; both through full
+    /// fences, so one of them always sees the other and no link is claimed with a send on it.
+    /// </summary>
+    internal sealed class CachedSender(SenderLink link, long lastUsed, long recency)
+    {
+        private const int Open = 0;
+        private const int Claiming = 1;
+        private const int Evicting = 2;
+
         private long lastUsed = lastUsed;
         private long recency = recency;
+        private int inFlight;
+        private int state = Open;
+        private int closing;
 
         public SenderLink Link { get; } = link;
 
@@ -163,6 +257,67 @@ internal sealed class ActiveMQReplySenders : IDisposable
         {
             Volatile.Write(ref this.lastUsed, now);
             Volatile.Write(ref this.recency, use);
+        }
+
+        /// <summary>Holds the link for a send, unless an eviction has claimed it.</summary>
+        public bool TryAcquire()
+        {
+            Interlocked.Increment(ref this.inFlight);
+            if (Volatile.Read(ref this.state) == Open)
+            {
+                return true;
+            }
+
+            this.Release();
+            return false;
+        }
+
+        /// <summary>Ends a send's hold; the last one on an evicted link closes it.</summary>
+        public void Release()
+        {
+            if (Interlocked.Decrement(ref this.inFlight) == 0 && Volatile.Read(ref this.state) == Evicting)
+            {
+                this.CloseOnce();
+            }
+        }
+
+        /// <summary>Claims the link for eviction, only while no send holds it.</summary>
+        public bool TryClaimIdle()
+        {
+            if (Interlocked.CompareExchange(ref this.state, Claiming, Open) != Open)
+            {
+                return false;
+            }
+
+            if (Volatile.Read(ref this.inFlight) == 0)
+            {
+                // Evicting, or already so through a discard
+                Interlocked.CompareExchange(ref this.state, Evicting, Claiming);
+                return true;
+            }
+
+            // A send took it meanwhile: keep it (a discard meanwhile keeps it evicting)
+            Interlocked.CompareExchange(ref this.state, Open, Claiming);
+            return false;
+        }
+
+        /// <summary>Marks the link evicted whatever holds it; it closes when no send holds it any more.</summary>
+        public void MarkEvicting()
+        {
+            Interlocked.Exchange(ref this.state, Evicting);
+            if (Volatile.Read(ref this.inFlight) == 0)
+            {
+                this.CloseOnce();
+            }
+        }
+
+        /// <summary>Starts closing the link, once, without waiting for it.</summary>
+        public void CloseOnce()
+        {
+            if (Interlocked.Exchange(ref this.closing, 1) == 0)
+            {
+                _ = CloseQuietlyAsync(this.Link);
+            }
         }
     }
 }
