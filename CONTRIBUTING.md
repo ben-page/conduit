@@ -53,6 +53,11 @@ change touches locally.
 have: behavior tests, the universal topology tests, transport-specific tests, and container-free per-endpoint
 registration and configuration-binding tests. A new transport must implement the full matrix.
 
+## Documentation
+
+The guides in `docs/` are published as a documentation site built from them; [site/README.md](site/README.md) says
+how to preview it locally, and how a new guide gets its place in the sidebar.
+
 ## Code style
 
 - Explicit variable names: `serviceProvider`, not `sp`; `cancellationToken`, not `ct`.

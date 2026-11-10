@@ -1,0 +1,74 @@
+name: Docs
+
+# Build the documentation site (site/, Astro + Starlight, its pages copied from docs/) and, on main, publish it to
+# GitHub Pages at the repository's default Pages URL. A pull request that touches the docs builds the site, which
+# also checks every internal link and heading anchor, without deploying it.
+#
+# Pages must be set to deploy from GitHub Actions (Settings → Pages → Build and deployment → Source).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'site/**'
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'site/**'
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push supersedes a queued one, but a deployment already running finishes.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      # prebuild runs scripts/prepare-docs.mjs, which copies docs/ into src/content/docs/.
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v5
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
