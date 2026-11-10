@@ -278,7 +278,7 @@ The support reference is a structured field, `DispatchError.Reference` (`referen
 
 **A caller's cancellation is not an error.** When the caller's own cancellation token fires mid-dispatch (an HTTP client disconnects, so `RequestAborted` is cancelled, or a hub connection closes), `HandleWireRequest` rethrows the `OperationCanceledException`. It writes no answer (nobody is waiting for one), no Error log entry and no support reference, and the dispatch's activity is marked as failed. An `OperationCanceledException` thrown while the caller's token is still live, such as a handler's own timeout, is an unexpected failure like any other.
 
-`ConduitException.Reference` (init-only, never part of the client data) lets code that wraps a failed inner dispatch (a batch item) keep the inner reference: `DispatchResult.Fail(ConduitException)` copies it onto the error. `ConduitRuntime.UnwrapReply` throws `RemoteDispatchException` (an `InvalidOperationException`) whose `Reference` is the remote error's.
+`ConduitException.Reference` (init-only, never part of the client data) lets code that wraps a failed inner dispatch (a batch item) keep the inner reference: `DispatchResult.Fail(ConduitException)` copies it onto the error. `ConduitRuntime.UnwrapReply` throws `RemoteDispatchException` (an `InvalidOperationException`) whose `Reference` is the remote error's and whose `Code` is the remote error's `ErrorCode`, with the status its server declared: `Code == ErrorCode.InternalError` tells a remote unexpected failure from a refusal.
 
 ### Translating an unexpected exception
 

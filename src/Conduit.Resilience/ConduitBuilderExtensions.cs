@@ -1,6 +1,7 @@
 using Conduit.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Polly;
+using Polly.Telemetry;
 
 namespace Conduit.Resilience;
 
@@ -30,6 +31,16 @@ public static class ConduitBuilderExtensions
         // Always register the pipeline registry so ResilienceBehavior can be resolved
         // even when no pipelines are configured (pass-through mode).
         builder.Services.AddResiliencePipelineRegistry<string>();
+
+        // Every pipeline the registry builds reports to these telemetry options, so the listener sees each retry
+        // Polly makes (its OnRetry event) and observes the ones made inside a Conduit dispatch as RetryAttempted.
+        builder.Services.Configure<TelemetryOptions>(options =>
+        {
+            if (!options.TelemetryListeners.Contains(RetryObservationListener.Instance))
+            {
+                options.TelemetryListeners.Add(RetryObservationListener.Instance);
+            }
+        });
 
         var resilienceBuilder = new ConduitResilienceBuilder(builder.Services);
         configure?.Invoke(resilienceBuilder);

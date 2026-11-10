@@ -56,12 +56,14 @@ public class ConduitResilienceBuilder
     }
 
     /// <summary>
-    /// Registers a resilience pipeline for all request types whose full name starts with
-    /// <paramref name="namespacePrefix"/>. Applied at dispatch time when resolving a pipeline
-    /// for a type in the given namespace. The pipeline key is the namespace prefix itself.
+    /// Registers a resilience pipeline for every message type in the namespace <paramref name="namespacePrefix"/> and
+    /// its sub-namespaces, matched on whole segments: <c>"MyApp.Orders"</c> covers <c>MyApp.Orders.CreateOrder</c> and
+    /// <c>MyApp.Orders.Commands.CancelOrder</c>, never <c>MyApp.OrdersArchive.Purge</c>. When several registered
+    /// namespaces enclose a type, the longest wins. A pipeline registered for the type itself takes precedence, and
+    /// any namespace pipeline takes precedence over the default. The pipeline key is the namespace itself.
     /// </summary>
     /// <param name="namespacePrefix">
-    /// The namespace prefix to match (e.g. <c>"MyApp.Orders"</c>).
+    /// The namespace to match (e.g. <c>"MyApp.Orders"</c>).
     /// </param>
     /// <param name="configure">Callback to build the resilience pipeline.</param>
     /// <returns>This builder for chaining.</returns>

@@ -12,7 +12,7 @@ namespace Conduit.Resilience;
 public static class ResilienceBehavior
 {
     /// <summary>
-    /// The pipeline key used when no type-specific pipeline is registered.
+    /// The pipeline key used when no type-specific or namespace pipeline is registered.
     /// Register a pipeline under this key to apply it as a catch-all fallback.
     /// </summary>
     internal const string DefaultPipelineKey = "Conduit.Default";
@@ -30,18 +30,52 @@ public static class ResilienceBehavior
     /// </summary>
     public static readonly ResiliencePropertyKey<string?> ConversationIdKey =
         new("Conduit.ConversationId");
+
+    /// <summary>
+    /// Set on every <see cref="ResilienceContext"/> <see cref="ResilienceBehavior{TRequest,TResult}"/> executes a
+    /// pipeline with, so <see cref="RetryObservationListener"/> observes only the retries of a Conduit dispatch.
+    /// </summary>
+    internal static readonly ResiliencePropertyKey<bool> DispatchKey = new("Conduit.Dispatch");
+
+    /// <summary>
+    /// The keys a pipeline for <paramref name="requestType"/> is looked up under, most specific first: its full name,
+    /// then each enclosing namespace on whole segments from the longest (<c>A.B.C</c>, <c>A.B</c>, <c>A</c>), then
+    /// <see cref="DefaultPipelineKey"/>.
+    /// </summary>
+    internal static string[] PipelineKeys(Type requestType)
+    {
+        var keys = new List<string> { requestType.FullName! };
+        for (var ns = requestType.Namespace; !string.IsNullOrEmpty(ns); ns = EnclosingNamespace(ns))
+        {
+            keys.Add(ns);
+        }
+
+        keys.Add(DefaultPipelineKey);
+        return [.. keys];
+    }
+
+    private static string? EnclosingNamespace(string ns)
+    {
+        var lastDot = ns.LastIndexOf('.');
+        return lastDot < 0 ? null : ns[..lastDot];
+    }
 }
 
 /// <summary>
-/// <see cref="IPipelineBehavior{TRequest,TResult}"/> that wraps dispatch in a Polly v8
-/// resilience pipeline. Pipelines are resolved by type name first, then by the default
-/// key <c>"Conduit.Default"</c>. If neither is found, the next delegate is called directly.
+/// <see cref="IPipelineBehavior{TRequest,TResult}"/> that wraps dispatch in a Polly v8 resilience pipeline. The
+/// pipeline is the first one registered under, in order: the request type's full name, its namespace or the longest
+/// registered enclosing namespace, and the default key <c>"Conduit.Default"</c>. Under each key a typed
+/// <see cref="ResiliencePipeline{T}"/> is preferred to a non-generic <see cref="ResiliencePipeline"/>. If none is
+/// registered, the next delegate is called directly.
 /// </summary>
 /// <typeparam name="TRequest">The command or query type.</typeparam>
 /// <typeparam name="TResult">The result type returned by the handler.</typeparam>
 public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TRequest, TResult>
 {
-    private static readonly string TypeKey = typeof(TRequest).FullName!;
+    // The lookup order is a pure function of TRequest, so it is computed once per closed type. What is registered under
+    // each key is asked of the provider on every dispatch: the provider belongs to one host (and caches the pipelines it
+    // builds), and a static cache of the resolved pipeline would hand one host's pipeline to another in the same process.
+    private static readonly string[] PipelineKeys = ResilienceBehavior.PipelineKeys(typeof(TRequest));
 
     private readonly ResiliencePipelineProvider<string> pipelineProvider;
 
@@ -62,116 +96,57 @@ public sealed class ResilienceBehavior<TRequest, TResult> : IPipelineBehavior<TR
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        if (this.TryResolveTypedPipeline(out var typedPipeline))
+        if (!this.TryResolvePipeline(out var typedPipeline, out var pipeline))
         {
-            var context = ResilienceContextPool.Shared.Get(cancellationToken);
-            try
-            {
-                EnrichContext(context);
-                var attempt = 0;
-                return await typedPipeline!.ExecuteAsync(async _ =>
-                {
-                    attempt++;
-                    try
-                    {
-                        return await next();
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageContext.Observe(new RetryAttempted(
-                            attempt,
-                            ex.Message,
-                            ex.GetType().Name,
-                            null));
-                        throw;
-                    }
-                }, context);
-            }
-            finally
-            {
-                ResilienceContextPool.Shared.Return(context);
-            }
+            return await next();
         }
 
-        if (this.TryResolveNonGenericPipeline(out var nonGenericPipeline))
+        var context = ResilienceContextPool.Shared.Get(cancellationToken);
+        try
         {
-            var context = ResilienceContextPool.Shared.Get(cancellationToken);
-            try
-            {
-                EnrichContext(context);
-                var attempt = 0;
-                return await nonGenericPipeline!.ExecuteAsync(async _ =>
-                {
-                    attempt++;
-                    try
-                    {
-                        return await next();
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageContext.Observe(new RetryAttempted(
-                            attempt,
-                            ex.Message,
-                            ex.GetType().Name,
-                            null));
-                        throw;
-                    }
-                }, context);
-            }
-            finally
-            {
-                ResilienceContextPool.Shared.Return(context);
-            }
+            EnrichContext(context);
+            return typedPipeline is not null
+                ? await typedPipeline.ExecuteAsync(static async (_, nextStep) => await nextStep(), context, next)
+                : await pipeline!.ExecuteAsync(static async (_, nextStep) => await nextStep(), context, next);
         }
-
-        return await next();
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
+        }
     }
 
     /// <summary>
-    /// Tries to resolve a typed <see cref="ResiliencePipeline{TResult}"/> by type key,
-    /// then by the default key. Typed pipelines are registered via
-    /// <c>AddResiliencePipeline&lt;string, TResult&gt;</c>.
+    /// Walks <see cref="PipelineKeys"/>, most specific first, and takes the first key with a pipeline: a typed
+    /// <see cref="ResiliencePipeline{T}"/> (registered via <c>AddResiliencePipeline&lt;string, TResult&gt;</c>), else a
+    /// non-generic <see cref="ResiliencePipeline"/> (registered via <c>AddResiliencePipeline(key, builder =&gt; ...)</c>,
+    /// as <see cref="ConduitResilienceBuilder"/> does).
     /// </summary>
-    private bool TryResolveTypedPipeline(out ResiliencePipeline<TResult>? pipeline)
+    private bool TryResolvePipeline(out ResiliencePipeline<TResult>? typedPipeline, out ResiliencePipeline? pipeline)
     {
-        if (this.pipelineProvider.TryGetPipeline<TResult>(TypeKey, out pipeline))
+        foreach (var key in PipelineKeys)
         {
-            return true;
+            if (this.pipelineProvider.TryGetPipeline<TResult>(key, out typedPipeline))
+            {
+                pipeline = null;
+                return true;
+            }
+
+            if (this.pipelineProvider.TryGetPipeline(key, out pipeline))
+            {
+                typedPipeline = null;
+                return true;
+            }
         }
 
-        if (this.pipelineProvider.TryGetPipeline<TResult>(ResilienceBehavior.DefaultPipelineKey, out pipeline))
-        {
-            return true;
-        }
-
-        pipeline = null;
-        return false;
-    }
-
-    /// <summary>
-    /// Tries to resolve a non-generic <see cref="ResiliencePipeline"/> by type key,
-    /// then by the default key. Non-generic pipelines are registered via
-    /// <c>AddResiliencePipeline(key, builder =&gt; ...)</c>, as used by
-    /// <see cref="ConduitResilienceBuilder"/>.
-    /// </summary>
-    private bool TryResolveNonGenericPipeline(out ResiliencePipeline? pipeline)
-    {
-        if (this.pipelineProvider.TryGetPipeline(TypeKey, out pipeline))
-        {
-            return true;
-        }
-
-        if (this.pipelineProvider.TryGetPipeline(ResilienceBehavior.DefaultPipelineKey, out pipeline))
-        {
-            return true;
-        }
-
+        typedPipeline = null;
         pipeline = null;
         return false;
     }
 
     private static void EnrichContext(ResilienceContext context)
     {
+        context.Properties.Set(ResilienceBehavior.DispatchKey, true);
+
         var messageContext = MessageContext.Current;
         if (messageContext is null)
         {

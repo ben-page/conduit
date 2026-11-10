@@ -236,6 +236,27 @@ public sealed partial class WireRequestFailureShould
         thrown.Message.Should().Contain("ref-1").And.Contain("InternalError");
     }
 
+    [TestMethod]
+    [DataRow("{\"code\":\"Conflict\",\"message\":\"taken\",\"status\":409}", "Conflict", 409)]
+    [DataRow("{\"code\":\"InternalError\",\"message\":\"An unexpected error occurred.\",\"status\":500}", "InternalError", 500)]
+    [DataRow("{\"code\":\"RateLimited\",\"message\":\"slow down\",\"status\":429}", "RateLimited", 429)]
+    [DataRow("{\"code\":\"NotFound\",\"message\":\"An older server sends no status.\"}", "NotFound", 404)]
+    public void PutTheRemoteCodeOnTheExceptionUnwrapReplyThrows(string error, string code, int status)
+    {
+        // Arrange
+        var reply = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
+            $"{{\"error\":{error}}}", ConduitRuntime.JsonOptions);
+
+        // Act
+        var act = () => ConduitRuntime.UnwrapReply(reply);
+
+        // Assert -- a consumer's own code keeps the status its server declared; one from a server predating the
+        // status takes the built-in code's.
+        var thrown = act.Should().Throw<RemoteDispatchException>().Which;
+        thrown.Code.Value.Should().Be(code);
+        thrown.Code.HttpStatusCode.Should().Be(status);
+    }
+
     private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
     {
         public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];

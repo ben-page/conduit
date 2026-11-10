@@ -601,20 +601,33 @@ public static partial class ConduitRuntime
 
     /// <summary>
     /// Checks a reply <see cref="DispatchResult{T}"/> for errors and returns the data.
-    /// Throws <see cref="RemoteDispatchException"/> (an <see cref="InvalidOperationException"/>, carrying the reference) if the result contains an error.
+    /// Throws <see cref="RemoteDispatchException"/> (an <see cref="InvalidOperationException"/>, carrying the code and the
+    /// reference) if the result contains an error.
     /// Used by all transports after receiving a reply from a remote endpoint.
     /// </summary>
     public static object? UnwrapReply(DispatchResult<JsonElement?>? result)
     {
-        if (result?.Error is not null)
+        if (result?.Error is { } error)
         {
-            var reference = result.Error.Reference is null ? string.Empty : $" (reference {result.Error.Reference})";
+            var reference = error.Reference is null ? string.Empty : $" (reference {error.Reference})";
             throw new RemoteDispatchException(
-                $"Remote dispatch failed: [{result.Error.Code}] {result.Error.Message}{reference}", result.Error.Reference);
+                RemoteErrorCode(error),
+                $"Remote dispatch failed: [{error.Code}] {error.Message}{reference}",
+                error.Reference);
         }
 
         return result?.Data;
     }
+
+    /// <summary>
+    /// The <see cref="ErrorCode"/> a remote error names: its code with the status its server declared, or the built-in
+    /// code's status from a server predating <see cref="DispatchError.Status"/> (the HTTP endpoint's own rule). An error
+    /// that names no code is no refusal the server chose, so it reads as <see cref="ErrorCode.InternalError"/>.
+    /// </summary>
+    private static ErrorCode RemoteErrorCode(DispatchError error) =>
+        string.IsNullOrWhiteSpace(error.Code)
+            ? ErrorCode.InternalError
+            : new ErrorCode(error.Code, error.Status > 0 ? error.Status : ErrorCode.ToHttpStatusCode(error.Code));
 
     // Error-level logs
     private static readonly Action<ILogger, string, string, Exception?> LogTranslatorFailed =

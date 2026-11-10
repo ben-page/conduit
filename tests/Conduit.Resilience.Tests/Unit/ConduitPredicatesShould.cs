@@ -1,6 +1,8 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Exceptions;
 using Conduit.Resilience;
+using Conduit.Runtime;
 using Polly;
 using Polly.Retry;
 
@@ -51,12 +53,49 @@ public class ConduitPredicatesShould
     }
 
     [TestMethod]
-    public async Task TransientErrorsHandlesInvalidOperationException()
+    public async Task TransientErrorsDoesNotHandleInvalidOperationException()
     {
         // Arrange / Act
         var attempts = await ExecuteWithRetryAsync(
             ConduitPredicates.TransientErrors<object>(),
             () => throw new InvalidOperationException());
+
+        // Assert
+        attempts.Should().Be(1);
+    }
+
+    [TestMethod]
+    [DataRow("NotFound", 404)]
+    [DataRow("Unauthorized", 401)]
+    [DataRow("Forbidden", 403)]
+    [DataRow("Conflict", 409)]
+    [DataRow("PreconditionFailed", 412)]
+    [DataRow("BadRequest", 400)]
+    [DataRow("ContractMismatch", 400)]
+    public async Task NotRetryARemoteRefusal(string code, int status)
+    {
+        // Arrange
+        var reply = RemoteReply(code, status);
+
+        // Act
+        var attempts = await ExecuteWithRetryAsync(
+            ConduitPredicates.TransientErrors<object>(),
+            () => Task.FromResult(ConduitRuntime.UnwrapReply(reply)));
+
+        // Assert
+        attempts.Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task RetryARemoteInternalError()
+    {
+        // Arrange
+        var reply = RemoteReply("InternalError", 500);
+
+        // Act
+        var attempts = await ExecuteWithRetryAsync(
+            ConduitPredicates.TransientErrors<object>(),
+            () => Task.FromResult(ConduitRuntime.UnwrapReply(reply)));
 
         // Assert
         attempts.Should().Be(2);
@@ -121,4 +160,10 @@ public class ConduitPredicatesShould
         // Assert
         attempts.Should().Be(1);
     }
+
+    /// <summary>A remote endpoint's error reply as it arrives on the wire, before <see cref="ConduitRuntime.UnwrapReply"/> reads it.</summary>
+    private static DispatchResult<JsonElement?> RemoteReply(string code, int status) =>
+        JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
+            $"{{\"error\":{{\"code\":\"{code}\",\"message\":\"refused\",\"status\":{status}}}}}",
+            ConduitRuntime.JsonOptions)!;
 }

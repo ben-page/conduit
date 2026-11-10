@@ -190,16 +190,20 @@ builder.Services.AddConduit(conduit =>
         resilience.AddDefaultPipeline(pipeline => pipeline
             .AddRetry(new RetryStrategyOptions
             {
-                ShouldHandle = ConduitPredicates.TransientErrors(),
+                ShouldHandle = ConduitPredicates.TransientErrors<object>(),
                 MaxRetryAttempts = 3,
                 BackoffType = DelayBackoffType.Exponential,
             }));
+
+        // Per-namespace override: every message type in MyApp.Billing and its sub-namespaces
+        resilience.AddPipelineForNamespace("MyApp.Billing", pipeline => pipeline
+            .AddTimeout(TimeSpan.FromSeconds(10)));
 
         // Per-type override
         resilience.AddPipelineForType<SyncInventory>(pipeline => pipeline
             .AddCircuitBreaker(new CircuitBreakerStrategyOptions
             {
-                ShouldHandle = ConduitPredicates.TransientErrors(),
+                ShouldHandle = ConduitPredicates.TransientErrors<object>(),
             }));
     });
 });
@@ -209,22 +213,31 @@ builder.Services.AddConduit(conduit =>
 
 `ConduitPredicates` provides pre-built predicates that understand Conduit's exception hierarchy:
 
-- **`TransientErrors<T>()`** — `TimeoutException`, `InvalidOperationException`. Does NOT handle `NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException` (business errors).
+- **`TransientErrors<T>()`** — `TimeoutException` (a broker request that gets no reply within its `ResponseTimeout` throws one), and a `RemoteDispatchException` whose `Code` is `ErrorCode.InternalError` (the endpoint a request was routed to failed unexpectedly). Does NOT handle a remote refusal (a `RemoteDispatchException` with any other code: `NotFound`, `Conflict`, `Unauthorized`, `PreconditionFailed`, ...), a local `ConduitException` (`NotFoundException`, `UnauthorizedException`, `ConflictException`, `PreconditionFailedException`, ...), or any other `InvalidOperationException`: resending those gets the same answer.
 - **`AllErrors<T>()`** — everything except `OperationCanceledException`.
+
+`T` is the pipeline's result type. The non-generic `RetryStrategyOptions` and `CircuitBreakerStrategyOptions` that `AddDefaultPipeline`, `AddPipelineForNamespace` and `AddPipelineForType<T>` take are the `object` variants, so pass `TransientErrors<object>()`.
 
 Compose with your own: chain additional `.Handle<MyException>()` calls on the returned builder.
 
 ### Pipeline Resolution
 
 1. Type-specific pipeline (registered via `AddPipelineForType<T>`)
-2. Default pipeline (registered via `AddDefaultPipeline`)
-3. Pass-through (no wrapping — `next()` called directly)
+2. Namespace pipeline (registered via `AddPipelineForNamespace`): the type's namespace, else the longest registered namespace enclosing it, matched on whole segments (`"MyApp.Orders"` covers `MyApp.Orders.Commands.CreateOrder`, never `MyApp.OrdersArchive.Purge`)
+3. Default pipeline (registered via `AddDefaultPipeline`)
+4. Pass-through (no wrapping — `next()` called directly)
+
+A pipeline is built once per key and shared by every message that resolves to it, so a stateful strategy is shared too. The `Conduit.Default` pipeline is one instance for every request type and event without a pipeline of its own: a circuit breaker in it counts all of their failures together, and when one message type's failures open it, every other message type falling back to the default is rejected until it closes. A namespace pipeline's breaker is likewise shared by its namespace. Give a message type its own breaker with `AddPipelineForType<T>` when it should fail on its own.
+
+The pipeline wraps an event's dispatch as well, around all of its local listeners at once. A listener's failure does not reach it: every listener runs, and their failures are thrown together as an `EventListenerException` after the pipeline has returned, so Polly never retries a failed listener. What it does retry is a failure thrown by a behavior inside it, and that retry runs every listener again, including those that already succeeded.
 
 The resilience behavior is automatically the outermost pipeline behavior, wrapping logging, validation, and other user behaviors. Because the generated `Validate()` runs innermost, validation failures (400 `ConduitException`s) now reach the resilience behavior: `ConduitPredicates.AllErrors<T>()` or Polly's default `ShouldHandle` would retry them and count them toward a circuit breaker. Use `ConduitPredicates.TransientErrors<T>()`, or exclude 4xx `ConduitException`s in a custom predicate.
 
 ### MessageContext Enrichment
 
 `MessageContext.Current` is automatically injected into Polly's `ResilienceContext` during execution. Access via `ResilienceBehavior.MessageIdKey` and `ResilienceBehavior.ConversationIdKey` in retry/circuit-breaker event handlers.
+
+Each retry Polly makes is observed on the dispatch's `MessageContext` as a `RetryAttempted` (the attempt that failed, numbered from 1, its exception's message and full type name, and the delay before the retry in ms), so the dispatch's audit record lists its retries. A failure the predicate does not handle, and the last attempt of an exhausted retry, are not retries and are not observed.
 
 ---
 

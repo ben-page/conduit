@@ -1,4 +1,5 @@
 using Conduit.Exceptions;
+using Conduit.Runtime;
 using Polly;
 
 namespace Conduit.Resilience;
@@ -11,11 +12,14 @@ namespace Conduit.Resilience;
 public static class ConduitPredicates
 {
     /// <summary>
-    /// Handles transient infrastructure failures (<see cref="TimeoutException"/> and
-    /// <see cref="InvalidOperationException"/>) that are safe to retry.
-    /// Does not handle <see cref="ConduitException"/> subtypes — those are business
-    /// outcomes (<see cref="NotFoundException"/>, <see cref="UnauthorizedException"/>, <see cref="ConflictException"/>,
-    /// <see cref="PreconditionFailedException"/>) and should not be retried.
+    /// Handles the failures a rerun can fix: a <see cref="TimeoutException"/> (a broker request with no reply within
+    /// its <c>ResponseTimeout</c> throws one), and a <see cref="RemoteDispatchException"/> whose
+    /// <see cref="RemoteDispatchException.Code"/> is <see cref="ErrorCode.InternalError"/> (the remote endpoint failed
+    /// unexpectedly). Does not handle a remote refusal (a <see cref="RemoteDispatchException"/> with any other code:
+    /// <c>NotFound</c>, <c>Conflict</c>, <c>Unauthorized</c>, <c>PreconditionFailed</c>, ...), a local
+    /// <see cref="ConduitException"/> (<see cref="NotFoundException"/>, <see cref="UnauthorizedException"/>,
+    /// <see cref="ConflictException"/>, <see cref="PreconditionFailedException"/>, ...) or any other
+    /// <see cref="InvalidOperationException"/>: those are outcomes, and resending them gets the same answer.
     /// </summary>
     /// <typeparam name="T">
     /// The result type of the resilience pipeline. For exception-only predicates the
@@ -25,7 +29,7 @@ public static class ConduitPredicates
     public static PredicateBuilder<T> TransientErrors<T>() =>
         new PredicateBuilder<T>()
             .Handle<TimeoutException>()
-            .Handle<InvalidOperationException>();
+            .Handle<RemoteDispatchException>(exception => exception.Code == ErrorCode.InternalError);
 
     /// <summary>
     /// Handles all exceptions except <see cref="OperationCanceledException"/>.
