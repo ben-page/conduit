@@ -8,7 +8,7 @@ namespace Conduit.Sample.Todos;
 /// <summary>
 /// REST API sample demonstrating Conduit's RESTful endpoint mapping.
 /// Each message type maps to a conventional HTTP route — no envelope dispatch needed.
-/// Run and open http://localhost:5000/swagger to interact with the API.
+/// Run and open https://localhost:49877/swagger to interact with the API.
 /// </summary>
 public partial class Program
 {

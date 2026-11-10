@@ -1,4 +1,4 @@
-﻿using Conduit.Attributes;
+using Conduit.Attributes;
 using Conduit.Generated;
 using Conduit.Transport.Http;
 using Conduit.Transport.SignalR;

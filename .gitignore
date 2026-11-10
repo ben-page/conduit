@@ -4,5 +4,12 @@ obj/
 *.suo
 .vs/
 *.DotSettings.user
+*.slnLaunch.user
 .claude/
 docs/superpowers/
+.superpowers/
+TestResults/
+artifacts/
+.nuget/
+.npm/
+node_modules/
