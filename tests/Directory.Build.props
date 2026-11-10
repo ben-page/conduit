@@ -11,8 +11,9 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
 
-  <!-- JUnit XML logger so every test project emits TestResults.xml that the
-       CI workflow (.github/workflows/ci.yml) uploads as a run artifact. Declared
+  <!-- JUnit XML logger so every test project emits {assembly}.junit.xml (into
+       ./TestResults/ when run from the root) that the CI workflow
+       (.github/workflows/ci.yml) uploads as a run artifact. Declared
        once here; no per-project PackageReference needed. -->
   <ItemGroup>
     <PackageReference Include="JunitXml.TestLogger" />

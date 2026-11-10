@@ -72,7 +72,9 @@ jobs:
       #
       # global.json selects Microsoft.Testing.Platform, so this is MTP syntax,
       # not VSTest: the JUnit report is `--report-spekt-junit` (JunitXml.TestLogger
-      # 8+), written per project to bin/Release/net10.0/TestResults/TestResults.xml.
+      # 8+). Run from the root, every project writes into ./TestResults/, so the
+      # file is named per assembly: one fixed name had each project overwrite the
+      # last, and the upload looked under tests/ and found nothing.
       # `--ignore-exit-code 8` ("zero tests ran"): the filtered-out broker
       # projects run nothing, and Conduit.Persistence.IntegrationTests skips
       # every test as inconclusive without a container runtime. A real failure
@@ -81,14 +83,14 @@ jobs:
         run: >
           dotnet test --no-build --configuration Release
           --filter "FullyQualifiedName!~Conduit.Transport.ActiveMQ.Tests&FullyQualifiedName!~Conduit.Transport.AmazonSqs.Tests&FullyQualifiedName!~Conduit.Transport.AzureServiceBus.Tests&FullyQualifiedName!~Conduit.Transport.RabbitMQ.Tests"
-          --report-spekt-junit "MethodFormat=Class;FailureBodyFormat=Verbose"
+          --report-spekt-junit "LogFileName={assembly}.junit.xml;MethodFormat=Class;FailureBodyFormat=Verbose"
           --ignore-exit-code 8
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results-dotnet
-          path: tests/**/TestResults/
+          path: TestResults/*.junit.xml
           retention-days: 7
 
   transport-ts:
