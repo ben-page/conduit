@@ -4,6 +4,7 @@ using Conduit.Runtime;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.Http;
@@ -13,6 +14,11 @@ namespace Conduit.Transport.Http;
 /// </summary>
 public static class EndpointRouteBuilderExtensions
 {
+    private static readonly Action<ILogger, string, string, Exception?> LogFailureObserverFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(100, "FailureObserverFailed"),
+            "Inbound failure observer '{Observer}' threw for a failed message of type '{MessageType}'; the answer and "
+                + "the other observers are unaffected");
+
     /// <summary>
     /// Maps POST endpoints for Conduit wire dispatch. The message type is read from the
     /// <c>X-Conduit-Type</c> header and the request body contains the plain serialized message.
@@ -21,7 +27,9 @@ public static class EndpointRouteBuilderExtensions
     /// (<see cref="EventListenerException"/>), or whose dispatch failed outside its listeners
     /// (<see cref="EventDispatchException"/>: a pipeline behavior, the listeners' resolution, a gate that threw), is
     /// answered as <c>/dispatch</c> answers an unexpected failure: <c>InternalError</c> (500), the fixed message and the
-    /// support reference it was logged under.
+    /// support reference it was logged under. Every unexpected failure is reported to each registered
+    /// <see cref="IInboundFailureObserver"/> before it is answered (the inbox releases its record, so a retry under the
+    /// same MessageId runs); a refusal is not.
     /// </summary>
     /// <remarks>
     /// The dispatch's correlation ids are the server's unless <paramref name="trustCallerContext"/> says otherwise:
@@ -60,14 +68,21 @@ public static class EndpointRouteBuilderExtensions
             HttpRequest httpRequest,
             IWireMediator mediator,
             IEnumerable<IDispatchContextEnricher> enrichers,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
             HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties);
 
+            var result = await mediator.HandleWireRequestAsync(envelope, cancellationToken);
+            if (result.Error is { } error && error.Code == ErrorCode.InternalError.Value)
+            {
+                await ReportFailureAsync(httpRequest.HttpContext, loggerFactory, envelope.Type, error);
+            }
+
             // The edge where the answer leaves the server for a person: the refusal is written in the reader's language here.
             return Answer(RefusalRendering.RenderResult(
-                await mediator.HandleWireRequestAsync(envelope, cancellationToken),
+                result,
                 httpRequest.HttpContext.RequestServices,
                 MessageContext.Current));
         });
@@ -100,9 +115,11 @@ public static class EndpointRouteBuilderExtensions
                 // a reference minted and logged here with the first failure, never the exception. Left to ASP.NET it was
                 // a bare 500 with no reference, a second stack in the log, and the listener's message and stack on a
                 // developer exception page.
+                var unexpected = ConduitRuntime.UnexpectedEventFailure(
+                    loggerFactory.CreateLogger(typeof(EndpointRouteBuilderExtensions)), envelope.Type, failure);
+                await ReportFailureAsync(httpRequest.HttpContext, loggerFactory, envelope.Type, unexpected.Error!);
                 return Answer(RefusalRendering.RenderResult(
-                    ConduitRuntime.UnexpectedEventFailure(
-                        loggerFactory.CreateLogger(typeof(EndpointRouteBuilderExtensions)), envelope.Type, failure),
+                    unexpected,
                     httpRequest.HttpContext.RequestServices,
                     MessageContext.Current));
             }
@@ -110,8 +127,10 @@ public static class EndpointRouteBuilderExtensions
             {
                 // The dispatch failed outside the listeners (a behavior, the listeners' resolution, a gate that threw),
                 // logged with the reference: answered as /dispatch answers an unexpected failure, never the exception.
+                var unexpected = ConduitRuntime.UnexpectedFailure(failure.Reference);
+                await ReportFailureAsync(httpRequest.HttpContext, loggerFactory, envelope.Type, unexpected.Error!);
                 return Answer(RefusalRendering.RenderResult(
-                    ConduitRuntime.UnexpectedFailure(failure.Reference),
+                    unexpected,
                     httpRequest.HttpContext.RequestServices,
                     MessageContext.Current));
             }
@@ -120,6 +139,44 @@ public static class EndpointRouteBuilderExtensions
         });
 
         return group;
+    }
+
+    /// <summary>
+    /// Reports an unexpected failure to every <see cref="IInboundFailureObserver"/> in the request's services, each in its
+    /// own guard: one that throws (or observers that cannot be resolved) is logged at Warning, EventId 100
+    /// <c>FailureObserverFailed</c>, and never changes the answer. The observers get <see cref="CancellationToken.None"/>:
+    /// a caller that has gone still retries, which is what the inbox's release is for.
+    /// </summary>
+    private static async Task ReportFailureAsync(
+        HttpContext httpContext, ILoggerFactory loggerFactory, string messageType, DispatchError error)
+    {
+        var logger = loggerFactory.CreateLogger(typeof(EndpointRouteBuilderExtensions));
+        IInboundFailureObserver[] observers;
+        try
+        {
+            observers = [.. httpContext.RequestServices.GetServices<IInboundFailureObserver>()];
+        }
+#pragma warning disable CA1031 // Observers that cannot be built are logged; the caller still gets its answer.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogFailureObserverFailed(logger, nameof(IInboundFailureObserver), messageType, ex);
+            return;
+        }
+
+        foreach (var observer in observers)
+        {
+            try
+            {
+                await observer.OnDispatchFailedAsync(messageType, error, CancellationToken.None);
+            }
+#pragma warning disable CA1031 // An observer that throws is logged; the caller still gets its answer, the others still run.
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                LogFailureObserverFailed(logger, observer.GetType().Name, messageType, ex);
+            }
+        }
     }
 
     /// <summary>

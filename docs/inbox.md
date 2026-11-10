@@ -41,8 +41,9 @@ Inbound wire message arrives (transport provides MessageId)
         ├── MessageId already in store?  → discard (gate returns false); broker ACKs, no handler run
         └── new MessageId?               → record it, then proceed to deserialize + dispatch
               ├── dispatch succeeds      → the record stays for RetentionPeriod
-              └── dispatch fails         → (broker transports) the record is released, so the
-                                           redelivery or a dead-letter replay runs
+              └── dispatch fails         → (broker transports, trusting HTTP/SignalR edges) the
+                                           record is released, so the redelivery, a dead-letter
+                                           replay or the caller's retry runs
 ```
 
 - **Dedup happens before the handler** — that's the whole point; it prevents duplicate side effects, not just duplicate results.
@@ -71,6 +72,8 @@ So on a broker transport (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ), a 
 - **A refusal stays recorded.** A request answered with a `ConduitException` (not found, conflict, forbidden, ...) did not fail: the caller has its answer, the transport acknowledges it, and a duplicate is discarded as a succeeded dispatch's duplicates are. So does an event a gate refuses, and a `[FireAndForget]` command refused other than as a bad request: both are acknowledged, and a redelivery would be refused again.
 - **A `[FireAndForget]` command that fails unexpectedly is released**, as a listener failure is: unless the dead letter queue captures it, the transport abandons it, and the broker's redelivery runs the handler again.
 
+A **trusting HTTP or SignalR edge** releases too. An edge that takes its callers' ids (`MapConduitEndpoint(..., trustCallerContext: true)`, `AddConduitSignalR(o => o.TrustCallerContext = true)`) lets a Conduit caller retry a failed dispatch under the same `MessageId`: the [outbox](outbox.md) relay's next attempt, or a resilience retry. When the dispatch fails unexpectedly there (a request answered `InternalError`, an event whose listener throws or whose dispatch fails outside its listeners), the edge answers its caller and releases the record through `IInboundFailureObserver`, which `InboxErrorInterceptor` implements as well, so the retry runs. A refusal stays recorded, as on a broker. An edge that does not trust its callers mints every `MessageId`, so a retry through it is a new message either way.
+
 Only the record **this dispatch** made is released. A message that fails before the gate runs (its body is not JSON, its DI scope or the mediator cannot be built, or a gate registered ahead of the inbox throws) leaves alone a record another delivery made, perhaps one whose handler succeeded; so does a duplicate the gate discarded.
 
 If the release itself fails (the database is unreachable), it is logged at Warning (EventId 330, `InboxReleaseFailed`) and the message is settled as it would have been: the redelivery or replay is then discarded until the record expires.
@@ -95,7 +98,7 @@ builder.Services.AddConduit(conduit =>
 });
 ```
 
-`AddInbox()` registers the `InboxInterceptor` gate, the `InboxErrorInterceptor` that [releases a failed dispatch's record](#when-a-dispatch-fails), the `IInboxStore` (`DbConnectionInboxStore`), and the `InboxCleanup` background service. The inbox is **all-or-nothing** — once enabled, every inbound wire message is deduplicated.
+`AddInbox()` registers the `InboxInterceptor` gate, the `InboxErrorInterceptor` that [releases a failed dispatch's record](#when-a-dispatch-fails) (as an `IInboundErrorInterceptor` for broker transports and an `IInboundFailureObserver` for the HTTP and SignalR edges), the `IInboxStore` (`DbConnectionInboxStore`), and the `InboxCleanup` background service. The inbox is **all-or-nothing** — once enabled, every inbound wire message is deduplicated.
 
 ## Database dialects
 
@@ -157,7 +160,7 @@ Some brokers offer native deduplication — Azure Service Bus `RequiresDuplicate
 
 - **Requires a database.** The inbox shares the durability database. A stateless service with no database should use broker-native dedup instead.
 - **At-most-once on crash** — see [above](#semantics-at-most-once-on-crash). The record-then-handle ordering trades duplicate-execution risk for lost-on-crash risk.
-- **Only broker transports release.** The HTTP endpoint and the SignalR hub answer their caller the failure and release nothing. Their server mints every `MessageId` by default, so a retry is a new message; but a caller an edge trusts to supply its own ids (`MapConduitEndpoint(..., trustCallerContext: true)`, `AddConduitSignalR(o => o.TrustCallerContext = true)`) that retries a failed request under the same `MessageId` gets the empty success a duplicate gets.
+- **A broker transport and a trusting HTTP or SignalR edge release; a host's own edge does not by itself.** Code that calls `IWireMediator.HandleWireRequestAsync` under a context it started (a batch handler, a custom transport) releases nothing when the dispatch fails, unless it reports the failure to every registered `IInboundFailureObserver` as the built-in edges do ([above](#when-a-dispatch-fails)); a caller that retries through it under the same `MessageId` otherwise gets the empty success a duplicate gets.
 - **No result caching.** A duplicate is not answered with the original result. A duplicate request over any transport, a broker included, gets an empty success instead.
 - **Retention must outlast redelivery.** If `RetentionPeriod` is shorter than the broker's redelivery window, a late duplicate can slip through after its record is purged.
 - **All-or-nothing.** There's no per-type opt-out; enabling the inbox deduplicates every inbound wire message.

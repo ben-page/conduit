@@ -371,7 +371,10 @@ int retriedCount = await outbox.RetryFailedAsync("Orders.Events.OrderPlaced", ca
 Retrying makes the entry `Pending` again with its retry count reset to 0 and its `NextAttemptAt` set to now:
 the relay delivers it on its next sweep, local listeners first and then the transport, exactly like a new
 entry, with a fresh `MaxRetries` budget and backoff. It keeps its `MessageId`, so a downstream
-[inbox](inbox.md) that recorded an earlier attempt which did reach it discards the repeat. Only a
+[inbox](inbox.md) that recorded an earlier attempt which succeeded there discards the repeat, while one whose
+earlier attempt failed there released that record and runs it: a broker transport and an HTTP or SignalR edge that
+trusts its callers' ids both release the record of a failed dispatch ([When a dispatch fails](inbox.md#when-a-dispatch-fails)).
+Only a
 Failed entry is retried: `RetryFailedAsync(id)` returns `false` for an id that is pending, sent or unknown,
 so it can never send a delivered message again, and the by-type overload returns how many it reset. A retry clears
 the entry's `FailedAt`; if it fails again, its `FailedRetention` counts from the new failure.

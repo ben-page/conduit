@@ -13,6 +13,7 @@
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
@@ -26,6 +27,8 @@
     <ProjectReference Include="..\..\src\Conduit.Persistence.Postgres\Conduit.Persistence.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Persistence.SqlServer\Conduit.Persistence.SqlServer.csproj" />
     <ProjectReference Include="..\..\src\Conduit.Persistence.MySql\Conduit.Persistence.MySql.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Transport.Http\Conduit.Transport.Http.csproj" />
+    <ProjectReference Include="..\..\src\Conduit.Transport.SignalR\Conduit.Transport.SignalR.csproj" />
     <ProjectReference Include="..\Conduit.TestUtils\Conduit.TestUtils.csproj" />
     <ProjectReference Include="..\..\src\Conduit.SourceGen\Conduit.SourceGen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Conduit.Analysis\Conduit.Analysis.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />

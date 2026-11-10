@@ -53,6 +53,7 @@ before the gates run, so a gate can read the transport-supplied `MessageId`. See
   `false` means it declined, and the send proceeds as if no interceptor were registered. Used by the
   outbox, which captures only inside a database transaction. See [Outbox](outbox.md).
 - **Error** — `IInboundErrorInterceptor`, invoked when a broker transport's inbound dispatch fails: every registered one runs (e.g. dead-letter capture, and the inbox releasing the failed message's record).
+- **Failure observer** — `IInboundFailureObserver`, the HTTP wire endpoint's and the SignalR hub's counterpart: told of a dispatch that failed unexpectedly before the edge answers it (the inbox releases the record there too). It captures nothing; the caller has its answer.
 
 ### Pipeline behavior (`IPipelineBehavior<TRequest, TResult>`)
 

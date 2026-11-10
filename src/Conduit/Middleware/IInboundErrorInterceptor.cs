@@ -17,7 +17,9 @@ namespace Conduit.Middleware;
 /// idempotent and fail gracefully. The message counts as captured, and the transport acknowledges it once,
 /// when any interceptor returns <c>true</c>; when none does, the transport falls back to its native behavior:
 /// abandon (redeliver) a failed dispatch, acknowledge a message that failed before dispatch or an event this host
-/// cannot read (a redelivery would fail the same way).
+/// cannot read (a redelivery would fail the same way). Only a broker transport calls it: the HTTP wire endpoint and the
+/// SignalR hub answer their caller and report an unexpected failure to <see cref="Runtime.IInboundFailureObserver"/>
+/// instead.
 /// </remarks>
 public interface IInboundErrorInterceptor
 {

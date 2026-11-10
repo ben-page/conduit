@@ -6,6 +6,7 @@ using Conduit.Durability.Runtime.DeadLetterQueue;
 using Conduit.Durability.Runtime.Inbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Middleware;
+using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -82,8 +83,9 @@ public sealed class DurabilityBuilder
     }
 
     /// <summary>
-    /// Adds the inbox (idempotent message processing). A broker dispatch that fails releases its record, so
-    /// the broker's redelivery, or a dead-letter replay, runs instead of being discarded as a duplicate. Calling it
+    /// Adds the inbox (idempotent message processing). A dispatch that fails releases its record, so the broker's
+    /// redelivery, a dead-letter replay, or a retry through a trusting HTTP or SignalR edge runs instead of being
+    /// discarded as a duplicate. Calling it
     /// again configures the same inbox (see the remarks on <see cref="DurabilityBuilder"/>): one gate, whose record
     /// a second gate in the same dispatch would take for a duplicate.
     /// </summary>
@@ -103,7 +105,10 @@ public sealed class DurabilityBuilder
         this.Services.TryAddScoped<InboxInterceptor>();
         this.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IInboundInterceptor, InboxInterceptor>(
             serviceProvider => serviceProvider.GetRequiredService<InboxInterceptor>()));
+        // A failed dispatch releases that record: a broker's through the error interceptors, a trusting HTTP or SignalR
+        // edge's through the failure observers.
         this.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IInboundErrorInterceptor, InboxErrorInterceptor>());
+        this.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IInboundFailureObserver, InboxErrorInterceptor>());
         this.Services.AddHostedService<InboxCleanup>();
 
         return this;

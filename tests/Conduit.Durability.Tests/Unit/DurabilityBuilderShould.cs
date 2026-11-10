@@ -8,6 +8,7 @@ using Conduit.Durability.Runtime.Outbox;
 using Conduit.Generated;
 using Conduit.Middleware;
 using Conduit.Persistence.Sqlite;
+using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -58,6 +59,8 @@ public sealed class DurabilityBuilderShould
         scope.ServiceProvider.GetServices<IInboundInterceptor>().Should().ContainSingle()
             .Which.Should().BeOfType<InboxInterceptor>();
         scope.ServiceProvider.GetServices<IInboundErrorInterceptor>().Should().ContainSingle()
+            .Which.Should().BeOfType<InboxErrorInterceptor>();
+        scope.ServiceProvider.GetServices<IInboundFailureObserver>().Should().ContainSingle()
             .Which.Should().BeOfType<InboxErrorInterceptor>();
         HostedServices(services).Should().ContainSingle(type => type == typeof(InboxCleanup));
     }

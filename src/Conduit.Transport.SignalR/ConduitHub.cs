@@ -2,6 +2,7 @@ using System.Text.Json;
 using Conduit.Exceptions;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,6 +20,9 @@ namespace Conduit.Transport.SignalR;
 /// A host that registers a <see cref="ConduitServerInfo"/> has it sent to each client as it connects.
 /// A failed dispatch's message and details are written in the reader's language on the way out
 /// (<see cref="RefusalRendering.RenderResult{T}"/>, from the hub invocation's service scope).
+/// An unexpected failure (<c>InternalError</c>, a listener's failure, a failure outside the listeners) is reported to
+/// each registered <see cref="IInboundFailureObserver"/> before it is answered (the inbox releases its record, so a retry
+/// under the same MessageId runs); a refusal is not.
 /// </summary>
 public class ConduitHub(
     IWireMediator mediator,
@@ -28,6 +32,11 @@ public class ConduitHub(
     IServiceProvider services,
     ILogger<ConduitHub> logger) : Hub
 {
+    private static readonly Action<ILogger, string, string, Exception?> LogFailureObserverFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(101, "FailureObserverFailed"),
+            "Inbound failure observer '{Observer}' threw for a failed message of type '{MessageType}'; the answer and "
+                + "the other observers are unaffected");
+
     /// <summary>The client method <see cref="OnConnectedAsync"/> invokes with the <see cref="ConduitServerInfo"/>.</summary>
     public const string ServerInfoMethod = "ConduitServerInfo";
 
@@ -68,12 +77,15 @@ public class ConduitHub(
     {
         this.StartMessageContext(context, headers);
 
-        return RefusalRendering.RenderResult(
-            await mediator.HandleWireRequestAsync(
-                new DispatchEnvelope(type, payload),
-                this.Context.ConnectionAborted),
-            services,
-            MessageContext.Current);
+        var result = await mediator.HandleWireRequestAsync(
+            new DispatchEnvelope(type, payload),
+            this.Context.ConnectionAborted);
+        if (result.Error is { } error && error.Code == ErrorCode.InternalError.Value)
+        {
+            await this.ReportFailureAsync(type, error);
+        }
+
+        return RefusalRendering.RenderResult(result, services, MessageContext.Current);
     }
 
     /// <summary>
@@ -114,8 +126,9 @@ public class ConduitHub(
             // A listener failed (every listener ran, each failure logged): the first failure is logged here under a
             // support reference and the invocation fails with the fixed message, as below. Left to SignalR it was a
             // generic invocation error, and with EnableDetailedErrors the listener's message.
-            var error = RefusalRendering.RenderResult(
-                ConduitRuntime.UnexpectedEventFailure(logger, type, failure), services, MessageContext.Current).Error!;
+            var unexpected = ConduitRuntime.UnexpectedEventFailure(logger, type, failure);
+            await this.ReportFailureAsync(type, unexpected.Error!);
+            var error = RefusalRendering.RenderResult(unexpected, services, MessageContext.Current).Error!;
             throw new HubException(error.Message);
         }
         catch (EventDispatchException failure)
@@ -123,9 +136,46 @@ public class ConduitHub(
             // The dispatch failed outside the listeners (a behavior, the listeners' resolution, a gate that threw), logged
             // with its stack: the invocation fails with the fixed message an unexpected failure is answered with, never
             // the exception (a HubException carries a message only, so the reference stays in the log line).
-            var error = RefusalRendering.RenderResult(
-                ConduitRuntime.UnexpectedFailure(failure.Reference), services, MessageContext.Current).Error!;
+            var unexpected = ConduitRuntime.UnexpectedFailure(failure.Reference);
+            await this.ReportFailureAsync(type, unexpected.Error!);
+            var error = RefusalRendering.RenderResult(unexpected, services, MessageContext.Current).Error!;
             throw new HubException(error.Message);
+        }
+    }
+
+    /// <summary>
+    /// Reports an unexpected failure to every <see cref="IInboundFailureObserver"/> in the invocation's services, each in
+    /// its own guard: one that throws (or observers that cannot be resolved) is logged at Warning, EventId 101
+    /// <c>FailureObserverFailed</c>, and never changes the answer. The observers get <see cref="CancellationToken.None"/>:
+    /// a caller that has gone still retries, which is what the inbox's release is for.
+    /// </summary>
+    private async Task ReportFailureAsync(string messageType, DispatchError error)
+    {
+        IInboundFailureObserver[] observers;
+        try
+        {
+            observers = [.. services.GetServices<IInboundFailureObserver>()];
+        }
+#pragma warning disable CA1031 // Observers that cannot be built are logged; the caller still gets its answer.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogFailureObserverFailed(logger, nameof(IInboundFailureObserver), messageType, ex);
+            return;
+        }
+
+        foreach (var observer in observers)
+        {
+            try
+            {
+                await observer.OnDispatchFailedAsync(messageType, error, CancellationToken.None);
+            }
+#pragma warning disable CA1031 // An observer that throws is logged; the caller still gets its answer, the others still run.
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                LogFailureObserverFailed(logger, observer.GetType().Name, messageType, ex);
+            }
         }
     }
 
