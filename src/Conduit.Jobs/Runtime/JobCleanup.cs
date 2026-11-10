@@ -30,7 +30,7 @@ internal sealed class JobCleanup : PeriodicCleanupServiceBase
         this.timeProvider = timeProvider;
     }
 
-    protected override TimeSpan Interval => TimeSpan.FromHours(1);
+    protected override TimeSpan Interval => this.options.Value.CleanupInterval;
 
     protected override async Task CleanupAsync(
         IServiceProvider scopedProvider, CancellationToken cancellationToken)

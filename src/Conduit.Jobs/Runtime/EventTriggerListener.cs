@@ -35,6 +35,7 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
     private readonly ClaimedJobExecutor executor;
     private readonly ScopeCoalescer coalescer;
     private readonly TimeProvider timeProvider;
+    private readonly JobSweepSignal sweepSignal;
     private readonly ILogger<EventTriggerListener<TEvent>> logger;
 
     public EventTriggerListener(
@@ -43,6 +44,7 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
         ClaimedJobExecutor executor,
         ScopeCoalescer coalescer,
         TimeProvider timeProvider,
+        JobSweepSignal sweepSignal,
         ILogger<EventTriggerListener<TEvent>> logger)
     {
         this.registry = registry;
@@ -50,6 +52,7 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
         this.executor = executor;
         this.coalescer = coalescer;
         this.timeProvider = timeProvider;
+        this.sweepSignal = sweepSignal;
         this.logger = logger;
     }
 
@@ -116,8 +119,9 @@ internal sealed partial class EventTriggerListener<TEvent> : IEventListener<TEve
         {
             // Written pending, never claimed. A claim held longer than ClaimTimeout looks abandoned,
             // so another host would take it and a thirty-minute delay would silently collapse into
-            // two. The sweep picks it up when it comes due.
+            // two. The sweep picks it up when it comes due, once woken to reckon its sleep with this run.
             await this.store.TryMaterializeAsync(run, cancellationToken);
+            this.sweepSignal.Wake();
             return;
         }
 

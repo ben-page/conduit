@@ -10,12 +10,15 @@ internal sealed class DurableJobs : IJobs
     private readonly ScheduleRegistry registry;
     private readonly IJobStore store;
     private readonly TimeProvider timeProvider;
+    private readonly JobSweepSignal sweepSignal;
 
-    public DurableJobs(ScheduleRegistry registry, IJobStore store, TimeProvider timeProvider)
+    public DurableJobs(
+        ScheduleRegistry registry, IJobStore store, TimeProvider timeProvider, JobSweepSignal sweepSignal)
     {
         this.registry = registry;
         this.store = store;
         this.timeProvider = timeProvider;
+        this.sweepSignal = sweepSignal;
     }
 
     /// <inheritdoc/>
@@ -148,6 +151,7 @@ internal sealed class DurableJobs : IJobs
         if (schedule.AllowsOverlap)
         {
             await this.store.TryMaterializeAsync(run, cancellationToken);
+            this.sweepSignal.Wake();
             return run.JobKey;
         }
 
@@ -161,6 +165,8 @@ internal sealed class DurableJobs : IJobs
             throw new JobOverlapException(schedule.Name);
         }
 
+        // "Now" means now on a runner host: its sweep claims the run at once rather than on its next pass.
+        this.sweepSignal.Wake();
         return run.JobKey;
     }
 

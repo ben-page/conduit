@@ -112,8 +112,11 @@ public interface IJobs
     /// the same way: a host on an older version, or one that declares the schedule as allowing
     /// overlap, writes its runs without taking the lock. With <c>AllowOverlap()</c> it always
     /// queues. While a manual run is outstanding the scheduler skips the schedule's occurrences,
-    /// exactly as it skips one behind an earlier occurrence. Without a persistence engine the run executes inline on this
-    /// host, and "outstanding" means in progress on this host.
+    /// exactly as it skips one behind an earlier occurrence. On a host that runs jobs the call wakes that
+    /// host's claim sweep, which takes the run at once; the wake is in-process, so on a host with
+    /// <c>ManageOnly</c> set the run waits for a runner host's next sweep, within <c>ClaimTimeout</c>.
+    /// Without a persistence engine the run executes inline on this host, and "outstanding" means in
+    /// progress on this host.
     /// </remarks>
     /// <param name="scheduleName">The schedule to run.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
@@ -134,8 +137,15 @@ public interface IJobs
     /// <summary>
     /// Asks a run to stop. Returns an outcome rather than <see cref="Task"/> because the caller has
     /// to confront the ambiguity: <see cref="CancellationOutcome.Requested"/> means the running host
-    /// will see the request within one heartbeat, not that the work stopped.
+    /// will see the request within one heartbeat, not that the work stopped. A run not yet started
+    /// (pending, or awaiting a retry) is marked cancelled by the host that claims it, without being
+    /// dispatched.
     /// </summary>
+    /// <remarks>
+    /// Without a persistence engine the key names a run in progress on this host: its run key, shaped as
+    /// with an engine (the key <see cref="TriggerNowAsync"/> returns, for one), or its schedule's name.
+    /// The run key wins when the text is both.
+    /// </remarks>
     /// <param name="jobKey">The run's key.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>What the request achieved.</returns>

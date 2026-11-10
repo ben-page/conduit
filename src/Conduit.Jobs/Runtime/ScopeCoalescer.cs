@@ -23,16 +23,20 @@ internal sealed partial class ScopeCoalescer
 
     private readonly IJobStore store;
     private readonly ClaimedJobExecutor executor;
+    private readonly JobSweepSignal sweepSignal;
     private readonly ILogger<ScopeCoalescer> logger;
 
     /// <summary>Initializes a new coalescer.</summary>
     /// <param name="store">The store to read and write scopes through.</param>
     /// <param name="executor">Runs a scope this host is picking up inline.</param>
+    /// <param name="sweepSignal">Wakes the sweep when a delayed scope opens.</param>
     /// <param name="logger">The logger for merge contention.</param>
-    public ScopeCoalescer(IJobStore store, ClaimedJobExecutor executor, ILogger<ScopeCoalescer> logger)
+    public ScopeCoalescer(
+        IJobStore store, ClaimedJobExecutor executor, JobSweepSignal sweepSignal, ILogger<ScopeCoalescer> logger)
     {
         this.store = store;
         this.executor = executor;
+        this.sweepSignal = sweepSignal;
         this.logger = logger;
     }
 
@@ -69,6 +73,13 @@ internal sealed partial class ScopeCoalescer
                 var opened = BuildScope(trigger, eventInstance, scopeKey, now);
                 if (await this.store.TryInsertScopeAsync(opened, cancellationToken))
                 {
+                    // A scope due later is the sweep's to pick up, so the sweep reckons its sleep with it now.
+                    // One already due is picked up by the listener that opened it.
+                    if (opened.DueAt > now)
+                    {
+                        this.sweepSignal.Wake();
+                    }
+
                     return opened;
                 }
 

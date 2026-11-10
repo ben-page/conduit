@@ -24,7 +24,7 @@ but `IJobStore` is not, naming the fix.
 ## Directory layout
 
 - `Configuration/` — `JobsBuilder`, `JobsOptions`, `ScheduleBuilder`, `EventTriggerBuilder<TEvent>`, `CoalescingTriggerBuilder<TEvent>` and `CoalescingTriggerBuilder<TEvent, TCommand>`, `MisfirePolicy`
-- `Runtime/` — `JobSchedule`, `JobTrigger`, `ScheduleRegistry`, `DurableJobScheduler`, `InMemoryJobScheduler`, `ClaimedJobExecutor`, `JobRunner`, `ClaimHeartbeat`, `EventTriggerListener<TEvent>`, `ScopeCoalescer`, `JobCleanup`, `DurableJobs`, `InMemoryJobs`, `InMemoryJobState`, `ManualRunKey`, `JobSchedulerReadiness`, `JobOutcome`, `JobAttempt`
+- `Runtime/` — `JobSchedule`, `JobTrigger`, `ScheduleRegistry`, `DurableJobScheduler`, `InMemoryJobScheduler`, `ClaimedJobExecutor`, `JobRunner`, `ClaimHeartbeat`, `EventTriggerListener<TEvent>`, `ScopeCoalescer`, `JobCleanup`, `DurableJobs`, `InMemoryJobs`, `InMemoryJobState`, `ManualRunKey`, `JobSchedulerReadiness`, `JobSweepSignal`, `JobOutcome`, `JobAttempt`
 - `Persistence/` — `IJobStore`, `DbJobStore`, `JobTableSchema` (`conduit_job_schedules`, `conduit_job_runs`, `conduit_job_scopes`, `conduit_job_run_history`), `JobRunsTableSchema`, `JobRun`, `JobRunStatus`, `JobRunOutcome`, `JobScheduleRow`, `JobScope`, `HeartbeatResult`, `MaterializeOutcome`
 - root — `ConduitBuilderExtensions` (`AddJobs`), `JobTableInitializer`, `IJobs`, `JobScheduleInfo`, `JobRunInfo`, `JobRunHistoryInfo`, `JobScopeInfo`, `JobFilter`, `JobHistoryFilter`, `JobHistoryPage`, `CancellationOutcome`, `JobOverlapException`
 
@@ -65,6 +65,7 @@ on `ManageOnly` (default off):
 |---|---|---|---|
 | `IJobStore` → `DbJobStore` (scoped) | same | — | — |
 | `IJobs` → `DurableJobs` (scoped) | same | `IJobs` → `InMemoryJobs` (singleton) | same |
+| `JobSweepSignal` (singleton) | same (nothing listens) | — | — |
 | `ScopeCoalescer` (scoped) | — | — | — |
 | `JobRunner`, `ClaimedJobExecutor` (singletons) | — | `InMemoryJobState` (singleton) | `InMemoryJobState` (singleton) |
 | `DurableJobScheduler`, `JobCleanup` (hosted) | — | `InMemoryJobScheduler` (hosted) | — |
@@ -229,7 +230,10 @@ keep the two in step.
   `ConcurrentDictionary.TryAdd`, shared by the scheduler loop and `InMemoryJobs.TriggerNowAsync`
   (which runs inline). There is nothing shared to coordinate through — every host fires every
   schedule anyway. A manual in-memory run is now cancellable through `CancelAsync` like a scheduled
-  one.
+  one, by its run key or its schedule's name: `TryTrack` records the key the durable runner would
+  give the run (`ManualRunKey`, `DurableJobScheduler.BuildJobKey`/`BuildStartUpJobKey`), and `TryCancel`
+  matches a run key first, so code written against the durable API (cancel the key trigger-now
+  returned) does not get `NotFound` in a test host. Test: `InMemoryJobsShould.CancelByRunKey`.
 - **`JobOverlapException` is not `ConflictException`.** `ConflictException` is a wire refusal: any
   handler letting it escape would answer its client 409 with this message. An `IJobs` caller decides
   whether an overlap is its client's business; an uncaught one is an unexpected failure (500, logged).
@@ -385,7 +389,7 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   store never fences. **Stopping wins:** `DisposeAsync` cancels `stop`, which is linked into every
   renewal's token, and a renewal that fails once stopping returns without fencing. The job has ended
   and its outcome's guarded write decides; fencing there would drop a finished job's outcome as a 410.
-  `ClaimTimeout` is capped at one day (`ConduitBuilderExtensions.LongestClaimTimeout`): the deadline's
+  `ClaimTimeout` is capped at one day (`JobsOptions.LongestClaimTimeout`, checked in `JobsOptions.Validate()`): the deadline's
   `CancellationTokenSource(TimeSpan, TimeProvider)` throws past about 49.7 days, which would fail every
   renewal. Tests: `ClaimHeartbeatShould.FenceItselfAfterClaimTimeoutOfFailures` /
   `.FenceAtTheClaimTimeoutWhenTheRenewalThatWouldDecideItHangs` /
@@ -465,7 +469,62 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
 - **`ComputeSweepDelayAsync` must include `GetNextScopeDueAsync`.** Without it a delayed coalescing
   scope runs up to a full `ClaimTimeout` late. A scope that is due but *blocked* behind an in-flight
   run falls through to the ceiling instead, deliberately — treating its past due time as "wake now"
-  would spin the sweep on work it cannot take. The cost is the accepted follow-on latency.
+  would spin the sweep on work it cannot take. What ends that wait is the blocking run's end, which
+  wakes the sweep of the host that ran it (`JobSweepSignal`, below); only a run whose outcome is never
+  recorded (its host died) leaves the follow-on to the ceiling.
+- **The sweep is woken by work this process writes (`JobSweepSignal`).** It sleeps on what was due when
+  it last looked, so a run written meanwhile waited up to `ClaimTimeout`: "run now" was not now. A
+  singleton, released (idempotently, `TrySetResult`) by `DurableJobs.TriggerNowAsync` after the write,
+  `EventTriggerListener`'s delayed `TryMaterializeAsync`, `ScopeCoalescer.MergeAsync` opening a scope due
+  later, and `ClaimedJobExecutor` at the end of every run, whatever its outcome (it may free a coalescing
+  key or the overlap lock, or set a retry sooner than the sleep). The sweep `Arm()`s at the start of
+  each pass (a wake before that is spent: the pass reads its write) and sleeps on `Task.WhenAny(delay,
+  woken)`, cancelling the delay when the wake wins. A `TaskCompletionSource` with asynchronous
+  continuations, not a `SemaphoreSlim`: nothing to dispose (a run left behind past shutdown may still
+  wake it), and a waker never runs the sweep's pass on its own thread. The scheduler's own occurrence
+  writes do not wake it: their loop claims straight after. In-process only — registered for a
+  manage-only host too, so `DurableJobs` resolves, but nothing listens there and its trigger-now waits
+  for a runner's sweep. Tests: `DurableJobSchedulerShould.RunATriggeredJobWithoutWaitingForTheSweep` /
+  `.RunADelayedTriggerWhenItComesDueRatherThanOnTheSweepsNextPass` /
+  `.PickUpADelayedScopeWhenItComesDueRatherThanOnTheSweepsNextPass`.
+- **A run cancelled before it started is never dispatched.** `RequestCancellationAsync` flags Pending
+  rows too, and `ClaimDueAsync` claims them like any other; only the claim's read-back carries the flag,
+  since no heartbeat has run. `ClaimedJobExecutor` checks `run.CancellationRequested` first and records
+  `JobOutcome.Cancelled` through the guarded `MarkTerminalAsync` (cursor, `Cancelled` history row, a lost
+  claim logs 410 as usual), with no dispatch. A cancel landing after that check is the heartbeat's, as
+  before. Test: `DurableJobsShould.NotRunAPendingRunThatWasCancelled`.
+- **A `[FireAndForget]` command is not a job body.** Its generated dispatch enqueues the handler and
+  returns, so `JobRunner` would record Completed before it ran. `JobRunner.RequireInlineBody` (the
+  attribute read with inheritance, as `RoslynScanner` reads it; `ConduitTypeRegistry` carries no F&F
+  flag) refuses it in three places: at declaration, from `typeof(TCommand)` — `ScheduleBuilder.Run`,
+  `EventTriggerBuilder.Run` and `CoalescingTriggerBuilder.Run` are generic for this (the first two
+  were `Func<ICommand>`/`Func<TEvent, ICommand>`; every lambda call site infers the type); on each
+  command built, because `Run` wraps the factory (`JobSchedule.CreateCommand`/`JobTrigger.CreateCommand`),
+  which catches `Run<ICommand>(...)` returning one in `BuildRun`, the start-up run, trigger-now, the
+  in-memory paths and the trigger listener (the coalescing factory is not wrapped: its scope is
+  serialized and run as the declared `TCommand`); and in `Rehydrate`, failing the attempt of a stored
+  run whose type gained the attribute. Tests: `ScheduleBuilderShould`.
+- **Shutdown's drain is bounded by the host's deadline.** `DurableJobScheduler.StopAsync` awaits
+  `DrainAsync().WaitAsync(cancellationToken)`; on the deadline it logs `DrainAbandoned` (EventId 411,
+  Warning, the in-flight run keys from `ClaimedJobExecutor.RunningJobKeys`) and returns. Unbounded, a
+  handler ignoring its token held the host's stop open past `ShutdownTimeout` for as long as it ran.
+  No grace period: jobs stay linked to `ApplicationStopping` from its first instant. A run left behind
+  keeps its claim until renewals stop; another host re-claims it after `ClaimTimeout`. Test:
+  `DurableJobSchedulerShould.StopWhenTheShutdownTokenExpires`.
+- **`JobsOptions.Validate()`**, called first in `AddJobs`, throws `InvalidOperationException` naming the
+  option (the jobs package's and `DispatchRetryOptions`' exception, not Durability's
+  `OptionsValidationException`; the two older checks' messages are unchanged): `HeartbeatInterval` not
+  positive (the heartbeat would renew in a loop), `ClaimTimeout` not more than twice it or above a day,
+  `MaxAttempts` not positive, a negative retention, `CleanupInterval` not positive, `RetryBackoff` empty
+  or with an entry not positive. A declaration's `MaxRuntime` is not an option, so `AddJobs` checks it
+  beside, over schedules and triggers. `RetryBackoff` (default 1, 2, 4 minutes; `BackoffAfter(n)` takes
+  entry `min(n - 1, Count - 1)`, the last repeating) replaced `30 * 2^attempts` in `ClaimedJobExecutor`,
+  and `CleanupInterval` (default 1 hour) the `JobCleanup` constant; both are mirrored on `JobsBuilder`.
+  Tests: `JobsOptionsShould`, `JobsConfigurationShould.RejectANonPositiveMaxRuntimeOn*`,
+  `JobFailureShould.DelayTheRetryByTheConfiguredBackoff`.
+- **`MaxRuntime` is checked on heartbeat ticks** (durable path), so it takes effect at the first renewal
+  at or after the limit: 10 s under the default 30 s interval fires at about 30 s. The in-memory scheduler
+  uses a `CancellationTokenSource(limit, timeProvider)` and is exact. Documented, not changed.
 - **Merging is read-modify-write in the host**, because the merge is caller-supplied C# and cannot be
   expressed in SQL without restricting merges to a fixed vocabulary. The retry is bounded
   (`MaxMergeAttempts`); past it the coalescer logs an Error naming the key and **throws**, so the

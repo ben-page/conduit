@@ -42,6 +42,31 @@ public class JobFailureShould
     }
 
     [TestMethod]
+    public async Task DelayTheRetryByTheConfiguredBackoff()
+    {
+        // Arrange — a handler that fails once, under a backoff that is no default
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { FailuresRemaining = 1 };
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs =>
+            {
+                jobs.RetryBackoff = [TimeSpan.FromMinutes(7)];
+                jobs.Schedule("nightly").Cron("0 2 * * *").Run(() => new RecordedJob("nightly"));
+            },
+            spy,
+            timeProvider,
+            database.ConnectionString);
+
+        // Act — the occurrence runs and fails at 02:00
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        var failed = await JobsDatabaseProbe.WaitForRunAsync(database, JobKey, run => run.AttemptCount == 1);
+
+        // Assert
+        failed.RunAt.Should().Be(Occurrence.AddMinutes(7), "the first retry waits RetryBackoff[0]");
+    }
+
+    [TestMethod]
     public async Task MarkFailedAndAdvanceTheCursorOnceAttemptsAreExhausted()
     {
         // Arrange

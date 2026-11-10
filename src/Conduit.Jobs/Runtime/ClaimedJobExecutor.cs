@@ -22,8 +22,9 @@ internal sealed partial class ClaimedJobExecutor
     private readonly TimeProvider timeProvider;
     private readonly IOptions<JobsOptions> options;
     private readonly IHostApplicationLifetime lifetime;
+    private readonly JobSweepSignal sweepSignal;
     private readonly ILogger<ClaimedJobExecutor> logger;
-    private readonly ConcurrentDictionary<long, Task> inFlight = new();
+    private readonly ConcurrentDictionary<long, (string JobKey, Task Task)> inFlight = new();
 
     public ClaimedJobExecutor(
         ScheduleRegistry registry,
@@ -32,6 +33,7 @@ internal sealed partial class ClaimedJobExecutor
         TimeProvider timeProvider,
         IOptions<JobsOptions> options,
         IHostApplicationLifetime lifetime,
+        JobSweepSignal sweepSignal,
         ILogger<ClaimedJobExecutor> logger)
     {
         this.registry = registry;
@@ -40,8 +42,12 @@ internal sealed partial class ClaimedJobExecutor
         this.timeProvider = timeProvider;
         this.options = options;
         this.lifetime = lifetime;
+        this.sweepSignal = sweepSignal;
         this.logger = logger;
     }
+
+    /// <summary>The keys of the runs this host is executing now, for the log line of a drain that ran out of time.</summary>
+    public IReadOnlyList<string> RunningJobKeys => [.. this.inFlight.Values.Select(running => running.JobKey)];
 
     /// <summary>
     /// Begins running a claimed job without waiting for it. Neither caller may block on the job: the
@@ -53,7 +59,7 @@ internal sealed partial class ClaimedJobExecutor
         ArgumentNullException.ThrowIfNull(run);
 
         var task = Task.Run(() => this.RunAsync(run), CancellationToken.None);
-        this.inFlight[run.Id] = task;
+        this.inFlight[run.Id] = (run.JobKey, task);
         _ = task.ContinueWith(
             _ => this.inFlight.TryRemove(run.Id, out var _),
             CancellationToken.None,
@@ -63,12 +69,36 @@ internal sealed partial class ClaimedJobExecutor
 
     /// <summary>
     /// Waits for every in-flight run to finish. A draining host must not exit while still holding
-    /// claims — that is the stall releasing them exists to avoid.
+    /// claims — that is the stall releasing them exists to avoid. Unbounded: the scheduler bounds it by the
+    /// host's shutdown deadline.
     /// </summary>
-    public Task DrainAsync() => Task.WhenAll(this.inFlight.Values);
+    public Task DrainAsync() => Task.WhenAll(this.inFlight.Values.Select(running => running.Task));
 
     private async Task RunAsync(JobRun run)
     {
+        try
+        {
+            await this.ExecuteAsync(run);
+        }
+        finally
+        {
+            // Whatever the outcome, it may let the sweep take work now: a completion frees a coalescing key and
+            // the overlap lock, a retry may be due sooner than the sweep meant to wake.
+            this.sweepSignal.Wake();
+        }
+    }
+
+    private async Task ExecuteAsync(JobRun run)
+    {
+        if (run.CancellationRequested)
+        {
+            // An operator cancelled it while it waited — pending, or awaiting a retry — and only the claim's
+            // read-back carries the flag, since no heartbeat has run yet. Dispatching it anyway would run a short
+            // job to Completed against the request. Terminal like any cancellation, under the claim, with history.
+            await this.RecordOutcomeAsync(run, JobOutcome.Cancelled, error: null);
+            return;
+        }
+
         var stoppingToken = this.lifetime.ApplicationStopping;
 
         // Linked to the host's stopping token, so a graceful drain reaches the handler the same way
@@ -190,7 +220,7 @@ internal sealed partial class ClaimedJobExecutor
             return true;
         }
 
-        var nextRunAt = this.timeProvider.GetUtcNow() + BackoffFor(attempts);
+        var nextRunAt = this.timeProvider.GetUtcNow() + this.options.Value.BackoffAfter(attempts);
         if (!await store.IncrementAttemptAsync(run.Id, run.ClaimToken!, nextRunAt, message, CancellationToken.None))
         {
             return false;
@@ -199,10 +229,6 @@ internal sealed partial class ClaimedJobExecutor
         LogRetryScheduled(this.logger, run.JobKey, attempts, nextRunAt);
         return true;
     }
-
-    /// <summary>Exponential backoff from thirty seconds: 1 minute, 2, 4, ...</summary>
-    private static TimeSpan BackoffFor(int attempts)
-        => TimeSpan.FromSeconds(30 * Math.Pow(2, attempts));
 
     /// <summary>
     /// The schedule whose cursor this run should advance, or <see langword="null"/> when the run came

@@ -192,13 +192,11 @@ public class JobsApiShould
             database.ConnectionString);
         var jobsApi = host.GetRequiredService<IJobs>();
 
-        // Act — the same occurrence that lands in GetFailedAsync also lands in history, permanently
+        // Act — the same occurrence that lands in GetFailedAsync also lands in history, permanently. Waited
+        // for without moving the clock again: past 02:05 the next occurrence would run and fail too
         timeProvider.Advance(TimeSpan.FromMinutes(5));
-        await FakeClock.AdvanceUntilAsync(
-            timeProvider,
-            TimeSpan.FromMinutes(1),
-            async () => (await jobsApi.GetHistoryAsync(new JobHistoryFilter(), CancellationToken.None))
-                .Entries.Count > 0);
+        await JobsDatabaseProbe.WaitForTerminalAsync(
+            database, DurableJobScheduler.BuildJobKey("warm", Start.AddMinutes(1)));
 
         // Assert
         var history = await jobsApi.GetHistoryAsync(new JobHistoryFilter(), CancellationToken.None);
@@ -213,9 +211,10 @@ public class JobsApiShould
     [TestMethod]
     public async Task FollowAManualRunFromTheLedgerIntoItsHistory()
     {
-        // Arrange
+        // Arrange — a job that takes a minute: trigger-now wakes the sweep, so an instant one could be gone
+        // from the ledger before the first read
         var timeProvider = new FakeTimeProvider(Start);
-        var spy = new JobSpy();
+        var spy = new JobSpy { JobDuration = TimeSpan.FromMinutes(1) };
         await using var database = SharedSqliteDatabase.Create();
         await using var host = await StartHostAsync(database, timeProvider, spy);
         var jobs = host.GetRequiredService<IJobs>();

@@ -32,8 +32,11 @@ public sealed class EventTriggerBuilder<TEvent>
         return this;
     }
 
-    /// <summary>Cancels a run that exceeds this duration, marking it cancelled rather than failed.</summary>
-    /// <param name="value">The maximum duration of a single run.</param>
+    /// <summary>
+    /// Cancels a run that exceeds this duration, marking it cancelled rather than failed. Checked when the
+    /// heartbeat renews the run's claim, so it takes effect at the first renewal at or after the limit.
+    /// </summary>
+    /// <param name="value">The maximum duration of a single run. Must be positive.</param>
     /// <returns>This builder for chaining.</returns>
     public EventTriggerBuilder<TEvent> MaxRuntime(TimeSpan value)
     {
@@ -42,17 +45,27 @@ public sealed class EventTriggerBuilder<TEvent>
     }
 
     /// <summary>Declares the command to dispatch, completing the trigger.</summary>
+    /// <remarks>
+    /// Generic so the command type is inferred from the lambda and checked here: a <c>[FireAndForget]</c>
+    /// command is refused, as on a schedule, and so is one the factory builds behind a wider declared type.
+    /// </remarks>
+    /// <typeparam name="TCommand">The command type, inferred from <paramref name="createCommand"/>.</typeparam>
     /// <param name="createCommand">Builds the command from the triggering event.</param>
-    public void Run(Func<TEvent, ICommand> createCommand)
+    /// <exception cref="InvalidOperationException">The command is <c>[FireAndForget]</c>.</exception>
+    public void Run<TCommand>(Func<TEvent, TCommand> createCommand)
+        where TCommand : ICommand
     {
         ArgumentNullException.ThrowIfNull(createCommand);
+
+        var owner = $"Event trigger '{this.Name}'";
+        JobRunner.RequireInlineBody(typeof(TCommand), owner);
 
         this.OnBuilt(new JobTrigger(
             this.Name,
             typeof(TEvent),
             this.Delay,
             this.DeclaredMaxRuntime,
-            instance => createCommand((TEvent)instance)));
+            instance => JobRunner.RequireInlineBody(createCommand((TEvent)instance), owner)));
     }
 
     /// <summary>

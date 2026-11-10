@@ -108,8 +108,12 @@ public sealed class ScheduleBuilder
         return this;
     }
 
-    /// <summary>Cancels a run that exceeds this duration, marking it cancelled rather than failed.</summary>
-    /// <param name="value">The maximum duration of a single run.</param>
+    /// <summary>
+    /// Cancels a run that exceeds this duration, marking it cancelled rather than failed. With a persistence
+    /// engine it is checked when the heartbeat renews the run's claim, so it takes effect at the first renewal
+    /// at or after the limit; without one it fires on time.
+    /// </summary>
+    /// <param name="value">The maximum duration of a single run. Must be positive.</param>
     /// <returns>This builder for chaining.</returns>
     public ScheduleBuilder MaxRuntime(TimeSpan value)
     {
@@ -141,8 +145,20 @@ public sealed class ScheduleBuilder
     }
 
     /// <summary>Declares the command to dispatch, completing the schedule.</summary>
+    /// <remarks>
+    /// Generic so the command type is inferred from the lambda and checked here: a <c>[FireAndForget]</c>
+    /// command is refused, because its handler would run in the background after the run was recorded
+    /// Completed. Each command the factory builds is checked again, which catches a factory declared with a
+    /// wider type (<c>Run&lt;ICommand&gt;(...)</c>) that returns one.
+    /// </remarks>
+    /// <typeparam name="TCommand">The command type, inferred from <paramref name="createCommand"/>.</typeparam>
     /// <param name="createCommand">Builds the command dispatched for one run.</param>
-    public void Run(Func<ICommand> createCommand)
+    /// <exception cref="InvalidOperationException">
+    /// The schedule declares no timetable or two, combines <see cref="RunAtStart"/> with a timetable that
+    /// refuses it, or runs a <c>[FireAndForget]</c> command.
+    /// </exception>
+    public void Run<TCommand>(Func<TCommand> createCommand)
+        where TCommand : ICommand
     {
         ArgumentNullException.ThrowIfNull(createCommand);
 
@@ -185,20 +201,27 @@ public sealed class ScheduleBuilder
                 "one of them.");
         }
 
+        var owner = $"Job schedule '{this.name}'";
+        JobRunner.RequireInlineBody(typeof(TCommand), owner);
+
+        // Every path that builds a run's command goes through this: the durable scheduler's occurrence and
+        // start-up runs, trigger-now, and the in-memory scheduler.
+        ICommand Build() => JobRunner.RequireInlineBody(createCommand(), owner);
+
         JobSchedule schedule;
         if (this.cronExpression is not null)
         {
             schedule = JobSchedule.FromCron(this.name, this.cronExpression, this.timeZone, this.misfire,
-                this.allowsOverlap, this.maxRuntime, createCommand);
+                this.allowsOverlap, this.maxRuntime, Build);
         }
         else if (this.onDemand)
         {
-            schedule = JobSchedule.FromOnDemand(this.name, this.allowsOverlap, this.maxRuntime, createCommand);
+            schedule = JobSchedule.FromOnDemand(this.name, this.allowsOverlap, this.maxRuntime, Build);
         }
         else
         {
             schedule = JobSchedule.FromInterval(this.name, this.interval!.Value, this.allowsOverlap,
-                this.maxRuntime, createCommand, this.runsAtStart);
+                this.maxRuntime, Build, this.runsAtStart);
         }
 
         this.onBuilt(schedule);

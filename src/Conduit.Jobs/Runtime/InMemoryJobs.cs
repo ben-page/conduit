@@ -101,10 +101,11 @@ internal sealed class InMemoryJobs : IJobs
     /// Runs the command inline and returns when it finishes. The overlap rule is enforced against
     /// this host only — the scheduled run or another manual one in progress here — because without a
     /// database every host fires every schedule anyway; there is nothing shared to coordinate through.
-    /// While it runs, <see cref="CancelAsync"/> with the schedule's name reaches it, as it does a
-    /// scheduled run. A run of an <c>AllowOverlap()</c> schedule that starts beside another is not
-    /// registered, so only the first of the two is reachable that way. The key it returns is shaped as the durable
-    /// runner's, and names a run that has already finished.
+    /// While it runs, <see cref="CancelAsync"/> with its run key (the key this returns, built from the clock
+    /// before the run starts) or with the schedule's name reaches it, as it does a scheduled run. A run of an
+    /// <c>AllowOverlap()</c> schedule that starts beside another is not registered, so only the first of the
+    /// two is reachable that way. The key it returns is shaped as the durable runner's, and names a run that
+    /// has already finished.
     /// </remarks>
     public async Task<string> TriggerNowAsync(string scheduleName, CancellationToken cancellationToken)
     {
@@ -115,7 +116,7 @@ internal sealed class InMemoryJobs : IJobs
 
         var key = ManualRunKey.Build(schedule.Name, this.timeProvider.GetUtcNow());
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var tracked = this.state.TryTrack(schedule.Name, cancellation);
+        var tracked = this.state.TryTrack(schedule.Name, key, cancellation);
         if (!tracked && !schedule.AllowsOverlap)
         {
             throw new JobOverlapException(schedule.Name);
@@ -140,8 +141,11 @@ internal sealed class InMemoryJobs : IJobs
 
     /// <inheritdoc/>
     /// <remarks>
-    /// There is no ledger, so the only thing a key can name here is a schedule running on this host.
-    /// Anything else is indistinguishable from a job that has already finished.
+    /// There is no ledger, so the only thing a key can name here is a run in progress on this host: by its
+    /// run key, shaped as the durable runner's (the key <see cref="TriggerNowAsync"/> returns,
+    /// <c>{schedule}@{occurrence}</c> for an occurrence, <c>{schedule}@start-{instant}</c> for a start-up run),
+    /// so code written against the durable runner reaches it, or by its schedule's name. The run key wins when
+    /// the text is both. Anything else is indistinguishable from a job that has already finished.
     /// </remarks>
     public Task<CancellationOutcome> CancelAsync(string jobKey, CancellationToken cancellationToken)
         => Task.FromResult(

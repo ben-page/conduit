@@ -14,6 +14,7 @@
 - [How an event-triggered job runs](#how-an-event-triggered-job-runs)
 - [Failure handling: two layers, in order](#failure-handling-two-layers-in-order)
 - [Misfire: what happens to occurrences you were down for](#misfire-what-happens-to-occurrences-you-were-down-for)
+- [Run at start](#run-at-start)
 - [Overlap](#overlap)
 - [Cancellation](#cancellation)
   - [MaxRuntime](#maxruntime)
@@ -45,6 +46,15 @@ Because it is a command, everything Conduit already does applies unchanged: it c
 worker endpoint instead of running locally, it passes through your pipeline behaviors, a
 `Conduit.Resilience` policy wraps it, and `Conduit.Audit` records the dispatch and everything it
 causes. Job history is a consequence of using the mediator, not a parallel subsystem.
+
+**The handler must run inline, so a `[FireAndForget]` command cannot be a job body.** Its dispatch
+hands the handler to the background dispatcher and returns at once, so the run would be recorded
+`Completed` before the handler had started, out of reach of `MaxRuntime`, cancellation, retries and
+run history. `Run(...)` refuses one at startup with an `InvalidOperationException` naming the
+schedule or trigger and the command. A factory declared with a wider type (`Run<ICommand>(...)`)
+that returns one is refused when it builds the command, and a stored run naming one (written before
+the type gained the attribute) fails its attempt. To run fire-and-forget work on a schedule, make the
+job body a plain command whose handler dispatches it.
 
 ## Declaring jobs
 
@@ -99,7 +109,7 @@ builder.Services.AddConduit(conduit =>
 | `OnMisfire(policy)` | What to do about occurrences missed while the application was down. |
 | `RunAtStart()` | One run when the host starts — interval schedules only; not an occurrence. See [Run at start](#run-at-start). |
 | `AllowOverlap()` | Permit a new run (an occurrence or a trigger-now) to start while another is still outstanding. |
-| `MaxRuntime(TimeSpan)` | Cancel a run that exceeds this duration. |
+| `MaxRuntime(TimeSpan)` | Cancel a run that exceeds this duration. Positive; checked on the heartbeat, see [MaxRuntime](#maxruntime). |
 | `Run(() => command)` | The command to dispatch. Completes the declaration. |
 
 A schedule declares exactly one of `Cron(...)`, `Every(...)` and `OnDemand()`; none, or any two,
@@ -149,9 +159,11 @@ var key = await jobs.TriggerNowAsync("rederive-totals", cancellationToken);
 - **A manual run of it is a manual run of any schedule.** The [overlap](#overlap) rule refuses a
   second trigger with `JobOverlapException` while a run is outstanding unless `AllowOverlap()` is
   declared; `MaxRuntime`, retries and [run history](#run-history) apply; and trigger-now does not
-  consult pause, so pausing an on-demand schedule changes nothing. With a database the run is claimed
-  on a runner host's next sweep, within `ClaimTimeout` (default 2 minutes); without one it runs inline
-  on the host that was called, and the call returns when it finishes.
+  consult pause, so pausing an on-demand schedule changes nothing. With a database, triggered on a
+  host that runs jobs, the run is claimed at once (the trigger wakes that host's sweep); triggered on
+  a [host that runs no jobs](#a-host-that-runs-no-jobs), it waits for a runner host's next sweep,
+  within `ClaimTimeout` (default 2 minutes). Without a database it runs inline on the host that was
+  called, and the call returns when it finishes.
 - **Listed like any schedule.** `GetSchedulesAsync` includes it, with `IsOnDemand` set and no
   `NextOccurrence`.
 - **It is not combined with a timetable.** `OnDemand()` with `Cron(...)` or `Every(...)` fails at
@@ -161,12 +173,14 @@ var key = await jobs.TriggerNowAsync("rederive-totals", cancellationToken);
 
 ### Event triggers
 
-`jobs.On<TEvent>()` runs a job when an event is published. `.After(TimeSpan)` delays it. The command
-is built from the event instance, so the job carries whatever it needs:
+`jobs.On<TEvent>()` runs a job when an event is published. `.After(TimeSpan)` delays it, and
+`.MaxRuntime(TimeSpan)` caps each run as it does on a schedule (see [MaxRuntime](#maxruntime)). The
+command is built from the event instance, so the job carries whatever it needs:
 
 ```csharp
 jobs.On<CartAbandoned>()
     .After(TimeSpan.FromMinutes(30))
+    .MaxRuntime(TimeSpan.FromMinutes(5))
     .Run(cart => new SendAbandonmentReminder(cart.CartId));
 ```
 
@@ -234,14 +248,15 @@ clears. A run between attempts holds its key the same way, so a retry does not f
 later event never moves it, so a steady stream cannot starve the run. The merge has already widened
 the scope, so the run still covers everything that arrived while it waited.
 
-**A follow-on run waits for the sweep.** A scope parked behind an in-flight run is due but blocked,
-and nothing nudges the sweep when the blocking run finally clears, so the follow-on starts up to
-`ClaimTimeout` (2 minutes by default) afterwards. An undelayed trigger also retries the pickup on
-every event it receives, so a busy key rarely waits that long — but `ClaimTimeout` is the bound, and
-it is a known, accepted limitation rather than a bug. Size it accordingly if a projection's staleness
-is what you are tuning. Each sweep also drains a bounded batch of scopes, oldest due time first, so
-if a whole batch of them is blocked behind in-flight runs a newer, unblocked scope waits for the next
-pass — self-resolving, since the blocked ones clear and stop crowding the batch.
+**A follow-on run starts when the run ahead of it ends.** A scope parked behind an in-flight run is
+due but blocked. When the blocking run ends, the host that ran it wakes its own sweep, whose next
+pass picks the scope up — the scopes table is shared, so that host need not be the one the events
+reached. Only when that run's outcome is never recorded (its host died mid-run, or lost its claim)
+does the follow-on wait for a sweep pass, up to `ClaimTimeout` (2 minutes by default). An undelayed
+trigger also retries the pickup on every event it receives. Each sweep drains a bounded batch of
+scopes, oldest due time first, so if a whole batch of them is blocked behind in-flight runs a newer,
+unblocked scope waits for the next pass — self-resolving, since the blocked ones clear and stop
+crowding the batch.
 
 **A run that gave up does not wedge its key.** Because the run key is the coalesce key, a terminal
 run — attempts exhausted, or cancelled by an operator — still holds that key while it waits out
@@ -319,7 +334,12 @@ steady-state traffic is proportional to occurrences rather than to the passage o
 A sweep does exist, but it is not a poll for due-ness: it exists to pick up runs whose timing is not
 derivable from a declaration — a retry waiting out its backoff, a delayed event trigger, a manual
 run (the only kind an on-demand schedule has), and the run a crashed host abandoned. It sleeps until the earliest pending run is due, capped at `ClaimTimeout`
-so an abandoned claim is still recovered when nothing else is scheduled.
+so an abandoned claim is still recovered when nothing else is scheduled. Work the host itself writes
+after the sweep went to sleep wakes it early: a manual run, a delayed trigger's run or coalescing
+scope, and the end of any run it was executing (which can free a coalescing key or the overlap lock,
+or schedule a retry). The wake is in-process: work written on another host wakes that host's sweep,
+and work written on a [host that runs no jobs](#a-host-that-runs-no-jobs) waits for a runner's next
+pass.
 
 ### Why the runs table is deleted on success
 
@@ -445,10 +465,11 @@ Polly policy retries transient failures in-process, against the same claimed row
 how **this attempt** behaves.
 
 **Outer — the ledger.** If the handler still throws once the in-process policy is exhausted, the
-runner increments the attempt count, sets `RunAt` to now plus an exponential backoff (one minute,
-two, four, …) and releases the claim to `Pending`. Any host picks it up on a later sweep. This layer
-decides whether there is **another attempt**, and it is the only one that survives a process
-restart, which is the thing Polly alone cannot give you.
+runner increments the attempt count, sets `RunAt` to now plus the backoff for that attempt
+(`RetryBackoff`: by default one minute after the first failure, two after the second, four after the
+third, the last entry repeating for any later one) and releases the claim to `Pending`. Any host
+picks it up on a later sweep. This layer decides whether there is **another attempt**, and it is the
+only one that survives a process restart, which is the thing Polly alone cannot give you.
 
 After `MaxAttempts` (default 3) the row is marked `Failed`, kept for `FailedRetention` (default 7
 days) so `IJobs` can surface it, and **the cursor advances** — one permanently broken occurrence must
@@ -573,12 +594,17 @@ var outcome = await jobs.CancelAsync("nightly-rollup@2026-08-25T02:00:00.0000000
 
 | Outcome | Meaning |
 |---|---|
-| `Requested` | The flag is set; the running host will see it within one heartbeat. Not "it stopped". |
+| `Requested` | The flag is set; a running host will see it within one heartbeat, and a run not yet started never starts. Not "it stopped". |
 | `NotFound` | No run with that key exists. |
 | `AlreadyComplete` | The run had already reached a terminal state. |
 
 `CancelAsync` returns this rather than `Task` so the caller has to confront the ambiguity instead of
 reading "nothing to cancel" as success.
+
+A run cancelled **before it starts** — still pending, or waiting out a retry's backoff — is marked
+`Cancelled` by the host that claims it, without its command being dispatched; its history row says
+`Cancelled`. A request that lands between that check and the dispatch reaches the run through the
+heartbeat, as for any running job.
 
 A cancelled run is marked `Cancelled`, which is **terminal and distinct from `Failed`**. Two
 consequences follow, and both are load-bearing: the retry path never picks it up (retrying would
@@ -590,10 +616,17 @@ an in-flight run.
 
 ### MaxRuntime
 
-An optional per-declaration ceiling. Exceeding it cancels the run's token and records the run as
-`Cancelled`, turning a hung job into a bounded, visible outcome rather than one that blocks its
-schedule indefinitely through the overlap check. It is enforced by the heartbeat, which already
-knows when the attempt began, and it works with or without a database.
+An optional per-declaration ceiling, on a schedule (`jobs.Schedule(...).MaxRuntime(...)`) or an event
+trigger (`jobs.On<TEvent>().MaxRuntime(...)`); it must be positive. Exceeding it cancels the run's
+token and records the run as `Cancelled`, turning a hung job into a bounded, visible outcome rather
+than one that blocks its schedule indefinitely through the overlap check. It is enforced by the
+heartbeat, which already knows when the attempt began, and it works with or without a database.
+
+**With a database it is only as precise as the heartbeat.** The limit is checked when the heartbeat
+renews the claim, so it takes effect at the first renewal at or after it: with the default
+`HeartbeatInterval` of 30 seconds, a `MaxRuntime` of 10 seconds cancels the run at about 30 seconds,
+and one of 45 seconds at about a minute. Lower `HeartbeatInterval` if that granularity matters.
+Without a database the in-memory scheduler cancels on time.
 
 Because cancellation is cooperative, the heartbeat keeps renewing the claim after it has asked the
 job to stop — otherwise a handler that takes its time winding down would have its claim go stale and
@@ -606,6 +639,14 @@ token, so on a graceful drain a well-written handler stops promptly, and the run
 claim back to `Pending` with **the attempt count untouched** — a handover is not a failed attempt.
 Another host picks the job up immediately rather than waiting out `ClaimTimeout`, which turns a
 rolling deploy from "stalled jobs per drained pod" into a fast handover.
+
+The token is cancelled the moment the host begins to stop; there is no grace period in which a job
+may finish undisturbed. The scheduler then waits for its running jobs to end, but **no longer than
+the host's shutdown deadline** (`HostOptions.ShutdownTimeout`, 30 seconds by default, or the token
+passed to the host's `StopAsync`). A handler that ignores its token is left running and the host
+stops anyway, logging one Warning with `EventId` **411** (`DrainAbandoned`) that names the runs still
+executing. Their claims are not released: each goes stale once the host stops renewing it, and
+another host takes the run over after `ClaimTimeout`.
 
 ## Operating jobs with IJobs
 
@@ -650,7 +691,10 @@ the host that received the call would be useless. It deliberately leaves the cur
 resuming picks up from the next occurrence.
 
 **Trigger-now** queues an extra run immediately, with no occurrence attached, so running a job by
-hand cannot swallow the occurrence the schedule was already waiting for. It returns the run's key,
+hand cannot swallow the occurrence the schedule was already waiting for. Called on a host that runs
+jobs, it wakes that host's sweep, which claims the run at once; the wake is in-process, so called on
+a [host that runs no jobs](#a-host-that-runs-no-jobs) the run waits for a runner host's next sweep,
+within `ClaimTimeout`. It returns the run's key,
 `{schedule}@manual-{instant}` — what `GetRunAsync`, a `JobKey` history filter and `CancelAsync`
 take — and that key is what sets `IsManual` on the run's `JobRunInfo` and `JobRunHistoryInfo` (an
 occurrence, a start-up run and a trigger's run read `false`; so does a coalescing trigger's run unless
@@ -710,7 +754,8 @@ to count it.
 
 History has its own retention, `HistoryRetention` (default 30 days) — longer than `FailedRetention`,
 because it is meant to answer "how has this job been doing" over a window wider than "what needs
-attention right now". `JobCleanup`'s hourly sweep purges both independently.
+attention right now". `JobCleanup` purges both independently, every `CleanupInterval` (default one
+hour).
 
 Without a persistence engine there is no ledger and no history either — `GetHistoryAsync` returns an
 empty page, the same honest degradation `GetFailedAsync` and `GetPendingAsync` use.
@@ -731,7 +776,11 @@ No engine means no tables. Each host runs one timer loop per timed schedule, wai
   while it is still going.
 - `OnMisfire` and event triggers are **rejected at startup**, not silently ignored.
 - Cancellation still works in-process, and `MaxRuntime` works normally — it needs nothing more than
-  a start time and a token.
+  a start time and a token. `CancelAsync` reaches a run in progress on this host by its run key,
+  shaped as with a database (the key `TriggerNowAsync` returns, `{schedule}@{occurrenceUtcIso}` for
+  an occurrence, `{schedule}@start-{instant}` for a start-up run), so code written against the
+  durable API behaves the same in a test host, or by its schedule's name; the run key wins when the
+  text is both.
 
 This is the usual precedent: Quartz's `RAMJobStore` is explicitly single-node and clustering needs
 the ADO.NET store; Hangfire likewise requires a storage backend.
@@ -864,9 +913,11 @@ never reaches it.
 |---|---|---|
 | `HeartbeatInterval` | 30 seconds | How often a running host renews its claim |
 | `ClaimTimeout` | 2 minutes | How stale a claim must be before another host may take it |
-| `MaxAttempts` | 3 | Durable attempts before a run is marked failed |
+| `MaxAttempts` | 3 | Durable attempts before a run is marked failed, the first included |
+| `RetryBackoff` | 1, 2, 4 minutes | The wait before each further attempt; the last entry repeats |
 | `FailedRetention` | 7 days | How long terminal ledger rows are kept for inspection |
 | `CompletedRetention` | 1 day | How long a completed event-trigger run is kept, so a late redelivery of its event collapses |
+| `CleanupInterval` | 1 hour | How often terminal runs and history past their retention are purged |
 | `AutoCreateTable` | `true` | Whether to create the jobs tables (including run history) on startup |
 | `HistoryRetention` | 30 days | How long run history is kept |
 | `ManageOnly` | `false` | Register `IJobs` without the runner — see [A host that runs no jobs](#a-host-that-runs-no-jobs) |
@@ -877,16 +928,22 @@ conduit.AddJobs(jobs =>
     jobs.HeartbeatInterval = TimeSpan.FromSeconds(15);
     jobs.ClaimTimeout = TimeSpan.FromMinutes(1);
     jobs.MaxAttempts = 5;
+    jobs.RetryBackoff = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5)];  // then 5 minutes each time
     jobs.FailedRetention = TimeSpan.FromDays(30);
     jobs.CompletedRetention = TimeSpan.FromDays(3);  // the longest redelivery delay you expect
     jobs.HistoryRetention = TimeSpan.FromDays(90);
+    jobs.CleanupInterval = TimeSpan.FromMinutes(15);
     jobs.AutoCreateTable = false;                 // you manage schema through migrations
 
     // schedules and triggers...
 });
 ```
 
-`ClaimTimeout` must be more than twice `HeartbeatInterval` and at most one day, or startup fails.
+`AddJobs` validates the options and fails at startup with an `InvalidOperationException` naming the
+offending one: `HeartbeatInterval`, `MaxAttempts` and `CleanupInterval` must be positive;
+`ClaimTimeout` must be more than twice `HeartbeatInterval` and at most one day; the three retentions
+cannot be negative (zero purges a row at the next cleanup); and `RetryBackoff` must hold at least one
+entry, every one positive. A declaration's `MaxRuntime` must be positive too.
 
 Every knob here but `ManageOnly` describes the durable path.
 [Without a database](#without-a-database) none of them apply — there are no tables to create, no
@@ -897,8 +954,13 @@ claim to renew or time out, no ledger rows to retain, and no history to purge.
 - **No imperative one-shot scheduling.** There is no `ScheduleAsync(command, runAt)`. A delayed
   *event trigger* covers the declarative version of that need.
 - **No backfill.** Misfire offers skip or one catch-up, and nothing else.
-- **A coalesced follow-on run waits for the sweep**, so it starts up to `ClaimTimeout` after the
-  run ahead of it clears. Nothing nudges the sweep when a blocking run finishes.
+- **Waking the sweep is in-process.** Trigger-now on a host that runs no jobs, and a coalesced
+  follow-on whose blocking run's outcome was never recorded (its host died), wait for a runner
+  host's next sweep, up to `ClaimTimeout`.
+- **`MaxRuntime` is as coarse as the heartbeat** with a database: it takes effect at the first
+  renewal at or after the limit.
+- **Shutdown does not wait for a job that ignores its token** past the host's shutdown deadline; that
+  run's claim goes stale and another host re-runs it after `ClaimTimeout`.
 - **No runtime-defined schedules.** Schedules are code-declared; that is what lets every host agree
   on occurrences without coordinating.
 - **Cancellation is not guaranteed.** It is cooperative, and partial work stays done.

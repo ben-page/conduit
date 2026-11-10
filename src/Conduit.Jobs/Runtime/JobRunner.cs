@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Conduit.Attributes;
 using Conduit.Jobs.Persistence;
 using Conduit.Messages;
 using Conduit.Runtime;
@@ -96,6 +97,41 @@ internal sealed partial class JobRunner
         }
     }
 
+    /// <summary>
+    /// Refuses a <c>[FireAndForget]</c> command as a job body. Its generated dispatch hands the handler to the
+    /// background dispatcher and returns at once, so <see cref="ExecuteAsync"/> would record the run Completed
+    /// before the handler had started: <c>MaxRuntime</c>, cancellation, retries and history would all describe
+    /// something other than the work. The attribute is read with inheritance, as the source generator reads it.
+    /// </summary>
+    /// <param name="commandType">The command type the job would dispatch.</param>
+    /// <param name="owner">Who declares or holds the body, for the message: <c>Job schedule 'nightly'</c>.</param>
+    /// <exception cref="InvalidOperationException">The command is <c>[FireAndForget]</c>.</exception>
+    internal static void RequireInlineBody(Type commandType, string owner)
+    {
+        if (commandType.IsDefined(typeof(FireAndForgetAttribute), inherit: true))
+        {
+            throw new InvalidOperationException(
+                $"{owner} runs {commandType.FullName}, a [FireAndForget] command. A job body must be a command " +
+                "whose handler runs inline: a fire-and-forget handler runs in the background after the run is " +
+                "recorded Completed, out of reach of MaxRuntime, cancellation, retries and run history. Remove " +
+                "[FireAndForget] from the command, or run a command whose handler dispatches it.");
+        }
+    }
+
+    /// <summary>
+    /// <see cref="RequireInlineBody(Type, string)"/> for a command just built, whose runtime type a factory
+    /// declared with a wider type can make <c>[FireAndForget]</c>.
+    /// </summary>
+    /// <param name="command">The command built for a run.</param>
+    /// <param name="owner">Who declares the body, for the message.</param>
+    /// <returns><paramref name="command"/>.</returns>
+    /// <exception cref="InvalidOperationException">The command is <c>[FireAndForget]</c>.</exception>
+    internal static ICommand RequireInlineBody(ICommand command, string owner)
+    {
+        RequireInlineBody(command.GetType(), owner);
+        return command;
+    }
+
     private ICommand Rehydrate(JobRun run)
     {
         // The payload is deserialized rather than rebuilt from the declaration, because the host that
@@ -107,6 +143,10 @@ internal sealed partial class JobRunner
                 $"Job run '{run.JobKey}' names command type '{run.MessageType}', which this application " +
                 "does not know. The type was removed or renamed after the run was written; delete the " +
                 "run or restore the type.");
+
+        // A run written before its type became [FireAndForget], or by a host that did not check: failing the
+        // attempt is honest, where dispatching it would record Completed for work not yet begun.
+        RequireInlineBody(commandType, $"Job run '{run.JobKey}'");
 
         return JsonSerializer.Deserialize(run.Payload, commandType, ConduitRuntime.JsonOptions) as ICommand
             ?? throw new InvalidOperationException(

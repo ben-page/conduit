@@ -35,6 +35,10 @@ public sealed class CoalescingTriggerBuilder<TEvent>
     {
         ArgumentNullException.ThrowIfNull(createCommand);
 
+        // Refused as on any trigger. The declared type is the whole check: a scope is written, merged and run
+        // as TCommand, whatever the runtime type of the command the factory built.
+        JobRunner.RequireInlineBody(typeof(TCommand), $"Event trigger '{this.owner.Name}'");
+
         var trigger = new JobTrigger(
             this.owner.Name,
             typeof(TEvent),

@@ -43,6 +43,13 @@ public sealed class JobsBuilder
         set => this.Options.MaxAttempts = value;
     }
 
+    /// <inheritdoc cref="JobsOptions.RetryBackoff"/>
+    public IReadOnlyList<TimeSpan> RetryBackoff
+    {
+        get => this.Options.RetryBackoff;
+        set => this.Options.RetryBackoff = value;
+    }
+
     /// <inheritdoc cref="JobsOptions.FailedRetention"/>
     public TimeSpan FailedRetention
     {
@@ -55,6 +62,13 @@ public sealed class JobsBuilder
     {
         get => this.Options.CompletedRetention;
         set => this.Options.CompletedRetention = value;
+    }
+
+    /// <inheritdoc cref="JobsOptions.CleanupInterval"/>
+    public TimeSpan CleanupInterval
+    {
+        get => this.Options.CleanupInterval;
+        set => this.Options.CleanupInterval = value;
     }
 
     /// <inheritdoc cref="JobsOptions.AutoCreateTable"/>

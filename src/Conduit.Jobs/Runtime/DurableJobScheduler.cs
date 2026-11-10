@@ -39,6 +39,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     private readonly IOptions<JobsOptions> options;
     private readonly ILogger<DurableJobScheduler> logger;
     private readonly JobSchedulerReadiness readiness;
+    private readonly JobSweepSignal sweepSignal;
     private readonly DateTimeOffset startedAt;
 
     public DurableJobScheduler(
@@ -48,6 +49,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         TimeProvider timeProvider,
         IOptions<JobsOptions> options,
         JobSchedulerReadiness readiness,
+        JobSweepSignal sweepSignal,
         ILogger<DurableJobScheduler> logger)
     {
         this.registry = registry;
@@ -56,6 +58,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         this.timeProvider = timeProvider;
         this.options = options;
         this.readiness = readiness;
+        this.sweepSignal = sweepSignal;
         this.logger = logger;
 
         // Read at construction rather than when a loop first runs: hosted services are constructed
@@ -67,13 +70,33 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Every running job's token is linked to the host's stopping token, so it was cancelled when the stop
+    /// began; this waits for the jobs to end, but no longer than <paramref name="cancellationToken"/>, the
+    /// host's shutdown deadline. A handler that ignores its token would otherwise hold the host's stop open
+    /// past <c>ShutdownTimeout</c>, for as long as it ran.
+    /// </remarks>
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
 
         // In-flight runs are not part of ExecuteAsync's task, so without this a draining host would
         // exit while still holding claims — exactly the stall that releasing them is meant to avoid.
-        await this.executor.DrainAsync();
+        try
+        {
+            await this.executor.DrainAsync().WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Left running, claims unreleased: each goes stale once this host stops renewing it, and another
+            // host takes the run over after ClaimTimeout. Read after the deadline, so runs that ended in the
+            // meantime are not named; if none is left, nothing was abandoned.
+            var abandoned = this.executor.RunningJobKeys;
+            if (abandoned.Count > 0)
+            {
+                LogDrainAbandoned(this.logger, abandoned);
+            }
+        }
     }
 
     /// <inheritdoc/>
@@ -367,6 +390,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Armed before the pass reads anything, so work written while the pass runs — after it has looked —
+            // still wakes the sleep that follows, and work written before is in what the pass reads.
+            var woken = this.sweepSignal.Arm();
+
             TimeSpan delay;
             try
             {
@@ -392,17 +419,14 @@ internal sealed partial class DurableJobScheduler : BackgroundService
                 delay = this.options.Value.ClaimTimeout;
             }
 
-            var wait = Task.Delay(delay, this.timeProvider, stoppingToken);
+            // Sleeps until the earliest due work or a wake from this process (JobSweepSignal), whichever is first.
+            // The timer is dropped when the wake wins, so sleeps do not pile up.
+            using var sleep = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            var wait = Task.Delay(delay, this.timeProvider, sleep.Token);
             armed = ReportArmedOnce(this.readiness, armed);
 
-            try
-            {
-                await wait;
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+            await Task.WhenAny(wait, woken);
+            await sleep.CancelAsync();
         }
     }
 
@@ -420,7 +444,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     /// The sweep sleeps until the earliest pending run or waiting scope is due, capped at the claim
     /// timeout so a claim abandoned by a crashed host is still recovered when nothing else is
     /// scheduled. Scopes must be in this minimum: without them a delayed coalescing trigger would
-    /// wait out the whole claim timeout past its due time.
+    /// wait out the whole claim timeout past its due time. Work this process writes after the sleep was
+    /// computed wakes it early (<see cref="JobSweepSignal"/>).
     /// </summary>
     /// <remarks>
     /// A scope that is due but blocked behind an in-flight run for the same key is left alone by
@@ -429,10 +454,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     /// <c>untilDue</c> zero or negative, which fails the "still in the future" check below and falls
     /// through to the ceiling, exactly as it does when nothing at all is due. This is deliberate: the
     /// alternative, treating a blocked scope's past due time as "wake up immediately," would spin the
-    /// sweep at zero delay on work it cannot yet take. The cost is that nothing nudges the sweep when
-    /// the blocking run finally clears, so the follow-on run starts only on the next sweep pass — up to
-    /// <c>ClaimTimeout</c> after the run ahead of it clears. That latency is a known, accepted
-    /// limitation; no nudge mechanism or shorter poll is added to close it.
+    /// sweep at zero delay on work it cannot yet take. What ends the wait is the blocking run's end: the
+    /// executor wakes the sweep of the host that ran it, whose next pass picks the scope up. Only when that
+    /// run's outcome is not recorded (its host died, or lost its claim) does the follow-on wait for a sweep
+    /// pass, up to <c>ClaimTimeout</c>.
     /// </remarks>
     private async Task<TimeSpan> ComputeSweepDelayAsync(CancellationToken stoppingToken)
     {
@@ -727,4 +752,15 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     private static partial void LogScopePickUpFailed(
         ILogger logger, string scopeKey, Exception exception);
 
+    /// <summary>
+    /// The host's shutdown deadline passed with runs still executing, so the stop returned without them. EventId
+    /// 411 is a contract: never renumber it.
+    /// </summary>
+    [LoggerMessage(
+        EventId = 411,
+        EventName = "DrainAbandoned",
+        Level = LogLevel.Warning,
+        Message = "The shutdown deadline passed while job runs {JobKeys} were still executing; they were left running " +
+            "with their claims unreleased, so another host takes each over once its claim goes stale after the claim timeout")]
+    private static partial void LogDrainAbandoned(ILogger logger, IReadOnlyList<string> jobKeys);
 }

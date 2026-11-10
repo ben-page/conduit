@@ -340,6 +340,7 @@ public class CoalescingTriggerShould
         var coalescer = new ScopeCoalescer(
             new ContendedJobStore(real),
             host.GetRequiredService<ClaimedJobExecutor>(),
+            host.GetRequiredService<JobSweepSignal>(),
             NullLogger<ScopeCoalescer>.Instance);
 
         // Act

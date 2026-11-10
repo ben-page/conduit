@@ -46,6 +46,37 @@ public class JobsConfigurationShould
     }
 
     [TestMethod]
+    [DataRow(0, DisplayName = "Zero")]
+    [DataRow(-1, DisplayName = "Negative")]
+    public void RejectANonPositiveMaxRuntimeOnASchedule(int seconds)
+    {
+        // Arrange — a ceiling of no time would cancel every run at its first heartbeat
+        void Configure(JobsBuilder jobs)
+            => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).MaxRuntime(TimeSpan.FromSeconds(seconds))
+                .Run(() => new NoopJob());
+
+        // Act
+        var act = () => AddJobsForTest(Configure);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*schedule 'warm'*MaxRuntime*positive*");
+    }
+
+    [TestMethod]
+    public void RejectANonPositiveMaxRuntimeOnAnEventTrigger()
+    {
+        // Arrange
+        static void Configure(JobsBuilder jobs)
+            => jobs.On<ThingHappened>("notify").MaxRuntime(TimeSpan.Zero).Run(thing => new RecordedJob(thing.Label));
+
+        // Act
+        var act = () => AddJobsForTest(Configure, withEngine: true);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("*trigger 'notify'*MaxRuntime*positive*");
+    }
+
+    [TestMethod]
     public void RejectDuplicateScheduleNames()
     {
         // Arrange
@@ -357,8 +388,10 @@ public class JobsConfigurationShould
             jobs.HeartbeatInterval = TimeSpan.FromSeconds(15);
             jobs.ClaimTimeout = TimeSpan.FromMinutes(1);
             jobs.MaxAttempts = 5;
+            jobs.RetryBackoff = [TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(90)];
             jobs.FailedRetention = TimeSpan.FromDays(30);
             jobs.CompletedRetention = TimeSpan.FromHours(6);
+            jobs.CleanupInterval = TimeSpan.FromMinutes(10);
             jobs.AutoCreateTable = false;
             jobs.HistoryRetention = TimeSpan.FromDays(90);
             jobs.ManageOnly = true;
@@ -371,8 +404,10 @@ public class JobsConfigurationShould
         options.HeartbeatInterval.Should().Be(TimeSpan.FromSeconds(15));
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(1));
         options.MaxAttempts.Should().Be(5);
+        options.RetryBackoff.Should().Equal(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(90));
         options.FailedRetention.Should().Be(TimeSpan.FromDays(30));
         options.CompletedRetention.Should().Be(TimeSpan.FromHours(6));
+        options.CleanupInterval.Should().Be(TimeSpan.FromMinutes(10));
         options.AutoCreateTable.Should().BeFalse();
         options.HistoryRetention.Should().Be(TimeSpan.FromDays(90));
         options.ManageOnly.Should().BeTrue();

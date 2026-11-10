@@ -16,8 +16,6 @@ namespace Conduit.Jobs;
 /// </summary>
 public static class ConduitBuilderExtensions
 {
-    private static readonly TimeSpan LongestClaimTimeout = TimeSpan.FromDays(1);
-
     /// <summary>
     /// Adds recurring schedules and event-triggered jobs to the Conduit configuration. Whether jobs
     /// are durable is inferred from whether a persistence engine is registered — an engine means
@@ -46,22 +44,17 @@ public static class ConduitBuilderExtensions
         configure(jobsBuilder);
 
         var options = jobsBuilder.Options;
-        if (options.ClaimTimeout <= options.HeartbeatInterval * 2)
-        {
-            throw new InvalidOperationException(
-                $"JobsOptions.ClaimTimeout ({options.ClaimTimeout}) must be more than twice " +
-                $"HeartbeatInterval ({options.HeartbeatInterval}). A claim that can expire within two " +
-                "heartbeats will be taken from a host that is still running the job, executing it twice.");
-        }
+        options.Validate();
 
-        // The heartbeat bounds each renewal by a timer set to the time left before the claim timeout, and
-        // a timer cannot hold much past 49 days: above that, every renewal would fail before it began.
-        if (options.ClaimTimeout > LongestClaimTimeout)
+        // A ceiling of no time cancels every run at its first heartbeat (or, without an engine, at once).
+        var unbounded = jobsBuilder.Schedules.Select(schedule => (Kind: "Job schedule", schedule.Name, schedule.MaxRuntime))
+            .Concat(jobsBuilder.Triggers.Select(trigger => (Kind: "Event trigger", trigger.Name, trigger.MaxRuntime)))
+            .FirstOrDefault(declaration => declaration.MaxRuntime <= TimeSpan.Zero);
+        if (unbounded.Name is not null)
         {
             throw new InvalidOperationException(
-                $"JobsOptions.ClaimTimeout ({options.ClaimTimeout}) must be at most one day " +
-                $"({LongestClaimTimeout}). Another host recovers a crashed host's run only once its claim is " +
-                "that old.");
+                $"{unbounded.Kind} '{unbounded.Name}' declares MaxRuntime({unbounded.MaxRuntime}); it must be positive. " +
+                "Remove MaxRuntime(...) for a run with no ceiling.");
         }
 
         var duplicate = jobsBuilder.Schedules
@@ -148,6 +141,10 @@ public static class ConduitBuilderExtensions
         {
             builder.Services.AddScoped<IJobStore, DbJobStore>();
             builder.Services.AddScoped<IJobs, DurableJobs>();
+
+            // Before the manage-only cut: DurableJobs wakes it on trigger-now, and with no sweep to hear
+            // it a wake does nothing.
+            builder.Services.AddSingleton<JobSweepSignal>();
             if (options.ManageOnly)
             {
                 // IJobs reads and writes the ledger through IJobStore alone. Everything below is the

@@ -175,7 +175,8 @@ created by `EnsureOutboundTopologyAsync` even in `ProducerOnly` mode.
 
 Background work declared via `conduit.AddJobs(...)`, either on a recurring **schedule** or as a
 reaction to an event (an **event trigger**). A job body is an ordinary command, so it inherits
-routing, pipeline behaviors, resilience and audit. See [Background Jobs](jobs.md).
+routing, pipeline behaviors, resilience and audit — any command but a `[FireAndForget]` one, whose
+handler would run after the job was recorded complete. See [Background Jobs](jobs.md).
 
 ### Schedule
 

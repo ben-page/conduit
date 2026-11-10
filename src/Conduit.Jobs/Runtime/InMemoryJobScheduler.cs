@@ -131,8 +131,12 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
             : CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, runtimeLimit.Token);
 
         // This loop awaits each run before the next occurrence, so it never overlaps itself; what it
-        // can overlap is a manual run, which registers in the same place.
-        var tracked = this.state.TryTrack(schedule.Name, jobCancellation);
+        // can overlap is a manual run, which registers in the same place. Keyed as the durable runner keys
+        // the same run, so IJobs.CancelAsync reaches it by that key as well as by the schedule's name.
+        var runKey = occurrence is { } at
+            ? DurableJobScheduler.BuildJobKey(schedule.Name, at)
+            : DurableJobScheduler.BuildStartUpJobKey(schedule.Name, this.startedAt);
+        var tracked = this.state.TryTrack(schedule.Name, runKey, jobCancellation);
         if (!tracked && !schedule.AllowsOverlap)
         {
             if (occurrence is { } due)
