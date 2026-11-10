@@ -41,7 +41,10 @@ public static class DispatchContextEndpointConventionBuilderExtensions
             endpointBuilder.RequestDelegate = async context =>
             {
                 HttpDispatchContext.Start(
-                    context, context.RequestServices.GetServices<IDispatchContextEnricher>(), trustCallerContext: false);
+                    context,
+                    context.RequestServices.GetServices<IDispatchContextEnricher>(),
+                    trustCallerContext: false,
+                    readClientProperties: false);
                 await inner(context);
             };
         });

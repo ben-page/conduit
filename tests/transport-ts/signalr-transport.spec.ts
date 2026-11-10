@@ -6,8 +6,16 @@ import { HubConnectionBuilder, HubConnectionState, type IRetryPolicy } from '@mi
 import {
   DEFAULT_RETRY_POLICY,
   SignalRTransport,
+  type SignalRTransportOptions,
   type TransportConnectionState,
 } from '../../src/Conduit.TypeGen/Transport/signalr';
+
+// Node's unhandled-rejection event. tsconfig's "types": [] keeps Node's typings out (they are not installed), so the
+// one Node API this suite needs is declared here.
+declare const process: {
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+  off(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+};
 
 /**
  * A hand-rolled HubConnection. The tests set `state` and fire the lifecycle callbacks themselves, because the
@@ -413,6 +421,119 @@ describe('SignalRTransport — a close nobody asked for is retried, with backoff
     await vi.advanceTimersByTimeAsync(60000);
 
     expect(seen.at(-1)).toBe('disconnected');
+    expect(connection.startCalls).toBe(1);
+  });
+});
+
+describe('SignalRTransport — a subscription made while the server is unreachable', () => {
+  // subscribe() starts the connection and returns at once. A start that failed used to reject a promise nobody held:
+  // an unhandled rejection, reported by the browser and fatal under Node's default policy.
+  it('leaves no unhandled rejection when the start it triggers fails, and retries on the schedule', async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', listener);
+    try {
+      const connection = new FakeHubConnection();
+      connection.startFailure = new Error('unreachable');
+      const transport = new SignalRTransport(connection as never);
+
+      transport.subscribe('App.Happened', () => undefined);
+      // Node reports an unhandled rejection once the microtask queue drains; the restart's 0 ms timer runs after that.
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(unhandled).toEqual([]);
+      expect(connection.startCalls).toBe(2);
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+  });
+});
+
+describe('SignalRTransport — a dispatch made while the hub reconnects waits for it', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function reconnecting(options?: SignalRTransportOptions) {
+    const connection = new FakeHubConnection();
+    const transport = new SignalRTransport(connection as never, options);
+    await transport.connect();
+    connection.state = HubConnectionState.Reconnecting;
+    connection.fire('reconnecting');
+    return { connection, transport };
+  }
+
+  function settledFlag(promise: Promise<unknown>): () => boolean {
+    let settled = false;
+    promise.then(() => { settled = true; }, () => { settled = true; });
+    return () => settled;
+  }
+
+  // The release-review finding: the hub was Reconnecting, connect() held a resolved start, and invoke() rejected
+  // "Cannot send data if the connection is not in the 'Connected' State." at once.
+  it('sends once the hub has reconnected, instead of failing at once', async () => {
+    const { connection, transport } = await reconnecting();
+    const request = transport.sendRequest('Ping', {});
+    const event = transport.sendEvent('Happened', {});
+    const requestSettled = settledFlag(request);
+
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(requestSettled()).toBe(false);
+    connection.state = HubConnectionState.Connected;
+    connection.fire('reconnected');
+
+    await expect(request).resolves.toEqual({ data: 'ok' });
+    await expect(event).resolves.toBeUndefined();
+    expect(connection.startCalls).toBe(1);
+  });
+
+  it('rejects when the hub has not reconnected within 10 s', async () => {
+    const { transport } = await reconnecting();
+    const request = transport.sendRequest('Ping', {});
+    const outcome = expect(request).rejects.toThrow('did not reconnect within 10000 ms');
+    const requestSettled = settledFlag(request);
+
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(requestSettled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await outcome;
+  });
+
+  it('waits as long as reconnectWait says', async () => {
+    const { transport } = await reconnecting({ reconnectWait: 500 });
+    const request = transport.sendEvent('Happened', {});
+    const outcome = expect(request).rejects.toThrow('did not reconnect within 500 ms');
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await outcome;
+  });
+
+  it('starts the connection again, and sends, when the reconnect ends in a close', async () => {
+    const { connection, transport } = await reconnecting();
+    const request = transport.sendRequest('Ping', {});
+
+    connection.state = HubConnectionState.Disconnected;
+    connection.fire('close');
+
+    await expect(request).resolves.toEqual({ data: 'ok' });
+    expect(connection.startCalls).toBe(2);
+  });
+
+  // Logout stops the socket on purpose. A dispatch that was waiting must not start it again.
+  it('rejects, without starting the connection again, when the app stops it during the wait', async () => {
+    const { connection, transport } = await reconnecting();
+    const request = transport.sendRequest('Ping', {});
+    const outcome = expect(request).rejects.toThrow('the connection was stopped');
+
+    await transport.stop();
+
+    await outcome;
     expect(connection.startCalls).toBe(1);
   });
 });

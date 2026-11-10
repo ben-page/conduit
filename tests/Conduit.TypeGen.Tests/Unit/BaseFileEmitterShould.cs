@@ -13,8 +13,8 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("export interface DispatchResult<T>");
-        result.Should().Contain("data?: T;");
-        result.Should().Contain("error?: ConduitError;");
+        result.Should().Contain("data?: T | null;");
+        result.Should().Contain("error?: ConduitError | null;");
     }
 
     [TestMethod]
@@ -41,9 +41,9 @@ public class BaseFileEmitterShould
         start.Should().BeGreaterThan(-1);
         var conduitError = result[start..result.IndexOf("\n}", start, StringComparison.Ordinal)];
         conduitError.Should().Contain("  status: number;");
-        conduitError.Should().Contain("  type?: string;");
+        conduitError.Should().Contain("  type?: string | null;");
         conduitError.Should().Contain("  data?: unknown;");
-        conduitError.Should().Contain("  reference?: string;");
+        conduitError.Should().Contain("  reference?: string | null;");
     }
 
     [TestMethod]
@@ -144,8 +144,8 @@ public class BaseFileEmitterShould
         var result = BaseFileEmitter.Emit();
 
         // Assert
-        result.Should().Contain("if (!response.ok)");
-        result.Should().Contain("Conduit dispatch failed with status");
+        result.Should().Contain("if (response.ok)");
+        result.Should().Contain("throw new Error(`Conduit: HTTP ${response.status} from ${url}`);");
     }
 
     [TestMethod]
@@ -169,6 +169,7 @@ public class BaseFileEmitterShould
         result.Should().Contain("accessTokenFactory?: () => string | Promise<string>;");
         result.Should().Contain("automaticReconnect?: boolean;");
         result.Should().Contain("retryPolicy?: IRetryPolicy;");
+        result.Should().Contain("reconnectWait?: number;");
         result.Should().Contain("configure?: (builder: HubConnectionBuilder) => void;");
     }
 
@@ -306,7 +307,7 @@ public class BaseFileEmitterShould
 
         // Assert
         result.Should().Contain("this.connection.onreconnecting(() => this.setConnectionState('reconnecting'));");
-        result.Should().Contain("this.connection.onreconnected(() => this.reportConnected());");
+        result.Should().Contain("this.connection.onreconnected(() => {\n      this.reportConnected();");
         result.Should().Contain("this.connection.onclose(error => {");
     }
 
@@ -464,7 +465,8 @@ public class BaseFileEmitterShould
         var result = BaseFileEmitter.Emit(transports, "/conduit", "/api/conduit");
 
         // Assert
-        result.Should().Contain("constructor(private baseUrl: string, private basePath: string = '/conduit') {}");
+        result.Should().Contain(
+            "constructor(private baseUrl: string, private basePath: string = '/conduit', private options?: HttpTransportOptions) {}");
         result.Should().Contain(
             "constructor(pathOrConnection: string | HubConnection = '/api/conduit', options?: SignalRTransportOptions) {");
     }

@@ -42,6 +42,11 @@ export interface SignalRTransportOptions {
   automaticReconnect?: boolean;
   /** Replaces DEFAULT_RETRY_POLICY. Ignored when automaticReconnect is false. */
   retryPolicy?: IRetryPolicy;
+  /**
+   * How long, in milliseconds, a dispatch made while the hub is reconnecting waits for it to reconnect or close before
+   * it rejects. Default 10 000.
+   */
+  reconnectWait?: number;
   configure?: (builder: HubConnectionBuilder) => void;
 }
 
@@ -57,6 +62,9 @@ export class SignalRTransport implements ConduitTransport {
   private restartStartedAt = 0;
   private connectedAt = 0;
   private hasConnected = false;
+  private readonly reconnectWait: number;
+  /** Dispatches waiting out a reconnect, released by the hub's next onreconnected or onclose. */
+  private readonly reconnectWaiters = new Set<() => void>();
 
   /** A connection up this long is healthy: the next close starts the backoff schedule over. */
   private static readonly STABLE_CONNECTION_MS = 30000;
@@ -73,10 +81,15 @@ export class SignalRTransport implements ConduitTransport {
     }
     this.restartPolicy = options?.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.restartsEnabled = options?.automaticReconnect !== false;
+    this.reconnectWait = options?.reconnectWait ?? 10_000;
     this.connection.onreconnecting(() => this.setConnectionState('reconnecting'));
-    this.connection.onreconnected(() => this.reportConnected());
+    this.connection.onreconnected(() => {
+      this.reportConnected();
+      this.releaseReconnectWaiters();
+    });
     // stop() reports 'stopped' before it closes the socket, so the close it causes is not a loss.
     this.connection.onclose(error => {
+      this.releaseReconnectWaiters();
       if (this.connectionState === 'stopped') return;
       this.scheduleRestart(error);
     });
@@ -141,19 +154,54 @@ export class SignalRTransport implements ConduitTransport {
   }
 
   async sendRequest<TResult>(type: string, payload: unknown, headers?: Record<string, string>): Promise<DispatchResult<TResult>> {
-    await this.connect();
+    await this.ready();
     return await this.connection.invoke<DispatchResult<TResult>>('Dispatch', type, payload, null, headers ?? null);
   }
 
   async sendEvent(type: string, data: unknown, headers?: Record<string, string>): Promise<void> {
-    await this.connect();
+    await this.ready();
     await this.connection.invoke('Publish', type, data, null, headers ?? null);
   }
 
   subscribe(eventName: string, handler: (data: unknown) => void): Subscription {
     this.connection.on(eventName, handler);
-    void this.connect();
+    void this.connect().catch(() => { /* the failure scheduled the next attempt */ });
     return { unsubscribe: () => this.connection.off(eventName, handler) };
+  }
+
+  /**
+   * Connects. While the hub is reconnecting, first waits (up to reconnectWait) for it to reconnect or close: invoke()
+   * would reject "Cannot send data…" at once. After a close the connection is started again, unless the app stopped
+   * it: a dispatch never undoes a stop it was waiting through. The state is read before anything is awaited, so the
+   * waiter is registered before any transition can pass it by.
+   */
+  private async ready(): Promise<void> {
+    if (this.connection.state === HubConnectionState.Reconnecting) {
+      await this.waitForReconnect();
+      if (this.connectionState === 'stopped') {
+        throw new Error('Conduit: the connection was stopped while the dispatch waited for it to reconnect.');
+      }
+    }
+    await this.connect();
+  }
+
+  private waitForReconnect(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const release = () => {
+        clearTimeout(timer);
+        this.reconnectWaiters.delete(release);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.reconnectWaiters.delete(release);
+        reject(new Error(`Conduit: the connection did not reconnect within ${this.reconnectWait} ms, so the dispatch was not sent.`));
+      }, this.reconnectWait);
+      this.reconnectWaiters.add(release);
+    });
+  }
+
+  private releaseReconnectWaiters(): void {
+    [...this.reconnectWaiters].forEach(release => release());
   }
 
   private reportConnected(): void {

@@ -26,13 +26,23 @@ namespace Conduit.Transport.Http.Tests.Integration;
 public class HttpDispatchContextShould
 {
     private const string CaptureType = "Conduit.Transport.Http.Tests.Support.CaptureContextCommand";
+    private const string CaptureEventType = "Conduit.Transport.Http.Tests.Support.CaptureContextEvent";
     private const string DispatchPath = "/api/conduit/dispatch";
+    private const string PublishPath = "/api/conduit/publish";
 
     private static readonly Dictionary<string, string> CallerIds = new()
     {
         ["X-Conduit-Message-Id"] = "m-1",
         ["X-Conduit-Conversation-Id"] = "c-1",
         ["X-Conduit-Causation-Id"] = "p-1",
+    };
+
+    // What the TS HttpTransport sends for `headers` { TenantCode, culture, UserId }, the prefix in two letter cases.
+    private static readonly Dictionary<string, string> ClientProperties = new()
+    {
+        ["X-Conduit-Property-TenantCode"] = "t1",
+        ["x-conduit-property-culture"] = "es",
+        ["X-Conduit-Property-UserId"] = "spoofed",
     };
 
     private static (WebApplication App, HttpClient Client, CapturedContexts Captured, MessageIdDedupGate Gate) CreateTestHost(
@@ -256,6 +266,69 @@ public class HttpDispatchContextShould
             ids.ConversationId.Should().NotBe("c-1");
             ids.ConversationId.Should().Be(ids.CausationId, "the route's minted context heads the conversation");
             captured.Properties.Single()!["UserId"].Should().Be("emp-42");
+        }
+    }
+
+    [TestMethod]
+    public async Task ReadClientPropertiesFromHeaders()
+    {
+        // Arrange: the browser's properties (the hub's `headers` argument) travel over HTTP as X-Conduit-Property-<name>.
+        var (app, client, captured, _) = CreateTestHost(
+            trustCallerContext: false, enricher: new StaticValueEnricher("UserId", "emp-42"));
+        await using (app)
+        using (client)
+        {
+            // Act
+            using var dispatched = await PostCaptureAsync(client, DispatchPath, ClientProperties);
+            using var published = await PostCaptureAsync(client, PublishPath, ClientProperties, CaptureEventType);
+
+            // Assert: the prefix matches in any letter case, the name after it is kept as sent, and an enricher's write
+            // wins over a client's property of the same name, as on the hub.
+            dispatched.StatusCode.Should().Be(HttpStatusCode.OK);
+            published.StatusCode.Should().Be(HttpStatusCode.OK);
+            captured.Properties.Should().HaveCount(2, "one request and one event were dispatched");
+            foreach (var properties in captured.Properties)
+            {
+                properties.Should().BeEquivalentTo(new Dictionary<string, object?>
+                {
+                    ["TenantCode"] = "t1",
+                    ["culture"] = "es",
+                    ["UserId"] = "emp-42",
+                });
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task ReadNoClientPropertiesOnARestEndpointOrAnOptedInMinimalApiRoute()
+    {
+        // Arrange: client properties are the wire endpoint's, as the hub's `headers` are the hub's.
+        var (app, client, captured, _) = CreateTestHost(
+            trustCallerContext: false,
+            mapMore: host =>
+            {
+                host.MapConduitPost<CaptureContextCommand>("/api/capture");
+                host.MapPost("/api/minimal", async (IMediator mediator) =>
+                {
+                    await mediator.ExecuteAsync(new CaptureContextCommand());
+                    return Results.Ok();
+                }).WithConduitDispatchContext();
+            });
+        await using (app)
+        using (client)
+        {
+            // Act
+            using var rest = await PostCaptureAsync(client, "/api/capture", ClientProperties, type: null);
+            using var minimal = await PostCaptureAsync(client, "/api/minimal", ClientProperties, type: null);
+
+            // Assert
+            rest.StatusCode.Should().Be(HttpStatusCode.OK);
+            minimal.StatusCode.Should().Be(HttpStatusCode.OK);
+            captured.Properties.Should().HaveCount(2);
+            foreach (var properties in captured.Properties)
+            {
+                (properties ?? new Dictionary<string, object?>()).Should().BeEmpty();
+            }
         }
     }
 }

@@ -48,7 +48,7 @@ public static class EndpointRouteBuilderExtensions
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext);
+            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties: true);
 
             // The edge where the answer leaves the server for a person: the refusal is written in the reader's language here.
             return Answer(RefusalRendering.RenderResult(
@@ -64,7 +64,7 @@ public static class EndpointRouteBuilderExtensions
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext);
+            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties: true);
 
             try
             {

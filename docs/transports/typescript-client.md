@@ -26,7 +26,7 @@ const result = await client.execute(
   { text: 'Buy groceries' }
 );
 // result.data is string (the Guid returned by the handler)
-// result.error is ConduitError | undefined
+// result.error is the server's refusal, null or absent on success
 
 const notes = await client.fetch(
   'MyApp.Queries.GetNotesQuery',
@@ -43,7 +43,7 @@ const sub = client.on(
 );
 ```
 
-`execute` and `fetch` return `DispatchResult<T>`. They never throw. Check `result.error` to handle failures. `publish` sends events fire-and-forget. `on` subscribes to server-pushed events and returns a `Subscription` with an `unsubscribe()` method.
+`execute` and `fetch` resolve to a `DispatchResult<T>`: the handler's result in `data`, or the server's refusal (a validation failure, a not-found, a type the server does not accept) in `error`. Check `result.error` for those. A **transport failure rejects the promise instead**: no connection, a request you aborted, a hub that did not reconnect in time, or a failed HTTP response that is not a refusal (a 401 or 403 from your authorization middleware, a proxy's 502). Catch it where it matters, e.g. to send a signed-out user to the login page. `publish` resolves once the server has accepted the event, and rejects on a refusal (with the refusal's message) and on a transport failure. `on` subscribes to server-pushed events and returns a `Subscription` with an `unsubscribe()` method.
 
 ## Mark types with [ClientVisible]
 
@@ -201,6 +201,13 @@ regenerates `conduit.ts` from a `Conduit.TypeGen` that contains it.
   recovers exactly like one left unattended through a crash. The attempt count resets only after a connection has
   stayed up 30 seconds, so a server that accepts and immediately closes a connection is retried on the schedule,
   not in a tight loop.
+- **A dispatch made while the hub reconnects waits for it.** It used to reject *"Cannot send data…"* at once. It now
+  waits for the hub's next `onreconnected` (then sends) or `onclose` (then starts the connection again and sends),
+  for at most `reconnectWait` milliseconds (`SignalRTransportOptions`, default 10 000), and then rejects. A dispatch
+  waiting when the app calls `stop()` rejects rather than starting the connection again.
+- **A subscription made while the server is down leaves no unhandled rejection.** `on` (`subscribe`) starts the
+  connection without waiting for it; a failed start is retried on the schedule, as above, and no longer also rejects
+  a promise nobody holds.
 
 `onStateChange(handler)` reports the socket's lifecycle as a `TransportConnectionState`, and calls the handler at
 once with the current state:
@@ -221,8 +228,8 @@ or `disconnected` — an app can tell a logout from an outage. `onStateChange` i
 `http.ts` and `signalr.ts`, embedded in `Conduit.TypeGen` and assembled into `conduit.ts` — and `tests/transport-ts`
 type-checks it (strict `tsc`) and runs it under vitest, locally (`npm test`) and in CI (the `transport-ts` job): a fake
 `HubConnection` driven past a permanent close, a close the server sent without `allowReconnect`, an intentional stop
-and a failed start, the retry policy the restart loop is built with, and `HttpTransport`'s requests, refusals and
-failures. Strict `tsc` checks each transport file, and also the two assembled outputs checked in under
+and a failed start, a dispatch waiting through a reconnect, a subscription whose start fails, the retry policy the
+restart loop is built with, and `HttpTransport`'s requests, properties, options, refusals and failures. Strict `tsc` checks each transport file, and also the two assembled outputs checked in under
 `tests/transport-ts/emitted/` — the default `conduit.ts` and the HTTP-only one, the only two shapes it takes (the
 configured paths change only literals). A `BaseFileEmitterShould` test pins both to the emitter, so a transport edit fails
 until the goldens are regenerated, and the golden diff is what every consumer's `conduit.ts` will show. Beside them,
@@ -257,27 +264,39 @@ import { ConduitClient, HttpTransport } from './generated/conduit.generated';
 // Same-origin
 const client = new ConduitClient(new HttpTransport(''));
 
-// Cross-origin
-const client = new ConduitClient(new HttpTransport('https://api.example.com'));
+// Cross-origin, authenticated by cookie: fetch sends no cookies to another origin unless asked to
+const client = new ConduitClient(new HttpTransport('https://api.example.com', undefined, { credentials: 'include' }));
 ```
 
 `HttpTransport` uses the native `fetch` API with zero npm dependencies. It supports `execute`, `fetch`, and `publish`. Calling `on` throws because HTTP has no server-to-client push. Use `SignalRTransport` for event subscriptions.
 
-`HttpTransport` takes two arguments: `baseUrl` (required) and `basePath` (optional, defaults to `'/api/conduit'`). The transport appends `/dispatch` and `/publish` to the base path.
+`HttpTransport` takes `baseUrl` (required), `basePath` (optional, defaults to `'/api/conduit'`; the transport appends `/dispatch` and `/publish` to it) and an optional `HttpTransportOptions`:
+
+| Option | Description |
+|---|---|
+| `credentials` | The `fetch` credentials mode of every request. A cross-origin host that authenticates by cookie needs `'include'`, and its CORS policy must allow credentials (`AllowCredentials()`) and the request headers: `Content-Type`, `X-Conduit-Type`, and each `X-Conduit-Property-<name>` you send. |
+| `fetch` | Replaces the global `fetch`, e.g. to add an `Authorization` header or a per-request timeout (`(input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) })`). Called unbound, as the global one must be. |
+| `signal` | An `AbortSignal` that aborts every request the transport makes once it fires, e.g. at logout. An aborted request rejects. |
+
+A failed response that carries the server's refusal (the `DispatchResult` the wire endpoint answers one with) resolves `execute`/`fetch` with it in `error`. Any other failed response rejects with `Conduit: HTTP <status> from <url>`: a 401 or 403 your authorization middleware answered, a 502 from a proxy, an HTML error page.
+
+### Properties
+
+The `headers` argument of `sendRequest`/`sendEvent` carries the dispatch's properties, on both transports: the server reads them into `MessageContext.Properties`, and your `IDispatchContextEnricher`s run after, so an enricher's write wins over a client's property of the same name. Over SignalR they are the hub method's `headers` argument. Over HTTP each one is sent as an `X-Conduit-Property-<name>` header (`{ TenantCode: 't1' }` is `X-Conduit-Property-TenantCode: t1`), never as a header of its own, so a property cannot replace the `Content-Type` or `X-Conduit-Type`, nor set a correlation id. Only the wire endpoint (`MapConduitEndpoint`'s `/dispatch` and `/publish`) reads them ([HTTP → Client properties](http.md#client-properties)). A property travels as a header, so its name must be a valid header name and its value Latin-1 text (`fetch` refuses anything else), and HTTP/2 and HTTP/3 lower-case every header name: a property meant to cross either transport is best named in lower case.
 
 ## Wire format
 
 Both transports send the plain serialized message as the payload — no envelope wrapper.
 
-**HTTP**: The message type is sent in the `X-Conduit-Type` header. The request body contains only the serialized message JSON.
+**HTTP**: The message type is sent in the `X-Conduit-Type` header, and each property in an `X-Conduit-Property-<name>` header. The request body contains only the serialized message JSON.
 
-**SignalR**: The message type and payload are separate hub method arguments. The third argument is a context dictionary (`null` from browser clients).
+**SignalR**: The message type and payload are separate hub method arguments. The third argument is a context dictionary (`null` from browser clients), the fourth the properties (`headers`).
 
 ## MessageContext
 
 Browser clients are always the origin of a new conversation. They do not send `MessageContext` ids — the server creates a fresh context (`MessageId`, `ConversationId`, `CausationId`) when it receives the request. All downstream dispatches (to other services via broker transports) inherit this context through the causal chain.
 
-Both halves of that hold in code. The client never sends the ids: `HttpTransport` drops `X-Conduit-Message-Id`, `X-Conduit-Conversation-Id` and `X-Conduit-Causation-Id` from the headers you pass it (in any letter case), and `SignalRTransport` passes `null` as the hub's context argument. And the server does not take them from a browser: the HTTP endpoint and the hub ignore caller-supplied ids unless they opt in for service-to-service callers, which an edge a browser can reach should not do ([HTTP → Correlation ids](http.md#correlation-ids), [SignalR → Correlation ids](signalr.md#correlation-ids)), so a hand-written request cannot set them either.
+Both halves of that hold in code. The client never sends the ids: `HttpTransport` sends every header you pass it as a property (`X-Conduit-Property-<name>`), never as a header of its own, so it cannot send `X-Conduit-Message-Id`, `X-Conduit-Conversation-Id` or `X-Conduit-Causation-Id`, and `SignalRTransport` passes `null` as the hub's context argument. And the server does not take them from a browser: the HTTP endpoint and the hub ignore caller-supplied ids unless they opt in for service-to-service callers, which an edge a browser can reach should not do ([HTTP → Correlation ids](http.md#correlation-ids), [SignalR → Correlation ids](signalr.md#correlation-ids)), so a hand-written request cannot set them either.
 
 C# service-to-service transports (HTTP, SignalR, brokers) send `MessageContext` automatically. HTTP uses `X-Conduit-Message-Id`, `X-Conduit-Causation-Id`, `X-Conduit-Conversation-Id` headers. SignalR uses a context dictionary as the third hub method argument. Broker transports use transport-native message properties, and always keep them. Over HTTP and SignalR the receiving edge keeps them only when it trusts its callers.
 

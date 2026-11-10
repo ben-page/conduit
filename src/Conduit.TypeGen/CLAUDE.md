@@ -80,11 +80,32 @@
   `npm test` in `tests/transport-ts`. A sample that must make generation throw cannot live where a `[ClientVisible]`
   type reaches it (it would fail every whole-assembly test): `Sample/UnreachedSampleTypes.cs`.
 - `ConduitClient` — typed browser client with `execute` (commands), `fetch` (queries), `publish` (client→server events), `on` (event subscriptions returning `Subscription`)
-- `ConduitClient` returns `DispatchResult<T>` (does not throw) — consumers decide error handling strategy
+- `ConduitClient` resolves a server's refusal as `DispatchResult<T>.error` — consumers decide error handling strategy —
+  and rejects on a transport failure (no connection, an abort, a reconnect wait that ran out, a non-refusal HTTP
+  failure such as a 401)
 - `Conduit.TypeGen.targets` — MSBuild targets file with opt-in via `<ConduitTypeGenEnabled>true</ConduitTypeGenEnabled>`, configurable output dir (`ConduitTypeGenOutput`, default `ClientApp/generated`) and transports (`ConduitTransports`, default `Http;SignalR`)
 - **Multi-project support**: For Clean Architecture projects where `[ClientVisible]` types are in a library assembly (not the Web host), consumers can override `AssemblyPath` in the target to point at the library DLL. Example: `AssemblyPath="$(MSBuildProjectDirectory)\bin\$(Configuration)\net10.0\MyApp.Application.dll"`
 - TypeScript transport interface mirrors C#: `sendRequest` (SendRequestAsync), `sendEvent` (SendEventAsync), `subscribe` (browser-only)
-- `HttpTransport` uses native `fetch`, zero npm dependencies, and drops the caller's `X-Conduit-Message-Id`/`-Conversation-Id`/`-Causation-Id` headers (any case; `callerHeaders`): a browser is a conversation's origin, so those ids are the server's. Other caller headers still pass, and can still override `Content-Type`/`X-Conduit-Type`. `SignalRTransport` wraps `HubConnection` from `@microsoft/signalr` and passes a null hub context
+- `HttpTransport(baseUrl, basePath = '/api/conduit', options?: HttpTransportOptions)` uses native `fetch`, zero npm
+  dependencies. `HttpTransportOptions`: `credentials` and `signal` go on every request; `fetch` replaces the global
+  one and is called through a local (unbound): a window's fetch throws "Illegal invocation" as another object's
+  method. **`headers` are properties** (`propertyHeaders`): each is sent as `X-Conduit-Property-<name>`, never as a
+  header of its own, so a caller cannot override `Content-Type`/`X-Conduit-Type` or send a correlation id (a browser
+  is a conversation's origin); the server's `HttpDispatchContext` reads them into `MessageContext.Properties`, as
+  `ConduitHub` reads its `headers` argument. **A non-OK response** resolves `sendRequest` only when its body is a
+  refusal (`readRefusal`: a JSON object whose `error` is an object with string `code` and `message`), else rejects
+  `Error("Conduit: HTTP <status> from <url>")` — a 401/403 ProblemDetails, an empty body, an OAuth
+  `{"error":"invalid_token"}`. `sendEvent` rejects on any non-OK response: with the refusal's message when the body is
+  one (`/publish` answers a refused event with the `DispatchResult`), else the same `Conduit: HTTP …` message.
+- `SignalRTransport` wraps `HubConnection` from `@microsoft/signalr` and passes a null hub context and the caller's
+  `headers` as the hub's properties argument. `subscribe` catches its `connect()` rejection (the failure already
+  scheduled a restart; uncaught it was an unhandled rejection). A dispatch made while the hub is `Reconnecting`
+  (`ready()`) waits for the next `onreconnected` or `onclose` — `reconnectWaiters`, released from the handlers the
+  constructor registers, since `HubConnection` has no way to remove an `onreconnected`/`onclose` callback — bounded by
+  `reconnectWait` (`SignalRTransportOptions`, default 10 000 ms), then `connect()`s (a no-op after a reconnect, a
+  restart after a close) and invokes; it rejects on the timeout, and when `stop()` closed the connection during the
+  wait (a dispatch never undoes a stop). The state is read before anything is awaited, so the waiter is registered
+  before a transition can pass it by.
 - Void commands merged into `CommandMap` with `response: void` (no separate `VoidCommandMap`)
 - **Inheritance**: abstract `[ClientVisible]` base types emit plain TypeScript `extends` — the derived interface extends the base and declares only its own properties. Concrete derived types are auto-discovered with no extra attribute (including types reached only through abstract-typed properties); multi-level chains work. `[LocalOnly]` on a derived type, or on a type it derives from, excludes it (`ReflectionScanner.IsLocalOnly` walks `BaseType`, as the source generator does; `TypeCollector` uses it too). `DispatchableTypeInfo` carries `BaseFullTypeName`/`BaseTypeName`; `ScanClientVisible` lets abstract `[ClientVisible]` bases through; `MergeFileEmitter` emits the `extends` clause and declared-only properties. Intentionally NOT supported: discriminated-union type aliases, literal discriminator fields, runtime type-guard helpers, open-generic inheritance.
 - **Declared refusals (`ErrorMap`, `isError`)**: `ErrorTypeScanner.Scan(assemblies)` finds concrete `ConduitException`
@@ -110,8 +131,11 @@
     was found); and the narrowing helper `export function isError<K extends keyof ErrorMap>(error: unknown, type:
     K): error is { type: K; data: ErrorMap[K] }`.
   - `conduit.ts`'s `ConduitError` carries `status: number` (the HTTP-status category; 0 from a server that
-    predates it), `type?: string` (a declared refusal's full type name), `data?: unknown`, and `reference?: string` (an unexpected failure's support reference; optional, absent on refusals
-    and from older servers).
+    predates it), `type?: string | null` (a declared refusal's full type name), `data?: unknown`, and
+    `reference?: string | null` (an unexpected failure's support reference; null or absent on refusals and from
+    older servers). `base.ts` types every member the server writes as `null` as `?: T | null` (`DispatchResult`'s
+    `data`/`error`, `details`, `field`, `type`, `reference`): optional for older servers, nullable for what
+    `ConduitRuntime.JsonOptions` actually writes.
   - **camelCase parity with the wire**: the emitted interface keys use `TypeScriptEmitter.ToCamelCase`; the
     wire (`ConduitException.GetClientData`) keys with `JsonNamingPolicy.CamelCase.ConvertName`. These are two
     separate implementations, so they could in principle disagree — checked exhaustively (every combination of

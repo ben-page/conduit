@@ -1,49 +1,89 @@
-import type { ConduitTransport, DispatchResult, Subscription } from './base';
+import type { ConduitError, ConduitTransport, DispatchResult, Subscription } from './base';
+
+export interface HttpTransportOptions {
+  /** The request's credentials mode. A cross-origin host that authenticates by cookie needs 'include'. */
+  credentials?: RequestCredentials;
+  /** Replaces the global fetch, e.g. to add a header or a per-request timeout. Called unbound, as the global one must be. */
+  fetch?: typeof fetch;
+  /** Aborts every request this transport makes once it fires, e.g. at logout. An aborted request rejects. */
+  signal?: AbortSignal;
+}
 
 export class HttpTransport implements ConduitTransport {
+  /** The prefix each caller header is sent under; the server reads the rest of the name as a dispatch property. */
+  private static readonly propertyHeaderPrefix = 'X-Conduit-Property-';
+
+  constructor(private baseUrl: string, private basePath: string = '/api/conduit', private options?: HttpTransportOptions) {}
+
   /**
-   * The correlation-id headers, lower-cased. A browser is always the origin of a conversation, so the server mints
-   * these ids: they are never sent, whatever the caller's headers hold (header names are case-insensitive).
+   * Resolves the server's answer: its result, or its refusal as `error`. Rejects on a transport failure: no response,
+   * an aborted request, or a failed response that is not a refusal (a 401 or 403 from authorization, a proxy's 502).
    */
-  private static readonly serverOwnedHeaders = new Set(['x-conduit-message-id', 'x-conduit-conversation-id', 'x-conduit-causation-id']);
-
-  constructor(private baseUrl: string, private basePath: string = '/api/conduit') {}
-
   async sendRequest<TResult>(type: string, payload: unknown, headers?: Record<string, string>): Promise<DispatchResult<TResult>> {
-    const response = await fetch(this.baseUrl + this.basePath + '/dispatch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type, ...HttpTransport.callerHeaders(headers) },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      try { return JSON.parse(text) as DispatchResult<TResult>; }
-      catch { throw new Error(`Conduit dispatch failed with status ${response.status}: ${text}`); }
+    const url = this.baseUrl + this.basePath + '/dispatch';
+    const response = await this.post(url, type, payload, headers);
+    if (response.ok) {
+      return await response.json() as DispatchResult<TResult>;
     }
-    return await response.json() as DispatchResult<TResult>;
+    const refusal = await HttpTransport.readRefusal(response);
+    if (refusal) {
+      return refusal;
+    }
+    throw new Error(`Conduit: HTTP ${response.status} from ${url}`);
   }
 
+  /** Rejects on a transport failure, and on a refusal, with the refusal's message: an event has no result to carry it. */
   async sendEvent(type: string, data: unknown, headers?: Record<string, string>): Promise<void> {
-    const response = await fetch(this.baseUrl + this.basePath + '/publish', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type, ...HttpTransport.callerHeaders(headers) },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      throw new Error(`Conduit publish failed with status ${response.status}`);
+    const url = this.baseUrl + this.basePath + '/publish';
+    const response = await this.post(url, type, data, headers);
+    if (response.ok) {
+      return;
     }
+    const refusal = await HttpTransport.readRefusal(response);
+    throw new Error(refusal ? refusal.error.message : `Conduit: HTTP ${response.status} from ${url}`);
   }
 
   subscribe(_eventName: string, _handler: (data: unknown) => void): Subscription {
     throw new Error('HttpTransport does not support event subscriptions. Use SignalRTransport for server-pushed events.');
   }
 
-  /** The caller's headers without the server-owned correlation ids. */
-  private static callerHeaders(headers?: Record<string, string>): Record<string, string> {
-    const kept: Record<string, string> = {};
+  private post(url: string, type: string, body: unknown, headers?: Record<string, string>): Promise<Response> {
+    // A local, so the call is unbound: a window's fetch throws "Illegal invocation" when called as a method of another object.
+    const send = this.options?.fetch ?? fetch;
+    return send(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Conduit-Type': type, ...HttpTransport.propertyHeaders(headers) },
+      body: JSON.stringify(body),
+      credentials: this.options?.credentials,
+      signal: this.options?.signal,
+    });
+  }
+
+  /**
+   * Each caller header as `X-Conduit-Property-<name>`, which the server reads into the dispatch's properties, as the
+   * hub reads its `headers` argument. Never a header of its own, so it cannot replace the content type or the type,
+   * nor set a correlation id, which is the server's to mint: a browser is always a conversation's origin.
+   */
+  private static propertyHeaders(headers?: Record<string, string>): Record<string, string> {
+    const sent: Record<string, string> = {};
     for (const [name, value] of Object.entries(headers ?? {})) {
-      if (!HttpTransport.serverOwnedHeaders.has(name.toLowerCase())) kept[name] = value;
+      sent[HttpTransport.propertyHeaderPrefix + name] = value;
     }
-    return kept;
+    return sent;
+  }
+
+  /**
+   * A failed response's refusal: the DispatchResult the server answers one with, whose `error` is a ConduitError. Null
+   * for any other body: none, text, a ProblemDetails, an OAuth `{ "error": "invalid_token" }`.
+   */
+  private static async readRefusal(response: Response): Promise<{ data?: null; error: ConduitError } | null> {
+    let body: unknown;
+    try { body = JSON.parse(await response.text()); }
+    catch { return null; }
+    if (typeof body !== 'object' || body === null) return null;
+    const error: unknown = (body as { error?: unknown }).error;
+    if (typeof error !== 'object' || error === null) return null;
+    const { code, message } = error as { code?: unknown; message?: unknown };
+    return typeof code === 'string' && typeof message === 'string' ? body as { data?: null; error: ConduitError } : null;
   }
 }

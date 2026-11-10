@@ -6,8 +6,9 @@
   - [Available verbs](#available-verbs)
 - [Binding strategies](#binding-strategies)
 - [Responses](#responses)
-- [Envelope dispatch](#envelope-dispatch)
+- [Wire dispatch](#wire-dispatch)
   - [Correlation ids](#correlation-ids)
+  - [Client properties](#client-properties)
 - [When to use which](#when-to-use-which)
 - [Outbound HttpTransport](#outbound-httptransport)
   - [Loading from configuration](#loading-from-configuration)
@@ -161,6 +162,16 @@ app.MapConduitEndpoint("/internal/conduit", trustCallerContext: true);
 A trusting endpoint honors the headers only when `X-Conduit-Message-Id` and `X-Conduit-Conversation-Id` are both present and every supplied id is a plain token: 1 to 64 ASCII letters, digits and hyphens (`MessageContextIds.IsValid`). An absent `X-Conduit-Causation-Id` defaults to the message id. Any other set of headers is ignored as a whole and the server mints fresh ids. Either way the request is answered as usual; a bad id is never an error. The outbound `HttpTransport` sends the three headers whenever all three ids are plain tokens, so the choice is made on the receiving side. When any is not (a broker can deliver a foreign producer's ids), it sends none and the receiver mints.
 
 [RESTful endpoints](#restful-endpoints) and routes opted in with `WithConduitDispatchContext()` never honor caller ids. Server-trusted properties from your `IDispatchContextEnricher`s apply on every edge, trusted or not.
+
+### Client properties
+
+`/dispatch` and `/publish` read each `X-Conduit-Property-<name>` request header into the dispatch's `MessageContext.Properties`, as the SignalR hub reads its `headers` argument: `X-Conduit-Property-TenantCode: t1` is the property `TenantCode` with the value `"t1"`. This is how the [TypeScript client](typescript-client.md#properties)'s `HttpTransport` sends the `headers` you pass it.
+
+- The prefix is matched in any letter case, as header names are. The property's name is the rest of the header name, spelled as it arrived. HTTP/2 and HTTP/3 lower-case every header name, so over them `X-Conduit-Property-TenantCode` arrives as the property `tenantcode`: name a property in lower case if a client may reach you over either.
+- The value is a string. A header sent twice arrives as one comma-joined value.
+- Your `IDispatchContextEnricher`s run after, so an enricher's write wins over a client's property of the same name. A client can set any property no enricher writes: treat one as the caller's claim, as you would the hub's `headers`.
+- The correlation-id rule above is unaffected: a property is never a correlation id. A request that carries a property and no trusted ids gets fresh server ids.
+- [RESTful endpoints](#restful-endpoints) and routes opted in with `WithConduitDispatchContext()` read no client properties.
 
 ## When to use which
 

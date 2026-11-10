@@ -8,10 +8,13 @@ document.getElementById('status')!.textContent = 'Connected';
 
 async function loadNotes() {
   const result = await conduit.fetch('Conduit.Sample.Notes.Queries.GetNotesQuery', {});
-  if (!result.data) return;
+  if (result.error) {
+    logEvent(`Error: [${result.error.code}] ${result.error.message}`);
+    return;
+  }
   const list = document.getElementById('noteList')!;
   list.replaceChildren();
-  for (const note of result.data) {
+  for (const note of result.data ?? []) {
     const li = document.createElement('li');
     const span = document.createElement('span');
     span.textContent = note.text;
