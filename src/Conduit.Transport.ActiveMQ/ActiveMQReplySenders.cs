@@ -8,107 +8,161 @@ namespace Conduit.Transport.ActiveMQ;
 /// attach and detach a link of its own.
 /// </summary>
 /// <remarks>
-/// A reply address is a requester connection's temporary queue, so over a long run the addresses keep
-/// changing: when a requester goes away, Artemis leaves a link to its address attached (a send to it
-/// still succeeds, and goes nowhere). Once more than 64 links are cached, adding one closes those unused
-/// for 5 minutes; the next reply to a requester whose link was closed that way attaches a new one.
+/// A reply address is whatever the requester put in <c>ReplyTo</c>, so the cache holds at most 64 links:
+/// a new address beyond that closes the least recently used link first, however recently it was used,
+/// so no number of distinct addresses opens more. Adding one also closes links unused for 5 minutes,
+/// since a requester that went away leaves its link attached (Artemis keeps a link to a deleted temporary
+/// address, and a send on it succeeds and goes nowhere). The next reply to a requester whose link was
+/// closed either way attaches a new one.
 /// </remarks>
-internal sealed class ActiveMQReplySenders
+internal sealed class ActiveMQReplySenders : IDisposable
 {
-    private const int SweepThreshold = 64;
+    /// <summary>The most sender links cached at once.</summary>
+    internal const int Capacity = 64;
+
     private static readonly TimeSpan IdleLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(10);
 
     private readonly Session session;
     private readonly TimeProvider timeProvider = TimeProvider.System;
     private readonly ConcurrentDictionary<string, CachedSender> senders = new(StringComparer.Ordinal);
+
+    // Serializes attaching a link, and the evictions that make room for it, so the cap holds
+    private readonly SemaphoreSlim attaching = new(1, 1);
+    private long uses;
 
     public ActiveMQReplySenders(Session session)
     {
         this.session = session;
     }
 
-    /// <summary>The sender link for <paramref name="replyAddress"/>, attaching one if none is cached.</summary>
-    public SenderLink Get(string replyAddress)
-    {
-        var now = this.timeProvider.GetTimestamp();
-        while (true)
-        {
-            if (this.senders.TryGetValue(replyAddress, out var cached))
-            {
-                if (!cached.Link.IsClosed)
-                {
-                    cached.Touch(now);
-                    return cached.Link;
-                }
+    /// <summary>The sender links cached now.</summary>
+    internal int Count => this.senders.Count;
 
-                this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached));
-                continue;
+    /// <summary>
+    /// The sender link for <paramref name="replyAddress"/>, attaching one if none is cached. Making room
+    /// for a new one closes the links it evicts first, waiting for the broker's answer (at most 10 seconds
+    /// each), as a management link's close does before the next attach on the session.
+    /// </summary>
+    public async ValueTask<SenderLink> GetAsync(string replyAddress)
+    {
+        if (this.TryGetOpen(replyAddress, out var link))
+        {
+            return link;
+        }
+
+        await this.attaching.WaitAsync();
+        try
+        {
+            if (this.TryGetOpen(replyAddress, out link))
+            {
+                return link;
             }
+
+            var now = this.timeProvider.GetTimestamp();
+            var evicted = new List<SenderLink>();
+
+            foreach (var (cachedAddress, cached) in this.senders)
+            {
+                if (this.timeProvider.GetElapsedTime(cached.LastUsed, now) > IdleLifetime
+                    && this.senders.TryRemove(KeyValuePair.Create(cachedAddress, cached)))
+                {
+                    evicted.Add(cached.Link);
+                }
+            }
+
+            while (this.senders.Count >= Capacity)
+            {
+                var (leastRecentAddress, leastRecent) = this.senders.MinBy(entry => entry.Value.Recency);
+                if (this.senders.TryRemove(KeyValuePair.Create(leastRecentAddress, leastRecent)))
+                {
+                    evicted.Add(leastRecent.Link);
+                }
+            }
+
+            await Task.WhenAll(evicted.Select(CloseQuietlyAsync));
 
             var created = new CachedSender(
-                new SenderLink(this.session, ActiveMQTopologyManager.LinkName("reply"), replyAddress), now);
-            if (this.senders.TryAdd(replyAddress, created))
-            {
-                this.SweepIdle(now);
-                return created.Link;
-            }
-
-            // Another reply attached one for the same address first
-            CloseQuietly(created.Link);
+                new SenderLink(this.session, ActiveMQTopologyManager.LinkName("reply"), replyAddress),
+                now,
+                Interlocked.Increment(ref this.uses));
+            this.senders[replyAddress] = created;
+            return created.Link;
+        }
+        finally
+        {
+            this.attaching.Release();
         }
     }
 
     /// <summary>Discards <paramref name="link"/>, a cached link a send failed on.</summary>
-    public void Evict(string replyAddress, SenderLink link)
+    public async Task EvictAsync(string replyAddress, SenderLink link)
     {
         if (this.senders.TryGetValue(replyAddress, out var cached)
             && ReferenceEquals(cached.Link, link)
             && this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached)))
         {
-            CloseQuietly(link);
+            await CloseQuietlyAsync(link);
         }
     }
 
-    private void SweepIdle(long now)
+    /// <inheritdoc />
+    public void Dispose() => this.attaching.Dispose();
+
+    // A cached link that is still open, marked used; a closed one is dropped
+    private bool TryGetOpen(string replyAddress, out SenderLink link)
     {
-        if (this.senders.Count <= SweepThreshold)
+        link = null!;
+        if (!this.senders.TryGetValue(replyAddress, out var cached))
         {
-            return;
+            return false;
         }
 
-        foreach (var (replyAddress, cached) in this.senders)
+        if (cached.Link.IsClosed)
         {
-            if (this.timeProvider.GetElapsedTime(cached.LastUsed, now) > IdleLifetime
-                && this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached)))
-            {
-                CloseQuietly(cached.Link);
-            }
+            this.senders.TryRemove(KeyValuePair.Create(replyAddress, cached));
+            return false;
         }
+
+        cached.Touch(this.timeProvider.GetTimestamp(), Interlocked.Increment(ref this.uses));
+        link = cached.Link;
+        return true;
     }
 
-    // Detaches without waiting for the broker's answer
-    private static void CloseQuietly(SenderLink link)
+    private static async Task CloseQuietlyAsync(SenderLink link)
     {
         try
         {
-            link.Close(TimeSpan.Zero);
+            if (!link.IsClosed)
+            {
+                await link.CloseAsync(CloseTimeout);
+            }
         }
 #pragma warning disable CA1031
         catch (Exception)
 #pragma warning restore CA1031
         {
-            // Already closing or closed
+            // Already closing or closed, or a broker that did not answer in time
         }
     }
 
-    private sealed class CachedSender(SenderLink link, long lastUsed)
+    private sealed class CachedSender(SenderLink link, long lastUsed, long recency)
     {
         private long lastUsed = lastUsed;
+        private long recency = recency;
 
         public SenderLink Link { get; } = link;
 
+        /// <summary>When the link was last used, as a <see cref="TimeProvider"/> timestamp.</summary>
         public long LastUsed => Volatile.Read(ref this.lastUsed);
 
-        public void Touch(long now) => Volatile.Write(ref this.lastUsed, now);
+        /// <summary>Its place in the order of use: the smallest is the least recently used.</summary>
+        public long Recency => Volatile.Read(ref this.recency);
+
+        public void Touch(long now, long use)
+        {
+            Volatile.Write(ref this.lastUsed, now);
+            Volatile.Write(ref this.recency, use);
+        }
     }
 }

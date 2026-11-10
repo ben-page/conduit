@@ -270,7 +270,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         }
 
         var connection = this.CurrentConnection();
-        var replySender = connection.ReplySenders.Get(replyAddress);
+        var replySender = await connection.ReplySenders.GetAsync(replyAddress);
 
         using var replyMessage = new Message(replyBody.ToArray())
         {
@@ -288,7 +288,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         catch (Exception)
         {
             // The next reply to that address attaches a fresh link
-            connection.ReplySenders.Evict(replyAddress, replySender);
+            await connection.ReplySenders.EvictAsync(replyAddress, replySender);
             throw;
         }
     }

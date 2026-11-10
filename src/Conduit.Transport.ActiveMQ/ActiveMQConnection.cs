@@ -266,6 +266,8 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
         {
             // Best-effort: a lost connection is already closed, and one that does not answer is abandoned
         }
+
+        this.ReplySenders.Dispose();
     }
 
     private static async Task CloseQuietlyAsync(ReceiverLink receiverLink)
