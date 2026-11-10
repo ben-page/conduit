@@ -230,16 +230,24 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
 
     /// <summary>
     /// The reply to <paramref name="request"/>: in the request's own session, and discarded after
-    /// <see cref="AzureServiceBusOptions.ReplyTimeToLive"/>, by which time a request still waiting for it has
-    /// given up, and nothing else reads its session.
+    /// <see cref="AzureServiceBusOptions.ReplyTimeToLive"/> (when there is one), by which time a request still
+    /// waiting for it has given up, and nothing else reads its session.
     /// </summary>
-    internal ServiceBusMessage CreateReplyMessage(ServiceBusReceivedMessage request, BinaryData replyBody) =>
-        new(replyBody)
+    internal ServiceBusMessage CreateReplyMessage(ServiceBusReceivedMessage request, BinaryData replyBody)
+    {
+        var replyMessage = new ServiceBusMessage(replyBody)
         {
             SessionId = request.ReplyToSessionId,
             ContentType = "application/json",
-            TimeToLive = this.options.ReplyTimeToLive,
         };
+
+        if (this.options.ReplyTimeToLive is { } timeToLive)
+        {
+            replyMessage.TimeToLive = timeToLive;
+        }
+
+        return replyMessage;
+    }
 
     // -----------------------------------------------------------------------
     // Outbound primitives

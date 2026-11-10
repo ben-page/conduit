@@ -166,7 +166,7 @@ Integration tests of one broker's own mechanics, beyond the shared matrix.
 
 | # | Test Method | Hosts | Assert |
 |---|---|---|---|
-| 11.5 | `AsbTopologyShould.UpdateASubscriptionWhenAPoolAssignmentChanges` | B starts and stops with no pool (`TestCommand`'s and `TestEvent`'s subscriptions forward to its app queue); B restarts, same app name and prefix, with a pool handling both; A sends `TestCommand` | B's restart succeeds, both subscriptions' `ForwardTo` name the pool's queue (admin client), and A gets the handler's reply |
+| 11.5 | `AsbTopologyShould.UpdateASubscriptionWhenAPoolAssignmentChanges` | B's first release starts and stops with `TestEvent` in a pool `retired` (`TestCommand` on its app queue); its second release, same app name and prefix, drops `retired` and moves `TestCommand` into a new pool `moved`; A sends `TestCommand` | The second release starts; `TestEvent`'s subscription forwards to the app queue again (it pointed at a queue the release no longer has, so only its being app-scoped allows the redirect) and `TestCommand`'s to `moved`'s queue (it pointed at the app queue, one of the release's own); A gets the handler's reply. Removing either condition from the redirect check makes it fail |
 | 11.6 | `AsbTopologyShould.RefuseASubscriptionThatForwardsToAnotherApplication` | B handles every command; C, another app name on the same prefix, also handling them, starts | C's start throws `InvalidOperationException` naming a collision between applications: a shared subscription forwarding to another application's queue is never taken over |
 | 11.7 | `AsbShutdownShould.FailARequestStillAwaitingItsReplyOnStop` | A (30 s `ResponseTimeout`) sends a `ShutdownProbeCommand` (5 s handler), B handles; once B's handler is running, A is stopped | A's request throws exactly `InvalidOperationException("The transport for endpoint 'broker' stopped before the reply arrived.")` within 3 s of the stop: the session receive is raced against the waiter `FailPendingReplies` fails |
 
@@ -236,9 +236,11 @@ These tests validate broker-specific topology features that don't apply to all t
 | # | Test Method | Validates |
 |---|---|---|
 | TM-S.2 | `CreateSqlFilterOnSubscriptions` | Subscriptions have SQL filter: `Subject = '{FullTypeName}'` |
-| TM-S.3 | `CreateSessionEnabledReplyQueue` | Reply queue has `RequiresSession = true` |
-| TM-S.4 | `ExpireOrphanedRepliesOnTheReplyQueue` | `CreateReplyQueueOptions()`: the reply queue's name, `RequiresSession`, and `DefaultMessageTimeToLive` = 2 × `ResponseTimeout` |
+| TM-S.3 | `CreateSessionEnabledReplyQueue` | `CreateReplyQueueOptions()` sets `RequiresSession = true` (and `CreateSessionEnabledReplyQueueWithCorrectName`: under the reply queue's name) |
+| TM-S.4 | `ExpireOrphanedRepliesOnTheReplyQueue` | `CreateReplyQueueOptions()`: `DefaultMessageTimeToLive` = 2 × `ResponseTimeout` |
 | TM-S.4b | `AsbReplyShould.CarryATimeToLive` (`Unit/AsbReplyShould.cs`) | The reply itself (`CreateReplyMessage`): the request's `ReplyToSessionId` as its session, and `TimeToLive` = 2 × `ResponseTimeout` |
+| TM-S.4c | `AsbReplyShould.ExpireAfterTwiceTheResponseTimeoutAndNoSoonerThanASecond` | The reply's `TimeToLive` and the reply queue's `DefaultMessageTimeToLive` alike: 300 ms and 500 ms give 1 s (Service Bus's minimum), 60 s gives 120 s |
+| TM-S.4d | `AsbReplyShould.CarryNoTimeToLiveWithoutAFiniteResponseTimeout` | `Timeout.InfiniteTimeSpan`, zero and `TimeSpan.MaxValue` set no time to live on either (both stay `TimeSpan.MaxValue`), and building them does not throw |
 
 #### Amazon SQS (+SNS)
 

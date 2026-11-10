@@ -11,6 +11,9 @@ namespace Conduit.Transport.AzureServiceBus;
 /// </remarks>
 public sealed class AzureServiceBusOptions : BrokerTransportOptions
 {
+    // The shortest time to live Service Bus accepts, for a message as for a queue's default
+    private static readonly TimeSpan MinimumTimeToLive = TimeSpan.FromSeconds(1);
+
     /// <summary>Creates options with every setting at its default.</summary>
     public AzureServiceBusOptions()
     {
@@ -34,10 +37,25 @@ public sealed class AzureServiceBusOptions : BrokerTransportOptions
     public string? AdminConnectionString { get; set; }
 
     /// <summary>
-    /// How long a reply waits in a reply queue to be read before Service Bus discards it: twice
-    /// <see cref="BrokerTransportOptions.ResponseTimeout"/>, both the reply's own time to live and the reply
-    /// queue's default. A request reads its reply as soon as it arrives or never (the request timed out, or
-    /// its process is gone), and nothing else reads a request's session.
+    /// How long a reply waits in a reply queue to be read before Service Bus discards it, both the reply's own
+    /// time to live and the reply queue's default: twice <see cref="BrokerTransportOptions.ResponseTimeout"/>,
+    /// and never less than one second, the shortest Service Bus accepts. A request reads its reply as soon as it
+    /// arrives or never (the request timed out, or its process is gone), and nothing else reads a request's
+    /// session. Null, for no expiry at all, when the response timeout has no finite double: infinite
+    /// (<see cref="Timeout.InfiniteTimeSpan"/>), not positive, or longer than half of <see cref="TimeSpan.MaxValue"/>.
     /// </summary>
-    internal TimeSpan ReplyTimeToLive => this.ResponseTimeout * 2;
+    internal TimeSpan? ReplyTimeToLive
+    {
+        get
+        {
+            var responseTimeoutTicks = this.ResponseTimeout.Ticks;
+            if (responseTimeoutTicks is <= 0 or > long.MaxValue / 2)
+            {
+                return null;
+            }
+
+            var twice = TimeSpan.FromTicks(responseTimeoutTicks * 2);
+            return twice < MinimumTimeToLive ? MinimumTimeToLive : twice;
+        }
+    }
 }

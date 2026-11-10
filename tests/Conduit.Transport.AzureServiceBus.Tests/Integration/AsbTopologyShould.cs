@@ -23,10 +23,11 @@ public class AsbTopologyShould : AsbTestBase
 
     /// <summary>
     /// Creates a handler host whose pool <paramref name="poolName"/> handles <paramref name="pooledTypeNames"/>.
+    /// When <paramref name="topologyPrefix"/> is null, a new unique prefix is generated.
     /// </summary>
     private static async Task<TestHost> CreateHostWithPoolAsync(
         string applicationName,
-        string topologyPrefix,
+        string? topologyPrefix,
         string poolName,
         params string[] pooledTypeNames)
     {
@@ -37,7 +38,11 @@ public class AsbTopologyShould : AsbTestBase
             {
                 conduit.ApplicationName = applicationName;
                 conduit.TopologyMode = TopologyMode.Test;
-                conduit.TopologyPrefix = topologyPrefix;
+
+                if (topologyPrefix is not null)
+                {
+                    conduit.TopologyPrefix = topologyPrefix;
+                }
 
                 conduit.AddEndpoint("self", endpoint =>
                     endpoint.UseAzureServiceBus(ConnectionString, options =>
@@ -54,7 +59,7 @@ public class AsbTopologyShould : AsbTestBase
             });
         });
 
-        RegisterPrefixForCleanup(topologyPrefix);
+        RegisterPrefixForCleanup(host.TopologyPrefix!);
         return host;
     }
 
@@ -64,37 +69,40 @@ public class AsbTopologyShould : AsbTestBase
     [TestMethod]
     public async Task UpdateASubscriptionWhenAPoolAssignmentChanges()
     {
-        // Arrange -- the application's first release handles TestCommand and TestEvent on its default queue
+        // Arrange -- the application's first release listens for TestEvent in a pool, "retired", and handles
+        // TestCommand on its default queue
         var handlerName = UniqueAppName("handler");
         var senderName = UniqueAppName("sender");
 
         string prefix;
-        await using (var firstRelease = await CreateHostAsync(handlerName))
+        await using (var firstRelease = await CreateHostWithPoolAsync(handlerName, null, "retired", TestEventTypeName))
         {
             prefix = firstRelease.TopologyPrefix!;
         }
 
-        // Act -- its next release moves both into a pool, so their subscriptions must forward elsewhere
-        await using var secondRelease = await CreateHostWithPoolAsync(
-            handlerName, prefix, "moved", TestCommandTypeName, TestEventTypeName);
+        // Act -- its next release drops that pool and moves TestCommand into a new one, "moved". TestEvent's
+        // subscription forwards to a queue this release no longer has, which only its being the application's
+        // own (an event's) makes it redirect; TestCommand's forwards to one of the release's own queues.
+        await using var secondRelease = await CreateHostWithPoolAsync(handlerName, prefix, "moved", TestCommandTypeName);
         await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
 
         var result = await senderHost.GetRequiredService<IMediator>().ExecuteAsync(new TestCommand("moved"));
 
-        // Assert -- the release started, the shared command subscription and the application's own event
-        // subscription now forward to the pool's queue, and the command was handled through it
+        // Assert -- the release started, the event subscription is back on the default queue, the shared
+        // command subscription forwards to the new pool's queue, and the command was handled through it
         var conduitOptions = secondRelease.GetRequiredService<ConduitOptions>();
         var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 260);
+        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 260);
         var poolQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "moved", 260);
         var adminClient = new ServiceBusAdministrationClient(AdminConnectionString);
 
-        SubscriptionProperties commandSubscription = await adminClient.GetSubscriptionAsync(
-            topicName, TopologyNaming.CreateSharedResourceName(conduitOptions, TestCommandTypeName, 50));
         SubscriptionProperties eventSubscription = await adminClient.GetSubscriptionAsync(
             topicName, TopologyNaming.CreateAppResourceName(conduitOptions, TestEventTypeName, 50));
+        SubscriptionProperties commandSubscription = await adminClient.GetSubscriptionAsync(
+            topicName, TopologyNaming.CreateSharedResourceName(conduitOptions, TestCommandTypeName, 50));
 
+        ForwardTarget(eventSubscription).Should().BeEquivalentTo(appQueueName);
         ForwardTarget(commandSubscription).Should().BeEquivalentTo(poolQueueName);
-        ForwardTarget(eventSubscription).Should().BeEquivalentTo(poolQueueName);
         result.Value.Should().Be("handled:moved");
     }
 

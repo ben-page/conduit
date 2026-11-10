@@ -113,15 +113,20 @@ internal sealed class AzureServiceBusTopologyManager
     /// <summary>
     /// The reply queue every request of this application reads its reply from: session-enabled, each reply in
     /// its own request's session, and discarding a reply after <see cref="AzureServiceBusOptions.ReplyTimeToLive"/>
-    /// by default. A reply nobody has read by then belongs to a request that gave up, and would otherwise stay
-    /// until the queue reaches its size quota and every reply fails.
+    /// by default (when there is one). A reply nobody has read by then belongs to a request that gave up, and
+    /// would otherwise stay until the queue reaches its size quota and every reply fails.
     /// </summary>
     internal CreateQueueOptions CreateReplyQueueOptions()
     {
         var replyQueueName = TopologyNaming.CreateAppResourceName(this.conduitOptions, "replies", 260);
         var queueOptions = CreateQueueOptions(replyQueueName, this.ComputeEphemeralTtl());
         queueOptions.RequiresSession = true;
-        queueOptions.DefaultMessageTimeToLive = this.options.ReplyTimeToLive;
+
+        if (this.options.ReplyTimeToLive is { } timeToLive)
+        {
+            queueOptions.DefaultMessageTimeToLive = timeToLive;
+        }
+
         return queueOptions;
     }
 

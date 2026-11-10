@@ -87,7 +87,7 @@ Topic: {systemName}
 │   (multicast — event, SQL filter: Subject = '{FullTypeName}',
 │    forwards to subscribing app's queue)
 Queue: {systemName}-{appName}
-Queue: {systemName}-{appName}-replies (session-enabled, messages expire after 2 × ResponseTimeout)
+Queue: {systemName}-{appName}-replies (session-enabled, messages expire after 2 × ResponseTimeout, at least 1 s)
 Queue: {systemName}-{appName}-{poolName} (optional)
 ```
 
@@ -97,10 +97,12 @@ All creation is idempotent. Multiple pods starting simultaneously will not confl
 
 A subscription that already exists but forwards to a different queue than this application's configuration names is either this application's to redirect or a collision:
 
-- **This application's own.** An event subscription (its name carries the application's name), or a command or query subscription that forwards to another of this application's queues — its app queue or one of its configured pools. That is what moving a type into a pool, or back out of one, leaves behind. Startup updates the subscription's forwarding to the queue the configuration names now and logs `SubscriptionRedirected`; while two releases with different pools run side by side, the instance that started last decides.
-- **Another application's.** A command or query subscription that forwards to any other queue: a second application handles the same command or query type, which unicast routing forbids. Startup fails with an `InvalidOperationException` (`... This indicates a naming collision between applications.`) rather than take the subscription over.
+- **This application's own.** An event subscription (its name carries the application's name), or a command or query subscription that forwards to another of this application's queues — its app queue or one of its configured pools. That is what moving a type into a pool, or back out of one, leaves behind. Startup updates the subscription's forwarding to the queue the configuration names now and logs `SubscriptionRedirected`.
+- **Another application's.** A command or query subscription that forwards to any other queue: a second application handles the same command or query type, which unicast routing forbids. Startup fails with an `InvalidOperationException` (`... This indicates a naming collision between applications. If that queue belonged to this application (a pool it no longer has), delete the subscription.`) rather than take the subscription over.
 
-A command or query subscription left forwarding to a pool this application no longer has is the second case, since that queue is no longer one of its own: delete the subscription, and the next startup creates it afresh.
+A command or query subscription that forwards to a pool queue this release does not have is the second case, since that queue is not one of its own. So a release that removes a pool still holding a command or query fails to start until that subscription is deleted, and so does the previous release (a rollback, or an old instance restarting mid-rollout) once a newer one has moved a command or query into a pool the previous release lacks. Delete the subscription, and the next startup creates it afresh. While two releases that both have the queues involved run side by side, the instance that started last decides where the subscription forwards.
+
+An event subscription is always redirected, never refused, because its name carries the application's name. Names are hyphen-joined, though, so two applications can compute the same one: application `a-b` listening for event `X` and application `a` listening for event `X.b` both get `{systemName}-a-b-X`. Rather than fail, each start redirects that shared subscription to its own application's queue, and the other application stops receiving the event until it restarts. Choose application names that cannot produce such a pair.
 
 
 ### Unicast vs multicast subscriptions
@@ -161,6 +163,8 @@ A request with no reply within `ResponseTimeout` fails with a `TimeoutException`
 
 A reply nobody will read does not stay in the reply queue. The sender reads its reply as soon as it arrives or never (the request timed out, or the sender stopped or crashed), and nothing else accepts a request's session, so each reply carries a time to live of twice the replying endpoint's `ResponseTimeout`, and the reply queue is created with a default message time to live of twice the requesting endpoint's. Service Bus discards a reply when either passes, where it would otherwise stay until the queue reached its size quota and every reply failed. A reply queue that already exists keeps the settings it was created with; the reply's own time to live still applies.
 
+The time to live is never shorter than one second, the least Service Bus accepts, so a `ResponseTimeout` under 500 ms still gives one second. A `ResponseTimeout` with no finite double (`Timeout.InfiniteTimeSpan`, zero or less, or more than half of `TimeSpan.MaxValue`) sets no time to live at all, on the reply or on the queue: such replies never expire.
+
 A handler still running when its host stops replies and completes its message before the transport closes, as on every broker (see [Stopping a host with work in flight](index.md#stopping-a-host-with-work-in-flight)): the transport replies and settles without the processor's cancellation token, which stopping cancels.
 
 ## Auto-discovery
@@ -211,7 +215,7 @@ endpoint.UseAzureServiceBus(connectionString, options =>
 
 This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue processed with concurrency 2, while everything else uses the default queue at concurrency 20. Use pools to prevent slow or resource-intensive commands from blocking normal traffic.
 
-Moving a type into a pool, out of one, or between two takes effect at the next startup, which redirects the type's existing subscription to its new queue (see [Topology](#topology)). Removing a pool altogether is the exception for commands and queries: delete their subscriptions that still forward to its queue (an event's subscription is redirected regardless).
+Moving a type into a pool, out of one, or between two takes effect at the next startup, which redirects the type's existing subscription to its new queue (see [Topology](#topology)). The exception is a command or query whose subscription forwards to a pool queue the starting release does not have (the pool was removed, or a rollback to a release without it): that release fails to start until the subscription is deleted. An event's subscription is redirected regardless.
 
 `AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
 endpoint's section) and configured again in code on the same name, and the two merge into one pool

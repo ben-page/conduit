@@ -408,7 +408,7 @@ Topic: {systemName}
 │   (multicast — event, SQL filter: Subject = '{FullTypeName}',
 │    forwards to subscribing app's queue)
 Queue: {systemName}-{appName}
-Queue: {systemName}-{appName}-replies (session-enabled, messages expire after 2 × ResponseTimeout)
+Queue: {systemName}-{appName}-replies (session-enabled, messages expire after 2 × ResponseTimeout, at least 1 s)
 Queue: {systemName}-{appName}-{poolName} (optional)
 ```
 
