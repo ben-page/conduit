@@ -105,6 +105,13 @@ public static class TypeCollector
     {
         foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
+            // An always-ignored property is never on the wire and MergeFileEmitter leaves it out, so the type behind it
+            // (a navigation or service property, say) is not walked either. A conditionally ignored one still is.
+            if (JsonMarks.IgnoreOf(property) == JsonIgnoreKind.Always)
+            {
+                continue;
+            }
+
             EnqueueReferencedType(property.PropertyType, visited, queue);
         }
     }

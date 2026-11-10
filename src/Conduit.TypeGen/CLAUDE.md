@@ -46,8 +46,11 @@
   full name from `CustomAttributeData`: `[JsonPropertyName]` is the key (`ToTsPropertyKey` quotes a non-identifier,
   `'x-trace'`), `[JsonIgnore]` (Condition `Always`, the default) omits the property, a conditional one
   (`WhenWritingNull`/`WhenWritingDefault`/`WhenWriting`/`WhenReading`) makes it optional (`note?:`), `Never` changes
-  nothing; `[JsonStringEnumMemberName]` and `[Flags]` as above. Applied by `MergeFileEmitter.EmitInterface` only:
-  error-type data keys come from `ConduitException.GetClientData`, which camelCases property names and ignores these.
+  nothing; `[JsonStringEnumMemberName]` and `[Flags]` as above. Applied by `MergeFileEmitter.EmitInterface`, and
+  `TypeCollector.EnqueuePropertyTypes` does not walk an always-ignored property (never on the wire: a navigation or
+  service property's type must not get an interface, nor collide by short name); a conditional one is walked. Not
+  applied to error types: their data keys come from `ConduitException.GetClientData`, which camelCases property names
+  and ignores these.
 - `ResultNullabilityReader` / `TypeMapEmitter.ResolveResultType` — a query or command result declared `T?` emits `response: T | null`. Read from the dispatchable's `IQuery<>`/`ICommand<>` interface row `NullableAttribute` (reflection cannot see it) by `ReflectionScanner` into `DispatchableTypeInfo.ResultIsNullable`; top level only (element nullability such as `List<T?>` is out of scope), a result declared on a constructed generic base is not read (it emits as before), an oblivious result is not nullable, and a value-type `T?` is mapped by `TypeMapper` through `Nullable<T>` so ` | null` is never doubled.
 - Emits two files: `conduit.ts` (stable runtime) and `conduit.generated.ts` (per-project types + client)
 - `conduit.ts` contains: `DispatchResult<T>`, `ConduitError`, `ConduitTransport` interface, `HttpTransport`, conditionally `SignalRTransport`

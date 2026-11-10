@@ -138,4 +138,16 @@ public sealed record ShapeJsonMarks
     public ShapeStatus Status { get; init; }
 
     public ShapePermissions Permissions { get; init; }
+
+    // Never on the wire, so never walked: ShapeAuditTrail is reached by nothing else and gets no interface.
+    [JsonIgnore]
+    public ShapeAuditTrail? Audit { get; init; }
+
+    // On the wire for some values, so walked: ShapeRemark gets an interface.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ShapeRemark? Remark { get; init; }
 }
+
+public sealed record ShapeAuditTrail(string Who, IReadOnlyList<ShapeAuditTrail> Earlier);
+
+public sealed record ShapeRemark(string Text);

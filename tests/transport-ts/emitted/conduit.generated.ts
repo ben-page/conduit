@@ -124,6 +124,7 @@ export interface ShapeJsonMarks {
   revision: number;
   status: 'in-progress' | 'Done';
   permissions: string;
+  remark?: ShapeRemark | null;
 }
 
 export interface LedgerBook {
@@ -292,6 +293,10 @@ export interface ShapeCustomer {
 
 export interface ShapeTag {
   label: string;
+}
+
+export interface ShapeRemark {
+  text: string;
 }
 
 export interface LedgerEntryBase {

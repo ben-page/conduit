@@ -34,6 +34,24 @@ public class TypeShapesShould
         thrown.Which.Message.Should().Contain("export interface Item");
     }
 
+    // An always-ignored property is never on the wire, so the type behind it is not walked: a same-short-name type reached
+    // only that way is no collision.
+    [TestMethod]
+    public void NotThrowWhenTheOtherTypeIsReachedOnlyThroughAnIgnoredProperty()
+    {
+        // Arrange
+        var assembly = typeof(TypeShapesShould).Assembly;
+        List<DispatchableTypeInfo> roots = [ModelRoot(typeof(SampleDomain.Catalog.CatalogPage)), ModelRoot(typeof(SampleDomain.Billing.Invoice))];
+
+        // Act
+        var generated = MergeFileEmitter.Emit(roots, [assembly]);
+
+        // Assert
+        Occurrences(generated, "export interface Item {").Should().Be(1);
+        InterfaceBlock(generated, "export interface Item {").Should().Contain("  title: string;", "the one Item is Catalog's");
+        InterfaceBlock(generated, "export interface Invoice {").Should().NotContain("internal");
+    }
+
     // A DTO named like an identifier the file always declares or imports collides with it the same way.
     [TestMethod]
     public void ThrowWhenAnInterfaceTakesAnIdentifierTheFileAlwaysDeclares()
@@ -197,6 +215,19 @@ public class TypeShapesShould
         marks.Should().NotContain("secret")
             .And.Contain("  note?: string | null;", "WhenWritingNull leaves the key out when it is null")
             .And.Contain("  revision: number;", "Never ignores nothing");
+    }
+
+    [TestMethod]
+    public void WalkAConditionallyIgnoredPropertyButNotAnAlwaysIgnoredOne()
+    {
+        // Act
+        var generated = Generated.Value;
+
+        // Assert
+        generated.Should().NotContain("ShapeAuditTrail", "an always-ignored property's type is never on the wire");
+        InterfaceBlock(generated, "export interface ShapeRemark {").Should().Contain("  text: string;");
+        InterfaceBlock(generated, "export interface ShapeJsonMarks {").Should().Contain("  remark?: ShapeRemark | null;")
+            .And.NotContain("audit");
     }
 
     [TestMethod]

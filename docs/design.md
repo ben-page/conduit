@@ -862,7 +862,8 @@ conduit.on('MyApp.Events.NoteCreatedEvent', event => console.log(event.text));
 | `string`, `char`, `Guid`, `Uri` | `string` |
 | every integer type, `Half`, `decimal`, `double`, `float` | `number` |
 | `bool` | `boolean` |
-| `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan` | `string` (ISO 8601) |
+| `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly` | `string` (ISO 8601) |
+| `TimeSpan` | `string` (the constant `"c"` format, `1.02:03:04`) |
 | `T[]`, `List<T>`, `IEnumerable<T>`, sets, immutable and concurrent collections | `T[]` |
 | `Dictionary<string, T>` (and the other dictionaries) | `Record<string, T>`; another key type is `Record<string /* int */, T>` |
 | `T?` (nullable) | `T \| null` |

@@ -309,7 +309,7 @@ The wire honors these, so the generated interfaces do too:
 | Attribute | Generated property |
 |---|---|
 | `[JsonPropertyName("order_no")]` | keyed `order_no` instead of the camelCased name; a name that is not a TypeScript identifier is quoted (`'x-trace': string`) |
-| `[JsonIgnore]` | left out |
+| `[JsonIgnore]` | left out, and the type behind it is not discovered through it |
 | `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]` (or `WhenWritingDefault`, `WhenWriting`, `WhenReading`) | optional (`note?: string \| null`), since the key is missing in one direction or for some values |
 | `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]` | unchanged |
 

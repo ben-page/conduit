@@ -17,6 +17,19 @@ namespace SampleDomain.Catalog
     public sealed record CatalogPage(Item Featured);
 }
 
+// A third Item, reached only through an always-ignored property: never on the wire, so never walked, and never a
+// collision with Catalog.Item.
+namespace SampleDomain.Billing
+{
+    public sealed record Item(string LedgerCode);
+
+    public sealed record Invoice(string Number)
+    {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Item? Internal { get; init; }
+    }
+}
+
 // A host type that shares a BCL type's short name is the host's type, not the BCL one.
 namespace SampleDomain.Lookalikes
 {
