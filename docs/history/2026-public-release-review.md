@@ -6,8 +6,8 @@
 > describe the library as it ships, and [CHANGELOG.md](../../CHANGELOG.md) lists the user-visible changes.
 
 Until this release Conduit had served one production application, a manufacturing ERP with an Angular front end. The
-review read the whole library as a stranger installing it from nuget.org would, in eleven read-only passes (core,
-source generator, TypeGen and the TypeScript runtime, HTTP and SignalR, brokers in two groups, persistence and
+review read the whole library as a stranger installing it from nuget.org would, in a read-only review of every area
+(core, source generator, TypeGen and the TypeScript runtime, HTTP and SignalR, brokers in two groups, persistence and
 durability, audit, jobs and resilience, two documentation audits, release readiness), and held it to one bar: no
 silent message loss, no trust in the wire by default, no generated code that fails to compile.
 
@@ -250,7 +250,7 @@ The core runtime's findings were narrow and are in the CHANGELOG: routes matched
 
 - **Resilience pipelines never see listener failures** (CONDUIT-82). `PublishLocalAsync` throws the
   `EventListenerException` after the behaviors have returned, so Polly never retries a listener that threw; a listener
-  whose construction fails is retried, re-running every listener. `pipeline-behaviors.md` states it.
+  whose construction fails is retried, re-running every listener. `resilience.md` states it.
 - **In-memory jobs ignore `MaxRuntime` on a manual run** (CONDUIT-83): an `InMemoryJobs.TriggerNowAsync` run is not
   cancelled at its limit. The durable scheduler honours it.
 - **ActiveMQ addresses are not auto-deleted.** Artemis reaps only addresses it auto-created, and `createAddress`
@@ -262,11 +262,13 @@ The core runtime's findings were narrow and are in the CHANGELOG: routes matched
 - **Real-AWS behaviour is unverified.** LocalStack never refuses a changed filter policy or queue attribute and does
   not model propagation delays, so the SNS "already exists" fallback and the attribute updates are tested only against
   it, though they run whenever a release changes a queue's types. A one-time real-account probe was recommended.
-- **The inbox on a trusting edge.** Only the broker transports call `IInboundErrorInterceptor`, so behind
-  `MapConduitEndpoint(trustCallerContext: true)` or a hub with `TrustCallerContext` the record of a failed dispatch is
-  not released, and a retry under the same `MessageId` (the outbox relay's, or `TransientErrors<T>()` re-running
-  `next()`) is discarded as a duplicate and answered as an empty success; `inbox.md` states it. The fix principle: the
-  edges run the inbox release on an `InternalError` answer or a failed event, and dead-letter capture stays broker-only.
+- **The inbox beyond the built-in edges.** A trusting edge (`MapConduitEndpoint(trustCallerContext: true)`, a hub with
+  `TrustCallerContext`) releases a failed dispatch's inbox record as a broker transport does, through
+  `IInboundFailureObserver`: a request answered `InternalError`, or an event whose listener throws or whose dispatch
+  fails outside its listeners, so a caller's retry under the same `MessageId` (the outbox relay's next attempt) runs; a
+  refusal stays recorded. Dead-letter capture stays broker-only. Code that calls `IWireMediator.HandleWireRequestAsync`
+  under a context it started releases nothing unless it reports the failure to every `IInboundFailureObserver` as the
+  built-in edges do; `inbox.md` states both.
 - **No broker or database test runs in CI**, and the tag-gated publish runs none, so a release is proven by running the
   container suite locally on the tagged commit.
 
