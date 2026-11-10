@@ -144,7 +144,7 @@ The retry log carries no exception: the failure it answers is the host's to log.
 
 ## Composing with Resilience and Jobs
 
-**`Conduit.Resilience`** is a pipeline behavior, so it runs *inside* each attempt, against that attempt's scope. A Polly retry replays within one attempt; if it exhausts and the handler still throws, the policy is asked, and a retry then starts a new attempt in a new scope with a fresh Polly pipeline. Use Resilience for failures a rerun in the same scope fixes, and dispatch retry for the ones that need new state.
+**[`Conduit.Resilience`](resilience.md)** is a pipeline behavior, so it runs *inside* each attempt, against that attempt's scope. A Polly retry replays within one attempt; if it exhausts and the handler still throws, the policy is asked, and a retry then starts a new attempt in a new scope, where the Polly pipeline runs again from its first try. Use Resilience for failures a rerun in the same scope fixes, and dispatch retry for the ones that need new state.
 
 **`Conduit.Jobs`** opens a scope per job attempt and dispatches the job's command from it. Each command attempt's scope is a sibling of the job's scope, created from the root factory. The ledger's retries (minutes apart, surviving a restart) wrap the whole thing: a command that keeps failing runs up to `DispatchRetryOptions.MaxAttempts` times per ledger attempt, so up to nine executions with both at their defaults.
 
@@ -157,4 +157,4 @@ The retry log carries no exception: the failure it answers is the host's to log.
 
 ---
 
-Previous: [Pipeline Behaviors](pipeline-behaviors.md) | [Home](../README.md) | Next: [Error Handling](error-handling.md)
+Previous: [Observability](observability.md) | [Home](../README.md) | Next: [Error Handling](error-handling.md)

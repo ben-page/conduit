@@ -223,7 +223,7 @@ the Polly pipelines it applies:
 | `AddPipelineForType<T>(Action<ResiliencePipelineBuilder> configure)` | `T`; wins over every other pipeline. |
 | `AddPipelineForNamespace(string namespacePrefix, Action<ResiliencePipelineBuilder> configure)` | Every type in the namespace and beneath it, on whole segments; the longest enclosing namespace wins. |
 
-See [Pipeline Behaviors → Resilience](pipeline-behaviors.md#resilience-polly).
+See [Resilience](resilience.md).
 
 ### The clock
 

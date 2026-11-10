@@ -125,14 +125,15 @@ ports, the run order for the two services, and calling the HTTP envelope endpoin
 5. [Background Jobs](https://ben-page.github.io/conduit/jobs/)
 6. [Audit Trail](https://ben-page.github.io/conduit/audit/)
 7. [Dispatch Retry](https://ben-page.github.io/conduit/dispatch-retry/)
-8. [Resilience](https://ben-page.github.io/conduit/pipeline-behaviors/#resilience-polly): Polly retry and circuit breaking
+8. [Resilience](https://ben-page.github.io/conduit/resilience/): Polly retry and circuit breaking
 
 ### Reference
 
 1. [Configuration Reference](https://ben-page.github.io/conduit/configuration-reference/)
 2. [Diagnostics](https://ben-page.github.io/conduit/diagnostics/): CONDUIT001 to CONDUIT008
-3. [Glossary](https://ben-page.github.io/conduit/glossary/)
-4. [FAQ](https://ben-page.github.io/conduit/faq/)
+3. [Observability](https://ben-page.github.io/conduit/observability/): OpenTelemetry traces and metrics
+4. [Glossary](https://ben-page.github.io/conduit/glossary/)
+5. [FAQ](https://ben-page.github.io/conduit/faq/)
 
 ---
 

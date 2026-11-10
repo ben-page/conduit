@@ -452,7 +452,7 @@ the coalesce key instead, which is why its merge has to be idempotent as well as
 
 These are not competing retry mechanisms. They answer different questions, and the order matters.
 
-**Inner — `Conduit.Resilience`.** The job command flows through `IPipelineBehavior`, so a registered
+**Inner — [`Conduit.Resilience`](resilience.md).** The job command flows through `IPipelineBehavior`, so a registered
 Polly policy retries transient failures in-process, against the same claimed row. This layer decides
 how **this attempt** behaves.
 

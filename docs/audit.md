@@ -33,7 +33,7 @@ Use the audit trail when:
 - **You need retention with automatic cleanup** — records are purged after a configurable window.
 
 You may not need it when:
-- Distributed tracing (the built-in OpenTelemetry `ActivitySource`) already gives you what you need for request-level observability.
+- Distributed tracing (the built-in OpenTelemetry `ActivitySource`: [Observability](observability.md)) already gives you what you need for request-level observability.
 - You only care about errors, which the dead-letter queue or your logging pipeline already captures.
 
 ## How it works
@@ -352,4 +352,4 @@ Because each service stamps its own records with the shared `MessageId`, the cen
 
 **Persistence requires a listener.** `AddAudit()` alone emits `AuditBatch` events but stores nothing. Without either a local `AddAuditListener()` or a central collector, the events have no consumer and the records are discarded.
 
-**Metrics are not the audit trail's job.** Audit stores the full per-dispatch observation trail for forensics and replay — it does not aggregate metrics. For real-time counts, durations, success rates, and dead-letter/transport metrics, use Conduit's built-in OpenTelemetry instrumentation (the `"Conduit"` `Meter` in `ConduitTelemetry`), wired into your OTel exporter (Prometheus/OTLP).
+**Metrics are not the audit trail's job.** Audit stores the full per-dispatch observation trail for forensics and replay — it does not aggregate metrics. For real-time counts, durations, success rates, and dead-letter/transport metrics, use Conduit's built-in OpenTelemetry instrumentation (the `"Conduit"` `Meter` in `ConduitTelemetry`), wired into your OTel exporter (Prometheus/OTLP): see [Observability](observability.md).

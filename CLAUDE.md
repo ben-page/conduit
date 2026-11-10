@@ -179,6 +179,8 @@ onboarding or answering "how does X work" questions:
 - [`docs/core-concepts.md`](docs/core-concepts.md) — messages, handlers, mediator, the mental model
 - [`docs/configuration-reference.md`](docs/configuration-reference.md) — `ConduitOptions` / builder reference
 - [`docs/pipeline-behaviors.md`](docs/pipeline-behaviors.md) — `IPipelineBehavior<,>` ordering and usage
+- [`docs/resilience.md`](docs/resilience.md) — `Conduit.Resilience`: Polly pipelines by type/namespace/default key, typed pipelines, predicates, the shared default breaker, events, retry observations
+- [`docs/observability.md`](docs/observability.md) — the `Conduit` ActivitySource and Meter: spans, tags, metrics, the `(undeclared)` type tag, the audit trail as the other surface
 - [`docs/dispatch-retry.md`](docs/dispatch-retry.md) — `IDispatchRetryPolicy`, fresh scope per attempt, nested vs independent dispatches, the retry counter
 - [`docs/error-handling.md`](docs/error-handling.md) — `ConduitException`, `ErrorCode`, Problem Details
 - [`docs/modular-monolith.md`](docs/modular-monolith.md) — handler composition across modules in one process

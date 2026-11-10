@@ -69,8 +69,7 @@ export const sidebar = [
             { label: 'Background Jobs', slug: 'jobs' },
             { label: 'Audit Trail', slug: 'audit' },
             { label: 'Dispatch Retry', slug: 'dispatch-retry' },
-            // A section of Pipeline Behaviors, as in the README, not a page of its own.
-            { label: 'Resilience', link: '/pipeline-behaviors/#resilience-polly' },
+            { label: 'Resilience', slug: 'resilience' },
         ],
     },
     {
@@ -78,6 +77,7 @@ export const sidebar = [
         items: [
             { label: 'Configuration Reference', slug: 'configuration-reference' },
             { label: 'Diagnostics', slug: 'diagnostics' },
+            { label: 'Observability', slug: 'observability' },
             { label: 'Glossary', slug: 'glossary' },
             { label: 'Dispatch Internals', slug: 'dispatch-flows' },
             { label: 'FAQ', slug: 'faq' },
