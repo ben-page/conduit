@@ -124,7 +124,8 @@ public static class JobsDatabaseProbe
 
             if (DateTime.UtcNow > deadline)
             {
-                throw new TimeoutException($"Run '{jobKey}' never matched the expected state.");
+                throw new TimeoutException(
+                    $"Run '{jobKey}' never matched the expected state (last seen: {Describe(run)}).");
             }
 
             await Task.Delay(10);
@@ -188,6 +189,14 @@ public static class JobsDatabaseProbe
         command.CommandText = $"SELECT COUNT(*) FROM {JobTableSchema.RunsTable}";
         return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     }
+
+    private static string Describe(JobRun? run)
+        => run is null
+            ? "deleted"
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"{run.Status}, claim {run.ClaimToken ?? "none"} at {run.ClaimedAt?.ToString("O", CultureInfo.InvariantCulture) ?? "-"}, " +
+                $"{run.AttemptCount} attempt(s), error {run.LastError ?? "none"}");
 
     private sealed class ProbeConnectionFactory : IConduitConnectionFactory
     {

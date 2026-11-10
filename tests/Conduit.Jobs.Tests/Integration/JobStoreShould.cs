@@ -1,7 +1,11 @@
 using AwesomeAssertions;
 using Conduit.Jobs;
+using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Tests.Support;
+using Conduit.Persistence.Sqlite;
+using Conduit.TestUtils;
+using Microsoft.Extensions.Options;
 
 namespace Conduit.Jobs.Tests.Integration;
 
@@ -26,6 +30,33 @@ public class JobStoreShould
         // Assert
         first.Should().HaveCount(1);
         second.Should().BeEmpty("a claimed row must not be claimable by a second worker");
+    }
+
+    [TestMethod]
+    public async Task HandBackAClaimThatIsCancelledBeforeItIsReadBack()
+    {
+        // Arrange — the host's stop lands after the claim's UPDATE committed, before its read-back
+        await using var database = new StubConnectionFactory();
+        var setup = new DbJobStore(database, new SqliteDialect(), Options.Create(new JobsOptions()));
+        await setup.EnsureTablesExistAsync(CancellationToken.None);
+        await setup.TryMaterializeAsync(NewRun(Key, Now), CancellationToken.None);
+        using var stopping = new CancellationTokenSource();
+        var stoppingStore = new DbJobStore(
+            new CancellingConnectionFactory(database, stopping, allowedConnections: 1),
+            new SqliteDialect(),
+            Options.Create(new JobsOptions()));
+
+        // Act
+        var claim = () => stoppingStore.ClaimDueAsync("worker-a", Now, 10, stopping.Token);
+
+        // Assert — the caller never learns it owns the row, so nothing would run it or release it; left
+        // claimed it would sit out ClaimTimeout, the stall a stopping host's handover exists to avoid
+        await claim.Should().ThrowAsync<OperationCanceledException>();
+        var run = await setup.GetRunAsync(Key, CancellationToken.None);
+        run!.Status.Should().Be(JobRunStatus.Pending);
+        run.ClaimToken.Should().BeNull();
+        (await setup.ClaimDueAsync("worker-b", Now, 10, CancellationToken.None))
+            .Should().ContainSingle("another worker takes the run at once");
     }
 
     [TestMethod]

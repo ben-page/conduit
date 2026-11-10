@@ -199,6 +199,36 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
     public async Task<IReadOnlyList<JobRun>> ClaimDueAsync(
         string claimToken, DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await this.ClaimAndReadBackAsync(claimToken, now, batchSize, cancellationToken);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancelled part-way (a host's stop, typically): the claim may have committed — a cancelled
+            // UPDATE can land on the server, and the read-back is a later statement — yet the caller never
+            // learns which rows it owns, so nothing would run or release them and they would sit out
+            // ClaimTimeout. Hand back whatever carries this token, uncancellable, as a run's own release
+            // is. SqlClient reports the cancellation as a SqlException, hence the filter on the token.
+            await this.ExecuteNonQueryAsync(
+                $"""
+                UPDATE {JobTableSchema.RunsTable}
+                SET Status = @Pending, ClaimToken = NULL, ClaimedAt = NULL, StartedAt = NULL
+                WHERE ClaimToken = @ClaimToken
+                """,
+                command =>
+                {
+                    DbParameterHelper.Add(command, "@Pending", (int)JobRunStatus.Pending);
+                    DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                },
+                CancellationToken.None);
+            throw;
+        }
+    }
+
+    private async Task<IReadOnlyList<JobRun>> ClaimAndReadBackAsync(
+        string claimToken, DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
+    {
         // Atomically move due rows — pending, or holding a claim that has gone stale because their
         // host stopped heartbeating — to Claiming under this worker's token, then read back exactly
         // the rows tagged with it. The UPDATE is the exclusivity primitive: two workers racing for

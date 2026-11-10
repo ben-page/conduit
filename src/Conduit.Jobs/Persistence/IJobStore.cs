@@ -79,7 +79,11 @@ public interface IJobStore
     /// </param>
     /// <param name="now">The current instant, from the injected <see cref="TimeProvider"/>.</param>
     /// <param name="batchSize">The maximum number of runs to claim.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">
+    /// A token to cancel the operation. Cancelled part-way, the call claims nothing: whatever its claim
+    /// committed is handed back (Pending, unclaimed) before the cancellation propagates, since a caller
+    /// that never learns which rows it owns would neither run nor release them.
+    /// </param>
     /// <returns>The runs this worker now owns.</returns>
     public Task<IReadOnlyList<JobRun>> ClaimDueAsync(
         string claimToken, DateTimeOffset now, int batchSize, CancellationToken cancellationToken);

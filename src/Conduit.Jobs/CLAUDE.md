@@ -361,6 +361,20 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   runs the job while the first is still winding down.
 - **`ReleaseAsync` is conditional on the claim token**, so a drain never hands a claim back out from
   under a host that has since taken it.
+- **A cancelled `ClaimDueAsync` claims nothing.** It is three statements (claim `UPDATE`, `StartedAt`
+  `UPDATE`, read-back), all on the sweep's stopping token. A stop landing after the claim committed used
+  to throw before the read-back, so the scheduler never learned it owned the row: nothing ran or released
+  it, and it sat `Claiming` until `ClaimTimeout`. Shutdown makes that window likely, not rare — a drained
+  run's `ReleaseAsync` wakes the sweep (`JobSweepSignal`), and the host cancels `ApplicationStopping`
+  before the scheduler's own `StopAsync`, so the sweep re-claims the just-released row while the stop is
+  arriving. On any exception while its token is cancelled (SqlClient reports cancellation as a
+  `SqlException`), `ClaimDueAsync` sets every row carrying its token back to Pending, uncancellable, and
+  rethrows; covering the whole call, not only the read-back, also handles a cancelled `UPDATE` whose
+  commit landed. Seen as `ClaimRenewalShould.ReleaseTheClaimOnShutdownSoAnotherHostResumesImmediately`
+  failing on two CI runs in a row (a slow, loaded runner widens the window; 3 in 7 locally on four
+  cores under the full suite) and about 1 in 100 in isolation on a fast machine; pinned
+  deterministically by `JobStoreShould.HandBackAClaimThatIsCancelledBeforeItIsReadBack`
+  (`CancellingConnectionFactory` cancels between two statements).
 - **So is every terminal write.** `CompleteAsync`, `IncrementAttemptAsync` and `MarkTerminalAsync`
   take the claim token, change the run row only `WHERE Id = @Id AND Status = @Claiming AND
   ClaimToken = @ClaimToken` (`DbJobStore.ClaimGuard`, module-owned, identical on every engine, the
