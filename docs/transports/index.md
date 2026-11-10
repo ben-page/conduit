@@ -276,7 +276,8 @@ registration with an `InvalidOperationException` naming the endpoint, rather tha
 
 A broker transport settles each message it receives once, by what became of its dispatch. The
 transport never retries a failed message itself: retry happens inside the dispatch, before the transport
-sees the failure ([dispatch retry](../dispatch-retry.md), or a [pipeline behavior](../pipeline-behaviors.md)).
+sees the failure ([dispatch retry](../dispatch-retry.md), or a Polly pipeline from
+[Resilience](../resilience.md)).
 
 | What happened | With a [dead-letter queue](../dead-letter-queue.md) | Without one |
 |---|---|---|

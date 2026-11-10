@@ -191,7 +191,7 @@ The time to live is never shorter than one second, the least Service Bus accepts
 
 ## Failure handling
 
-A broker transport settles each message once, by what became of its dispatch, and never retries it itself: retry happens inside the dispatch ([dispatch retry](../dispatch-retry.md), or a [pipeline behavior](../pipeline-behaviors.md)). The rules every broker shares are in [Failed messages](index.md#failed-messages). On Azure Service Bus:
+A broker transport settles each message once, by what became of its dispatch, and never retries it itself: retry happens inside the dispatch ([dispatch retry](../dispatch-retry.md), or a Polly pipeline from [Resilience](../resilience.md)). The rules every broker shares are in [Failed messages](index.md#failed-messages). On Azure Service Bus:
 
 - **A request whose handler throws** is answered: its caller receives the failure as its reply (`InternalError` with a support reference, or the refusal the handler threw), and the request is completed. An unexpected failure is also captured when the host has Conduit's dead-letter store.
 - **An event whose listener throws (or whose dispatch fails outside its listeners: a pipeline behavior throws, a listener cannot be resolved, a gate throws something other than a refusal), or a `[FireAndForget]` command whose handler fails unexpectedly**, has no caller to tell. Where it goes depends on whether the host registered Conduit's [dead-letter queue](../dead-letter-queue.md):

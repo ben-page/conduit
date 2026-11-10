@@ -317,7 +317,7 @@ A routed `[FireAndForget]` command is POSTed to `/dispatch` and its reply discar
       });
   ```
 
-- **No retry.** A failed POST is reported, not retried: retry inside the dispatch ([dispatch retry](../dispatch-retry.md), or a [pipeline behavior](../pipeline-behaviors.md)).
+- **No retry.** A failed POST is reported, not retried. On the sending host neither [dispatch retry](../dispatch-retry.md) nor [Resilience](../resilience.md) wraps a routed request ([Where the pipeline runs](../resilience.md#where-the-pipeline-runs)): retry at the caller, or make the handler on the other side idempotent so a resend is safe.
 - **RESTful endpoints never take caller context.** They ignore caller correlation ids and client properties ([Correlation ids](#correlation-ids)).
 - **Files are small and single.** A command takes at most one `BinaryData` or `ConduitFile` property, read whole into memory; a GET or DELETE command, bound from the route, takes none. Streaming and range requests are not supported.
 

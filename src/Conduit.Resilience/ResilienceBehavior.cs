@@ -19,14 +19,14 @@ public static class ResilienceBehavior
 
     /// <summary>
     /// Resilience context property key for <see cref="MessageContext.MessageId"/>.
-    /// Available inside <c>OnRetry</c>, <c>OnCircuitOpened</c>, and similar callbacks.
+    /// Available inside <c>OnRetry</c>, <c>OnOpened</c>, and similar callbacks.
     /// </summary>
     public static readonly ResiliencePropertyKey<string?> MessageIdKey =
         new("Conduit.MessageId");
 
     /// <summary>
     /// Resilience context property key for <see cref="MessageContext.ConversationId"/>.
-    /// Available inside <c>OnRetry</c>, <c>OnCircuitOpened</c>, and similar callbacks.
+    /// Available inside <c>OnRetry</c>, <c>OnOpened</c>, and similar callbacks.
     /// </summary>
     public static readonly ResiliencePropertyKey<string?> ConversationIdKey =
         new("Conduit.ConversationId");

@@ -65,11 +65,11 @@ The broker spans are named after the transports' shared base class, ``BrokerTran
 | `conduit.message.kind` | Mediator and wire spans | `command`, `query` or `event` on a mediator span; `request` (a command or a query) or `event` on a wire span. |
 | `conduit.message.id` | Spans started inside a dispatch | The dispatch's `MessageContext.MessageId`. |
 | `conduit.conversation.id` | Spans started inside a dispatch | The dispatch's `MessageContext.ConversationId`. |
-| `conduit.dispatch` | A command's or a query's mediator span | `local` (handled on this host) or `remote` (routed to an endpoint). |
-| `conduit.endpoint` | A routed command's or query's mediator span | The endpoint's name. |
+| `conduit.dispatch` | A command's or a query's mediator span, once it is handed to its handler or sent to its endpoint | `local` (handled on this host) or `remote` (sent to an endpoint). Absent when the dispatch throws for want of a route or a handler, and on a routed `[FireAndForget]` command the outbox captures. |
+| `conduit.endpoint` | A command's or a query's mediator span, once it is sent to its endpoint | The endpoint's name. |
 | `conduit.transport` | Broker spans | The transport's class name: `RabbitMQTransport`, `AzureServiceBusTransport`, `AmazonSqsTransport` or `ActiveMQTransport`. |
 
-The ids are on every mediator span, on the producer spans, and on a wire span whenever its edge started the message's context first, which the HTTP endpoint, the hub and the broker transports all do. A preflight runs under no context, so its span has none. A consumer span starts before the message's context is read, so it has none either; its wire span carries them.
+The ids are on every mediator span and on the producer spans. A wire span carries them only when its edge started the message's context before the span: a broker transport always does; the HTTP endpoint and the hub do only when they honor the caller's ids ([Security → Correlation ids](security.md#correlation-ids)) or have properties to carry (client properties, or an enricher's: [Security → Client properties](security.md#client-properties)). Otherwise the context is minted after the wire span has started, and that span has no ids; the spans of the dispatches its handler makes carry the minted `ConversationId`. A preflight runs under no context, so its span has none. A consumer span starts before the message's context is read, so it has none either; its wire span carries them.
 
 ### Status
 
@@ -104,7 +104,7 @@ All on the `Conduit` meter:
 | Tag | Value |
 |---|---|
 | `conduit.message.type` | The message's full type name, or [`(undeclared)`](#the-undeclared-type). |
-| `conduit.message.kind` | `command`, `query` or `event`. A wire request takes its type's declared kind, so an in-process command and the same command over the wire share a series. |
+| `conduit.message.kind` | `command`, `query` or `event`, or `request` for an undeclared wire request. A wire request takes its type's declared kind, so an in-process command and the same command over the wire share a series. |
 | `conduit.outcome` | `error` when the dispatch threw, a refusal included (a `NotFoundException`, a failed `Validate()`); `success` otherwise. |
 
 A wire request or event that an inbound gate refuses or discards never reaches the mediator, so it is not measured here. Its wire span still records it.
@@ -118,14 +118,14 @@ A wire request or event names its type with a string the caller chooses. So the 
 - a request this host forwards by route to another endpoint without declaring its type;
 - a name nothing on this host declares, which is refused with `BadRequest` ([Error Handling](error-handling.md#unhandled-exceptions)) and measured with `conduit.outcome` = `error`.
 
-Only the dispatch metrics are bounded this way. A wire span's `conduit.message.type`, and the broker metrics below, carry the name as it arrived.
+Only the dispatch metrics are bounded this way. A wire span's `conduit.message.type`, and the transport metrics below, carry the name as it arrived.
 
 ### Transports
 
 The broker transports (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ) record the transport metrics. The HTTP and SignalR transports record none.
 
 - `conduit.transport.send.count` and `conduit.transport.send.duration` measure each send that succeeds: a request (with the wait for its reply) or an event. A failed send is not measured.
-- `conduit.transport.receive.count` counts each message received. Its `conduit.outcome` is `error` only when the message could not be turned into a dispatch (its context or its body could not be read) or the transport failed while handling it. A handler's failure is still a `success` here; the dispatch metrics count it.
+- `conduit.transport.receive.count` counts each typed message received; a message with no type is acknowledged before any span or measurement. Its `conduit.outcome` is `error` only when the message could not be turned into a dispatch (its context or its body could not be read) or the transport failed while handling it. A handler's failure is still a `success` here; the dispatch metrics count it.
 - `conduit.transport` is the transport's class name, as on the spans.
 
 ### Retries and durability
@@ -145,14 +145,15 @@ The broker transports (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ) record
 
 The [audit trail](audit.md) (`Conduit.NET.Audit`) is the other observability surface. It keeps one record per dispatch in a database: the message's ids (`MessageId`, `ConversationId`, `CausationId`), its payload (redacted as you mark it), and every observation the dispatch made, from handler start and end to each retry, each transport send, a dead-lettering, and the outcome. It answers what happened to one message, and aggregates nothing; the meter and the source answer how many, how fast, and by which path.
 
-The two share their ids. A span's `conduit.message.id` and `conduit.conversation.id` are the audit record's `MessageId` and `ConversationId`, so a trace leads to the records of the dispatches in it.
+The two share their ids. A span's `conduit.message.id` and `conduit.conversation.id` are the audit record's `MessageId` and `ConversationId`, so a trace leads to the records of the dispatches in it whose spans carry them: every in-process and nested dispatch, and a wire dispatch arriving by broker, or over the HTTP endpoint or the hub when that edge honors the caller's ids or carries properties. A default HTTP or hub wire span has no ids ([Tags](#tags)); the `ConversationId` on its nested dispatches' spans still leads to its record.
 
 ## Limitations
 
 - **In-process and broker spans carry no status.** A failed `ExecuteAsync` shows as a span with its status unset; read failures from `conduit.outcome`, or from the wire span on the receiving host.
 - **The HTTP and SignalR transports have no spans or transport metrics of their own.** The wire spans and the dispatch metrics still cover what they bring in.
 - **Some deliveries start no span.** The outbox's delivery to this host's listeners is measured but has no span, and a dead-letter replay's redelivery starts no producer span.
-- **The broker metrics carry the type name as it arrived.** `conduit.transport.receive.count` and `conduit.messages.dead_lettered` are tagged with whatever type a producer on the broker set; only the dispatch metrics bound it with [`(undeclared)`](#the-undeclared-type).
+- **A default HTTP or hub wire span has no message ids.** Unless the edge honors the caller's ids or has properties to carry, the context is minted after the span starts ([Tags](#tags)).
+- **The transport metrics carry the type name as it arrived.** `conduit.transport.receive.count` and `conduit.messages.dead_lettered` are tagged with whatever type a producer on the broker set. A request this host forwards by route without declaring its type is sent under the caller's name too, so on a broker transport that name tags `conduit.transport.send.*` and the producer span. Only the dispatch metrics bound it with [`(undeclared)`](#the-undeclared-type).
 
 ---
 

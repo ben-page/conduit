@@ -112,7 +112,7 @@ builder.Services.AddResiliencePipeline<string, ExportStatus>(
 | `TransientErrors<T>()` | A `TimeoutException` (a broker request with no reply within its endpoint's `ResponseTimeout` throws one), and a `RemoteDispatchException` whose `Code` is `ErrorCode.InternalError` (the endpoint a request was routed to failed unexpectedly). Nothing else. |
 | `AllErrors<T>()` | Every exception except an `OperationCanceledException`. |
 
-`TransientErrors` leaves out what a rerun would get the same answer to: a remote refusal (a `RemoteDispatchException` with any other code: `NotFound`, `Conflict`, `Unauthorized`, `PreconditionFailed`, ...), a local `ConduitException` (`NotFoundException`, `ConflictException`, ...), and any other `InvalidOperationException`. It also leaves out a transport's own failure to reach the other side, such as the `HttpRequestException` of a refused connection. Add what your transports throw:
+`TransientErrors` leaves out what a rerun would get the same answer to: a remote refusal (a `RemoteDispatchException` with any other code: `NotFound`, `Conflict`, `Unauthorized`, `PreconditionFailed`, ...), a local `ConduitException` (`NotFoundException`, `ConflictException`, ...), and any other `InvalidOperationException`. It also leaves out a transport's own failure to reach the other side, such as the `HttpRequestException` of a refused connection. Add what your transports throw (it reaches a pipeline from a routed call made inside a handler; see [Where the pipeline runs](#where-the-pipeline-runs)):
 
 ```csharp
 resilience.AddDefaultPipeline(pipeline => pipeline
