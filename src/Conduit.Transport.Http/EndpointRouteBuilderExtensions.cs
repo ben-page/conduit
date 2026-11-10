@@ -16,7 +16,10 @@ public static class EndpointRouteBuilderExtensions
     /// Maps POST endpoints for Conduit wire dispatch. The message type is read from the
     /// <c>X-Conduit-Type</c> header and the request body contains the plain serialized message.
     /// A refused event (the type filter, an unknown type) is answered on <c>/publish</c> as <c>/dispatch</c> answers a
-    /// refused request: the <see cref="DispatchResult{T}"/>, status-coded from its error.
+    /// refused request: the <see cref="DispatchResult{T}"/>, status-coded from its error. An event whose dispatch failed
+    /// outside its listeners (<see cref="EventDispatchException"/>: a pipeline behavior, the listeners' resolution, a
+    /// gate that threw) is answered as <c>/dispatch</c> answers an unexpected failure: <c>InternalError</c> (500), the
+    /// fixed message and the support reference it was logged under.
     /// </summary>
     /// <remarks>
     /// The dispatch's correlation ids are the server's unless <paramref name="trustCallerContext"/> says otherwise:
@@ -85,6 +88,15 @@ public static class EndpointRouteBuilderExtensions
                 // A refused event (the type filter, an unknown type) is answered as /dispatch answers a refused request.
                 return Answer(RefusalRendering.RenderResult(
                     DispatchResult<object>.Fail(refusal),
+                    httpRequest.HttpContext.RequestServices,
+                    MessageContext.Current));
+            }
+            catch (EventDispatchException failure)
+            {
+                // The dispatch failed outside the listeners (a behavior, the listeners' resolution, a gate that threw),
+                // logged with the reference: answered as /dispatch answers an unexpected failure, never the exception.
+                return Answer(RefusalRendering.RenderResult(
+                    ConduitRuntime.UnexpectedFailure(failure.Reference),
                     httpRequest.HttpContext.RequestServices,
                     MessageContext.Current));
             }

@@ -5,6 +5,7 @@ using Conduit.TestUtils;
 using Conduit.Generated;
 using Conduit.Transport.SignalR.Tests.Support;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -117,6 +118,34 @@ public class ConduitHubShould
 
         // Assert — exception propagates to the caller
         await act.Should().ThrowAsync<Exception>();
+    }
+
+    // A behavior that throws fails the event outside its listeners: Publish answers nothing, so the invocation fails
+    // with the fixed message an unexpected failure is answered with, and nothing of the exception itself
+    [TestMethod]
+    public async Task FailAPublishWhoseBehaviorThrowsWithTheFixedMessage()
+    {
+        // Arrange
+        await using var host = TestWebHost.Start(
+            builder =>
+            {
+                builder.Services.AddConduit(conduit => conduit.AddPipeline(typeof(ThrowingEventBehavior<,>)));
+                builder.Services.AddConduitSignalR();
+            },
+            app => app.MapHub<ConduitHub>("/conduit"));
+        await using var connection = await ConnectToHub(host.Address);
+        var payload = JsonSerializer.SerializeToElement(new { Data = "x" });
+        Dictionary<string, string>? noContext = null;
+        Dictionary<string, string>? noHeaders = null;
+
+        // Act
+        var publish = () => connection.InvokeAsync(
+            "Publish", typeof(BehaviorFailureEvent).FullName, payload, noContext, noHeaders);
+
+        // Assert -- a HubException (the server's own message reaches the client only through one) with the fixed text
+        var failure = await publish.Should().ThrowExactlyAsync<HubException>();
+        failure.Which.Message.Should().EndWith("HubException: An unexpected error occurred.");
+        failure.Which.Message.Should().NotContain("The behavior failed.");
     }
 
     private static TestWebHost CreateHost(ConduitServerInfo serverInfo)

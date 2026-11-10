@@ -657,17 +657,27 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         IWireMediator wireMediator,
         AsyncServiceScope scope)
     {
-        // Dispatch, acknowledge on success, abandon on listener failure
+        // Only the dispatch is guarded, and each arm settles the message and returns: the acknowledgement of a handled
+        // event runs after the try, so no settlement can fail into a second one.
         try
         {
             await wireMediator.HandleWireEventAsync(envelope, CancellationToken.None);
-            await this.AcknowledgeAsync(message);
-            LogMessageCompleted(this.Logger, messageType, null);
         }
         catch (EventListenerException ex)
         {
             await this.CaptureOrAbandonAsync(
                 scope.ServiceProvider, message, messageType, ex, reference: null, alreadyLogged: false);
+            return;
+        }
+        catch (EventDispatchException ex)
+        {
+            // The dispatch failed outside the listeners (a behavior, the listeners' resolution, a gate that threw): no
+            // refusal and no handled event, so it is settled as a listener's failure is. HandleWireEvent logged the
+            // original with its stack under the reference; the capture records that original and the reference, and the
+            // abandon log names the reference without a second stack.
+            await this.CaptureOrAbandonAsync(
+                scope.ServiceProvider, message, messageType, ex.InnerException ?? ex, ex.Reference, alreadyLogged: true);
+            return;
         }
         catch (ConduitException ex) when (ex is BadRequestException or ContractMismatchException)
         {
@@ -675,13 +685,18 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
             // message no redelivery could dispatch. Dead-letter it, else acknowledge it, as a message that failed
             // before dispatch is. HandleWireEvent has logged it.
             await this.CaptureOrAcknowledgeAsync(scope.ServiceProvider, message, messageType, ex);
+            return;
         }
         catch (ConduitException)
         {
             // Any other refusal (the type filter's Forbidden, a gate's own) is final, since a redelivery would be
             // refused again, and HandleWireEvent has logged it: acknowledge.
             await this.AcknowledgeAsync(message);
+            return;
         }
+
+        await this.AcknowledgeAsync(message);
+        LogMessageCompleted(this.Logger, messageType, null);
     }
 
     /// <summary>

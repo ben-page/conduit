@@ -11,12 +11,23 @@ public sealed class InMemoryInboxStore : IInboxStore
     /// <summary>When set, every <see cref="RemoveAsync"/> throws it, as an unreachable database would.</summary>
     public Exception? RemoveFailure { get; init; }
 
+    /// <summary>While set, every <see cref="RecordAsync"/> throws it, as an unreachable database would; clear it to
+    /// bring the database back.</summary>
+    public Exception? RecordFailure { get; set; }
+
     public Task<bool> ExistsAsync(string messageId, CancellationToken cancellationToken)
         => Task.FromResult(this.messages.ContainsKey(messageId));
 
     // TryAdd is true only when the id is newly added: the rows-affected answer the real store gives.
     public Task<bool> RecordAsync(string messageId, CancellationToken cancellationToken)
-        => Task.FromResult(this.messages.TryAdd(messageId, 0));
+    {
+        if (this.RecordFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        return Task.FromResult(this.messages.TryAdd(messageId, 0));
+    }
 
     public Task RemoveAsync(string messageId, CancellationToken cancellationToken)
     {

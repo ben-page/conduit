@@ -76,7 +76,9 @@ public class ConduitHub(
 
     /// <summary>
     /// Publishes an event received from a SignalR client. A refusal (the type filter, an unknown type) fails the
-    /// invocation with a <see cref="HubException"/> carrying the refusal's message, written in the reader's language.
+    /// invocation with a <see cref="HubException"/> carrying the refusal's message, written in the reader's language. A
+    /// dispatch that failed outside the listeners (<see cref="EventDispatchException"/>: a pipeline behavior, the
+    /// listeners' resolution, a gate that threw) fails it with the fixed message of an unexpected failure.
     /// </summary>
     /// <param name="type">The fully-qualified event type name.</param>
     /// <param name="payload">The JSON payload to deserialize.</param>
@@ -102,6 +104,15 @@ public class ConduitHub(
         {
             // Publish answers nothing, so the refusal fails the invocation: a HubException's message reaches the client.
             var error = RefusalRendering.RenderResult(DispatchResult<object>.Fail(refusal), services, MessageContext.Current).Error!;
+            throw new HubException(error.Message);
+        }
+        catch (EventDispatchException failure)
+        {
+            // The dispatch failed outside the listeners (a behavior, the listeners' resolution, a gate that threw), logged
+            // with its stack: the invocation fails with the fixed message an unexpected failure is answered with, never
+            // the exception (a HubException carries a message only, so the reference stays in the log line).
+            var error = RefusalRendering.RenderResult(
+                ConduitRuntime.UnexpectedFailure(failure.Reference), services, MessageContext.Current).Error!;
             throw new HubException(error.Message);
         }
     }

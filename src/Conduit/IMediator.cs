@@ -129,7 +129,9 @@ public interface IWireMediator : IMediator
     /// <see cref="Exceptions.EventListenerException"/> when a listener fails, the <see cref="Exceptions.ConduitException"/>
     /// when the event is refused (a gate such as the type filter, or a type this host does not know) for the transport to
     /// answer its caller, and <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is
-    /// cancelled; logs and swallows any other failure.
+    /// cancelled. Any other failure -- outside the listeners: a pipeline behavior, the listeners' resolution, a gate that
+    /// threw something other than a refusal -- is logged with a support reference and thrown as a
+    /// <see cref="EventDispatchException"/> carrying it, for the transport to settle as an unexpected failure.
     /// </summary>
     /// <remarks>
     /// <para>

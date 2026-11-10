@@ -299,6 +299,10 @@ sees the failure ([dispatch retry](../dispatch-retry.md), or a [pipeline behavio
 | A message this host cannot read: not JSON, an unknown type, a body its type cannot read (`ContractMismatch`), or any other `BadRequest` refusal of an event or `[FireAndForget]` command, a validation failure among them | Captured, then acknowledged | Acknowledged: a redelivery would fail the same way |
 | An event or `[FireAndForget]` command was refused otherwise (the type filter's `Forbidden`, `NotFound`, `Conflict`, any other `ConduitException`) | Acknowledged, not captured | Acknowledged: a redelivery would be refused again |
 
+An event whose dispatch fails outside its listeners (a pipeline behavior throws, a listener cannot be resolved, or
+a gate throws an exception that is not a `ConduitException`) is settled as a listener failure is, captured or else
+abandoned, and a publisher over HTTP `/publish` or the SignalR hub's `Publish` is answered `InternalError`.
+
 An abandoned message is not gone, and it is not handled only once: until the broker dead-letters it, the broker
 delivers it again and its listener or handler runs again.
 

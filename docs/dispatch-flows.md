@@ -286,7 +286,8 @@ error).
 `ConduitRuntime.HandleWireEvent`. Wire-inbound events dispatch to local listeners only (via the
 private `PublishLocalAsync`) — they are **never re-broadcast** to transports, preventing echo
 loops. `HandleWireEvent` lets `EventListenerException` **propagate** so the transport can
-retry / dead-letter; all other exceptions are logged and swallowed.
+retry / dead-letter, and a refusal (`ConduitException`) for the transport to answer; any other exception is logged
+with a support reference and thrown as `EventDispatchException`, which the transport settles as a listener failure.
 
 ### Outbound F&F capture (`IOutboundInterceptor`)
 

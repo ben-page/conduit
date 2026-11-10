@@ -229,6 +229,39 @@ public class HttpEndpointShould
         }
     }
 
+    // A behavior that throws fails the event outside its listeners: the publisher hears what /dispatch answers an
+    // unexpected failure -- InternalError, the fixed message, and the support reference the Error line carries
+    [TestMethod]
+    public async Task AnswerAnEventWhoseBehaviorThrowsWithAnInternalErrorAndAReference()
+    {
+        // Arrange
+        var spy = new SpyLoggerProvider();
+        await using var host = TestWebHost.Start(
+            builder =>
+            {
+                builder.Logging.AddProvider(spy);
+                builder.Services.AddConduit(conduit => conduit.AddPipeline(typeof(ThrowingEventBehavior<,>)));
+            },
+            app => app.MapConduitEndpoint());
+        using var client = new HttpClient { BaseAddress = new Uri(host.Address) };
+
+        // Act
+        var response = await PostConduitAsync(
+            client, "/api/conduit/publish", typeof(BehaviorFailureEvent).FullName!, new { Data = "x" });
+
+        // Assert -- the InternalError envelope, status-coded as /dispatch codes it, its reference the logged one's
+        ((int)response.StatusCode).Should().Be(500);
+        var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
+        error.GetProperty("code").GetString().Should().Be("InternalError");
+        error.GetProperty("message").GetString().Should().Be("An unexpected error occurred.");
+        var reference = error.GetProperty("reference").GetString();
+        reference.Should().NotBeNullOrEmpty();
+        var failure = spy.Entries.Should().ContainSingle(entry => entry.Level >= LogLevel.Error).Subject;
+        failure.EventId.Id.Should().Be(2);
+        failure.Message.Should().Contain(reference);
+        failure.Exception.Should().BeOfType<InvalidOperationException>().Which.Message.Should().Be("The behavior failed.");
+    }
+
     [TestMethod]
     public async Task Return200ForPublishEndpoint()
     {

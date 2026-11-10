@@ -255,7 +255,7 @@ public interface IWireMediator : IMediator
 }
 ```
 
-Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IInboundInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events — lets `EventListenerException` propagate to the transport for retry/dead-letter, swallows other exceptions.
+Extended mediator interface for inbound wire dispatch. Transport packages (HTTP, SignalR) inject `IWireMediator`; application code uses `IMediator`. `HandleWireRequestAsync` chains registered `IInboundInterceptor` instances, deserializes the payload, dispatches to the handler, and wraps the result in `DispatchResult<T>`. `HandleWireEventAsync` does the same for events — lets `EventListenerException` propagate to the transport for retry/dead-letter, and throws any other unexpected failure as an `EventDispatchException` carrying the support reference it was logged under.
 
 ### Message Context
 

@@ -250,6 +250,68 @@ public class ConduitRuntimeShould
         logger.Entries.Should().ContainSingle(entry => entry.Level == LogLevel.Error);
     }
 
+    // A failure outside the listeners is no refusal and no handled event: logged once, with its stack and a support
+    // reference, and thrown typed with that reference, for the transport to settle (it used to be logged and swallowed)
+    [TestMethod]
+    public async Task ThrowAWireEventsUnexpectedFailureWithTheReferenceItWasLoggedUnder()
+    {
+        // Arrange -- a behavior's failure, as it reaches HandleWireEvent from the generated dispatch
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        var envelope = new DispatchEnvelope("Test.Failing", JsonSerializer.SerializeToElement(new { }));
+        var original = new InvalidOperationException("The behavior failed.");
+
+        // Act
+        var publish = () => ConduitRuntime.HandleWireEvent(
+            envelope.Type,
+            [],
+            () => envelope,
+            (_, _, _) => throw original,
+            logger,
+            CancellationToken.None);
+
+        // Assert -- the original inside, its reference the one the single Error line carries
+        var failure = (await publish.Should().ThrowExactlyAsync<EventDispatchException>()).Which;
+        failure.InnerException.Should().BeSameAs(original);
+        failure.MessageType.Should().Be("Test.Failing");
+        failure.Reference.Should().MatchRegex("^[0-9a-f]{32}$");
+        var error = logger.Entries.Should().ContainSingle(entry => entry.Level >= LogLevel.Warning).Subject;
+        error.Level.Should().Be(LogLevel.Error);
+        error.EventId.Id.Should().Be(2);
+        error.EventId.Name.Should().Be("PublishError");
+        error.Message.Should().Contain(failure.Reference);
+        error.Exception.Should().BeSameAs(original);
+    }
+
+    // A gate that throws something other than a refusal (an inbox whose store is down) decided nothing: the same
+    [TestMethod]
+    public async Task ThrowAWireEventsGateFailureAsAnUnexpectedFailure()
+    {
+        // Arrange
+        var logger = new RecordingLogger<ConduitRuntimeShould>();
+        var envelope = new DispatchEnvelope("Test.Gated", JsonSerializer.SerializeToElement(new { }));
+        var dispatched = false;
+
+        // Act
+        var publish = () => ConduitRuntime.HandleWireEvent(
+            envelope.Type,
+            [new ThrowingGate()],
+            () => envelope,
+            (_, _, _) =>
+            {
+                dispatched = true;
+                return Task.CompletedTask;
+            },
+            logger,
+            CancellationToken.None);
+
+        // Assert
+        var failure = (await publish.Should().ThrowExactlyAsync<EventDispatchException>()).Which;
+        failure.InnerException.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("The inbox store is unreachable.");
+        dispatched.Should().BeFalse();
+        logger.Entries.Should().ContainSingle(entry => entry.Level == LogLevel.Error && entry.EventId.Id == 2);
+    }
+
     [TestMethod]
     public async Task RethrowARefusedWireEventAndLogItAtWarning()
     {

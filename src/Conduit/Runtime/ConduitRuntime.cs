@@ -639,9 +639,9 @@ public static partial class ConduitRuntime
         LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(1, "DispatchError"),
             "Unhandled exception dispatching '{Type}' (reference {Reference})");
 
-    private static readonly Action<ILogger, string, Exception?> LogPublishError =
-        LoggerMessage.Define<string>(LogLevel.Error, new EventId(2, "PublishError"),
-            "Unhandled exception publishing event '{Type}'");
+    private static readonly Action<ILogger, string, string, Exception?> LogPublishError =
+        LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(2, "PublishError"),
+            "Unhandled exception publishing event '{Type}' (reference {Reference})");
 
     private static readonly Action<ILogger, string, Exception?> LogListenerFailed =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(4, "ListenerFailed"),
@@ -1134,23 +1134,10 @@ public static partial class ConduitRuntime
             }
 
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            // A reference the user can quote and support can grep: the dispatch's ConversationId. ConduitHub mints a
-            // fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line,
-            // so finding it needs no log scopes. Refusals (the ConduitException arm above) carry none -- they are not bugs.
-            // The ConversationId can come from outside: a trusting HTTP or SignalR edge takes it from its caller (checked
-            // there), a broker transport from the message (unchecked: a foreign producer can send anything), and a host
-            // can start a context itself. CR/LF would forge log lines, so use it only when it is a plain token
-            // (MessageContextIds); otherwise mint one.
-            var conversationId = MessageContext.Current?.ConversationId;
-            var reference = MessageContextIds.IsValid(conversationId)
-                ? conversationId
-                : Guid.NewGuid().ToString("N");
+            // Refusals (the ConduitException arm above) carry no reference -- they are not bugs.
+            var reference = SupportReference();
             LogDispatchError(logger, messageType, reference, ex);
-            var failed = DispatchResult<object>.Fail("InternalError", "An unexpected error occurred.");
-            return failed with
-            {
-                Error = failed.Error! with { Reference = reference, Text = new RefusalText(ConduitTextNames.UnexpectedError) },
-            };
+            return UnexpectedFailure(reference);
         }
         finally
         {
@@ -1159,11 +1146,49 @@ public static partial class ConduitRuntime
     }
 
     /// <summary>
+    /// The answer to an unexpected failure logged under <paramref name="reference"/>: <c>InternalError</c>, the fixed
+    /// message <c>"An unexpected error occurred."</c> (never the exception's), the reference, and the sentence name
+    /// (<see cref="ConduitTextNames.UnexpectedError"/>) an edge writes in the reader's language. What
+    /// <see cref="HandleWireRequest(string, IEnumerable{IInboundInterceptor}, Func{DispatchEnvelope}, Func{string, JsonElement, CancellationToken, Task{object}}, ILogger, CancellationToken)"/>
+    /// answers, and what an edge answers for an <see cref="EventDispatchException"/>.
+    /// </summary>
+    public static DispatchResult<object> UnexpectedFailure(string reference)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reference);
+        var failed = DispatchResult<object>.Fail("InternalError", "An unexpected error occurred.");
+        return failed with
+        {
+            Error = failed.Error! with { Reference = reference, Text = new RefusalText(ConduitTextNames.UnexpectedError) },
+        };
+    }
+
+    /// <summary>
+    /// A reference the user can quote and support can grep: the current dispatch's ConversationId. ConduitHub mints a
+    /// fresh one per browser invocation, a batch's items share their batch's, and it is written INTO the log line, so
+    /// finding it needs no log scopes. The ConversationId can come from outside: a trusting HTTP or SignalR edge takes it
+    /// from its caller (checked there), a broker transport from the message (unchecked: a foreign producer can send
+    /// anything), and a host can start a context itself. CR/LF would forge log lines, so it is used only when it is a
+    /// plain token (<see cref="MessageContextIds"/>); otherwise one is minted.
+    /// </summary>
+    private static string SupportReference()
+    {
+        var conversationId = MessageContext.Current?.ConversationId;
+        return MessageContextIds.IsValid(conversationId)
+            ? conversationId
+            : Guid.NewGuid().ToString("N");
+    }
+
+    /// <summary>
     /// Runs inbound interceptor gates, then deserializes and dispatches a wire event.
     /// Lets <see cref="EventListenerException"/> propagate to the transport for retry/dead-letter, and a refusal
     /// (<see cref="ConduitException"/>: a gate such as the type filter, or an unknown type) to the transport to answer its
     /// caller, logged at Warning without a stack (EventId 7, <c>RefusedEvent</c>). A cancellation of
-    /// <paramref name="cancellationToken"/> propagates unlogged. Logs and swallows every other exception.
+    /// <paramref name="cancellationToken"/> propagates unlogged. Any other exception -- the dispatch failed outside its
+    /// listeners: a pipeline behavior, the listeners' resolution, a gate that threw something other than a refusal, the
+    /// event's read or audit capture -- is logged at Error with its support reference (EventId 2, <c>PublishError</c>)
+    /// and thrown as an <see cref="EventDispatchException"/> carrying that reference, for the transport to settle as an
+    /// unexpected failure: a broker captures or abandons it, HTTP and SignalR answer <c>InternalError</c>. It used to be
+    /// logged and swallowed, so a broker acknowledged the event as handled.
     /// </summary>
     public static async Task HandleWireEvent(
         string messageType,
@@ -1224,12 +1249,15 @@ public static partial class ConduitRuntime
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
-#pragma warning disable CA1031 // Any other failure is logged (PublishError) and ends here, as this method's contract states.
         catch (Exception ex)
-#pragma warning restore CA1031
         {
+            // An unexpected failure outside the listeners: logged here, once, with its stack and a support reference,
+            // then handed to the transport typed, so it can tell it from a listener's failure and a refusal, and answer
+            // the reference without the exception. The context is still the dispatch's (restored in finally).
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            LogPublishError(logger, messageType, ex);
+            var reference = SupportReference();
+            LogPublishError(logger, messageType, reference, ex);
+            throw new EventDispatchException(messageType, reference, ex);
         }
         finally
         {

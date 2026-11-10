@@ -307,7 +307,10 @@ stack trace (EventId 7, `RefusedEvent`) and rethrows it. HTTP `/publish` answers
 envelope, status-coded as `/dispatch` is, and the hub's `Publish` fails with a `HubException`. Either way the message is
 written in the reader's language. A broker transport acknowledges the refused message. A listener's failure
 (`EventListenerException`) propagates to the transport for retry or dead-lettering, a cancellation of the caller's
-token propagates as it does for a request, and any other exception is logged at Error and not returned.
+token propagates as it does for a request, and any other exception (a behavior, listener resolution, a gate that
+throws something other than a refusal) is logged at Error under a support reference and answered as an unexpected
+failure: HTTP `/publish` with the `InternalError` envelope carrying the reference, the hub's `Publish` with a
+`HubException` carrying the fixed message, and a broker transport captures or abandons it as a listener failure.
 
 ## ErrorCode equality
 

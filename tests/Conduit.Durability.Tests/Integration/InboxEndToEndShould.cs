@@ -271,6 +271,47 @@ public class InboxEndToEndShould
         (await inboxStore.ExistsAsync("msg-succeeded", CancellationToken.None)).Should().BeTrue();
     }
 
+    // A gate whose store is down decided nothing: it recorded nothing and no listener ran. The event must reach the
+    // broker again, not be acknowledged as handled (it used to be: logged, never recorded, never redelivered), and the
+    // redelivery, once the database is back, runs its listener.
+    [TestMethod]
+    public async Task AbandonAnEventWhoseInboxStoreFailsAtTheGateAndRunItsRedelivery()
+    {
+        // Arrange -- the inbox alone, over a store whose database is down
+        var inboxStore = new InMemoryInboxStore { RecordFailure = new InvalidOperationException("The database is down.") };
+        var connectionFactory = new StubConnectionFactory();
+        await using var _ = connectionFactory;
+        var deliveries = new DeliveryCounter();
+        await using var host = TestWebHost.Start(builder =>
+        {
+            builder.Services.AddSingleton(deliveries);
+
+            // Ahead of AddInbox, whose TryAdd then keeps it
+            builder.Services.AddSingleton<IInboxStore>(inboxStore);
+            builder.Services.AddConduit(conduit =>
+            {
+                conduit.UseSqlite("Data Source=:memory:");
+                conduit.AddDurability(durability => durability.AddInbox());
+            });
+            builder.Services.AddSingleton<IConduitConnectionFactory>(connectionFactory);
+        });
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var firstAttempt = BrokerMessage(new FlakyInboxEvent(Failures: 0), "msg-store-down", isRequest: false);
+
+        // Act
+        await transport.DeliverAsync(firstAttempt);
+        inboxStore.RecordFailure = null;
+        var redelivery = BrokerMessage(new FlakyInboxEvent(Failures: 0), "msg-store-down", isRequest: false);
+        await transport.DeliverAsync(redelivery);
+
+        // Assert -- the first attempt abandoned unhandled, the redelivery handled and recorded
+        firstAttempt.Abandoned.Should().BeTrue();
+        firstAttempt.Acknowledged.Should().BeFalse();
+        redelivery.Acknowledged.Should().BeTrue();
+        deliveries.Count.Should().Be(1, "the listener ran once, for the redelivery");
+        (await inboxStore.ExistsAsync("msg-store-down", CancellationToken.None)).Should().BeTrue();
+    }
+
     private static TestWebHost StartBrokerHost(
         StubConnectionFactory connectionFactory,
         DeliveryCounter deliveries,
