@@ -190,6 +190,8 @@ When the generated mediator routes a command to an Amazon SQS endpoint:
 
 Replies time out after `ResponseTimeout` (default 60 seconds). `VisibilityTimeoutSeconds` must be at least `ResponseTimeout`, or a message could become visible again — and be redelivered to another consumer — while the original caller is still waiting for its reply. The transport validates this at startup.
 
+A request with no reply within `ResponseTimeout` fails with a `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`), the same on every broker transport. It is never an `OperationCanceledException`, which only the caller's own cancellation token produces, so a `catch (OperationCanceledException)` around a dispatch cannot swallow a remote that did not answer. A request still waiting when the transport stops fails with an `InvalidOperationException`.
+
 ## Auto-discovery
 
 The transport reads `ConduitTypeRegistry` — populated at compile time by the source generator — to learn which types this application handles:

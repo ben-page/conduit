@@ -1047,7 +1047,7 @@ All 4 broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) shar
 - Reply serialization owned by base class — `SendReplyAsync` receives pre-serialized `BinaryData`, not `DispatchResult<object>`
 - Error reply on request failure is standardized — all broker transports send an `InternalError` reply on handler failure, preventing caller timeouts
 - HTTP and SignalR transports do not extend this base — they lack inbound dispatch, topology, and hosted service lifecycle
-- **Configurable ResponseTimeout**: Each transport options class has a `ResponseTimeout` property (default 60s). Replaces any hardcoded timeout values.
+- **Configurable ResponseTimeout**: `BrokerTransportOptions.ResponseTimeout` (default 60s), per endpoint. A request with no reply within it fails with the same `TimeoutException` on every broker transport, from the reply correlator in `BrokerTransportBase`.
 - **No application retry**: Transports are one-shot dispatch + dead letter on failure. The `AbandonAsync` abstract method is called on event listener failure; transports decide how to dead-letter (RMQ/ASB use broker native redelivery). Application retry is the user's concern via `IPipelineBehavior<,>` + Polly.
 
 ## Amazon SQS (+SNS) Transport (`Conduit.Transport.AmazonSqs`)

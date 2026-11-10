@@ -30,7 +30,7 @@ public static class EndpointBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new RabbitMQOptions { EndpointName = builder.EndpointName };
+        var options = new RabbitMQOptions(builder.EndpointName);
 
         // Configuration first, then the explicit argument, then the callback — code always wins.
         ConduitConfigurationBinder.BindTransportOptions(options, builder.Configuration);

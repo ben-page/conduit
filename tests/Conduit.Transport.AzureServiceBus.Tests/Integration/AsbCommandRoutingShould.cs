@@ -175,18 +175,23 @@ public class AsbCommandRoutingShould : AsbTestBase
     [Timeout(90_000)]
     public async Task TimeoutWhenNoHandlerAvailable()
     {
-        // Arrange — sender-only, no handler host
+        // Arrange — sender-only, no handler host; a short ResponseTimeout so the test doesn't block for 60s
         var senderName = UniqueAppName("sender");
         var prefix = new ConduitOptions { TopologyMode = TopologyMode.Test }.TopologyPrefix!;
 
-        await using var senderHost = await CreateSenderHostAsync(senderName, prefix, ContractsNamespace, "broker");
+        await using var senderHost = await CreateSenderHostAsync(
+            senderName, prefix, ContractsNamespace, "broker",
+            options => options.ResponseTimeout = TimeSpan.FromSeconds(5));
 
         var mediator = senderHost.GetRequiredService<IMediator>();
 
         // Act
         var action = () => mediator.ExecuteAsync(new TestCommand("nobody-home"));
 
-        // Assert — timeout because no handler is listening
-        await action.Should().ThrowAsync<Exception>();
+        // Assert -- a TimeoutException naming the request, the endpoint and the timeout, never an
+        // OperationCanceledException that a caller's catch for its own cancellation would swallow
+        var exception = await action.Should().ThrowExactlyAsync<TimeoutException>();
+        exception.WithMessage(
+            "No reply to 'Conduit.Transport.AzureServiceBus.Tests.Support.Contracts.TestCommand' from endpoint 'broker' within 00:00:05.");
     }
 }

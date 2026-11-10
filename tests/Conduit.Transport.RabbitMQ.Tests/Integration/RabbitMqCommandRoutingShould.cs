@@ -167,8 +167,11 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         // Act
         var action = () => mediator.ExecuteAsync(new TestCommand("nobody-home"));
 
-        // Assert
-        await action.Should().ThrowAsync<Exception>();
+        // Assert -- a TimeoutException naming the request, the endpoint and the timeout, never an
+        // OperationCanceledException that a caller's catch for its own cancellation would swallow
+        var exception = await action.Should().ThrowExactlyAsync<TimeoutException>();
+        exception.WithMessage(
+            "No reply to 'Conduit.Transport.RabbitMQ.Tests.Support.Contracts.TestCommand' from endpoint 'broker' within 00:00:05.");
     }
 
     [TestMethod]

@@ -17,7 +17,7 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
     private volatile bool started;
 
     public FakeBrokerTransport(ConduitOptions conduitOptions, IServiceProvider serviceProvider)
-        : base(conduitOptions, serviceProvider, NullLogger.Instance)
+        : base(new FakeBrokerOptions(), conduitOptions, serviceProvider, NullLogger.Instance)
     {
     }
 
@@ -85,12 +85,13 @@ public sealed class FakeBrokerTransport : BrokerTransportBase<FakeBrokerMessage>
         return Task.CompletedTask;
     }
 
-    protected override Task<BinaryData> PublishRequestAsync(
+    protected override Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
+        string correlationId,
         CancellationToken cancellationToken)
-        => Task.FromResult(new BinaryData("{}"));
+        => Task.FromResult(new BinaryData("{}").ToMemory());
 
     protected override Task PublishEventAsync(
         DispatchEnvelope envelope,

@@ -41,7 +41,7 @@ Test class: `{Transport}CommandRoutingShould`
 | 1.3 | `RouteVoidCommandAndComplete` | A sends, B handles | B spy == 1, A succeeds |
 | 1.4 | `PropagateConduitExceptionAsFailResult` | A sends, B throws `NotFoundException` | A gets `InvalidOperationException` with error code |
 | 1.5 | `ReturnInternalErrorForUnexpectedException` | A sends, B throws `InvalidOperationException` | A gets `InternalError`, no details leaked |
-| 1.6 | `TimeoutWhenNoHandlerAvailable` | A sends, no handler host | Throws after `ResponseTimeout` (use short 5s timeout) |
+| 1.6 | `TimeoutWhenNoHandlerAvailable` | A sends, no handler host | After `ResponseTimeout` (use short 5s timeout), throws exactly `TimeoutException("No reply to '{type}' from endpoint 'broker' within 00:00:05.")` — never an `OperationCanceledException` |
 | 1.7 | `DeliverFireAndForgetCommandToHandler` | A sends `[FireAndForget]` command, B handles | B spy == 1 with correct data, no reply expected |
 
 ### Category 2: Query Routing
@@ -53,7 +53,7 @@ Test class: `{Transport}QueryRoutingShould`
 | 2.1 | `RouteQueryToCorrectEndpoint` | A sends, B handles, C present (bystander) | B spy == 1, C spy == 0 |
 | 2.2 | `ReturnQueryResponseWithCorrectData` | A sends, B handles | Result value matches expected |
 | 2.3 | `PropagateConduitExceptionFromQuery` | A sends, B throws `NotFoundException` | Error propagated |
-| 2.4 | `TimeoutQueryWhenNoHandler` | A sends, no handler host | Throws after `ResponseTimeout` |
+| 2.4 | `TimeoutQueryWhenNoHandler` | A sends, no handler host | Same as 1.6, for a query |
 
 ### Category 3: Event Routing
 

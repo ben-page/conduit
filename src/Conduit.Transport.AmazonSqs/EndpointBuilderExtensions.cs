@@ -28,7 +28,7 @@ public static class EndpointBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new AmazonSqsOptions { EndpointName = builder.EndpointName };
+        var options = new AmazonSqsOptions(builder.EndpointName);
 
         // Configuration first, then the callback — code always wins.
         // "Credentials" MUST be excluded: AWSCredentials is abstract, so the generic binder throws

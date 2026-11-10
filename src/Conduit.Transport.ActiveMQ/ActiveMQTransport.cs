@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Text;
+﻿using System.Text;
 using Amqp;
 using Amqp.Framing;
 using Conduit.Configuration;
@@ -31,7 +30,6 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     private string? replyQueueAddress;
     private TopologyResult? topologyResult;
 
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<ReceiverLink> consumerLinks = [];
 
     // Transport-specific logging delegates
@@ -59,14 +57,10 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
         ILogger<ActiveMQTransport> logger)
-        : base(conduitOptions, serviceProvider, logger)
+        : base(options, conduitOptions, serviceProvider, logger)
     {
-        ArgumentNullException.ThrowIfNull(options);
         this.options = options;
     }
-
-    /// <inheritdoc/>
-    protected override string EndpointName => this.options.EndpointName;
 
     /// <inheritdoc/>
     protected override string TransportName => "activemq";
@@ -231,14 +225,6 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
                 // Best-effort cleanup during shutdown
             }
         }
-
-        // Cancel pending outbound reply waiters
-        foreach (var pending in this.pendingReplies.Values)
-        {
-            pending.TrySetCanceled(cancellationToken);
-        }
-
-        this.pendingReplies.Clear();
     }
 
     /// <inheritdoc />
@@ -421,52 +407,33 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         this.commandSender is not null && this.eventSender is not null && this.replyQueueAddress is not null;
 
     /// <inheritdoc />
-    protected override async Task<BinaryData> PublishRequestAsync(
+    protected override async Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
+        string correlationId,
         CancellationToken cancellationToken)
     {
-        var correlationId = Guid.NewGuid().ToString("N");
-
         LogSendingRequest(this.Logger, envelope.Type, null);
 
-        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        this.pendingReplies[correlationId] = tcs;
-
-        try
+        using var message = new Message(body.ToArray())
         {
-            using var message = new Message(body.ToArray())
+            Properties = new Properties
             {
-                Properties = new Properties
-                {
-                    Subject = envelope.Type,
-                    MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
-                        ?? Guid.NewGuid().ToString("N"),
-                    CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
-                },
-                ApplicationProperties = BuildOutboundApplicationProperties(headers),
-            };
+                Subject = envelope.Type,
+                MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
+                    ?? Guid.NewGuid().ToString("N"),
+                CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
+            },
+            ApplicationProperties = BuildOutboundApplicationProperties(headers),
+        };
 
-            message.ApplicationProperties["ReplyTo"] = this.replyQueueAddress;
-            message.ApplicationProperties["ReplyCorrelationId"] = correlationId;
+        message.ApplicationProperties["ReplyTo"] = this.replyQueueAddress;
+        message.ApplicationProperties["ReplyCorrelationId"] = correlationId;
 
-            await this.commandSender!.SendAsync(message);
+        await this.commandSender!.SendAsync(message);
 
-            // Wait for reply with timeout
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(this.options.ResponseTimeout);
-
-            using var registration = timeoutCts.Token.Register(() =>
-                tcs.TrySetCanceled(timeoutCts.Token));
-
-            var replyBytes = await tcs.Task;
-            return new BinaryData(replyBytes);
-        }
-        finally
-        {
-            this.pendingReplies.TryRemove(correlationId, out _);
-        }
+        return await this.AwaitReplyAsync(correlationId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -594,8 +561,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     private void OnReplyReceived(IReceiverLink receiverLink, Message message)
     {
         var correlationId = message.Properties?.CorrelationId?.ToString();
-        if (!string.IsNullOrEmpty(correlationId) &&
-            this.pendingReplies.TryRemove(correlationId, out var tcs))
+        if (!string.IsNullOrEmpty(correlationId))
         {
             byte[] replyBytes;
             if (message.Body is byte[] bytes)
@@ -615,7 +581,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
                 replyBytes = Encoding.UTF8.GetBytes(message.Body?.ToString() ?? "{}");
             }
 
-            tcs.TrySetResult(replyBytes);
+            this.CompleteReply(correlationId, replyBytes);
         }
 
         ((ReceiverLink)receiverLink).Accept(message);

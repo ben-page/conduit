@@ -29,7 +29,7 @@ public static class EndpointBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ActiveMQOptions { EndpointName = builder.EndpointName };
+        var options = new ActiveMQOptions(builder.EndpointName);
 
         // Configuration first, then the explicit argument, then the callback — code always wins.
         ConduitConfigurationBinder.BindTransportOptions(options, builder.Configuration);

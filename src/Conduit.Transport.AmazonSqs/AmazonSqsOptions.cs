@@ -15,6 +15,14 @@ namespace Conduit.Transport.AmazonSqs;
 /// </remarks>
 public sealed class AmazonSqsOptions : BrokerTransportOptions
 {
+    /// <summary>Creates options with every setting at its default.</summary>
+    public AmazonSqsOptions()
+    {
+    }
+
+    /// <summary>Creates options for the endpoint <c>UseAmazonSqs()</c> is configuring.</summary>
+    internal AmazonSqsOptions(string endpointName) => this.EndpointName = endpointName;
+
     /// <summary>
     /// AWS region for the SNS/SQS clients. Required unless <see cref="ServiceUri"/> is set.
     /// </summary>
@@ -35,14 +43,9 @@ public sealed class AmazonSqsOptions : BrokerTransportOptions
     public AWSCredentials? Credentials { get; set; }
 
     /// <summary>
-    /// Timeout for request/response operations. Default 60 seconds.
-    /// Must be less than or equal to <see cref="VisibilityTimeoutSeconds"/>.
-    /// </summary>
-    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
-
-    /// <summary>
     /// SQS visibility timeout in seconds. Messages become invisible during processing.
-    /// Must be greater than or equal to <see cref="ResponseTimeout"/> total seconds.
+    /// Must be greater than or equal to <see cref="BrokerTransportOptions.ResponseTimeout"/> total
+    /// seconds, so a request is not redelivered while its caller still awaits the reply.
     /// Default 60 seconds.
     /// </summary>
     public int VisibilityTimeoutSeconds { get; set; } = 60;
@@ -53,12 +56,4 @@ public sealed class AmazonSqsOptions : BrokerTransportOptions
     /// The transport validates this at startup and throws if <c>false</c>.
     /// </summary>
     public bool RawMessageDelivery { get; set; } = true;
-
-    /// <summary>
-    /// The endpoint name this transport is registered under in keyed DI.
-    /// Set automatically by <c>UseAmazonSqs()</c> from the <c>ConduitEndpointBuilder</c> context.
-    /// Used by dead letter queue capture to record the source endpoint and by replay to
-    /// resolve the correct transport.
-    /// </summary>
-    public string EndpointName { get; internal set; } = string.Empty;
 }

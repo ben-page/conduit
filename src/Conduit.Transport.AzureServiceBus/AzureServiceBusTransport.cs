@@ -44,10 +44,6 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         LoggerMessage.Define(LogLevel.Information, new EventId(108, "StoppingProcessors"),
             "Stopping Azure Service Bus processors");
 
-    private static readonly Action<ILogger, string, Exception?> LogReplyTimeout =
-        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(109, "ReplyTimeout"),
-            "Timed out waiting for reply to session '{SessionId}'");
-
     private static readonly Action<ILogger, string, string, Exception?> LogProcessingError =
         LoggerMessage.Define<string, string>(LogLevel.Error, new EventId(105, "ProcessingError"),
             "Error processing message on '{EntityPath}': {ErrorSource}");
@@ -60,14 +56,10 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
         ILogger<AzureServiceBusTransport> logger)
-        : base(conduitOptions, serviceProvider, logger)
+        : base(options, conduitOptions, serviceProvider, logger)
     {
-        ArgumentNullException.ThrowIfNull(options);
         this.options = options;
     }
-
-    /// <inheritdoc/>
-    protected override string EndpointName => this.options.EndpointName;
 
     /// <inheritdoc/>
     protected override string TransportName => "asb";
@@ -220,22 +212,23 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
     protected override bool IsStarted => this.topicSender is not null;
 
     /// <inheritdoc />
-    protected override async Task<BinaryData> PublishRequestAsync(
+    protected override async Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
+        string correlationId,
         CancellationToken cancellationToken)
     {
         LogSendingRequest(this.Logger, envelope.Type, null);
 
-        var sessionId = Guid.NewGuid().ToString("N");
         var replyQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, "replies", 260);
 
+        // The correlation id is the reply's session: Service Bus correlates the reply itself
         var serviceBusMessage = new ServiceBusMessage(body)
         {
             Subject = envelope.Type,
             ContentType = "application/json",
-            ReplyToSessionId = sessionId,
+            ReplyToSessionId = correlationId,
             ReplyTo = replyQueueName,
         };
 
@@ -243,7 +236,7 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
 
         await this.topicSender!.SendMessageAsync(serviceBusMessage, cancellationToken);
 
-        return await this.AwaitReplyAsync(sessionId, cancellationToken);
+        return await this.ReceiveSessionReplyAsync(envelope.Type, correlationId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -339,7 +332,15 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
         return Task.CompletedTask;
     }
 
-    private async Task<BinaryData> AwaitReplyAsync(string sessionId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Receives a request's reply from its own session on the shared, session-enabled reply queue.
+    /// Service Bus keeps the reply until the session is accepted, so this transport waits on the
+    /// session rather than on the base class's reply waiter, and needs no reply consumer.
+    /// </summary>
+    private async Task<ReadOnlyMemory<byte>> ReceiveSessionReplyAsync(
+        string messageType,
+        string sessionId,
+        CancellationToken cancellationToken)
     {
         var replyQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, "replies", 260);
 
@@ -349,19 +350,16 @@ public sealed class AzureServiceBusTransport : BrokerTransportBase<ProcessMessag
             cancellationToken: cancellationToken);
 
         var replyMessage = await sessionReceiver.ReceiveMessageAsync(
-            this.options.ResponseTimeout, cancellationToken);
+            this.Options.ResponseTimeout, cancellationToken);
 
         if (replyMessage is null)
         {
-            LogReplyTimeout(this.Logger, sessionId, null);
-            throw new TimeoutException(
-                $"Timed out waiting for reply on session '{sessionId}'. " +
-                "The remote handler may have crashed or is taking too long.");
+            throw this.CreateReplyTimeoutException(messageType);
         }
 
         await sessionReceiver.CompleteMessageAsync(replyMessage, cancellationToken);
 
-        return replyMessage.Body;
+        return replyMessage.Body.ToMemory();
     }
 
     private static void SeedOutboundMessageContext(

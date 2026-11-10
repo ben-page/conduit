@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text;
 using Conduit.Configuration;
 using Conduit.Runtime;
@@ -28,7 +27,6 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     private string? replyQueueName;
     private TopologyResult? topologyResult;
 
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<string> consumerTags = [];
     private readonly List<IChannel> consumerChannels = [];
 
@@ -57,14 +55,10 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
         ILogger<RabbitMQTransport> logger)
-        : base(conduitOptions, serviceProvider, logger)
+        : base(options, conduitOptions, serviceProvider, logger)
     {
-        ArgumentNullException.ThrowIfNull(options);
         this.options = options;
     }
-
-    /// <inheritdoc/>
-    protected override string EndpointName => this.options.EndpointName;
 
     /// <inheritdoc/>
     protected override string TransportName => "rabbitmq";
@@ -184,14 +178,6 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
                 // Best-effort cancellation during shutdown
             }
         }
-
-        // Cancel pending outbound reply waiters
-        foreach (var pending in this.pendingReplies.Values)
-        {
-            pending.TrySetCanceled(cancellationToken);
-        }
-
-        this.pendingReplies.Clear();
     }
 
     /// <inheritdoc />
@@ -321,55 +307,37 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         this.publishChannel is not null && this.replyQueueName is not null;
 
     /// <inheritdoc />
-    protected override async Task<BinaryData> PublishRequestAsync(
+    protected override async Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
+        string correlationId,
         CancellationToken cancellationToken)
     {
         var exchangeName = TopologyNaming.CreateSharedResourceName(this.ConduitOptions, 255);
-        var correlationId = Guid.NewGuid().ToString("N");
 
         LogSendingRequest(this.Logger, envelope.Type, envelope.Type, null);
 
-        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        this.pendingReplies[correlationId] = tcs;
-
-        try
+        var properties = new BasicProperties
         {
-            var properties = new BasicProperties
-            {
-                ContentType = "application/json",
-                Type = envelope.Type,
-                CorrelationId = correlationId,
-                ReplyTo = this.replyQueueName,
-                MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
-                    ?? Guid.NewGuid().ToString("N"),
-                Headers = ToRabbitHeaders(headers),
-            };
+            ContentType = "application/json",
+            Type = envelope.Type,
+            CorrelationId = correlationId,
+            ReplyTo = this.replyQueueName,
+            MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
+                ?? Guid.NewGuid().ToString("N"),
+            Headers = ToRabbitHeaders(headers),
+        };
 
-            await this.publishChannel!.BasicPublishAsync(
-                exchange: exchangeName,
-                routingKey: envelope.Type,
-                mandatory: false,
-                basicProperties: properties,
-                body: body.ToMemory(),
-                cancellationToken: cancellationToken);
+        await this.publishChannel!.BasicPublishAsync(
+            exchange: exchangeName,
+            routingKey: envelope.Type,
+            mandatory: false,
+            basicProperties: properties,
+            body: body.ToMemory(),
+            cancellationToken: cancellationToken);
 
-            // Wait for reply with timeout
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(this.options.ResponseTimeout);
-
-            using var registration = timeoutCts.Token.Register(() =>
-                tcs.TrySetCanceled(timeoutCts.Token));
-
-            var replyBytes = await tcs.Task;
-            return new BinaryData(replyBytes);
-        }
-        finally
-        {
-            this.pendingReplies.TryRemove(correlationId, out _);
-        }
+        return await this.AwaitReplyAsync(correlationId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -482,11 +450,11 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
     private Task OnReplyReceivedAsync(object sender, BasicDeliverEventArgs args)
     {
+        // The client reuses the delivery's body buffer once this handler returns: copy it
         var correlationId = args.BasicProperties.CorrelationId;
-        if (!string.IsNullOrEmpty(correlationId) &&
-            this.pendingReplies.TryRemove(correlationId, out var tcs))
+        if (!string.IsNullOrEmpty(correlationId))
         {
-            tcs.TrySetResult(args.Body.ToArray());
+            this.CompleteReply(correlationId, args.Body.ToArray());
         }
 
         return Task.CompletedTask;

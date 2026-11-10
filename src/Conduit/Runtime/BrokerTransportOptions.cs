@@ -16,6 +16,20 @@ public abstract class BrokerTransportOptions
     public int DefaultConcurrency { get; set; } = 10;
 
     /// <summary>
+    /// How long a request waits for its reply. A request with no reply within it fails with a
+    /// <see cref="TimeoutException"/> naming the request, the endpoint and this timeout. Default 60 seconds.
+    /// </summary>
+    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// The endpoint name this transport is registered under in keyed DI. Set by the transport's
+    /// <c>Use*</c> extension from the <c>ConduitEndpointBuilder</c> context, never from configuration:
+    /// the endpoint's identity is not a setting. Dead-letter capture records it as the source endpoint
+    /// and replay resolves the transport by it.
+    /// </summary>
+    public string EndpointName { get; protected set; } = string.Empty;
+
+    /// <summary>
     /// Named receiver pools for concurrency isolation. Each pool routes its assigned message types
     /// onto a dedicated consumer with its own <see cref="ReceiverPoolOptions.Concurrency"/> budget.
     /// </summary>

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using Amazon.SimpleNotificationService;
@@ -25,7 +24,6 @@ namespace Conduit.Transport.AmazonSqs;
 public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMessage>
 {
     private readonly AmazonSqsOptions options;
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> pendingReplies = new();
     private readonly List<Task> pollingTasks = [];
 
     private AmazonSimpleNotificationServiceClient? snsClient;
@@ -53,10 +51,6 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         LoggerMessage.Define(LogLevel.Information, new EventId(107, "TransportStopping"),
             "Stopping Amazon SQS transport");
 
-    private static readonly Action<ILogger, string, Exception?> LogReplyTimeout =
-        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(108, "ReplyTimeout"),
-            "Timed out waiting for reply with correlation '{CorrelationId}'");
-
     private static readonly Action<ILogger, string, Exception?> LogPollingError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(109, "PollingError"),
             "Error polling SQS queue '{QueueAddress}'");
@@ -69,16 +63,12 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
         ILogger<AmazonSqsTransport> logger)
-        : base(conduitOptions, serviceProvider, logger)
+        : base(options, conduitOptions, serviceProvider, logger)
     {
-        ArgumentNullException.ThrowIfNull(options);
         this.options = options;
 
         this.ValidateOptions();
     }
-
-    /// <inheritdoc/>
-    protected override string EndpointName => this.options.EndpointName;
 
     /// <inheritdoc/>
     protected override string TransportName => "sqs";
@@ -185,14 +175,6 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                 // Expected during shutdown
             }
         }
-
-        // Cancel pending outbound reply waiters
-        foreach (var pending in this.pendingReplies.Values)
-        {
-            pending.TrySetCanceled(cancellationToken);
-        }
-
-        this.pendingReplies.Clear();
     }
 
     /// <inheritdoc />
@@ -301,65 +283,37 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
         this.snsClient is not null && this.topicArn is not null;
 
     /// <inheritdoc />
-    protected override async Task<BinaryData> PublishRequestAsync(
+    protected override async Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
+        string correlationId,
         CancellationToken cancellationToken)
     {
         LogSendingRequest(this.Logger, envelope.Type, null);
 
-        var correlationId = Guid.NewGuid().ToString("N");
-        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        this.pendingReplies[correlationId] = tcs;
-
-        try
+        var messageAttributes = BuildOutboundAttributes(envelope.Type, headers);
+        messageAttributes["ReplyQueueAddress"] = new SqsMessageAttributeValue
         {
-            var messageAttributes = BuildOutboundAttributes(envelope.Type, headers);
-            messageAttributes["ReplyQueueAddress"] = new SqsMessageAttributeValue
+            DataType = "String",
+            StringValue = this.replyQueueAddress,
+        };
+        messageAttributes["CorrelationId"] = new SqsMessageAttributeValue
+        {
+            DataType = "String",
+            StringValue = correlationId,
+        };
+
+        await this.snsClient!.PublishAsync(
+            new PublishRequest
             {
-                DataType = "String",
-                StringValue = this.replyQueueAddress,
-            };
-            messageAttributes["CorrelationId"] = new SqsMessageAttributeValue
-            {
-                DataType = "String",
-                StringValue = correlationId,
-            };
+                TopicArn = this.topicArn,
+                Message = body.ToString(),
+                MessageAttributes = ConvertToSnsAttributes(messageAttributes),
+            },
+            cancellationToken);
 
-            await this.snsClient!.PublishAsync(
-                new PublishRequest
-                {
-                    TopicArn = this.topicArn,
-                    Message = body.ToString(),
-                    MessageAttributes = ConvertToSnsAttributes(messageAttributes),
-                },
-                cancellationToken);
-
-            // Wait for reply with timeout
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(this.options.ResponseTimeout);
-
-            using var registration = timeoutCts.Token.Register(() =>
-                tcs.TrySetCanceled(timeoutCts.Token));
-
-            var replyBytes = await tcs.Task;
-            return new BinaryData(replyBytes);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            LogReplyTimeout(this.Logger, correlationId, null);
-            throw new TimeoutException(
-                string.Format(
-                    CultureInfo.InvariantCulture,
-                    "Timed out waiting for reply with correlation '{0}'. " +
-                    "The remote handler may have crashed or is taking too long.",
-                    correlationId));
-        }
-        finally
-        {
-            this.pendingReplies.TryRemove(correlationId, out _);
-        }
+        return await this.AwaitReplyAsync(correlationId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -517,10 +471,9 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
                             ? attr.StringValue
                             : null;
 
-                    if (!string.IsNullOrEmpty(correlationId) &&
-                        this.pendingReplies.TryRemove(correlationId, out var tcs))
+                    if (!string.IsNullOrEmpty(correlationId))
                     {
-                        tcs.TrySetResult(Encoding.UTF8.GetBytes(sqsMessage.Body));
+                        this.CompleteReply(correlationId, Encoding.UTF8.GetBytes(sqsMessage.Body));
                     }
 
                     // Always delete reply messages after processing

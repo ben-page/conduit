@@ -12,23 +12,18 @@ namespace Conduit.Transport.RabbitMQ;
 /// </remarks>
 public sealed class RabbitMQOptions : BrokerTransportOptions
 {
+    /// <summary>Creates options with every setting at its default.</summary>
+    public RabbitMQOptions()
+    {
+    }
+
+    /// <summary>Creates options for the endpoint <c>UseRabbitMQ()</c> is configuring.</summary>
+    internal RabbitMQOptions(string endpointName) => this.EndpointName = endpointName;
+
     /// <summary>
     /// AMQP connection string (e.g. "amqp://guest:guest@localhost:5672/").
     /// Supplied in code or from the endpoint's <c>ConnectionString</c> configuration key;
     /// validated after both are applied.
     /// </summary>
     public string ConnectionString { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Timeout for request/response operations. Default 60 seconds.
-    /// </summary>
-    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
-
-    /// <summary>
-    /// The endpoint name this transport is registered under in keyed DI.
-    /// Set automatically by <c>UseRabbitMQ()</c> from the <c>ConduitEndpointBuilder</c> context.
-    /// Used by dead letter queue capture to record the source endpoint and by replay to
-    /// resolve the correct transport.
-    /// </summary>
-    public string EndpointName { get; internal set; } = string.Empty;
 }

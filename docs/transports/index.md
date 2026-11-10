@@ -21,7 +21,7 @@ Conduit ships six transports in two categories.
 - **SignalR** provides persistent bidirectional connections. Browser clients dispatch commands and receive events on the same connection. Services connect to each other with automatic reconnect. See [SignalR](signalr.md).
 - **HTTP** maps commands and queries to RESTful endpoints or an envelope dispatch endpoint. Request/response only. No server-to-client push. See [HTTP](http.md).
 
-**Durable messaging (broker) transports** use a message broker for reliable communication. All five
+**Durable messaging (broker) transports** use a message broker for reliable communication. All four
 share the same `BrokerTransportBase<TMessage>` template (inbound dispatch orchestration, reply
 queues, topology naming via `TopologyNaming`/`SystemName`) and differ only in broker-specific
 primitives, so they follow identical Conduit patterns. Each has a dedicated `IConduitTransport` and

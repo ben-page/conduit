@@ -51,25 +51,34 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define(LogLevel.Warning, new EventId(507, "DeadLetterStoreFailed"),
             "Failed to write to dead letter store, falling back to abandon");
 
+    private readonly ReplyCorrelator replies = new(TimeProvider.System);
+
     /// <summary>
     /// Creates a new broker transport base.
     /// </summary>
+    /// <param name="options">The transport's options (its endpoint name and response timeout among them).</param>
     /// <param name="conduitOptions">The Conduit configuration options.</param>
     /// <param name="serviceProvider">The application service provider.</param>
     /// <param name="logger">Logger for transport diagnostics.</param>
     protected BrokerTransportBase(
+        BrokerTransportOptions options,
         ConduitOptions conduitOptions,
         IServiceProvider serviceProvider,
         ILogger logger)
     {
+        ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(conduitOptions);
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
+        this.Options = options;
         this.ConduitOptions = conduitOptions;
         this.ServiceProvider = serviceProvider;
         this.Logger = logger;
     }
+
+    /// <summary>The transport's options.</summary>
+    protected BrokerTransportOptions Options { get; }
 
     /// <summary>The Conduit configuration options.</summary>
     protected ConduitOptions ConduitOptions { get; }
@@ -87,11 +96,11 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     protected abstract string TransportName { get; }
 
     /// <summary>
-    /// The identifier stored on dead letter entries as the source endpoint, and used to resolve
-    /// the transport on replay. Defaults to <see cref="ConduitOptions.ApplicationName"/>.
-    /// Concrete transports can override this if they need a different identifier.
+    /// The endpoint this transport serves (<see cref="BrokerTransportOptions.EndpointName"/>): stored on
+    /// dead letter entries as the source endpoint, used to resolve the transport on replay, and named
+    /// in a reply timeout.
     /// </summary>
-    protected virtual string EndpointName => this.ConduitOptions.ApplicationName ?? string.Empty;
+    protected string EndpointName => this.Options.EndpointName;
 
     // -----------------------------------------------------------------------
     // IHostedService — sealed template methods
@@ -123,6 +132,10 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         await this.StopConsumersAsync(cancellationToken);
+
+        // Nothing reads a reply after this, so a request still waiting fails now rather than at its timeout
+        this.FailPendingReplies(new InvalidOperationException(
+            $"The transport for endpoint '{this.EndpointName}' stopped before the reply arrived."));
     }
 
     // -----------------------------------------------------------------------
@@ -147,18 +160,23 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         var body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(
             envelope.Payload, ConduitRuntime.JsonOptions));
 
+        // Registered before the publish, so a reply that arrives before the publish call returns
+        // still finds its waiter; released when the request ends, however it ends.
+        var correlationId = Guid.NewGuid().ToString("N");
+        using var pendingReply = this.replies.Register(correlationId, envelope.Type, this.EndpointName);
+
         MessageContext.Observe(new TransportSendStarted(this.TransportName, this.EndpointName));
         var sw = Stopwatch.StartNew();
         try
         {
-            var replyData = await this.PublishRequestAsync(envelope, body, headers, cancellationToken);
+            var replyData = await this.PublishRequestAsync(envelope, body, headers, correlationId, cancellationToken);
             sw.Stop();
 
             ConduitTelemetry.RecordTransportSend(envelope.Type, this.GetType().Name, sw.Elapsed.TotalMilliseconds);
             MessageContext.Observe(new TransportSendCompleted(sw.Elapsed.TotalMilliseconds));
 
             var result = JsonSerializer.Deserialize<DispatchResult<JsonElement?>>(
-                replyData, ConduitRuntime.JsonOptions);
+                replyData.Span, ConduitRuntime.JsonOptions);
 
             return ConduitRuntime.UnwrapReply(result);
         }
@@ -577,17 +595,57 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
     /// <summary>Whether the transport has been started (connections open).</summary>
     protected abstract bool IsStarted { get; }
 
-    /// <summary>Publishes a request and returns the raw reply payload.</summary>
+    /// <summary>
+    /// Publishes a request and returns the raw reply payload. A transport whose replies arrive on a
+    /// shared reply consumer publishes the request carrying <paramref name="correlationId"/>, returns
+    /// <see cref="AwaitReplyAsync"/>, and has its consumer call <see cref="CompleteReply"/>.
+    /// </summary>
     /// <param name="envelope">The message being published.</param>
     /// <param name="body">The serialized payload.</param>
     /// <param name="headers">Outbound metadata assembled by the base class. Transports map these
     /// onto their native property model; the dictionary is never shared between publishes.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    protected abstract Task<BinaryData> PublishRequestAsync(
+    /// <param name="correlationId">The id the reply must carry back. Its waiter is already registered.</param>
+    /// <param name="cancellationToken">The caller's token.</param>
+    protected abstract Task<ReadOnlyMemory<byte>> PublishRequestAsync(
         DispatchEnvelope envelope,
         BinaryData body,
         IReadOnlyDictionary<string, string> headers,
+        string correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Waits for the reply to the request published with <paramref name="correlationId"/>, at most
+    /// <see cref="BrokerTransportOptions.ResponseTimeout"/>.
+    /// </summary>
+    /// <exception cref="TimeoutException">No reply arrived within the response timeout. Never an
+    /// <see cref="OperationCanceledException"/>, so a caller's catch for its own cancellation cannot
+    /// swallow a remote that did not answer.</exception>
+    /// <exception cref="OperationCanceledException">Only for <paramref name="cancellationToken"/>, the caller's own.</exception>
+    /// <exception cref="InvalidOperationException">The transport stopped before the reply arrived.</exception>
+    protected Task<ReadOnlyMemory<byte>> AwaitReplyAsync(string correlationId, CancellationToken cancellationToken) =>
+        this.replies.WaitAsync(correlationId, this.Options.ResponseTimeout, cancellationToken);
+
+    /// <summary>
+    /// Hands a reply to the request waiting on <paramref name="correlationId"/>. Called by the
+    /// transport's reply consumer. The memory must outlive the call: copy a buffer the broker client
+    /// reuses. Returns false for a reply nobody awaits (late, after its request timed out, or foreign).
+    /// </summary>
+    protected bool CompleteReply(string correlationId, ReadOnlyMemory<byte> body) =>
+        this.replies.Complete(correlationId, body);
+
+    /// <summary>
+    /// Fails every request still waiting for a reply with <paramref name="exception"/>.
+    /// <see cref="StopAsync"/> calls it once nothing can read a reply any more.
+    /// </summary>
+    protected void FailPendingReplies(Exception exception) => this.replies.FailAll(exception);
+
+    /// <summary>
+    /// The <see cref="TimeoutException"/> a request of <paramref name="messageType"/> fails with when no
+    /// reply arrives within the response timeout, for a transport that waits for replies itself rather
+    /// than through <see cref="AwaitReplyAsync"/>.
+    /// </summary>
+    protected TimeoutException CreateReplyTimeoutException(string messageType) =>
+        ReplyCorrelator.NoReply(messageType, this.EndpointName, this.Options.ResponseTimeout);
 
     /// <summary>Publishes an event (fire-and-forget).</summary>
     /// <param name="envelope">The message being published.</param>

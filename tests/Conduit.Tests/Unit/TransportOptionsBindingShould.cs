@@ -12,8 +12,6 @@ public class TransportOptionsBindingShould
     {
         public string ConnectionString { get; set; } = string.Empty;
 
-        public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
-
         public Uri? ServiceUri { get; set; }
     }
 
@@ -48,6 +46,25 @@ public class TransportOptionsBindingShould
         options.Pools[0].Concurrency.Should().Be(50);
         options.Pools[0].MessageTypes.Should().Equal("Orders.Commands.Import", "Orders.Commands.Reindex");
         options.Pools[1].MessageTypes.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public void NotBindTheEndpointNameFromConfiguration()
+    {
+        // Arrange -- the endpoint's identity is not a setting; only the Use* extension names it
+        var section = Section(new Dictionary<string, string?>
+        {
+            ["E:EndpointName"] = "hijacked",
+            ["E:DefaultConcurrency"] = "20",
+        });
+        var options = new TestBrokerOptions();
+
+        // Act
+        ConduitConfigurationBinder.BindTransportOptions(options, section);
+
+        // Assert
+        options.DefaultConcurrency.Should().Be(20);
+        options.EndpointName.Should().BeEmpty();
     }
 
     [TestMethod]

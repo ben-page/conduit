@@ -13,6 +13,14 @@ namespace Conduit.Transport.ActiveMQ;
 /// </remarks>
 public sealed class ActiveMQOptions : BrokerTransportOptions
 {
+    /// <summary>Creates options with every setting at its default.</summary>
+    public ActiveMQOptions()
+    {
+    }
+
+    /// <summary>Creates options for the endpoint <c>UseActiveMQ()</c> is configuring.</summary>
+    internal ActiveMQOptions(string endpointName) => this.EndpointName = endpointName;
+
     /// <summary>
     /// AMQP 1.0 connection string (e.g. "amqp://localhost:5672").
     /// Supplied in code or from the endpoint's <c>ConnectionString</c> configuration key;
@@ -29,17 +37,4 @@ public sealed class ActiveMQOptions : BrokerTransportOptions
     /// Optional password for AMQP SASL PLAIN authentication.
     /// </summary>
     public string? Password { get; set; }
-
-    /// <summary>
-    /// Timeout for request/response operations. Default 60 seconds.
-    /// </summary>
-    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(60);
-
-    /// <summary>
-    /// The endpoint name this transport is registered under in keyed DI.
-    /// Set automatically by <c>UseActiveMQ()</c> from the <c>ConduitEndpointBuilder</c> context.
-    /// Used by dead letter queue capture to record the source endpoint and by replay to
-    /// resolve the correct transport.
-    /// </summary>
-    public string EndpointName { get; internal set; } = string.Empty;
 }
