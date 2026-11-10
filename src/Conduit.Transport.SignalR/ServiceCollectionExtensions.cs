@@ -18,6 +18,11 @@ public static class ServiceCollectionExtensions
     /// A published event is pushed to every connection when it is <c>[ClientVisible]</c> and to none otherwise, unless
     /// an <see cref="IEventRecipientResolver"/> is registered, which then decides for every event.
     /// </summary>
+    /// <remarks>
+    /// The transport is added once, however often this is called: a second call (another module of the same host, say)
+    /// registers nothing twice, so an event is still pushed once, and its <paramref name="configure"/> callback applies
+    /// after the first call's.
+    /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="configure">Configures how the hub treats its callers (<see cref="ConduitSignalROptions"/>); by
     /// default it mints every dispatch's correlation ids and ignores the caller's. Callbacks from several calls all
@@ -26,6 +31,19 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddConduitSignalR(
         this IServiceCollection services, Action<ConduitSignalROptions>? configure = null)
     {
+        services.AddOptions<ConduitSignalROptions>();
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+
+        // Added once: a second non-keyed forwarder would have the generated publish broadcast every event to the hub
+        // twice. (Client-mode SignalRTransports are keyed per endpoint, so they never match.)
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(SignalRTransport) && !descriptor.IsKeyedService))
+        {
+            return services;
+        }
+
         services.AddSignalR()
             .AddJsonProtocol(options =>
             {
@@ -38,11 +56,6 @@ public static class ServiceCollectionExtensions
                     options.PayloadSerializerOptions.Converters.Add(converter);
                 }
             });
-        services.AddOptions<ConduitSignalROptions>();
-        if (configure is not null)
-        {
-            services.Configure(configure);
-        }
 
         // A factory, not the constructor DI would pick: the resolver is optional and resolved here, at the one place that
         // builds the server-mode transport. The registry is AddConduit's.

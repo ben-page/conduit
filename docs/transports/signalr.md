@@ -91,7 +91,7 @@ Each mode has its own options class.
 |---|---|---|
 | `TrustCallerContext` | `false` | Whether the hub honors the correlation ids a caller passes in the `context` argument ([Correlation ids](#correlation-ids)). Set it only on a hub that other services reach and browsers do not. |
 
-`AddConduitSignalR(serverInfo, configure)` also takes a `ConduitServerInfo` the hub sends each client as it connects ([Server identity on connect](#server-identity-on-connect)). Conduit binds neither from configuration: set both in code. Call `AddConduitSignalR` once per host: a second call registers the transport for broadcast again, and every event is pushed twice.
+`AddConduitSignalR(serverInfo, configure)` also takes a `ConduitServerInfo` the hub sends each client as it connects ([Server identity on connect](#server-identity-on-connect)). Conduit binds neither from configuration: set both in code. A second `AddConduitSignalR` call (another module of the same host, say) is harmless: the transport is registered once, so an event is still pushed once, and each call's `configure` callback applies, in order.
 
 **Client mode.** `UseSignalR(hubUri, configure)` configures `SignalROptions`:
 

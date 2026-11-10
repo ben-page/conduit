@@ -105,6 +105,28 @@ public class EventBroadcastShould
         received.Types.Should().Equal(typeof(ItemRenamedEvent).FullName);
     }
 
+    // Two modules of one host can each call AddConduitSignalR (one with a ConduitServerInfo, one without). The second
+    // call used to register the transport for broadcast again, so every event reached every browser twice.
+    [TestMethod]
+    public async Task PushAnEventOnceWhenAddConduitSignalRIsCalledTwice()
+    {
+        // Arrange
+        await using var host = StartHubHost(services => services.AddConduitSignalR());
+        await using var connection = BuildConnection(host.Address, user: null);
+        var received = ReceivedEvents.Listen(connection, typeof(ItemRenamedEvent), typeof(ItemSharedEvent));
+        await StartRegisteredAsync(connection);
+        var mediator = host.GetRequiredService<IMediator>();
+
+        // Act: a second event behind the first, so every push of the first has arrived once the second has
+        await mediator.PublishAsync(new ItemRenamedEvent(Guid.NewGuid(), "Renamed"));
+        await mediator.PublishAsync(new ItemSharedEvent(Guid.NewGuid(), "team-a"));
+        await received.WaitForAsync(typeof(ItemSharedEvent));
+
+        // Assert
+        received.Types.Should().StartWith([typeof(ItemRenamedEvent).FullName!, typeof(ItemSharedEvent).FullName!]);
+        received.Types.Count(type => type == typeof(ItemRenamedEvent).FullName).Should().Be(1);
+    }
+
     // A registered resolver decides for every event, from its typed payload: users, groups, or everyone, an event that
     // is not [ClientVisible] included.
     [TestMethod]

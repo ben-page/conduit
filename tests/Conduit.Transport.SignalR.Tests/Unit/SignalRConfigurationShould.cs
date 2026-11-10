@@ -70,4 +70,26 @@ public class SignalRConfigurationShould
         withServerInfoProvider.GetRequiredService<IOptions<ConduitSignalROptions>>().Value.TrustCallerContext.Should().BeTrue();
         withServerInfoProvider.GetRequiredService<ConduitServerInfo>().Should().Be(new ConduitServerInfo("build-1"));
     }
+
+    // The server transport is registered once, however often AddConduitSignalR is called; each call's options callback
+    // and server info still apply.
+    [TestMethod]
+    public async Task RegisterTheServerTransportOnceWhenCalledTwice()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddConduitSignalR();
+        services.AddConduitSignalR(new ConduitServerInfo("build-2"), options => options.TrustCallerContext = true);
+
+        // Assert
+        services.Where(descriptor => descriptor.ServiceType == typeof(IConduitTransport) && !descriptor.IsKeyedService)
+            .Should().ContainSingle("a second forwarder would push every event twice");
+        services.Where(descriptor => descriptor.ServiceType == typeof(SignalRTransport) && !descriptor.IsKeyedService)
+            .Should().ContainSingle();
+        await using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IOptions<ConduitSignalROptions>>().Value.TrustCallerContext.Should().BeTrue();
+        provider.GetRequiredService<ConduitServerInfo>().Should().Be(new ConduitServerInfo("build-2"));
+    }
 }

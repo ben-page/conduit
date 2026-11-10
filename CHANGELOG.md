@@ -28,6 +28,8 @@ The first public preview. The entries below are the changes since the earlier, u
   `readClientProperties: true`.
 - `MapConduitEndpoint` returns the `RouteGroupBuilder` it maps `/dispatch` and `/publish` in, so a convention chained
   on it applies to both.
+- `ConduitHub` is sealed. A subclass never received server push (the transport pushes through
+  `IHubContext<ConduitHub>`); map `ConduitHub` itself and authorize the mapping.
 - `ConduitPredicates.TransientErrors<T>()` handles only a `TimeoutException` and a remote `InternalError`. It no longer
   handles `InvalidOperationException`, which every remote refusal (404, 409, 412) was.
 - Resilience pipeline keys are `Conduit.Type:{full name}`, `Conduit.Namespace:{namespace}` and `Conduit.Default`. A

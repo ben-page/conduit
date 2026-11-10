@@ -64,11 +64,10 @@ app.MapConduitPost<CreateTodoCommand>("/api/todos").RequireAuthorization();
 
 ### The SignalR hub
 
-Map `ConduitHub` itself and put the authorization on the mapping, as above. Do not subclass it to add `[Authorize]`.
-`ConduitHub` takes its dependencies through its constructor, so `class SecureConduitHub : ConduitHub;` does not
-compile, and a subclass that forwards the constructor compiles but breaks server push: the server-mode
-`SignalRTransport` pushes events through `IHubContext<ConduitHub>`, which reaches only the connections to `ConduitHub`.
-To SignalR a subclass is a different hub, so its clients would never receive an event.
+Map `ConduitHub` itself and put the authorization on the mapping, as above. `ConduitHub` is sealed, so it cannot be
+subclassed to add `[Authorize]`, and that is deliberate: the server-mode `SignalRTransport` pushes events through
+`IHubContext<ConduitHub>`, which reaches only the connections to `ConduitHub`. To SignalR a subclass would be a
+different hub, so its clients would never receive an event.
 
 `RequireAuthorization()` on the hub authorizes the connection, once, when the client connects. A check on each
 invocation belongs in a pipeline behavior (next section). A C# service calling an authorized hub supplies its token

@@ -24,7 +24,7 @@ namespace Conduit.Transport.SignalR;
 /// each registered <see cref="IInboundFailureObserver"/> before it is answered (the inbox releases its record, so a retry
 /// under the same MessageId runs); a refusal is not.
 /// </summary>
-public class ConduitHub(
+public sealed class ConduitHub(
     IWireMediator mediator,
     IEnumerable<IDispatchContextEnricher> enrichers,
     IEnumerable<ConduitServerInfo> serverInfo,
