@@ -53,7 +53,8 @@ public sealed class ConduitEndpointBuilder
     /// <summary>
     /// Registers a DI-managed transport for this endpoint. The concrete type must be
     /// pre-registered as a keyed singleton with this endpoint's name as the key.
-    /// Typically called by transport extension methods after their own keyed registration.
+    /// Typically called by transport extension methods after their own keyed registration; a broker
+    /// transport's extension must call <see cref="UseTransport{TTransport}(BrokerTransportOptions)"/> instead.
     /// </summary>
     public ConduitEndpointBuilder UseTransport<TTransport>() where TTransport : class, IConduitTransport
     {
@@ -66,8 +67,10 @@ public sealed class ConduitEndpointBuilder
     /// <summary>
     /// Registers a DI-managed broker transport for this endpoint, as <see cref="UseTransport{TTransport}()"/>, once the
     /// settings every broker transport shares are valid, so a misconfigured endpoint fails here rather than at its first
-    /// request. A broker transport's extension calls it last, after configuration and its <c>configure</c> callback
-    /// have set <paramref name="options"/>.
+    /// request. A broker transport's extension (any transport whose options derive from
+    /// <see cref="BrokerTransportOptions"/>) must register through this overload, never through
+    /// <see cref="UseTransport{TTransport}()"/>, which skips the validation; it calls it last, after configuration and
+    /// its <c>configure</c> callback have set <paramref name="options"/>.
     /// </summary>
     /// <param name="options">This endpoint's transport options.</param>
     /// <exception cref="InvalidOperationException"><see cref="BrokerTransportOptions.ResponseTimeout"/> is not positive

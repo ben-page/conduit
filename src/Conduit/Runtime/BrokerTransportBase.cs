@@ -27,9 +27,9 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(501, "MessageCompleted"),
             "Completed message '{Type}'");
 
-    private static readonly Action<ILogger, string, Exception?> LogMessageAbandoned =
-        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(502, "MessageAbandoned"),
-            "Abandoned message '{Type}' — broker will redeliver");
+    private static readonly Action<ILogger, string, string, Exception?> LogMessageAbandoned =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(502, "MessageAbandoned"),
+            "Abandoned message '{Type}' (support reference: {Reference}); the broker redelivers or dead-letters it");
 
     private static readonly Action<ILogger, string, Exception?> LogMessageProcessingError =
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(503, "MessageProcessingError"),
@@ -661,17 +661,15 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
         catch (EventListenerException ex)
         {
-            await this.CaptureOrAbandonAsync(scope.ServiceProvider, message, messageType, ex, reference: null);
+            await this.CaptureOrAbandonAsync(
+                scope.ServiceProvider, message, messageType, ex, reference: null, alreadyLogged: false);
         }
         catch (ConduitException ex) when (ex is BadRequestException or ContractMismatchException)
         {
             // An event this host cannot read (an unknown type, a body its type cannot read) refuses no one: it is a
             // message no redelivery could dispatch. Dead-letter it, else acknowledge it, as a message that failed
             // before dispatch is. HandleWireEvent has logged it.
-            if (!await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, ex, reference: null))
-            {
-                await this.AcknowledgeAsync(message);
-            }
+            await this.CaptureOrAcknowledgeAsync(scope.ServiceProvider, message, messageType, ex);
         }
         catch (ConduitException)
         {
@@ -736,7 +734,8 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 #pragma warning restore CA1031
         {
             LogMessageProcessingError(this.Logger, messageType, ex);
-            await this.CaptureOrAbandonAsync(scope.ServiceProvider, message, messageType, ex, reference: null);
+            await this.CaptureOrAbandonAsync(
+                scope.ServiceProvider, message, messageType, ex, reference: null, alreadyLogged: true);
             return;
         }
 
@@ -747,15 +746,13 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
         }
         else if (error.Code == ErrorCode.InternalError.Value)
         {
-            // The runtime logged the real exception under the reference; the entry records it to find that line
-            await this.CaptureOrAbandonAsync(scope.ServiceProvider, message, messageType, AnswerAsException(error), error.Reference);
+            // The runtime logged the real exception under the reference; the entry and the abandon log name it
+            await this.CaptureOrAbandonAsync(
+                scope.ServiceProvider, message, messageType, AnswerAsException(error), error.Reference, alreadyLogged: true);
         }
         else if (error.Code == ErrorCode.BadRequest.Value || error.Code == ErrorCode.ContractMismatch.Value)
         {
-            if (!await this.TryCaptureErrorAsync(scope.ServiceProvider, message, messageType, AnswerAsException(error), reference: null))
-            {
-                await this.AcknowledgeAsync(message);
-            }
+            await this.CaptureOrAcknowledgeAsync(scope.ServiceProvider, message, messageType, AnswerAsException(error));
         }
         else
         {
@@ -766,22 +763,40 @@ public abstract class BrokerTransportBase<TMessage> : IConduitTransport, IHosted
 
     /// <summary>
     /// Settles a dispatch that failed: captured when an <see cref="IInboundErrorInterceptor"/> takes it, otherwise
-    /// abandoned, so the broker redelivers or dead-letters it.
+    /// abandoned, so the broker redelivers or dead-letters it. The abandon log names <paramref name="reference"/>, and
+    /// carries <paramref name="exception"/> only when nothing logged it before: one stack per failure.
     /// </summary>
     private async Task CaptureOrAbandonAsync(
         IServiceProvider services,
         TMessage message,
         string messageType,
         Exception exception,
-        string? reference)
+        string? reference,
+        bool alreadyLogged)
     {
         if (await this.TryCaptureErrorAsync(services, message, messageType, exception, reference))
         {
             return;
         }
 
-        LogMessageAbandoned(this.Logger, messageType, exception);
+        LogMessageAbandoned(this.Logger, messageType, reference ?? "none", alreadyLogged ? null : exception);
         await this.AbandonAsync(message);
+    }
+
+    /// <summary>
+    /// Settles a message no redelivery could dispatch: captured when an <see cref="IInboundErrorInterceptor"/> takes
+    /// it, otherwise acknowledged, so it cannot loop.
+    /// </summary>
+    private async Task CaptureOrAcknowledgeAsync(
+        IServiceProvider services,
+        TMessage message,
+        string messageType,
+        Exception exception)
+    {
+        if (!await this.TryCaptureErrorAsync(services, message, messageType, exception, reference: null))
+        {
+            await this.AcknowledgeAsync(message);
+        }
     }
 
     /// <summary>

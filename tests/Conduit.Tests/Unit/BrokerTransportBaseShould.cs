@@ -41,14 +41,17 @@ public class BrokerTransportBaseShould
         message.Abandoned.Should().BeFalse();
     }
 
-    // Without a store the broker keeps it: abandoned, so its own dead-lettering applies
+    // Without a store the broker keeps it: abandoned, so its own dead-lettering applies. The abandon log names the
+    // support reference the runtime logged the exception under, and does not repeat a stack
     [TestMethod]
     public async Task AbandonAFailedFireAndForgetCommandWhenNothingCaptures()
     {
         // Arrange
         await using var host = StartHost(withInterceptor: false);
         var spy = host.GetRequiredService<EventSpy<FailingFireAndForgetCommand>>();
-        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var logger = new RecordingLogger<FakeBrokerTransport>();
+        var transport = new FakeBrokerTransport(
+            host.GetRequiredService<ConduitOptions>(), host.Services, logger: logger);
         var message = FireAndForgetMessage(new FailingFireAndForgetCommand("unexpected"));
 
         // Act
@@ -59,6 +62,10 @@ public class BrokerTransportBaseShould
         message.Abandoned.Should().BeTrue();
         message.Acknowledged.Should().BeFalse();
         transport.Lifecycle.Should().BeEmpty();
+        var abandoned = logger.Entries.Where(entry => entry.Level >= LogLevel.Warning).Should().ContainSingle().Subject;
+        abandoned.EventId.Id.Should().Be(502);
+        abandoned.Message.Should().MatchRegex("support reference: [0-9a-f]{32}");
+        abandoned.Exception.Should().BeNull();
     }
 
     // Valid JSON its type cannot read: no redelivery could dispatch it, so it is settled as an unreadable event is
@@ -70,11 +77,7 @@ public class BrokerTransportBaseShould
         var interceptor = host.GetRequiredService<RecordingErrorInterceptor>();
         var spy = host.GetRequiredService<EventSpy<FailingFireAndForgetCommand>>();
         var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
-        var message = new FakeBrokerMessage
-        {
-            Type = typeof(FailingFireAndForgetCommand).FullName!,
-            Body = new BinaryData("""{"reason":42}"""),
-        };
+        var message = UnreadableFireAndForgetMessage();
 
         // Act
         await transport.DeliverAsync(message);
@@ -86,6 +89,26 @@ public class BrokerTransportBaseShould
         capture.Reference.Should().BeNull();
         transport.Lifecycle.Should().Equal("acknowledged");
         message.Abandoned.Should().BeFalse();
+    }
+
+    // Nothing to capture it: acknowledged all the same, never abandoned, since a redelivery would fail the same way
+    [TestMethod]
+    public async Task AcknowledgeAnUnreadableFireAndForgetCommandWhenNothingCaptures()
+    {
+        // Arrange
+        await using var host = StartHost(withInterceptor: false);
+        var spy = host.GetRequiredService<EventSpy<FailingFireAndForgetCommand>>();
+        var transport = new FakeBrokerTransport(host.GetRequiredService<ConduitOptions>(), host.Services);
+        var message = UnreadableFireAndForgetMessage();
+
+        // Act
+        await transport.DeliverAsync(message);
+
+        // Assert
+        spy.Count.Should().Be(0);
+        message.Acknowledged.Should().BeTrue();
+        message.Abandoned.Should().BeFalse();
+        transport.Lifecycle.Should().Equal("acknowledged");
     }
 
     // A refusal is final and no caller waits for it: acknowledged, said once at Warning, never stored
@@ -143,4 +166,11 @@ public class BrokerTransportBaseShould
             Body = new BinaryData(JsonSerializer.SerializeToUtf8Bytes(envelope.Payload, ConduitRuntime.JsonOptions)),
         };
     }
+
+    // Valid JSON with a number where the command has a string: a BadRequest refusal
+    private static FakeBrokerMessage UnreadableFireAndForgetMessage() => new()
+    {
+        Type = typeof(FailingFireAndForgetCommand).FullName!,
+        Body = new BinaryData("""{"reason":42}"""),
+    };
 }

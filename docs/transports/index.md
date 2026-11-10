@@ -295,9 +295,25 @@ sees the failure ([dispatch retry](../dispatch-retry.md), or a [pipeline behavio
 |---|---|---|
 | Handled | Acknowledged | Acknowledged |
 | A request (it carries a reply address) failed or was refused | The failure is its reply; an unexpected failure (`InternalError`) is also captured | Acknowledged after the reply |
-| An event listener threw, or a `[FireAndForget]` command's handler failed unexpectedly (`InternalError`): no caller is waiting to hear it | Captured, then acknowledged | Abandoned, so the broker's own dead-lettering applies: [RabbitMQ](rabbitmq.md#failed-messages) rejects it to the system's dead-letter queue, [ActiveMQ](activemq.md#failed-messages) counts a delivery attempt and moves it to the dead-letter address after `max-delivery-attempts`, [Amazon SQS](amazon-sqs.md#failed-messages) delivers it again until the redrive policy moves it to the queue's dead-letter queue, and Azure Service Bus delivers it again until the entity's maximum delivery count dead-letters it |
-| A message this host cannot read: not JSON, an unknown type, or a body its type cannot read (`BadRequest`, `ContractMismatch`) | Captured, then acknowledged | Acknowledged: a redelivery would fail the same way |
-| An event or `[FireAndForget]` command was refused (the type filter's `Forbidden`, or any other `ConduitException`) | Acknowledged, not captured | Acknowledged: a redelivery would be refused again |
+| An event listener threw, or a `[FireAndForget]` command's handler failed unexpectedly (`InternalError`): no caller is waiting to hear it | Captured, then acknowledged | Abandoned, so the broker's own dead-lettering applies (see below) |
+| A message this host cannot read: not JSON, an unknown type, a body its type cannot read (`ContractMismatch`), or any other `BadRequest` refusal of an event or `[FireAndForget]` command, a validation failure among them | Captured, then acknowledged | Acknowledged: a redelivery would fail the same way |
+| An event or `[FireAndForget]` command was refused otherwise (the type filter's `Forbidden`, `NotFound`, `Conflict`, any other `ConduitException`) | Acknowledged, not captured | Acknowledged: a redelivery would be refused again |
+
+An abandoned message is not gone, and it is not handled only once: until the broker dead-letters it, the broker
+delivers it again and its listener or handler runs again.
+
+- [RabbitMQ](rabbitmq.md#failed-messages) rejects it once, without requeue, to the system's dead-letter queue: the
+  handler ran once.
+- [ActiveMQ](activemq.md#failed-messages) redelivers it up to the address's `max-delivery-attempts` (10 by
+  default), with no delay between attempts by default, then moves it to the dead-letter address.
+- [Amazon SQS](amazon-sqs.md#failed-messages) delivers it again a visibility timeout later, up to `MaxReceiveCount`
+  (5 by default), then the redrive policy moves it to the queue's dead-letter queue.
+- [Azure Service Bus](azure-service-bus.md) redelivers it at once, up to the entity's maximum delivery count (10 by
+  default), then moves it to the entity's dead-letter subqueue.
+
+So a listener or a `[FireAndForget]` handler with side effects that can fail part-way should be idempotent, or
+the host should use the [inbox](../inbox.md) (see its [at-most-once semantics](../inbox.md#semantics-at-most-once-on-crash))
+or Conduit's [dead-letter queue](../dead-letter-queue.md), which captures the failure the first time instead.
 
 A refused `[FireAndForget]` command is logged once at Warning (`FireAndForgetCommandRefused`), naming its type
 and the refusal's code, since nothing else will report it. A dead-letter replay of a command or query arrives

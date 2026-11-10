@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Generated;
+using Conduit.Runtime;
 using Conduit.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -30,5 +31,24 @@ public class BrokerTransportOptionsShould
         // Assert
         register.Should().Throw<InvalidOperationException>()
             .WithMessage("*'orders'*ResponseTimeout*");
+    }
+
+    // The default 60 s, and exactly the longest delay a timer accepts (uint.MaxValue - 1 ms)
+    [TestMethod]
+    [DataRow(600_000_000L)]
+    [DataRow(42_949_672_940_000L)]
+    public void AcceptAPositiveFiniteResponseTimeout(long responseTimeoutTicks)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var options = new FakeBrokerOptions { ResponseTimeout = TimeSpan.FromTicks(responseTimeoutTicks) };
+
+        // Act
+        services.AddConduit(conduit =>
+            conduit.AddEndpoint("orders", endpoint => endpoint.UseTransport<FakeBrokerTransport>(options)));
+
+        // Assert -- the endpoint's transport is registered
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IConduitTransport) && Equals(descriptor.ServiceKey, "orders"));
     }
 }

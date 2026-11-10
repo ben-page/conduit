@@ -160,7 +160,7 @@ Integration tests of one broker's own mechanics, beyond the shared matrix.
 | 11.1 | `RabbitMqCommandRoutingShould.KeepReplyingAfterConnectionRecovery` | A sends (15 s `ResponseTimeout`), B handles; one round trip, then the broker container is restarted (`RabbitMqTestBase.RestartBrokerAsync`: Testcontainers `StopAsync`/`StartAsync`; Inconclusive for a configured or reused broker, or a re-mapped port) | Once both connections raise `RecoverySucceededAsync` (no fixed sleep; the transport's own handler, which re-declares the reply queue, runs first), a second request gets its reply: the client-named reply queue came back under the name its requests carry in `ReplyTo` |
 | 11.2 | `RabbitMqConcurrencyShould.RunHandlersInParallelUpToConcurrency` | B with `DefaultConcurrency = 4`; A sends 8 `ConcurrencyProbeCommand`s (1 s handler) at once | All 8 answered, and replaying the handler's `ConcurrencyProbeMark`s gives exactly 4 running at once: in parallel, never beyond the concurrency |
 | 11.3 | `RabbitMqDeadLetterShould.RouteAFailedEventToTheDeadLetterExchangeWithoutAConduitDlq` | A publishes `ThrowingTestEvent`, B listens with no dead-letter store | After 2 s the listener has run once (rejected, not requeued), and `{prefix}-conduit-dead-letter` holds the event once (`basic.get` twice: the event, then nothing), with `x-first-death-reason: rejected` and `x-first-death-queue` = B's app queue |
-| 11.3b | `RabbitMqDeadLetterShould.CaptureAFailedFireAndForgetCommand` | A (producer-only) routes `ThrowingFireAndForgetCommand`, whose handler throws, to B, which has a dead-letter store | After 2 s the handler has run once, the store holds one entry for the command, with the `Reference` its failure was logged under, and neither the command's queue nor `{prefix}-conduit-dead-letter` holds a message: captured and acknowledged, not abandoned |
+| 11.3b | `RabbitMqDeadLetterShould.CaptureAFailedFireAndForgetCommand` | A (producer-only) routes `ThrowingFireAndForgetCommand`, whose handler throws, to B, which has a dead-letter store; once it is captured a standby host joins the command's queue and B is disposed | The store holds one entry for the command, with the `Reference` its failure was logged under; B's handler ran once; 2 s after B stopped the standby has run nothing (a delivery B left unsettled would have been requeued to it as B's channel closed: skipping the post-capture acknowledgement makes it fail), and neither the command's queue nor `{prefix}-conduit-dead-letter` holds a message |
 | 11.3c | `RabbitMqDeadLetterShould.RouteAFailedFireAndForgetCommandToTheDeadLetterExchangeWithoutAConduitDlq` | A (producer-only) routes `ThrowingFireAndForgetCommand` to B, which has no dead-letter store | After 2 s the handler has run once (rejected, neither acknowledged nor requeued), and `{prefix}-conduit-dead-letter` holds the command once, with `x-first-death-reason: rejected` and `x-first-death-queue` = the command's shared queue |
 | 11.4 | `RabbitMqReplyQueueShould.FallBackToAFreshNameWhenTheNameIsLocked` | B handles; a test connection declares an exclusive queue under the reply queue name A would take (`InitialReplyQueueInstanceId` pins it); then A starts and sends | A starts despite `RESOURCE_LOCKED`, its request gets its reply (so the reply went to A's fresh queue), and the locked queue holds no message |
 
@@ -206,7 +206,7 @@ These read what the transport created through an SQS or SNS client on the same L
 
 Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class and its **4 transport-specific tests** of category 11, bringing its total to **43**. RabbitMQ adds the **6 transport-specific tests** of category 11, bringing its total to **44**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **12**, bringing its total to **50**.
 
-Behavior-test methods across the four transports: 42 (RabbitMQ) + 41 (ASB) + 43 (SQS) + 50 (ActiveMQ) = **176 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 44 (RabbitMQ) + 41 (ASB) + 43 (SQS) + 50 (ActiveMQ) = **178 `[TestMethod]` integration tests**.
 
 ---
 
@@ -324,9 +324,14 @@ Universal. Two endpoints on the same transport, each given a different connectio
 | R-1.1 | `GiveEachEndpointItsOwnOptions` | The keyed `{Name}Options` for each endpoint name are different instances, each carrying that endpoint's values and its own `EndpointName` |
 | R-1.2 | `ResolveADistinctTransportPerEndpoint` | The keyed `IConduitTransport` for each endpoint name are two distinct objects |
 | R-1.3 | `RegisterOneBroadcastTargetAndOneLifecyclePerEndpoint` | `GetServices<IConduitTransport>()` and `GetServices<IHostedService>()` each yield one **distinct** object per endpoint — not the same instance twice (RabbitMQ splits this into `BroadcastToOneTransportInstancePerEndpoint` + `StartOneHostedServicePerEndpoint`) |
+| R-1.4 | `RejectANonPositiveOrInfiniteResponseTimeout` | Broker transports. Its `Use*` extension registers through `ConduitEndpointBuilder.UseTransport<TTransport>(BrokerTransportOptions)`, so `Use{Name}(..., options => options.ResponseTimeout = ...)` with zero, a negative value or `Timeout.InfiniteTimeSpan` throws `InvalidOperationException` naming the endpoint |
 
-These exist because the non-keyed registration they replaced failed silently in every one of these
+R-1.1 to R-1.3 exist because the non-keyed registration they replaced failed silently in every one of these
 ways — see [Per-endpoint transport instances](transports/index.md#per-endpoint-transport-instances).
+R-1.4 exists because a broker extension that calls `UseTransport<TTransport>()` instead skips the shared
+validation, and the bad timeout then fails every request rather than the registration. The four existing
+broker transports call the options overload and lean on the core `BrokerTransportOptionsShould` (which
+pins the overload's accept and reject sides); a **new** broker transport should write R-1.4 directly.
 
 ### Category C-1: Configuration binding (`Unit/{Name}ConfigurationShould.cs`)
 

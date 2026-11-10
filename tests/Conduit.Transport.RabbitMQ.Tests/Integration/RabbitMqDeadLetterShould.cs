@@ -395,30 +395,36 @@ public class RabbitMqDeadLetterShould : RabbitMqTestBase
                 typeof(ThrowingFireAndForgetCommand).Namespace!,
                 "self");
 
-            var conduitOptions = handler.GetRequiredService<ConduitOptions>();
+            var commandQueueName = TopologyNaming.CreateSharedResourceName(
+                handler.GetRequiredService<ConduitOptions>(), typeof(ThrowingFireAndForgetCommand).FullName!, 255);
             var handlerSpy = handler.GetRequiredService<SpyLog>();
             var deadLetters = handler.GetRequiredService<IDeadLetters>();
             var mediator = sender.GetRequiredService<IMediator>();
 
-            // Act — a requeued copy would run the handler again, so give it time to
             await mediator.ExecuteAsync(new ThrowingFireAndForgetCommand("capture-me"));
             await WaitForDeadLetterCountAsync(deadLetters, 1, TimeSpan.FromSeconds(10));
+            var page = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
+
+            // Act — a standby consumer joins the command's queue, then the capturing host stops. A delivery it
+            // left unsettled would go back to the queue as its channel closes, and on to the standby.
+            await using var standby = await CreateHostAsync(UniqueAppName("dlq-b"), prefix);
+            var standbySpy = standby.GetRequiredService<SpyLog>();
+            await handler.DisposeAsync();
             await Task.Delay(2000);
 
             // Assert — handled once, captured once under the reference its failure was logged with
             handlerSpy.Invocations.OfType<ThrowingFireAndForgetCommand>().Should().ContainSingle();
-            var page = await deadLetters.QueryAsync(new DeadLetterFilter(), CancellationToken.None);
             var entry = page.Entries.Should().ContainSingle().Subject;
             entry.MessageType.Should().Be(typeof(ThrowingFireAndForgetCommand).FullName);
             entry.Reference.Should().NotBeNullOrEmpty();
             entry.SourceEndpoint.Should().Be("self");
 
-            // ...and acknowledged: not back on its queue, not rejected to the system's dead-letter queue
+            // ...and acknowledged: never redelivered to the standby, not on its queue, not rejected to the
+            // system's dead-letter queue
+            standbySpy.Invocations.Should().BeEmpty();
             var factory = new ConnectionFactory { Uri = new Uri(ConnectionString!) };
             await using var connection = await factory.CreateConnectionAsync();
             await using var channel = await connection.CreateChannelAsync();
-            var commandQueueName = TopologyNaming.CreateSharedResourceName(
-                conduitOptions, typeof(ThrowingFireAndForgetCommand).FullName!, 255);
             (await channel.MessageCountAsync(commandQueueName)).Should().Be(0);
             (await channel.MessageCountAsync($"{prefix}-conduit-dead-letter")).Should().Be(0);
         }
