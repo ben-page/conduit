@@ -144,7 +144,7 @@ No manual binding configuration is needed. When a message is published, the tran
 
 | Mode | Prefix | Durable | Cleanup |
 |---|---|---|---|
-| `Production` | None, unless `TopologyPrefix` is set | Yes: exchanges and queues (but see [Limitations](#limitations) on messages) | None |
+| `Production` | None, unless `TopologyPrefix` is set | Yes: exchanges, queues and the messages in them | None |
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | No: a broker restart deletes them | Auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | No | As Developer, and the dead-letter queue expires once unused for 5 minutes |
 
@@ -218,7 +218,7 @@ Messages use JSON serialization (`ConduitRuntime.JsonOptions`) with type informa
 | `MessageId` | From `MessageContext` or auto-generated |
 | `CorrelationId` | Request/response correlation (requests and their replies only) |
 | `ReplyTo` | Reply queue name (requests only) |
-| `DeliveryMode` | Not set: the message is transient (see [Limitations](#limitations)) |
+| `DeliveryMode` | `2` (persistent) on every message, replies included: a durable (Production) queue keeps it across a broker restart, and the publisher confirm arrives once it is on disk |
 | Header `CausationId` | From `MessageContext.CausationId` (historical name, kept for existing consumers) |
 | Header `ConversationId` | From `MessageContext.ConversationId` (historical name, kept for existing consumers) |
 | Header `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the historical names above |
@@ -254,7 +254,6 @@ A pool can be declared in configuration (the endpoint's `Pools` array) and in co
 
 ## Limitations
 
-- **Messages are transient.** The transport publishes without the persistent delivery mode, so a broker restart drops the messages still in a queue, durable Production queues included. Only the queues and exchanges survive.
 - **No broker redelivery.** A failed event or fire-and-forget command is rejected to the dead-letter queue at once (or captured by Conduit's store): RabbitMQ never runs its handler a second time. Retry it inside the dispatch.
 - **Command and query queues are shared by type.** Two applications that handle the same type compete for its messages ([Competing consumers](#competing-consumers)).
 - **One dead-letter queue per system.** Every application's broker-side dead letters land in `{systemName}-dead-letter`, which nothing consumes; moving them back is a job for the management UI or a shovel.

@@ -163,6 +163,9 @@ Integration tests of one broker's own mechanics, beyond the shared matrix.
 | 11.3b | `RabbitMqDeadLetterShould.CaptureAFailedFireAndForgetCommand` | A (producer-only) routes `ThrowingFireAndForgetCommand`, whose handler throws, to B, which has a dead-letter store; once it is captured a standby host joins the command's queue and B is disposed | The store holds one entry for the command, with the `Reference` its failure was logged under; B's handler ran once; 2 s after B stopped the standby has run nothing (a delivery B left unsettled would have been requeued to it as B's channel closed: skipping the post-capture acknowledgement makes it fail), and neither the command's queue nor `{prefix}-conduit-dead-letter` holds a message |
 | 11.3c | `RabbitMqDeadLetterShould.RouteAFailedFireAndForgetCommandToTheDeadLetterExchangeWithoutAConduitDlq` | A (producer-only) routes `ThrowingFireAndForgetCommand` to B, which has no dead-letter store | After 2 s the handler has run once (rejected, neither acknowledged nor requeued), and `{prefix}-conduit-dead-letter` holds the command once, with `x-first-death-reason: rejected` and `x-first-death-queue` = the command's shared queue |
 | 11.4 | `RabbitMqReplyQueueShould.FallBackToAFreshNameWhenTheNameIsLocked` | B handles; a test connection declares an exclusive queue under the reply queue name A would take (`InitialReplyQueueInstanceId` pins it); then A starts and sends | A starts despite `RESOURCE_LOCKED`, its request gets its reply (so the reply went to A's fresh queue), and the locked queue holds no message |
+| 11.4b | `RabbitMqDurabilityShould.KeepAQueuedEventAcrossABrokerRestart` | B (Production topology under a `TestTopologyPrefix` prefix, listens for `TestEvent` alone) starts and stops; A (producer-only) publishes `TestEvent`; the broker container is restarted (`RequireRestartableBroker` first, then `RestartBrokerAsync`); B starts again | B's listener receives the event: the persistent message survived in the durable queue. The test deletes its durable topology in a `finally` |
+| 11.4c | `RabbitMqDurabilityShould.PublishRequestsPersistent` | B handles, A sends `TestCommand`; a test queue bound to the exchange takes a copy | The copy's `BasicProperties.Persistent` is true |
+| 11.4d | `RabbitMqDurabilityShould.PublishRepliesPersistent` | B handles; a raw requester publishes `TestCommand` with `ReplyTo` = its own exclusive queue | The reply's `BasicProperties.Persistent` is true |
 
 #### Azure Service Bus
 
@@ -190,6 +193,8 @@ Several of these read what the broker holds through the Artemis management addre
 | 11.17 | `ActiveMQReplySendersShould.SendThroughALinkOfItsOwnWhenEveryCachedLinkIsBusy` | No hosts; 64 cached links, all leased; a requester's real temporary reply queue | The reply goes out on an uncached link (`Lease.IsCached` false) and arrives; that link is closed on release; 64 cached, none of the leased links closed |
 | 11.18 | `ActiveMQReplySendersShould.CloseADiscardedLinkOnlyOnceItsSendsDrain` | No hosts; two leases on one requester's link, the first discarded (a failed send) and released | The link stays open until the second lease is released, then closes; the next lease for that address gets a fresh link |
 | 11.19 | `ActiveMQEventRoutingShould.DeliverAnEventTypeAddedSinceTheQueueWasCreated` | B's first release (listens for `TestEvent`) starts and stops; its second release, same app name and prefix, also listens for `FireAndForgetEvent`; A publishes `FireAndForgetEvent` | B's second release receives it, and the existing queue's filter names both types: the filter was updated on start. Disabling the update makes it fail |
+| 11.19b | `ActiveMQDurabilityShould.KeepAQueuedEventAcrossABrokerRestart` | As 11.4b, on Artemis (`ActiveMQTestBase.RequireRestartableBroker`, then `RestartBrokerAsync`) | B receives the event: the durable-header message survived in the durable queue. The test deletes both addresses, forced, in a `finally` (`ArtemisManagement.DeleteAddressAsync`) |
+| 11.19c | `ActiveMQDurabilityShould.SendRepliesDurable` | B handles; a raw AMQPNetLite requester (a dynamic reply node) sends `TestCommand` to the commands address | The reply's `Header.Durable` is true |
 
 #### Amazon SQS
 
@@ -204,9 +209,9 @@ These read what the transport created through an SQS or SNS client on the same L
 
 ### Totals (verified 2026-11-10)
 
-Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class and its **4 transport-specific tests** of category 11, bringing its total to **43**. RabbitMQ adds the **6 transport-specific tests** of category 11, bringing its total to **44**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **12**, bringing its total to **50**.
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class and its **4 transport-specific tests** of category 11, bringing its total to **43**. RabbitMQ adds the **9 transport-specific tests** of category 11, bringing its total to **47**. Azure Service Bus adds its **3**, bringing its total to **41**. ActiveMQ adds its **14**, bringing its total to **52**.
 
-Behavior-test methods across the four transports: 44 (RabbitMQ) + 41 (ASB) + 43 (SQS) + 50 (ActiveMQ) = **178 `[TestMethod]` integration tests**.
+Behavior-test methods across the four transports: 47 (RabbitMQ) + 41 (ASB) + 43 (SQS) + 52 (ActiveMQ) = **183 `[TestMethod]` integration tests**.
 
 ---
 
@@ -361,6 +366,17 @@ Only where a transport hand-maps something the binder cannot handle:
 | C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials`, and the scalars (`VisibilityTimeoutSeconds`, `MaxReceiveCount`, `ServiceUri`) |
 | C-S.2 | `BuildSessionCredentialsWhenATokenIsSupplied` | Amazon SQS | A `SessionToken` selects `SessionAWSCredentials` |
 | C-S.3 | `LeaveCredentialsNullForTheDefaultAwsChain` | Amazon SQS | No key pair leaves `Credentials` null so the AWS default chain applies |
+
+### Category F-S: Transport-specific client construction (`Unit/{Name}ClientFactoryShould.cs`)
+
+Where a transport builds its broker clients from the bound options:
+
+| # | Test Method | Transport | Validates |
+|---|---|---|---|
+| F-S.1 | `UseConfiguredCredentialsAgainstAws` | Amazon SQS | With `Region` and `Credentials` (a `Support/StubAwsCredentials`), both clients carry those credentials (`Config.DefaultAWSCredentials`), in that region |
+| F-S.2 | `UseConfiguredCredentialsWithACustomEndpoint` | Amazon SQS | With `ServiceUri` and `Credentials`, the endpoint is overridden and the credentials are still the configured ones |
+| F-S.3 | `UseAPlaceholderPairForACustomEndpointWithoutCredentials` | Amazon SQS | `ServiceUri` alone gets the LocalStack placeholder pair (`test`/`test`) |
+| F-S.4 | `LeaveCredentialsToTheDefaultChainWhenNoneAreConfigured` | Amazon SQS | `Region` alone leaves the clients without credentials, so the SDK's default chain applies |
 
 ### Category O-S: Transport-specific option validation (`Unit/{Name}OptionsShould.cs`)
 

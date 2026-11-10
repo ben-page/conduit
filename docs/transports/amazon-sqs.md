@@ -58,7 +58,7 @@ endpoint.UseAmazonSqs(options =>
 |---|---|---|
 | `Region` | `null` | AWS region. Falls back to the SDK's own region resolution when unset. Not used when `ServiceUri` is set. |
 | `ServiceUri` | `null` | Override endpoint for both SNS and SQS, used for [LocalStack](#localstack). |
-| `Credentials` | `null` | Credentials for the `ServiceUri` endpoint. Without `ServiceUri` they are not used: the default AWS credential chain applies (see [Credentials](#credentials)). |
+| `Credentials` | `null` | Explicit AWS credentials, used with or without `ServiceUri`. When unset, the default AWS credential chain applies; with `ServiceUri` set, the LocalStack placeholder pair is used instead (see [Credentials](#credentials) and [LocalStack](#localstack)). |
 | `DefaultConcurrency` | `10` | How many handlers the application queue's poller runs at once. The poller receives up to 10 messages per long poll and starts each one as a handler slot frees up. |
 | `ResponseTimeout` | `00:01:00` | How long a request waits for its reply (see [Request/response](#requestresponse)). Positive and finite, and at most `VisibilityTimeoutSeconds`. |
 | `VisibilityTimeoutSeconds` | `60` | SQS visibility timeout of the application and pool queues. Must be at least `ResponseTimeout`, validated at startup. |
@@ -97,9 +97,7 @@ conduit.AddEndpoint("orders", endpoint => endpoint.UseAmazonSqs());
 
 ### Credentials
 
-Against AWS itself, the transport always authenticates through the **default AWS credential chain** (environment variables, profile, container or instance role), whether or not `Credentials` is set. Give the process its identity that way; it is what you want in a deployed environment anyway, rather than secrets in appsettings.
-
-`Credentials` is used only together with [`ServiceUri`](#localstack). Configuration supplies it nested under `Credentials`, mirroring the property it populates:
+Without `Credentials`, the transport authenticates through the **default AWS credential chain** (environment variables, profile, container or instance role), what you want in a deployed environment rather than secrets in appsettings. Set `Credentials` to use explicit ones, against AWS or a `ServiceUri` endpoint alike. Configuration supplies it nested under `Credentials`, mirroring the property it populates:
 
 ```json
 {
@@ -341,7 +339,6 @@ Remember the [80-character queue-name cap](#name-length) when naming pools: a lo
 ## Limitations
 
 - **Unicast by convention.** Two applications that handle the same command or query type both receive it ([Unicast by convention](#unicast-by-convention)).
-- **Explicit credentials only for `ServiceUri`.** Against AWS, the transport always uses the default credential chain ([Credentials](#credentials)).
 - **No auto-delete.** Developer and Test resources, and the reply queues of crashed instances, stay until someone deletes them ([Developer and Test modes](#developer-and-test-modes)).
 - **No visibility extension.** The transport does not extend a message's visibility while its handler runs. A handler that outlasts `VisibilityTimeoutSeconds` sees its message delivered again, to it or another instance, while it is still running; and a message received in a batch but waiting for a free handler slot spends its visibility timeout waiting.
 - **Standard queues.** SQS standard queues keep no order and may deliver a message more than once even without a failure; use the [inbox](../inbox.md) where a duplicate matters.

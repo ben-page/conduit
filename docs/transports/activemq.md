@@ -141,7 +141,7 @@ No manual binding configuration is needed.
 
 | Mode | Prefix | Durable | Cleanup |
 |---|---|---|---|
-| `Production` | None, unless `TopologyPrefix` is set | Yes: queues (but see [Limitations](#limitations) on messages) | None |
+| `Production` | None, unless `TopologyPrefix` is set | Yes: queues and the messages in them | None |
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | No: a broker restart deletes the queues | A queue is deleted 4 hours after its last consumer left; the two addresses stay |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | No | A queue is deleted 5 minutes after its last consumer left; the two addresses stay |
 
@@ -216,7 +216,7 @@ Messages use JSON serialization (`ConduitRuntime.JsonOptions`) mapped onto AMQP 
 | `Subject` | Full type name (e.g. `"Orders.Commands.CreateOrder"`) |
 | `MessageId` | From `MessageContext` or auto-generated |
 | `CorrelationId` | From `MessageContext.ConversationId`; a reply's is the request's `ReplyCorrelationId` |
-| Header | Not set: the message's `durable` flag is AMQP's default, false (see [Limitations](#limitations)) |
+| Header | `durable` = true on every message, replies included: a durable (Production) queue keeps it across a broker restart |
 | Property `CausationId` | From `MessageContext.CausationId` (historical name, kept for existing consumers) |
 | Property `ReplyTo`, `ReplyCorrelationId` | Reply routing (requests only) |
 | Property `conduit-message-id`, `conduit-causation-id`, `conduit-conversation-id` | Canonical forms of the same three values, written alongside the native and historical names above |
@@ -249,7 +249,6 @@ A pool can be declared in configuration (the endpoint's `Pools` array) and in co
 ## Limitations
 
 - **Artemis only.** ActiveMQ "Classic" has no Artemis management address, so the transport cannot create its topology there.
-- **Messages are not durable.** The transport sends without an AMQP header, so each message's `durable` flag is AMQP's default, false, and a broker restart loses the messages still in a queue, durable Production queues included.
 - **Command and query queues are shared by type.** Two applications that handle the same type compete for its messages ([Anycast and multicast](#anycast-and-multicast)).
 - **Addresses are left behind.** The two addresses of a Developer or Test prefix are never auto-deleted ([Developer and Test modes](#developer-and-test-modes)).
 - **No delay between redeliveries by default.** A failed message is redelivered at once, up to `max-delivery-attempts`, unless the broker's `redelivery-delay` says otherwise.
