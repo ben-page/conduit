@@ -269,13 +269,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             return;
         }
 
-        using var replyMessage = new Message(replyBody.ToArray())
-        {
-            Properties = new Properties
-            {
-                CorrelationId = correlationId,
-            },
-        };
+        using var replyMessage = NewMessage(replyBody, new Properties { CorrelationId = correlationId });
 
         // Held for the send: the link is never evicted or closed under it
         var lease = this.CurrentConnection().ReplySenders.Acquire(replyAddress);
@@ -347,17 +341,16 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
         // One connection for the request and the reply queue it names
         var connection = this.CurrentConnection();
 
-        using var message = new Message(body.ToArray())
-        {
-            Properties = new Properties
+        using var message = NewMessage(
+            body,
+            new Properties
             {
                 Subject = envelope.Type,
                 MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
                     ?? Guid.NewGuid().ToString("N"),
                 CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
             },
-            ApplicationProperties = BuildOutboundApplicationProperties(headers),
-        };
+            BuildOutboundApplicationProperties(headers));
 
         message.ApplicationProperties["ReplyTo"] = connection.ReplyAddress;
         message.ApplicationProperties["ReplyCorrelationId"] = correlationId;
@@ -388,17 +381,16 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             LogSendingFireAndForgetCommand(this.Logger, envelope.Type, null);
         }
 
-        using var message = new Message(body.ToArray())
-        {
-            Properties = new Properties
+        using var message = NewMessage(
+            body,
+            new Properties
             {
                 Subject = envelope.Type,
                 MessageId = headers.GetValueOrDefault(ConduitHeaders.MessageId)
                     ?? Guid.NewGuid().ToString("N"),
                 CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
             },
-            ApplicationProperties = BuildOutboundApplicationProperties(headers),
-        };
+            BuildOutboundApplicationProperties(headers));
 
         await (isEvent ? connection.EventSender! : connection.CommandSender!).SendAsync(message);
     }
@@ -434,16 +426,15 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
             .RedeliveryQueue(envelope.Type, isCommandOrQuery);
         var headers = BuildRedeliveryHeaders(ids);
 
-        using var message = new Message(body.ToArray())
-        {
-            Properties = new Properties
+        using var message = NewMessage(
+            body,
+            new Properties
             {
                 Subject = envelope.Type,
                 MessageId = headers[ConduitHeaders.MessageId],
                 CorrelationId = headers.GetValueOrDefault(ConduitHeaders.ConversationId),
             },
-            ApplicationProperties = BuildOutboundApplicationProperties(headers),
-        };
+            BuildOutboundApplicationProperties(headers));
 
         var redeliverSender = new SenderLink(
             connection.Session, ActiveMQTopologyManager.LinkName("dlq-redeliver"), fullyQualifiedQueueName);
@@ -797,6 +788,24 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
 
         ((ReceiverLink)receiverLink).Accept(message);
     }
+
+    /// <summary>
+    /// A message to send, durable: every message goes out through here, requests, events, replies and
+    /// redeliveries alike, with an AMQP header whose <c>durable</c> flag is set (AMQP's default, with no
+    /// header, is false). Artemis writes a durable message to its journal when a durable queue (Production)
+    /// takes it, so it outlives a broker restart; a non-durable queue (Developer and Test modes, the reply
+    /// queue) holds it in memory as it would any other.
+    /// </summary>
+    private static Message NewMessage(
+        BinaryData body,
+        Properties properties,
+        ApplicationProperties? applicationProperties = null) =>
+        new(body.ToArray())
+        {
+            Header = new Header { Durable = true },
+            Properties = properties,
+            ApplicationProperties = applicationProperties,
+        };
 
     private static ApplicationProperties BuildOutboundApplicationProperties(
         IReadOnlyDictionary<string, string> headers)

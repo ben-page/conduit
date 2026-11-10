@@ -78,6 +78,10 @@ internal sealed class ArtemisManagement : IAsyncDisposable
         return configuration.RootElement.Clone();
     }
 
+    /// <summary>Deletes the address and, forced, every queue bound to it with whatever it holds.</summary>
+    public async Task DeleteAddressAsync(string address) =>
+        await this.RequestAsync("broker", "deleteAddress", attribute: null, [address, true]);
+
     public async ValueTask DisposeAsync() => await this.connection.CloseAsync();
 
     private Task<JsonElement> ReadQueueAttributeAsync(string queueName, string attribute) =>

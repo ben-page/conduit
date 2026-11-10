@@ -440,12 +440,13 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         // Confirmed before the request is acknowledged: a reply the broker refused is logged by the base class.
         // Nothing bounds the wait for the confirm but the drain's deadline when the host stops (the
         // requester's own response timeout bounds what it waits for, not this publish).
-        await this.replyPublishChannel.BasicPublishAsync(
+        await PublishPersistentAsync(
+            this.replyPublishChannel,
             exchange: string.Empty,
             routingKey: message.Args.BasicProperties.ReplyTo,
-            mandatory: false,
-            basicProperties: replyProperties,
-            body: replyBody.ToMemory());
+            replyProperties,
+            replyBody,
+            CancellationToken.None);
     }
 
     /// <inheritdoc />
@@ -500,13 +501,8 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             Headers = ToRabbitHeaders(headers),
         };
 
-        await this.publishChannel!.BasicPublishAsync(
-            exchange: exchangeName,
-            routingKey: envelope.Type,
-            mandatory: false,
-            basicProperties: properties,
-            body: body.ToMemory(),
-            cancellationToken: cancellationToken);
+        await PublishPersistentAsync(
+            this.publishChannel!, exchangeName, routingKey: envelope.Type, properties, body, cancellationToken);
 
         return await this.AwaitReplyAsync(correlationId, cancellationToken);
     }
@@ -531,13 +527,8 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             Headers = ToRabbitHeaders(headers),
         };
 
-        await this.publishChannel!.BasicPublishAsync(
-            exchange: exchangeName,
-            routingKey: envelope.Type,
-            mandatory: false,
-            basicProperties: properties,
-            body: body.ToMemory(),
-            cancellationToken: cancellationToken);
+        await PublishPersistentAsync(
+            this.publishChannel!, exchangeName, routingKey: envelope.Type, properties, body, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -573,13 +564,8 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         };
 
         // Publish directly to the app queue via the default exchange — bypasses topic routing
-        await this.publishChannel!.BasicPublishAsync(
-            exchange: string.Empty,
-            routingKey: appQueueName,
-            mandatory: false,
-            basicProperties: properties,
-            body: body.ToMemory(),
-            cancellationToken: cancellationToken);
+        await PublishPersistentAsync(
+            this.publishChannel!, exchange: string.Empty, routingKey: appQueueName, properties, body, cancellationToken);
     }
 
     // -----------------------------------------------------------------------
@@ -644,6 +630,33 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             args.BasicProperties,
             args.Body.ToArray(),
             args.CancellationToken);
+
+    /// <summary>
+    /// Publishes one message, persistent (delivery mode 2), and returns once the broker confirmed it (both
+    /// publishing channels have publisher confirms on). Every publish goes through here, requests, events,
+    /// replies and redeliveries alike, whatever the topology mode: a durable queue (Production) writes a
+    /// persistent message to disk before the broker confirms it, so it outlives a broker restart, while a
+    /// non-durable queue (Developer and Test modes, the reply queue) holds it in memory, as it would a
+    /// transient one. Never mandatory: an event nobody subscribes to is routed nowhere and still confirmed.
+    /// </summary>
+    private static ValueTask PublishPersistentAsync(
+        IChannel channel,
+        string exchange,
+        string routingKey,
+        BasicProperties properties,
+        BinaryData body,
+        CancellationToken cancellationToken)
+    {
+        properties.DeliveryMode = DeliveryModes.Persistent;
+
+        return channel.BasicPublishAsync(
+            exchange,
+            routingKey,
+            mandatory: false,
+            basicProperties: properties,
+            body: body.ToMemory(),
+            cancellationToken: cancellationToken);
+    }
 
     private static async Task CloseChannelAsync(IChannel channel)
     {

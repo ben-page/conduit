@@ -87,6 +87,18 @@ public abstract class ActiveMQTestBase
     }
 
     /// <summary>
+    /// Inconclusive unless this test run started the Artemis container, the only broker a test may restart. A
+    /// test that creates durable topology calls it first, so it leaves a broker it cannot restart untouched.
+    /// </summary>
+    protected static void RequireRestartableBroker()
+    {
+        if (container is null)
+        {
+            Assert.Inconclusive("Restarting the broker needs the Artemis container this test run started.");
+        }
+    }
+
+    /// <summary>
     /// Restarts the Artemis container this test run started, dropping every connection to it and every
     /// non-durable queue on it, and returns once it accepts connections again. See <see cref="StopBrokerAsync"/>
     /// and <see cref="StartBrokerAsync"/> for when it is Inconclusive.

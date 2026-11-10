@@ -87,6 +87,18 @@ public abstract class RabbitMqTestBase
     }
 
     /// <summary>
+    /// Inconclusive unless this test run started the broker container, the only broker a test may restart. A
+    /// test that declares durable topology calls it first, so it leaves a broker it cannot restart untouched.
+    /// </summary>
+    protected static void RequireRestartableBroker()
+    {
+        if (container is null)
+        {
+            Assert.Inconclusive("Restarting the broker needs the RabbitMQ container this test run started.");
+        }
+    }
+
+    /// <summary>
     /// Restarts the broker container this test run started, at the same address: every client connection
     /// drops and everything non-durable on the broker is lost, as when a broker restarts in production.
     /// Inconclusive for a broker this run did not start (a configured one, or a reused container another
