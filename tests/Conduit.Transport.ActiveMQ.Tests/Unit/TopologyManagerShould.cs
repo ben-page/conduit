@@ -305,7 +305,27 @@ public class TopologyManagerShould
 
         // Assert — a command queue takes its own type; an event queue exactly the types it subscribes
         commandFilter.Should().Be("JMSType='Orders.Commands.CreateOrder'");
-        eventFilter.Should().Be("JMSType IN ('Orders.Events.OrderPlaced','Billing.Events.Invoiced')");
+        eventFilter.Should().Be("JMSType IN ('Billing.Events.Invoiced','Orders.Events.OrderPlaced')");
+    }
+
+    [TestMethod]
+    public void WriteTheSameEventFilterForAnyOrderOfTheSameTypes()
+    {
+        // Arrange — one set of event types, listed in two orders and once with a repeat
+        string[] registryOrder = ["Orders.Events.OrderPlaced", "Billing.Events.Invoiced", "Billing.Events.Paid"];
+        string[] poolOrder = ["Billing.Events.Paid", "Orders.Events.OrderPlaced", "Billing.Events.Invoiced"];
+        string[] repeated = [.. poolOrder, "Billing.Events.Paid"];
+
+        // Act
+        var fromRegistryOrder = ActiveMQTopologyManager.EventQueueFilter(registryOrder);
+        var fromPoolOrder = ActiveMQTopologyManager.EventQueueFilter(poolOrder);
+        var fromRepeated = ActiveMQTopologyManager.EventQueueFilter(repeated);
+
+        // Assert — the read-back comparison sees one filter, so a start does not rewrite it
+        fromPoolOrder.Should().Be(fromRegistryOrder);
+        fromRepeated.Should().Be(fromRegistryOrder);
+        fromRegistryOrder.Should().Be(
+            "JMSType IN ('Billing.Events.Invoiced','Billing.Events.Paid','Orders.Events.OrderPlaced')");
     }
 
     // --- TM-S.13: UseUniqueLinkNames ---

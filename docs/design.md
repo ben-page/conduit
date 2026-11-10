@@ -350,7 +350,7 @@ Both families accept an optional `suffix` parameter for sub-resources (e.g. `"re
 | `Developer` | `{TopologyPrefix}` (default: `Environment.UserName`) | Non-durable | 4 hours |
 | `Test` | `{TopologyPrefix}` (default: `test-{random}`) | Non-durable | 5 minutes |
 
-Developer mode gives each developer isolated broker resources (e.g. `bpage-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests that self-clean.
+Developer mode gives each developer isolated broker resources (e.g. `alice-conduit` instead of `conduit`). Test mode creates fully isolated, short-lived resources for integration tests. RabbitMQ and Azure Service Bus clean them up through native auto-delete and TTL, and ActiveMQ its queues; Artemis offers no auto-delete for an address created through management, so the two addresses per prefix stay, empty. Amazon SQS has no auto-delete at all, so a test project reaps its own prefix (`AmazonSqsTopologyReaper.ReapByPrefixAsync`).
 
 `ConduitOptions.TopologyPrefix` auto-resolves on first access: Developer defaults to `Environment.UserName`, Test generates a random 13-character prefix, Production resolves to null. Explicitly setting `TopologyPrefix` overrides the auto-resolution — use this when multiple hosts must share the same topology (e.g., multi-host integration tests).
 

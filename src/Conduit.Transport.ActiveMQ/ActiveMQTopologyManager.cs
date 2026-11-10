@@ -318,10 +318,12 @@ internal sealed class ActiveMQTopologyManager
         $"JMSType={FilterLiteral(messageType)}";
 
     /// <summary>
-    /// The filter of an event queue on the multicast address: the event types it takes, and no other.
+    /// The filter of an event queue on the multicast address: the event types it takes, and no other,
+    /// each once and in ordinal order, so one set gives one string whatever order the registry and the
+    /// pools list it in, and a start that reads the filter back compares it as unchanged.
     /// </summary>
     internal static string EventQueueFilter(IEnumerable<string> eventTypes) =>
-        $"JMSType IN ({string.Join(',', eventTypes.Select(FilterLiteral))})";
+        $"JMSType IN ({string.Join(',', eventTypes.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(FilterLiteral))})";
 
     // A filter string literal: single-quoted, an embedded quote doubled
     private static string FilterLiteral(string value) =>

@@ -573,7 +573,7 @@ public sealed class ActiveMQTransport : BrokerTransportBase<ActiveMQInboundMessa
     /// Called by <see cref="ActiveMQConnection"/>, on an AMQPNetLite thread, when the connection or one of
     /// its links closed without the transport closing it.
     /// </summary>
-    private void OnConnectionLost(ActiveMQConnection connection, Error? error)
+    private void OnConnectionLost(ActiveMQConnection connection)
     {
         bool isCurrent;
         lock (this.stateLock)

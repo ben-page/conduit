@@ -27,7 +27,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
     private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
 
     private readonly Connection connection;
-    private readonly Action<ActiveMQConnection, Error?> onLost;
+    private readonly Action<ActiveMQConnection> onLost;
     private readonly Lock consumerLinksLock = new();
     private readonly List<ReceiverLink> consumerLinks = [];
     private volatile string? replyAddress;
@@ -35,7 +35,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
     private int lossReported;
     private int closing;
 
-    private ActiveMQConnection(Connection connection, Action<ActiveMQConnection, Error?> onLost)
+    private ActiveMQConnection(Connection connection, Action<ActiveMQConnection> onLost)
     {
         this.connection = connection;
         this.onLost = onLost;
@@ -90,7 +90,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
     /// <exception cref="TimeoutException">The broker did not open the connection within 30 seconds.</exception>
     public static async Task<ActiveMQConnection> OpenAsync(
         ActiveMQOptions options,
-        Action<ActiveMQConnection, Error?> onLost,
+        Action<ActiveMQConnection> onLost,
         CancellationToken cancellationToken)
     {
         var address = new Address(options.ConnectionString);
@@ -335,7 +335,7 @@ internal sealed class ActiveMQConnection : IAsyncDisposable
             if (Volatile.Read(ref this.closing) == 0
                 && Interlocked.CompareExchange(ref this.loss, new Loss(error), null) is null)
             {
-                this.onLost(this, error);
+                this.onLost(this);
             }
         });
 
