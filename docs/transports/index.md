@@ -289,7 +289,8 @@ sees the failure ([dispatch retry](../dispatch-retry.md), or a [pipeline behavio
 
 An event whose dispatch fails outside its listeners (a pipeline behavior throws, a listener cannot be resolved, or
 a gate throws an exception that is not a `ConduitException`) is settled as a listener failure is, captured or else
-abandoned, and a publisher over HTTP `/publish` or the SignalR hub's `Publish` is answered `InternalError`.
+abandoned. A publisher over HTTP `/publish` is answered the `InternalError` envelope with its support reference, and
+one over the SignalR hub's `Publish` a `HubException` with the fixed message `An unexpected error occurred.`
 
 An abandoned message is not gone, and it is not handled only once: until the broker dead-letters it, the broker
 delivers it again and its listener or handler runs again.

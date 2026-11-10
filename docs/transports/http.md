@@ -213,7 +213,7 @@ app.MapConduitEndpoint(); // defaults to /api/conduit
 This registers two POST endpoints:
 
 - **POST /api/conduit/dispatch**: commands and queries. Returns `DispatchResult` envelope. A request an inbound gate discards (the [inbox](../inbox.md)'s duplicate) is answered `200` with an empty success (`DispatchResult.Ok(null)`), as if it had run.
-- **POST /api/conduit/publish**: events. Returns 200 OK, or, for a refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type, a body the event type cannot read), the `DispatchResult` envelope status-coded as `/dispatch` answers a refusal.
+- **POST /api/conduit/publish**: events. Returns 200 OK, or, for a refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type, a body the event type cannot read), the `DispatchResult` envelope status-coded as `/dispatch` answers a refusal, and for an event whose dispatch failed outside its listeners, the `InternalError` envelope (see [Failure handling](#failure-handling)).
 
 The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON, with no envelope wrapper. This matches the wire format used by broker transports (type in transport-native properties, body is the raw message).
 
@@ -286,7 +286,7 @@ A routed `[FireAndForget]` command is POSTed to `/dispatch` and its reply discar
 **On the server.** Nothing is retried or dead-lettered: the caller gets the answer.
 
 - The wire dispatch endpoint answers a refusal with the `DispatchResult` envelope and the HTTP status its `ErrorCode` declares (`DispatchError.Status`): 404 for a `NotFoundException`, 409 for a `ConflictException`, a custom code's own status. A handler that fails unexpectedly is answered 500, with `InternalError`, the fixed message `An unexpected error occurred.` and a support reference the server logs with the exception.
-- `/publish` answers a refused event the same way. A listener that throws is not a refusal: its exception propagates to the host's exception handling (a 500, by default).
+- `/publish` answers a refused event the same way. An event whose dispatch fails outside its listeners (a pipeline behavior throws, a listener cannot be resolved, a gate throws something other than a refusal) is answered as `/dispatch` answers an unexpected failure: 500, `InternalError`, the fixed message and the support reference the server logged the failure under. A listener that throws is neither: its exception propagates to the host's exception handling (a 500, by default).
 - A RESTful endpoint answers a `ConduitException` with Problem Details ([Responses](#responses)); any other exception propagates to the host's exception handling.
 
 **On the client.** A failure is reported honestly. A refusal from the remote endpoint (a `DispatchResult` error, JSON) throws `RemoteDispatchException` with its code and message, and its support reference for an unexpected failure. Any other non-success answer, a reverse proxy's 502 page or an authentication middleware's bare 401, throws `HttpRequestException` carrying the status. A success that is not JSON (a fallback route's HTML page under a wrong base path) is not a reply either: a request throws `HttpRequestException` rather than return `null`.
@@ -301,7 +301,7 @@ A routed `[FireAndForget]` command is POSTed to `/dispatch` and its reply discar
 | Body | The plain serialized message (`ConduitRuntime.JsonOptions`), no envelope |
 | `X-Conduit-Message-Id`, `X-Conduit-Conversation-Id`, `X-Conduit-Causation-Id` | `MessageContext` ids, sent by the C# `HttpTransport` when all three are plain tokens; read only by a trusting endpoint |
 | `X-Conduit-Property-<name>` | A client property, sent by the TypeScript `HttpTransport`; read only by an endpoint mapped with `readClientProperties: true` |
-| Response | `/dispatch`: the `DispatchResult` as JSON, 200 on success, the error's status on a failure. `/publish`: 200 with no body, or a refusal's `DispatchResult` |
+| Response | `/dispatch`: the `DispatchResult` as JSON, 200 on success, the error's status on a failure. `/publish`: 200 with no body, or the `DispatchResult` of a refusal or an unexpected failure |
 
 ## Limitations
 
