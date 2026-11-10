@@ -150,6 +150,9 @@ The first public preview. The entries below are the changes since the earlier, u
   - Stopping drains running jobs only until the host's shutdown deadline.
   - A sweep that a host's stop cancels part-way hands back the runs it had just claimed, rather than leaving them
     claimed by nobody until `ClaimTimeout`.
+  - A stopping host takes no new work from the moment it begins to stop: the scheduler stops claiming, where it used
+    to re-claim a just-drained run and restart its handler under a cancelled token hundreds of times, and a run an
+    event trigger writes during shutdown is handed back unstarted.
   - `TriggerNowAsync` wakes the sweep, so a manual run starts at once rather than on the sweep's next pass.
 - **Audit**
   - Stopping drains the queued records for `ShutdownGrace` at most, and counts what it abandons.

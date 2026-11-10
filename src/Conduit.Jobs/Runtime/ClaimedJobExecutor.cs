@@ -100,6 +100,15 @@ internal sealed partial class ClaimedJobExecutor
         }
 
         var stoppingToken = this.lifetime.ApplicationStopping;
+        if (stoppingToken.IsCancellationRequested)
+        {
+            // Claimed after the host began stopping — an event trigger's run, from a delivery a broker drains after
+            // ApplicationStopping. Dispatching it would start the handler under a token already cancelled, and a
+            // handler that ignores its token would run in full on a host on its way out. Hand it back untouched, so
+            // another host runs it whole.
+            await this.RecordOutcomeAsync(run, JobOutcome.HandedOver, error: null);
+            return;
+        }
 
         // Linked to the host's stopping token, so a graceful drain reaches the handler the same way
         // an operator's cancellation and a MaxRuntime breach do — the runner tells them apart after.

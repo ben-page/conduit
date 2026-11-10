@@ -4,6 +4,7 @@ using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
 using Conduit.TestUtils;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Jobs.Tests.Integration;
@@ -67,6 +68,71 @@ public class ClaimRenewalShould
         await using var hostB = await StartHostAsync(database, timeProvider, spy);
         await JobsDatabaseProbe.WaitForDeletionAsync(database, JobKey);
         spy.Count.Should().Be(1);
+    }
+
+    [TestMethod]
+    public async Task NotStartARunOnceTheHostIsStopping()
+    {
+        // Arrange — another service takes half a second to stop, holding open the window in which the host
+        // is stopping (ApplicationStopping fired) but the scheduler's own StopAsync has not yet run
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy { JobDuration = TimeSpan.FromMinutes(10) };
+        var calls = new JobStoreCalls();
+        await using var database = SharedSqliteDatabase.Create();
+        var hostA = await JobsTestHost.StartAsync(
+            WarmEveryFiveMinutes,
+            spy,
+            timeProvider,
+            database.ConnectionString,
+            configureServices: services =>
+            {
+                CountingJobStore.Install(services, calls);
+                services.AddHostedService(
+                    provider => new StoppingHook(provider, _ => Task.Delay(TimeSpan.FromMilliseconds(500))));
+            });
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await spy.WaitForStartedAsync(1);
+
+        // Act — drain host A mid-job
+        await hostA.DisposeAsync();
+
+        // Assert — the drained run is handed back once, not re-claimed by a host on its way out: each re-claim
+        // restarted the handler under a cancelled token, or handed the run straight back, hundreds of times
+        calls.Count(nameof(IJobStore.ReleaseAsync)).Should().Be(1, "a stopping host takes no new work");
+        spy.StartedCount.Should().Be(1);
+        var released = await JobsDatabaseProbe.WaitForRunAsync(
+            database, JobKey, run => run.Status == JobRunStatus.Pending);
+        released.AttemptCount.Should().Be(0);
+    }
+
+    [TestMethod]
+    public async Task HandBackATriggeredRunWithoutDispatchingItOnceTheHostIsStopping()
+    {
+        // Arrange — an event arrives while the host is stopping (a broker drains its in-flight deliveries
+        // after ApplicationStopping), and its trigger writes and starts a claimed run
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        var host = await JobsTestHost.StartAsync(
+            jobs => jobs.On<ThingHappened>().Run(thing => new RecordedJob(thing.Label)),
+            spy,
+            timeProvider,
+            database.ConnectionString,
+            configureServices: services => services.AddHostedService(
+                provider => new StoppingHook(
+                    provider,
+                    services => services.GetRequiredService<IMediator>().PublishAsync(new ThingHappened("late")))));
+
+        // Act
+        await host.DisposeAsync();
+
+        // Assert — the handler is never started under a token already cancelled; the run is left pending, so
+        // another host runs it in full
+        spy.StartedCount.Should().Be(0, "a stopping host dispatches no new run");
+        var run = await JobsDatabaseProbe.WaitForOnlyRunAsync(database);
+        run.Status.Should().Be(JobRunStatus.Pending);
+        run.ClaimToken.Should().BeNull();
+        run.AttemptCount.Should().Be(0);
     }
 
     [TestMethod]

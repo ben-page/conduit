@@ -631,7 +631,10 @@ Another host picks the job up immediately rather than waiting out `ClaimTimeout`
 rolling deploy from "stalled jobs per drained pod" into a fast handover.
 
 The token is cancelled the moment the host begins to stop; there is no grace period in which a job
-may finish undisturbed. The scheduler then waits for its running jobs to end, but **no longer than
+may finish undisturbed. From that same moment the host takes no new work: it materializes no
+occurrence and claims nothing, and a run an event trigger writes while it is stopping (a broker still
+draining its deliveries, say) is handed back unstarted, so another host runs it in full rather than this
+one starting it under a token already cancelled. The scheduler then waits for its running jobs to end, but **no longer than
 the host's shutdown deadline** (`HostOptions.ShutdownTimeout`, 30 seconds by default, or the token
 passed to the host's `StopAsync`). A handler that ignores its token is left running and the host
 stops anyway, logging one Warning with `EventId` **411** (`DrainAbandoned`) that names the runs still

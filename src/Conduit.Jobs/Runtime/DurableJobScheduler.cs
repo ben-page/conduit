@@ -40,6 +40,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     private readonly ILogger<DurableJobScheduler> logger;
     private readonly JobSchedulerReadiness readiness;
     private readonly JobSweepSignal sweepSignal;
+    private readonly IHostApplicationLifetime lifetime;
     private readonly DateTimeOffset startedAt;
 
     public DurableJobScheduler(
@@ -50,6 +51,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         IOptions<JobsOptions> options,
         JobSchedulerReadiness readiness,
         JobSweepSignal sweepSignal,
+        IHostApplicationLifetime lifetime,
         ILogger<DurableJobScheduler> logger)
     {
         this.registry = registry;
@@ -59,6 +61,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         this.options = options;
         this.readiness = readiness;
         this.sweepSignal = sweepSignal;
+        this.lifetime = lifetime;
         this.logger = logger;
 
         // Read at construction rather than when a loop first runs: hosted services are constructed
@@ -100,8 +103,16 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     }
 
     /// <inheritdoc/>
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // The loops stop at the host's first stop signal, ApplicationStopping, not only at this service's own
+        // StopAsync, which the host reaches later (after stopping the services registered after this one). Running
+        // jobs are linked to ApplicationStopping, so between the two a drained run's release woke the sweep, which
+        // re-claimed the run and started its handler again under a cancelled token, only to hand it back again:
+        // hundreds of times in half a second (ClaimRenewalShould.NotStartARunOnceTheHostIsStopping).
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken, this.lifetime.ApplicationStopping);
+
         // An on-demand schedule has no timetable, so it gets no loop: no cursor read, no misfire walk,
         // no occurrence and no start-up run. Its schedule row (reconciled by the initializer) holds only
         // its pause flag and a cursor nothing moves, since a manual run is not an occurrence: null
@@ -112,11 +123,11 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         var loops = new List<Task>(timed.Count + 1);
         foreach (var schedule in timed)
         {
-            loops.Add(this.RunScheduleAsync(schedule, stoppingToken));
+            loops.Add(this.RunScheduleAsync(schedule, stopping.Token));
         }
 
-        loops.Add(this.SweepAsync(stoppingToken));
-        return Task.WhenAll(loops);
+        loops.Add(this.SweepAsync(stopping.Token));
+        await Task.WhenAll(loops);
     }
 
     private async Task RunScheduleAsync(JobSchedule schedule, CancellationToken stoppingToken)

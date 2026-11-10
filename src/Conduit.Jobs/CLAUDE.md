@@ -527,6 +527,18 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   No grace period: jobs stay linked to `ApplicationStopping` from its first instant. A run left behind
   keeps its claim until renewals stop; another host re-claims it after `ClaimTimeout`. Test:
   `DurableJobSchedulerShould.StopWhenTheShutdownTokenExpires`.
+- **A stopping host takes no new work.** The scheduler's loops stop at `ApplicationStopping` too
+  (`ExecuteAsync` links it with the `BackgroundService` token), not only at the scheduler's own
+  `StopAsync`, which the host reaches only after stopping every service registered later. Before that, a drained run's release woke the sweep, which re-claimed it and
+  restarted its handler under a cancelled token, only to hand it back: 222-316 restarts in 500 ms, and
+  31-75 claim/release round trips once the executor guard (next) stopped the restarts.
+  **`ClaimedJobExecutor` hands back a run claimed after stopping began, undispatched** (`HandedOver`
+  before the heartbeat starts): the scheduler no longer claims then, but an event trigger still writes
+  and starts one when a broker drains a delivery after `ApplicationStopping`. Tests:
+  `ClaimRenewalShould.NotStartARunOnceTheHostIsStopping` (counts `ReleaseAsync` through
+  `CountingJobStore`, so the executor guard alone cannot pass it) and
+  `.HandBackATriggeredRunWithoutDispatchingItOnceTheHostIsStopping`, both holding the window open with
+  `StoppingHook`, a hosted service registered after `AddConduit` and so stopped first.
 - **`JobsOptions.Validate()`**, called first in `AddJobs`, throws `InvalidOperationException` naming the
   option (the jobs package's and `DispatchRetryOptions`' exception, not Durability's
   `OptionsValidationException`; the two older checks' messages are unchanged): `HeartbeatInterval` not
