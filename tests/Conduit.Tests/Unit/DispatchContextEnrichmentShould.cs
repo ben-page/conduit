@@ -134,6 +134,38 @@ public class DispatchContextEnrichmentShould
     }
 
     [TestMethod]
+    public void RemoveAClientPropertyWhateverCaseTheEnricherNamesIt()
+    {
+        // Arrange: property names are case-insensitive, so an enricher's removal reaches every spelling a client sent
+        // (HTTP/2 delivers a header name lower-cased; a hand-written client may send any case).
+        var client = new Dictionary<string, object?> { ["UserId"] = "client-spoofed", ["TenantCode"] = "acme" };
+        var enricher = new DelegateEnricher((user, props) => props.Remove("userid"));
+
+        // Act
+        var result = DispatchContextEnrichment.Apply([enricher], user: null, client);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.ContainsKey("UserId").Should().BeFalse();
+        result["tenantcode"].Should().Be("acme");
+    }
+
+    [TestMethod]
+    public void OverwriteAClientPropertyWhateverCaseTheEnricherNamesIt()
+    {
+        // Arrange
+        var client = new Dictionary<string, object?> { ["userid"] = "client-spoofed" };
+        var enricher = new DelegateEnricher((user, props) => props["UserId"] = "server-trusted");
+
+        // Act
+        var result = DispatchContextEnrichment.Apply([enricher], user: null, client);
+
+        // Assert: one property, the enricher's value.
+        result.Should().ContainSingle();
+        result!["USERID"].Should().Be("server-trusted");
+    }
+
+    [TestMethod]
     public void PreserveClientPropertiesEnricherDidNotTouch()
     {
         // Arrange

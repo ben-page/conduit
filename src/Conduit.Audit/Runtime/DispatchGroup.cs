@@ -19,8 +19,9 @@ internal sealed class DispatchGroup
         this.messageId = context.MessageId;
         this.conversationId = context.ConversationId;
         this.causationId = context.CausationId;
+        // Case-insensitive, as the context's bag is.
         this.properties = context.Properties.Count > 0
-            ? new Dictionary<string, object?>(context.Properties)
+            ? new Dictionary<string, object?>(context.Properties, StringComparer.OrdinalIgnoreCase)
             : null;
         this.context = context;
         this.CreatedAt = DateTime.UtcNow;

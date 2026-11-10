@@ -102,6 +102,29 @@ public class DispatchEnricherShould
     }
 
     [TestMethod]
+    public async Task ReadAHeaderNameRegardlessOfCase()
+    {
+        // Arrange: property names are case-insensitive on the hub as over HTTP, with and without an enricher.
+        await using var plainHost = CreateHost();
+        await using var enrichedHost = CreateHost(new StaticValueEnricher("UserId", "server-trusted"));
+        await using var plainConnection = await ConnectToHub(plainHost.Address);
+        await using var enrichedConnection = await ConnectToHub(enrichedHost.Address);
+        var headers = new Dictionary<string, string> { ["tenantcode"] = "acme", ["userid"] = "client-spoofed" };
+
+        // Act
+        await DispatchCaptureAsync(plainConnection, headers);
+        await DispatchCaptureAsync(enrichedConnection, headers);
+
+        // Assert
+        var plain = plainHost.GetRequiredService<CapturedProperties>().Properties!;
+        plain["TenantCode"].Should().Be("acme");
+        var enriched = enrichedHost.GetRequiredService<CapturedProperties>().Properties!;
+        enriched["TenantCode"].Should().Be("acme");
+        enriched.Should().HaveCount(2, "the enricher's UserId replaced the client's userid rather than joining it");
+        enriched["userid"].Should().Be("server-trusted");
+    }
+
+    [TestMethod]
     public async Task ComposeMultipleEnrichers()
     {
         // Arrange

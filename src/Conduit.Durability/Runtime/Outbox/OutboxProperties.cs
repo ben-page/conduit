@@ -97,7 +97,8 @@ internal static class OutboxProperties
     /// the host listed any property) delivers with an empty bag, exactly as before. A stored key the host no longer
     /// lists, or whose value no longer reads as its declared type (the host changed it after the entry was written),
     /// is dropped rather than failing the delivery; so is the whole column when it is not a JSON object (truncated or
-    /// edited by hand), which would otherwise fail every retry of the entry.
+    /// edited by hand), which would otherwise fail every retry of the entry. The restored bag's names are
+    /// case-insensitive, as every <see cref="MessageContext.Properties"/> bag's are.
     /// </summary>
     internal static IReadOnlyDictionary<string, object?>? Read(string? json, IDictionary<string, Type>? persisted)
     {
@@ -127,7 +128,7 @@ internal static class OutboxProperties
         {
             if (persisted.TryGetValue(property.Name, out var type) && TryReadValue(property.Value, type, out var value))
             {
-                (restored ??= new Dictionary<string, object?>(StringComparer.Ordinal))[property.Name] = value;
+                (restored ??= new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase))[property.Name] = value;
             }
         }
 

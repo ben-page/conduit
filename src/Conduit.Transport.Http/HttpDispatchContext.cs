@@ -31,9 +31,9 @@ internal static class HttpDispatchContext
     /// <param name="trustCallerContext">Whether this edge honors the correlation ids its callers send: only the wire
     /// endpoint mapped with <c>trustCallerContext: true</c> does; REST endpoints and minimal-API routes never do.</param>
     /// <param name="readClientProperties">Whether this edge seeds the properties from the request's
-    /// <c>X-Conduit-Property-*</c> headers, as the hub seeds them from its <c>headers</c> argument: the wire endpoint's
-    /// <c>/dispatch</c> and <c>/publish</c> do; REST endpoints and minimal-API routes never do. Enrichers run after, so
-    /// their writes win over a client property of the same name.</param>
+    /// <c>X-Conduit-Property-*</c> headers, as the hub seeds them from its <c>headers</c> argument: only the wire
+    /// endpoint mapped with <c>readClientProperties: true</c> does; REST endpoints and minimal-API routes never do.
+    /// Enrichers run after, so their writes (and removals) win over a client property of the same name.</param>
     public static void Start(
         HttpContext httpContext,
         IEnumerable<IDispatchContextEnricher> enrichers,
@@ -61,8 +61,9 @@ internal static class HttpDispatchContext
 
     /// <summary>
     /// The client's properties: each <c>X-Conduit-Property-&lt;name&gt;</c> header (prefix in any letter case) as
-    /// <c>name</c>, spelled as it arrived, with its value as a string; null when the request carries none. HTTP/2 and
-    /// HTTP/3 deliver every header name in lower case, so over them a name arrives lower-cased.
+    /// <c>name</c>, with its value as a string; null when the request carries none. The bag's names are
+    /// case-insensitive, because HTTP/2 and HTTP/3 deliver every header name in lower case: <c>TenantCode</c> sent by a
+    /// browser over HTTP/2 arrives as <c>tenantcode</c>, and <c>Properties["TenantCode"]</c> must still find it.
     /// </summary>
     private static Dictionary<string, object?>? ReadClientProperties(IHeaderDictionary headers)
     {
@@ -72,7 +73,7 @@ internal static class HttpDispatchContext
             if (name.Length > PropertyHeaderPrefix.Length
                 && name.StartsWith(PropertyHeaderPrefix, StringComparison.OrdinalIgnoreCase))
             {
-                properties ??= new Dictionary<string, object?>();
+                properties ??= new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
                 properties[name[PropertyHeaderPrefix.Length..]] = value.ToString();
             }
         }

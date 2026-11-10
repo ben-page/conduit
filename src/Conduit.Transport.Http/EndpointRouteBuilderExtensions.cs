@@ -26,18 +26,28 @@ public static class EndpointRouteBuilderExtensions
     /// present and every supplied id is a plain token (<see cref="MessageContextIds.IsValid"/>); otherwise it mints
     /// too. Either way the request is answered as usual. Server-trusted properties from the registered
     /// <see cref="IDispatchContextEnricher"/>s apply in every case.
+    /// <para>
+    /// Client properties are ignored unless <paramref name="readClientProperties"/> says otherwise: an edge that reads
+    /// them seeds the dispatch's <see cref="MessageContext.Properties"/> from each <c>X-Conduit-Property-&lt;name&gt;</c>
+    /// header (the TypeScript <c>HttpTransport</c>'s <c>headers</c>), as the SignalR hub does from its <c>headers</c>
+    /// argument, before the enrichers run. Turn it on only when every enricher writes or removes each key it owns on
+    /// every dispatch, unauthenticated ones included: a key an enricher leaves alone keeps the client's value.
+    /// </para>
     /// </remarks>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="basePath">The base URL path for Conduit endpoints. Defaults to "/api/conduit".
     /// Dispatch maps to "{basePath}/dispatch", publish maps to "{basePath}/publish".</param>
     /// <param name="trustCallerContext">Whether this edge honors the correlation ids its callers send: true only for
     /// an endpoint that service-to-service callers (<see cref="HttpTransport"/>) reach and browsers do not.</param>
+    /// <param name="readClientProperties">Whether this edge reads client properties from <c>X-Conduit-Property-*</c>
+    /// headers into the dispatch's properties. Off by default: an HTTP edge fails closed.</param>
     /// <returns>The route group both endpoints are mapped in, so a convention chained on it (e.g.
     /// <c>RequireAuthorization()</c>) applies to both.</returns>
     public static RouteGroupBuilder MapConduitEndpoint(
         this IEndpointRouteBuilder endpoints,
         string basePath = "/api/conduit",
-        bool trustCallerContext = false)
+        bool trustCallerContext = false,
+        bool readClientProperties = false)
     {
         var group = endpoints.MapGroup(basePath);
 
@@ -48,7 +58,7 @@ public static class EndpointRouteBuilderExtensions
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties: true);
+            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties);
 
             // The edge where the answer leaves the server for a person: the refusal is written in the reader's language here.
             return Answer(RefusalRendering.RenderResult(
@@ -64,7 +74,7 @@ public static class EndpointRouteBuilderExtensions
             CancellationToken cancellationToken) =>
         {
             var envelope = await ReadEnvelopeAsync(httpRequest, cancellationToken);
-            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties: true);
+            HttpDispatchContext.Start(httpRequest.HttpContext, enrichers, trustCallerContext, readClientProperties);
 
             try
             {

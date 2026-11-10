@@ -7,9 +7,10 @@ namespace Conduit.Runtime;
 public sealed class DispatchOptions
 {
     /// <summary>
-    /// User-defined key/value pairs attached to the dispatch.
+    /// User-defined key/value pairs attached to the dispatch. Names are case-insensitive, as
+    /// <see cref="MessageContext.Properties"/>' are.
     /// </summary>
-    public Dictionary<string, object?> Properties { get; } = new();
+    public Dictionary<string, object?> Properties { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Adds or overwrites a property on this dispatch.

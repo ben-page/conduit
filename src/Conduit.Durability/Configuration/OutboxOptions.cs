@@ -51,9 +51,11 @@ public sealed class OutboxOptions
     /// <see cref="Guid"/>; <c>AddOutbox</c> refuses any other with <see cref="OptionsValidationException"/>.
     /// Default: empty — nothing is carried, and the store neither writes nor reads the <c>Properties</c> column, so
     /// an outbox table created before the column existed keeps working. A host that lists a key must have the column
-    /// (<see cref="AutoCreateTable"/> creates it only with a new table).
+    /// (<see cref="AutoCreateTable"/> creates it only with a new table). Keys are case-insensitive, as property names
+    /// are: <c>"UserId"</c> and <c>"userid"</c> are one entry.
     /// </summary>
-    public IDictionary<string, Type> PersistedProperties { get; } = new Dictionary<string, Type>(StringComparer.Ordinal);
+    public IDictionary<string, Type> PersistedProperties { get; } =
+        new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type.</summary>
     /// <exception cref="OptionsValidationException">An entry is invalid; each failure names its key.</exception>

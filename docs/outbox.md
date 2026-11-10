@@ -393,6 +393,9 @@ durability.AddOutbox(outbox =>
   value before it stamps its own. A transport seeds a context from the caller's headers, and with no
   enricher registered `DispatchContextEnrichment.Apply` hands those headers on unchanged: listing such
   a key would let a caller choose who a listener runs as.
+- **Keys are case-insensitive**, as property names are everywhere: `"UserId"` and `"userid"` are one
+  entry, a dispatch's `userid` is written under the listed spelling, and the restored bag finds it in
+  any case.
 - **Supported types** are `string`, `int`, `long`, `bool` and `Guid`. `AddOutbox` refuses any other,
   and an empty key, with an `OptionsValidationException` at startup.
 - **The column.** A host that lists no key never writes or reads `Properties`, so its table may predate

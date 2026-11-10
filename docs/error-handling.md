@@ -208,9 +208,9 @@ throw new ConflictException("Order 42 was already shipped")
   render. A failure is logged at Error, under `RefusalRendering`'s category: EventId 20 `RefusalTextRenderFailed`
   (with the text's name, the culture and the renderer's exception) and EventId 21 `DispatchCultureResolveFailed`.
 - **A client can set the property when no enricher writes it.** `ConduitHub` seeds a dispatch's properties with the
-  client's `headers`, and the HTTP wire endpoint with its `X-Conduit-Property-*` headers
-  ([HTTP → Client properties](transports/http.md#client-properties)), and an enricher's writes win only for the keys
-  it writes. So an enricher that owns the language key must write it, or remove the client's, on every dispatch, and a
+  client's `headers`, and an HTTP wire endpoint mapped with `readClientProperties: true` with its
+  `X-Conduit-Property-*` headers ([HTTP → Client properties](transports/http.md#client-properties)), and an enricher's
+  writes win only for the keys it writes (names are case-insensitive). So an enricher that owns the language key must write it, or remove the client's, on every dispatch, and a
   resolver must accept only values it maps, as `DispatchPropertyCultureResolver` does. REST endpoints and
   `WithConduitDispatchContext()` routes read no client properties.
 - **Conduit names its own two sentences** (`ConduitTextNames`), so a host's catalog can translate them:

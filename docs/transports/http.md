@@ -165,12 +165,23 @@ A trusting endpoint honors the headers only when `X-Conduit-Message-Id` and `X-C
 
 ### Client properties
 
-`/dispatch` and `/publish` read each `X-Conduit-Property-<name>` request header into the dispatch's `MessageContext.Properties`, as the SignalR hub reads its `headers` argument: `X-Conduit-Property-TenantCode: t1` is the property `TenantCode` with the value `"t1"`. This is how the [TypeScript client](typescript-client.md#properties)'s `HttpTransport` sends the `headers` you pass it.
+An endpoint mapped to read them takes each `X-Conduit-Property-<name>` request header into the dispatch's `MessageContext.Properties`, on `/dispatch` and `/publish`, as the SignalR hub reads its `headers` argument: `X-Conduit-Property-TenantCode: t1` is the property `TenantCode` with the value `"t1"`. This is how the [TypeScript client](typescript-client.md#properties)'s `HttpTransport` sends the `headers` you pass it. The endpoint reads none unless you ask: an HTTP edge fails closed.
 
-- The prefix is matched in any letter case, as header names are. The property's name is the rest of the header name, spelled as it arrived. HTTP/2 and HTTP/3 lower-case every header name, so over them `X-Conduit-Property-TenantCode` arrives as the property `tenantcode`: name a property in lower case if a client may reach you over either.
+```csharp
+app.MapConduitEndpoint(readClientProperties: true);
+```
+
+**An enricher that owns a key must write it or remove it on every dispatch, unauthenticated ones included.** Your `IDispatchContextEnricher`s run after the client's properties are read, so an enricher's write wins, but a dispatch it leaves alone keeps whatever the client sent under that key: an enricher that returns early without a signed-in user lets an anonymous request dispatch with `UserId=victim`. With no identity, remove the keys you own:
+
+```csharp
+var sub = user?.FindFirst("sub")?.Value;
+if (sub is null) { properties.Remove("UserId"); return; }
+```
+
+- **Property names are case-insensitive.** The prefix is matched in any letter case, as header names are, and so is the property: `Properties["TenantCode"]` finds `X-Conduit-Property-TenantCode`, and also the `x-conduit-property-tenantcode` that HTTP/2 and HTTP/3 deliver (they lower-case every header name). An enricher's `properties.Remove("UserId")` removes every spelling a client sent.
 - The value is a string. A header sent twice arrives as one comma-joined value.
-- Your `IDispatchContextEnricher`s run after, so an enricher's write wins over a client's property of the same name. A client can set any property no enricher writes: treat one as the caller's claim, as you would the hub's `headers`.
-- The correlation-id rule above is unaffected: a property is never a correlation id. A request that carries a property and no trusted ids gets fresh server ids.
+- A client can set any property no enricher writes or removes: treat one as the caller's claim, as you would the hub's `headers`.
+- The correlation-id rule above is unaffected: a property is never a correlation id, even one named `X-Conduit-Message-Id`. A request that carries properties and no trusted ids gets fresh server ids.
 - [RESTful endpoints](#restful-endpoints) and routes opted in with `WithConduitDispatchContext()` read no client properties.
 
 ## When to use which

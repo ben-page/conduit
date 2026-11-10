@@ -160,7 +160,8 @@ public class ConduitHub(
             return null;
         }
 
-        var props = new Dictionary<string, object?>(headers.Count);
+        // Property names are case-insensitive at every edge, as over HTTP (where HTTP/2 lower-cases header names).
+        var props = new Dictionary<string, object?>(headers.Count, StringComparer.OrdinalIgnoreCase);
         foreach (var (key, value) in headers)
         {
             props[key] = value;

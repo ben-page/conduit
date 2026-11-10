@@ -10,7 +10,9 @@ namespace Conduit.Runtime;
 /// Used by inbound transports (SignalR hub, HTTP endpoint) to fold server-trusted
 /// values onto the property bag before <see cref="MessageContext.StartDispatchFromTransport"/>.
 /// Enrichers run after the client headers are seeded, so their writes win over any
-/// client-supplied entry of the same key.
+/// client-supplied entry of the same key. Property names are case-insensitive
+/// (<see cref="StringComparer.OrdinalIgnoreCase"/>): the bag an enricher receives matches <c>"userid"</c> to a
+/// client's <c>"UserId"</c>, so removing or overwriting a key reaches every spelling of it.
 /// </remarks>
 public static class DispatchContextEnrichment
 {
@@ -38,9 +40,16 @@ public static class DispatchContextEnrichment
             return clientProperties;
         }
 
-        var merged = clientProperties is null
-            ? new Dictionary<string, object?>()
-            : new Dictionary<string, object?>(clientProperties);
+        // Case-insensitive, and filled by the indexer: two client keys that differ only by case are one property (the
+        // last one wins) rather than a duplicate-key exception.
+        var merged = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        if (clientProperties is not null)
+        {
+            foreach (var (key, value) in clientProperties)
+            {
+                merged[key] = value;
+            }
+        }
 
         // Enrichers run after the client headers are copied, so their writes overwrite
         // any client-supplied value of the same key (anti-spoofing).

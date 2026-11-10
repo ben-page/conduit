@@ -199,6 +199,26 @@ public class OutboxDispatchPropertiesShould
     }
 
     [TestMethod]
+    public void PersistAndRestoreAPropertyWhateverCaseItIsSpelledIn()
+    {
+        // Arrange: the host lists "UserId"; the dispatch's bag spells it as an HTTP/2 header delivers it.
+        var options = new OutboxOptions();
+        options.PersistedProperties["UserId"] = typeof(string);
+        var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["userid"] = "emp-7" };
+
+        // Act
+        var written = OutboxProperties.Write(values, options.PersistedProperties);
+        var restored = OutboxProperties.Read(written, options.PersistedProperties);
+
+        // Assert: written under the listed spelling, and read back into a bag whose names are case-insensitive.
+        written.Should().Be("""{"UserId":"emp-7"}""");
+        restored.Should().NotBeNull();
+        restored!["userid"].Should().Be("emp-7");
+        restored["USERID"].Should().Be("emp-7");
+        options.PersistedProperties.Should().ContainKey("userId", "the listed keys are case-insensitive too");
+    }
+
+    [TestMethod]
     public void RestoreNothingFromAColumnThatIsNotJson()
     {
         // Arrange — a truncated or hand-edited column.

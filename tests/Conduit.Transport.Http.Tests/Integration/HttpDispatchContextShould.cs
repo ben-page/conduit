@@ -46,7 +46,10 @@ public class HttpDispatchContextShould
     };
 
     private static (WebApplication App, HttpClient Client, CapturedContexts Captured, MessageIdDedupGate Gate) CreateTestHost(
-        bool trustCallerContext, IDispatchContextEnricher? enricher = null, Action<WebApplication>? mapMore = null)
+        bool trustCallerContext,
+        IDispatchContextEnricher? enricher = null,
+        Action<WebApplication>? mapMore = null,
+        bool? readClientProperties = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton<CapturedContexts>();
@@ -59,7 +62,16 @@ public class HttpDispatchContextShould
         }
 
         var app = builder.Build();
-        app.MapConduitEndpoint(trustCallerContext: trustCallerContext);
+        // Null maps the endpoint without the argument, so a test can pin MapConduitEndpoint's own default.
+        if (readClientProperties is { } read)
+        {
+            app.MapConduitEndpoint(trustCallerContext: trustCallerContext, readClientProperties: read);
+        }
+        else
+        {
+            app.MapConduitEndpoint(trustCallerContext: trustCallerContext);
+        }
+
         mapMore?.Invoke(app);
         app.Urls.Add("http://127.0.0.1:0");
         app.Start();
@@ -272,9 +284,10 @@ public class HttpDispatchContextShould
     [TestMethod]
     public async Task ReadClientPropertiesFromHeaders()
     {
-        // Arrange: the browser's properties (the hub's `headers` argument) travel over HTTP as X-Conduit-Property-<name>.
+        // Arrange: the browser's properties (the hub's `headers` argument) travel over HTTP as X-Conduit-Property-<name>,
+        // to an endpoint mapped to read them.
         var (app, client, captured, _) = CreateTestHost(
-            trustCallerContext: false, enricher: new StaticValueEnricher("UserId", "emp-42"));
+            trustCallerContext: false, enricher: new StaticValueEnricher("UserId", "emp-42"), readClientProperties: true);
         await using (app)
         using (client)
         {
@@ -282,7 +295,7 @@ public class HttpDispatchContextShould
             using var dispatched = await PostCaptureAsync(client, DispatchPath, ClientProperties);
             using var published = await PostCaptureAsync(client, PublishPath, ClientProperties, CaptureEventType);
 
-            // Assert: the prefix matches in any letter case, the name after it is kept as sent, and an enricher's write
+            // Assert: the prefix matches in any letter case, the name after it is the property's, and an enricher's write
             // wins over a client's property of the same name, as on the hub.
             dispatched.StatusCode.Should().Be(HttpStatusCode.OK);
             published.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -300,9 +313,110 @@ public class HttpDispatchContextShould
     }
 
     [TestMethod]
+    public async Task IgnoreClientPropertiesUnlessTheEndpointReadsThem()
+    {
+        // Arrange: an HTTP edge fails closed. One host maps the wire endpoint by default, the other opts in.
+        var (defaultApp, defaultClient, defaultCaptured, _) = CreateTestHost(trustCallerContext: false);
+        var (readingApp, readingClient, readingCaptured, _) = CreateTestHost(
+            trustCallerContext: false, readClientProperties: true);
+        await using (defaultApp)
+        await using (readingApp)
+        using (defaultClient)
+        using (readingClient)
+        {
+            // Act
+            using var ignored = await PostCaptureAsync(defaultClient, DispatchPath, ClientProperties);
+            using var read = await PostCaptureAsync(readingClient, DispatchPath, ClientProperties);
+
+            // Assert
+            ignored.StatusCode.Should().Be(HttpStatusCode.OK);
+            read.StatusCode.Should().Be(HttpStatusCode.OK);
+            (defaultCaptured.Properties.Single() ?? new Dictionary<string, object?>()).Should().NotContainKey("TenantCode");
+            readingCaptured.Properties.Single()!["TenantCode"].Should().Be("t1");
+        }
+    }
+
+    [TestMethod]
+    public async Task ReadAPropertyNameRegardlessOfCase()
+    {
+        // Arrange: HTTP/2 and HTTP/3 lower-case every header name, so a browser's TenantCode arrives as tenantcode.
+        var (app, client, captured, _) = CreateTestHost(trustCallerContext: false, readClientProperties: true);
+        var lowerCased = new Dictionary<string, string> { ["x-conduit-property-tenantcode"] = "t1" };
+        await using (app)
+        using (client)
+        {
+            // Act
+            using var response = await PostCaptureAsync(client, DispatchPath, lowerCased);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var properties = captured.Properties.Single()!;
+            properties["TenantCode"].Should().Be("t1");
+            properties["TENANTCODE"].Should().Be("t1");
+        }
+    }
+
+    [TestMethod]
+    public async Task KeepAPropertyNamedLikeACorrelationIdOutOfTheIds()
+    {
+        // Arrange: a trusting edge that reads properties, and properties named like the correlation headers.
+        var (app, client, captured, gate) = CreateTestHost(trustCallerContext: true, readClientProperties: true);
+        var headers = new Dictionary<string, string>
+        {
+            ["X-Conduit-Property-X-Conduit-Message-Id"] = "m-1",
+            ["X-Conduit-Property-X-Conduit-Conversation-Id"] = "c-1",
+        };
+        await using (app)
+        using (client)
+        {
+            // Act
+            using var response = await PostCaptureAsync(client, DispatchPath, headers);
+
+            // Assert: they are properties and nothing else; the ids are minted.
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var ids = captured.Ids.Should().ContainSingle().Subject;
+            ids.MessageId.Should().NotBe("m-1");
+            ids.ConversationId.Should().Be(ids.MessageId, "a minted dispatch is the head of its own conversation");
+            ids.CausationId.Should().Be(ids.MessageId);
+            gate.Seen.Should().NotContain("m-1");
+            var properties = captured.Properties.Single()!;
+            properties["X-Conduit-Message-Id"].Should().Be("m-1");
+            properties["X-Conduit-Conversation-Id"].Should().Be("c-1");
+        }
+    }
+
+    [TestMethod]
+    public async Task DropAPropertyAnEnricherOwnsFromAnAnonymousRequest()
+    {
+        // Arrange: an enricher that owns UserId removes it when there is no identity, so an anonymous caller cannot
+        // dispatch as someone else, whatever spelling it sends.
+        var (app, client, captured, _) = CreateTestHost(
+            trustCallerContext: false, enricher: new SubClaimUserIdEnricher(), readClientProperties: true);
+        var spoofed = new Dictionary<string, string>
+        {
+            ["X-Conduit-Property-userid"] = "victim",
+            ["X-Conduit-Property-TenantCode"] = "t1",
+        };
+        await using (app)
+        using (client)
+        {
+            // Act
+            using var response = await PostCaptureAsync(client, DispatchPath, spoofed);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var properties = captured.Properties.Single()!;
+            properties.Keys.Where(key => string.Equals(key, "UserId", StringComparison.OrdinalIgnoreCase))
+                .Should().BeEmpty("no spelling of the owned key survives");
+            properties["TenantCode"].Should().Be("t1");
+        }
+    }
+
+    [TestMethod]
     public async Task ReadNoClientPropertiesOnARestEndpointOrAnOptedInMinimalApiRoute()
     {
-        // Arrange: client properties are the wire endpoint's, as the hub's `headers` are the hub's.
+        // Arrange: client properties are the wire endpoint's, as the hub's `headers` are the hub's, even on a host whose
+        // wire endpoint reads them.
         var (app, client, captured, _) = CreateTestHost(
             trustCallerContext: false,
             mapMore: host =>
@@ -313,7 +427,8 @@ public class HttpDispatchContextShould
                     await mediator.ExecuteAsync(new CaptureContextCommand());
                     return Results.Ok();
                 }).WithConduitDispatchContext();
-            });
+            },
+            readClientProperties: true);
         await using (app)
         using (client)
         {

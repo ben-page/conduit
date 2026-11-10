@@ -89,6 +89,28 @@ public class MessageContextShould
     }
 
     [TestMethod]
+    public void ReadAPropertyRegardlessOfCaseWhoeverBuiltTheBag()
+    {
+        // Arrange: a transport that hands over an ordinal bag, and one key spelled twice.
+        var ordinal = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["tenantcode"] = "first",
+            ["TenantCode"] = "acme",
+            ["UserId"] = "emp-1",
+        };
+
+        // Act
+        var context = MessageContext.StartDispatchFromTransport("msg-1", null, "msg-1", ordinal);
+        var child = MessageContext.StartDispatch(new DispatchOptions().Tag("Region", "eu"));
+
+        // Assert: one property per name, the last spelling's value, found in any case; a local dispatch's tags too.
+        context.Properties.Should().HaveCount(2);
+        context.Properties["TENANTCODE"].Should().Be("acme");
+        context.Properties["userid"].Should().Be("emp-1");
+        child.Properties["region"].Should().Be("eu");
+    }
+
+    [TestMethod]
     public void DefaultTransportCausationToMessageIdWhenWireOmitsIt()
     {
         // Act — a producer that omitted the causation header (non-Conduit sender)

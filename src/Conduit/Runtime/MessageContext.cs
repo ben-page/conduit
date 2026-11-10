@@ -15,7 +15,7 @@ public sealed class MessageContext
     private static readonly AsyncLocal<MessageContext?> CurrentContext = new();
 
     private static readonly IReadOnlyDictionary<string, object?> EmptyProperties =
-        new Dictionary<string, object?>();
+        new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The current message context, or null if no dispatch is active.
@@ -53,8 +53,10 @@ public sealed class MessageContext
     public string DeliveredMessageId { get; }
 
     /// <summary>
-    /// User-defined key/value pairs attached to this dispatch via <see cref="DispatchOptions"/>.
-    /// Empty when no options were provided.
+    /// User-defined key/value pairs attached to this dispatch via <see cref="DispatchOptions"/>, a transport (a client's
+    /// headers, an enricher's writes) or the outbox's persisted properties. Empty when none were provided. Names are
+    /// case-insensitive (<see cref="StringComparer.OrdinalIgnoreCase"/>), whoever built the bag: an HTTP/2 or HTTP/3
+    /// request delivers a header name lower-cased, and <c>Properties["TenantCode"]</c> still finds it.
     /// </summary>
     public IReadOnlyDictionary<string, object?> Properties { get; }
 
@@ -78,8 +80,30 @@ public sealed class MessageContext
         this.MessageId = messageId;
         this.CausationId = causationId;
         this.ConversationId = conversationId;
-        this.Properties = properties;
+        this.Properties = CaseInsensitive(properties);
         this.DeliveredMessageId = deliveredMessageId ?? messageId;
+    }
+
+    /// <summary>
+    /// <paramref name="properties"/> itself when it is already a case-insensitive <see cref="Dictionary{TKey,TValue}"/>
+    /// (every bag Conduit builds), else a case-insensitive copy, filled by the indexer so two keys that differ only by
+    /// case are one property (the last wins) rather than an exception.
+    /// </summary>
+    private static IReadOnlyDictionary<string, object?> CaseInsensitive(IReadOnlyDictionary<string, object?> properties)
+    {
+        if (properties is Dictionary<string, object?> dictionary
+            && ReferenceEquals(dictionary.Comparer, StringComparer.OrdinalIgnoreCase))
+        {
+            return properties;
+        }
+
+        var copy = new Dictionary<string, object?>(properties.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in properties)
+        {
+            copy[key] = value;
+        }
+
+        return copy;
     }
 
     /// <summary>
@@ -111,7 +135,7 @@ public sealed class MessageContext
         IReadOnlyDictionary<string, object?> properties;
         if (options?.Properties is { Count: > 0 } explicitProps)
         {
-            properties = new Dictionary<string, object?>(explicitProps);
+            properties = new Dictionary<string, object?>(explicitProps, StringComparer.OrdinalIgnoreCase);
         }
         else if (parent?.Properties is { Count: > 0 } parentProps)
         {

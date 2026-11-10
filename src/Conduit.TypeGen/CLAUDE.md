@@ -107,7 +107,8 @@
   one and is called through a local (unbound): a window's fetch throws "Illegal invocation" as another object's
   method. **`headers` are properties** (`propertyHeaders`): each is sent as `X-Conduit-Property-<name>`, never as a
   header of its own, so a caller cannot override `Content-Type`/`X-Conduit-Type` or send a correlation id (a browser
-  is a conversation's origin); the server's `HttpDispatchContext` reads them into `MessageContext.Properties`, as
+  is a conversation's origin); the server's `HttpDispatchContext` reads them into `MessageContext.Properties`
+  (case-insensitive names) when the endpoint is mapped with `readClientProperties: true` (off by default), as
   `ConduitHub` reads its `headers` argument. **A non-OK response** resolves `sendRequest` only when its body is a
   refusal (`readRefusal`: a JSON object whose `error` is an object with string `code` and `message`), else rejects
   `Error("Conduit: HTTP <status> from <url>")` — a 401/403 ProblemDetails, an empty body, an OAuth

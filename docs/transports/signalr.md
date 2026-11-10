@@ -3,6 +3,7 @@
 - [Overview](#overview)
 - [Server setup](#server-setup)
 - [Correlation ids](#correlation-ids)
+- [Client properties](#client-properties)
 - [Bidirectional communication](#bidirectional-communication)
 - [Solicited events](#solicited-events)
 - [Client mode (service-to-service)](#client-mode-service-to-service)
@@ -40,6 +41,17 @@ builder.Services.AddConduitSignalR(options => options.TrustCallerContext = true)
 ```
 
 A trusting hub honors the context only when `MessageId` and `ConversationId` are both present and every supplied id is a plain token: 1 to 64 ASCII letters, digits and hyphens (`MessageContextIds.IsValid`). An absent `CausationId` defaults to the message id. Any other context is ignored as a whole and the server mints fresh ids; the invocation is answered as usual. The `headers` argument and your `IDispatchContextEnricher`s are unaffected: enrichers run on every invocation and win over a caller's header of the same key.
+
+## Client properties
+
+The `headers` argument of `Dispatch` and `Publish` seeds the invocation's `MessageContext.Properties` (the [TypeScript client](typescript-client.md#properties)'s `headers`); your `IDispatchContextEnricher`s run after. **Property names are case-insensitive**: `Properties["TenantCode"]` finds a client's `tenantcode`, as over HTTP.
+
+**An enricher that owns a key must write it or remove it on every invocation, unauthenticated ones included.** An enricher's write wins over a client's header of the same key, but an invocation it leaves alone keeps whatever the client sent: an enricher that returns early without a signed-in user lets an anonymous caller dispatch with `UserId=victim`. With no identity, remove the keys you own:
+
+```csharp
+var sub = user?.FindFirst("sub")?.Value;
+if (sub is null) { properties.Remove("UserId"); return; }
+```
 
 `ConduitSignalROptions` configures the hub (the inbound side). `SignalROptions` configures the outbound client-mode transport. `AddConduitSignalR(serverInfo, configure)` takes both a `ConduitServerInfo` and the options callback.
 
