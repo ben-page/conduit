@@ -86,8 +86,10 @@ jobs:
     name: Test (TypeScript transport)
     runs-on: ubuntu-latest
     # The TypeScript transport TypeGen embeds into every consumer's conduit.ts
-    # (src/Conduit.TypeGen/Transport/*.ts): strict tsc, then vitest. Needs no
-    # .NET, so it runs alongside the .NET job.
+    # (src/Conduit.TypeGen/Transport/*.ts), and the emitted goldens in
+    # tests/transport-ts/emitted (conduit.ts, conduit.http-only.ts and the
+    # conduit.generated.ts EmittedGoldenShould pins): strict tsc, then vitest.
+    # Needs no .NET, so it runs alongside the .NET job.
     defaults:
       run:
         working-directory: tests/transport-ts

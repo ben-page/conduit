@@ -484,8 +484,9 @@ public class BaseFileEmitterShould
             .Should().BeLessThan(result.IndexOf("export interface DispatchResult<T> {", StringComparison.Ordinal));
     }
 
-    // conduit.ts is the transport files assembled; tests/transport-ts/emitted holds both shapes it takes (default and
-    // HTTP-only) and type-checks them. A transport edit therefore fails here until the goldens are regenerated.
+    // conduit.ts is the transport files assembled; tests/transport-ts/emitted holds both shapes it takes (the default as
+    // conduit.ts, which the golden conduit.generated.ts imports, and conduit.http-only.ts) and type-checks them. A
+    // transport edit therefore fails here until the goldens are regenerated.
     [TestMethod]
     public void EmitTheDefaultConduitTsPinnedInItsGoldenFile()
     {
@@ -493,7 +494,7 @@ public class BaseFileEmitterShould
         var result = BaseFileEmitter.Emit();
 
         // Assert
-        AssertMatchesGolden("conduit.default.ts", result);
+        AssertMatchesGolden("conduit.ts", result);
     }
 
     [TestMethod]
