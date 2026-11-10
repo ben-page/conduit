@@ -309,7 +309,7 @@ public class SqsDeadLetterShould : SqsTestBase
         using (sns)
         using (sqs)
         {
-            var queue = await sqs.GetQueueUrlAsync(TopologyNaming.CreateAppResourceName(options, 80));
+            var queue = await sqs.GetQueueUrlAsync(AmazonSqsTopologyManager.AppQueueName(options));
             await sqs.SendMessageAsync(new SendMessageRequest
             {
                 QueueUrl = queue.QueueUrl,

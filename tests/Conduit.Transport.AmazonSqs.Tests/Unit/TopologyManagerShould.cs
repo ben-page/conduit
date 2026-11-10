@@ -32,7 +32,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions();
 
         // Act
-        var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);
+        var topicName = AmazonSqsTopologyManager.TopicName(conduitOptions);
 
         // Assert
         topicName.Should().Be("conduit");
@@ -45,7 +45,7 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(applicationName: new string('a', 260));
 
         // Act
-        var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);
+        var topicName = AmazonSqsTopologyManager.TopicName(conduitOptions);
 
         // Assert
         topicName.Length.Should().BeLessThanOrEqualTo(256);
@@ -56,11 +56,11 @@ public class TopologyManagerShould
     [TestMethod]
     public void UseAppResourceNameForSqsQueue()
     {
-        // Arrange — SQS queue names use CreateAppResourceName with maxLength 80 (tight!)
+        // Arrange — the app queue is an app-scoped name under SQS's tight limit
         var conduitOptions = CreateConduitOptions(applicationName: "orders");
 
         // Act
-        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 80);
+        var appQueueName = AmazonSqsTopologyManager.AppQueueName(conduitOptions);
 
         // Assert
         appQueueName.Should().Be("conduit-orders");
@@ -69,14 +69,16 @@ public class TopologyManagerShould
     [TestMethod]
     public void UseCorrectMaxLengthForSqsQueues()
     {
-        // Arrange — SQS queue names limited to 80 characters
+        // Arrange — SQS queue names are limited to 80 characters, and an app queue to 76, so that its
+        // dead-letter queue's name, four characters longer, fits too
         var conduitOptions = CreateConduitOptions(applicationName: new string('a', 80));
 
         // Act
-        var queueName = TopologyNaming.CreateAppResourceName(conduitOptions, 80);
+        var queueName = AmazonSqsTopologyManager.AppQueueName(conduitOptions);
 
         // Assert
-        queueName.Length.Should().BeLessThanOrEqualTo(80);
+        queueName.Length.Should().Be(76);
+        AmazonSqsTopologyManager.DeadLetterQueueName(queueName).Length.Should().Be(80);
     }
 
     // --- TM-1.4: UseAppResourceNameForReplyQueue ---
@@ -87,11 +89,11 @@ public class TopologyManagerShould
         // Arrange
         var conduitOptions = CreateConduitOptions(applicationName: "orders");
 
-        // Act — reply queue uses CreateAppResourceName with "replies" suffix
-        var replyQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 80);
+        // Act — one reply queue per transport instance
+        var replyQueueName = AmazonSqsTopologyManager.ReplyQueueName(conduitOptions, "0f1e2d3c");
 
-        // Assert
-        replyQueueName.Should().Be("conduit-orders-replies");
+        // Assert — reply queue includes app name, "replies" suffix and instance id
+        replyQueueName.Should().Be("conduit-orders-replies-0f1e2d3c");
     }
 
     // --- TM-1.7: TruncateLongQueueNamesWithHash ---
@@ -104,7 +106,7 @@ public class TopologyManagerShould
             applicationName: "my-very-long-application-name-that-exceeds");
 
         // Act
-        var queueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 80);
+        var queueName = AmazonSqsTopologyManager.ReplyQueueName(conduitOptions, Guid.NewGuid().ToString("N"));
 
         // Assert
         queueName.Length.Should().BeLessThanOrEqualTo(80);
@@ -114,12 +116,12 @@ public class TopologyManagerShould
     public void TruncatedQueueNamesContainHashSuffix()
     {
         // Arrange — name long enough to require truncation at 80 chars
-        // "conduit-" (8) + app name (70) + "-replies" (8) = 86 chars, exceeds 80
+        // "conduit-" (8) + app name (70) + "-replies-0f1e2d3c" (17) = 95 chars, exceeds 80
         var conduitOptions = CreateConduitOptions(
             applicationName: new string('a', 70));
 
         // Act
-        var queueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 80);
+        var queueName = AmazonSqsTopologyManager.ReplyQueueName(conduitOptions, "0f1e2d3c");
 
         // Assert — truncated name contains 8-character hex hash suffix
         queueName.Length.Should().BeLessThanOrEqualTo(80);
@@ -129,16 +131,16 @@ public class TopologyManagerShould
     [TestMethod]
     public void TruncateLongPoolQueueNamesWithHash()
     {
-        // Arrange — pool queue names also subject to 80-char SQS limit
+        // Arrange — pool queue names also subject to the SQS limit, less the dead-letter suffix
         var conduitOptions = CreateConduitOptions(
             applicationName: "my-very-long-application-name");
 
         // Act
-        var poolQueueName = TopologyNaming.CreateAppResourceName(
-            conduitOptions, "high-priority-processing", 80);
+        var poolQueueName = AmazonSqsTopologyManager.PoolQueueName(
+            conduitOptions, "high-priority-processing-of-overnight-imports");
 
         // Assert
-        poolQueueName.Length.Should().BeLessThanOrEqualTo(80);
+        poolQueueName.Length.Should().Be(76);
     }
 
     // --- TM-1.8: IncludeTopologyPrefixInNames ---
@@ -153,14 +155,14 @@ public class TopologyManagerShould
             topologyPrefix: "alice");
 
         // Act
-        var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);
-        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 80);
-        var replyQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 80);
+        var topicName = AmazonSqsTopologyManager.TopicName(conduitOptions);
+        var appQueueName = AmazonSqsTopologyManager.AppQueueName(conduitOptions);
+        var replyQueueName = AmazonSqsTopologyManager.ReplyQueueName(conduitOptions, "0f1e2d3c");
 
         // Assert — developer prefix appears in all resource names
         topicName.Should().Be("alice-conduit");
         appQueueName.Should().Be("alice-conduit-orders");
-        replyQueueName.Should().Be("alice-conduit-orders-replies");
+        replyQueueName.Should().Be("alice-conduit-orders-replies-0f1e2d3c");
     }
 
     [TestMethod]
@@ -173,8 +175,8 @@ public class TopologyManagerShould
             topologyPrefix: "test-abc123");
 
         // Act
-        var topicName = TopologyNaming.CreateSharedResourceName(conduitOptions, 256);
-        var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 80);
+        var topicName = AmazonSqsTopologyManager.TopicName(conduitOptions);
+        var appQueueName = AmazonSqsTopologyManager.AppQueueName(conduitOptions);
 
         // Assert — test prefix appears in all resource names
         topicName.Should().StartWith("test-abc123-conduit");
@@ -195,7 +197,7 @@ public class TopologyManagerShould
         sqsOptions.AddPool("bulk", pool => pool.Handle("Orders.Commands.ImportBulk"));
 
         // Act — verify the pool queue name matches what the topology manager would create
-        var poolQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "bulk", 80);
+        var poolQueueName = AmazonSqsTopologyManager.PoolQueueName(conduitOptions, "bulk");
 
         // Assert — pool queue includes app name (per-app) and pool name
         poolQueueName.Should().Be("conduit-orders-bulk");
@@ -274,7 +276,7 @@ public class TopologyManagerShould
             }
         }
 
-        var defaultQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 80);
+        var defaultQueueName = AmazonSqsTopologyManager.AppQueueName(conduitOptions);
         var isPoolAssigned = poolAssignedTypes.Contains("Orders.Commands.CreateOrder");
 
         // Assert — unassigned type falls through to default queue

@@ -23,15 +23,19 @@ public class AmazonSqsTopologyReaperShould
             TopologyMode = TopologyMode.Developer,
             TopologyPrefix = "john.doe",
         };
-        var queueName = TopologyNaming.CreateAppResourceName(options, 80);
-        var topicName = TopologyNaming.CreateSharedResourceName(options, 256);
+        var queueName = AmazonSqsTopologyManager.AppQueueName(options);
+        var topicName = AmazonSqsTopologyManager.TopicName(options);
+        var deadLetterQueueName = AmazonSqsTopologyManager.DeadLetterQueueName(queueName);
+        var replyQueueName = AmazonSqsTopologyManager.ReplyQueueName(options, Guid.NewGuid().ToString("N"));
 
         // Act
         var resourcePrefix = AmazonSqsTopologyReaper.ResourceNamePrefix("john.doe");
 
-        // Assert
+        // Assert — the queues, their dead-letter queues and each instance's reply queue alike
         resourcePrefix.Should().Be("john-doe");
         queueName.Should().StartWith(resourcePrefix);
         topicName.Should().StartWith(resourcePrefix);
+        deadLetterQueueName.Should().StartWith(resourcePrefix);
+        replyQueueName.Should().StartWith(resourcePrefix);
     }
 }

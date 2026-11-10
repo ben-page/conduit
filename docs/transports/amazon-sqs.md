@@ -9,6 +9,7 @@
 - [Topology](#topology)
   - [Filter policies and raw message delivery](#filter-policies-and-raw-message-delivery)
   - [Name length](#name-length)
+- [Permissions](#permissions)
 - [Developer and test modes](#developer-and-test-modes)
 - [Request/response](#requestresponse)
 - [Failed messages](#failed-messages)
@@ -170,6 +171,37 @@ SQS queue names are capped at **80 characters**. An application or pool queue is
 
 Every resource name is also sanitized to `[A-Za-z0-9_-]` (the only characters SQS queue and SNS topic names accept), any other character becoming `-`. The default `ApplicationName` is the entry assembly's name, so an application named `Conduit.Sample.Orders` gets the queue `conduit-Conduit-Sample-Orders`, not `conduit-Conduit.Sample.Orders`. `AmazonSqsTopologyReaper.ReapByPrefixAsync` sanitizes the prefix it is given the same way, so a `john.doe` prefix reaps the `john-doe-…` resources.
 
+## Permissions
+
+The identity the transport runs as needs these actions, each one a call the transport makes:
+
+| Action | On | When |
+|---|---|---|
+| `sns:CreateTopic` | the topic | Every start: creates the topic, or returns the existing one |
+| `sns:Subscribe` | the topic | Every start, for each application or pool queue that takes a type (never on a `ProducerOnly` host) |
+| `sns:SetSubscriptionAttributes` | those subscriptions | Every start, after `Subscribe`: the filter policy and raw message delivery |
+| `sns:Publish` | the topic | Every command, query and event sent |
+| `sqs:CreateQueue` | the application's queues | Every start: the application, pool, dead-letter and reply queues |
+| `sqs:GetQueueUrl` | the application's queues | A start that finds a queue with other attributes than it asks for (a changed setting) |
+| `sqs:SetQueueAttributes` | the application's queues | Every start: visibility timeout, redrive policy, and the access policy that lets the topic send to the application and pool queues |
+| `sqs:GetQueueAttributes` | the application's queues | Every start: the ARNs of the application, pool and dead-letter queues |
+| `sqs:ReceiveMessage`, `sqs:DeleteMessage` | the application, pool and reply queues | Polling |
+| `sqs:ChangeMessageVisibility` | the application and pool queues | Stop: handing received messages back at once (the batch call is authorized by this action) |
+| `sqs:DeleteQueue` | the instance's reply queue | Stop |
+| `sqs:SendMessage` | the reply queues of the applications that send it requests, and its own queue | A reply; a dead-letter replay through `IDeadLetters` |
+
+A `ProducerOnly` host needs only `sns:CreateTopic`, `sns:Publish`, and, on its own reply queue, `sqs:CreateQueue`, `sqs:GetQueueUrl`, `sqs:SetQueueAttributes`, `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:DeleteQueue`. [`ReapByPrefixAsync`](#developer-and-test-modes) needs `sqs:ListQueues`, `sqs:DeleteQueue`, `sns:ListTopics` and `sns:DeleteTopic`.
+
+Without one of the start-time actions the host fails to start: `sns:SetSubscriptionAttributes` is needed on every start, and `sqs:GetQueueUrl` on the first start after a queue setting changed. The stop-time ones degrade instead: without `sqs:DeleteQueue` each stop logs `ReplyQueueNotDeleted` and leaves the instance's reply queue behind, and without `sqs:ChangeMessageVisibility` each stop logs `MessagesNotMadeVisible` and the messages it hands back reappear only when their visibility timeout lapses. The transport sets the access policy of each application and pool queue on every start, replacing any other policy on that queue.
+
+Scope the grants by name prefix rather than by exact ARN: every reply queue carries a random instance id, so no policy can name it in advance.
+
+- **SQS**, the application's own queues: `arn:aws:sqs:{region}:{account}:{prefix-}{systemName}-{appName}*` covers its queue, its pools' queues, their dead-letter queues and every instance's reply queue.
+- **SQS**, replies it sends: `sqs:SendMessage` on `arn:aws:sqs:{region}:{account}:{prefix-}{systemName}-{requesterApp}-replies-*` for each application that sends it commands or queries.
+- **SNS**: `arn:aws:sns:{region}:{account}:{prefix-}{systemName}*`, where the trailing wildcard also covers the topic's subscriptions (`{topicArn}:{id}`), which `sns:SetSubscriptionAttributes` acts on.
+
+A [long name](#name-length) is cut and hashed after its first 67 characters (71 for a reply queue), so keep `{prefix-}{systemName}-{appName}` shorter than that for the prefix to match every queue.
+
 ## Developer and test modes
 
 `TopologyMode` on `ConduitOptions` controls resource naming:
@@ -204,7 +236,7 @@ When the generated mediator routes a command to an Amazon SQS endpoint:
 3. The handler runs and the reply is sent **directly to the sender's reply queue** with the matching correlation id, bypassing SNS.
 4. The sender matches the reply by correlation id and deserializes the `DispatchResult`.
 
-Each transport instance has a reply queue of its own, `{systemName}-{appName}-replies-{instanceId}`, created when it starts and deleted when it stops, so the reply reaches the instance that sent the request however many instances of the application run. A reply that arrives after its request timed out or was cancelled is deleted and logged at Debug (`LateReply`, EventId 111). An instance that ends without stopping (a crash, a kill) leaves its reply queue behind, empty: delete it in the AWS console, or, in Developer and Test mode, with [`ReapByPrefixAsync`](#developer-and-test-modes). Do not reap a prefix live instances use: it deletes their queues too.
+Each transport instance has a reply queue of its own, `{systemName}-{appName}-replies-{instanceId}`, created when it starts and deleted when it stops, so the reply reaches the instance that sent the request however many instances of the application run. A reply that arrives after its request timed out or was cancelled is deleted and logged at Debug (`LateReply`, EventId 111). An instance that ends without stopping (a crash, a kill) leaves its reply queue behind, holding any reply that arrives for it until SQS's retention period (4 days) expires the reply. In Developer and Test mode [`ReapByPrefixAsync`](#developer-and-test-modes) deletes such queues with the rest of the prefix. Production has no reaper: an operator deletes leftover reply queues by hand (in the AWS console or with the CLI), one by one. Reaping the `-replies-` prefix would delete the reply queues of the instances still running too.
 
 Replies time out after `ResponseTimeout` (default 60 seconds). `VisibilityTimeoutSeconds` must be at least `ResponseTimeout`, or a message could become visible again — and be redelivered to another consumer — while the original caller is still waiting for its reply. The transport validates this at startup.
 
@@ -221,14 +253,16 @@ SQS counts every delivery toward `MaxReceiveCount`, including one the transport 
 
 ## Stopping
 
-When the host stops, the transport follows the [shared stop sequence](index.md#stopping-a-host-with-work-in-flight). It stops polling the application and pool queues; a message it had received but not started, and one handed over after the drain began, is made visible again at once (`ChangeMessageVisibility` to 0) for another instance to take, rather than when its visibility timeout lapses. The reply queue is polled through the drain, since a handler being drained may await a reply, and is then deleted, within the host's shutdown deadline or, failing that, when the host disposes the transport; a deletion that still fails is logged as a Warning (`ReplyQueueNotDeleted`, EventId 112) and leaves the queue behind, empty.
+When the host stops, the transport follows the [shared stop sequence](index.md#stopping-a-host-with-work-in-flight). It stops polling the application and pool queues; a message it had received but not started, and one handed over after the drain began, is made visible again at once (`ChangeMessageVisibility` to 0) for another instance to take, rather than when its visibility timeout lapses. The reply queue is polled through the drain, since a handler being drained may await a reply, and is then deleted, within the host's shutdown deadline or, failing that, when the host disposes the transport; a deletion that still fails is logged as a Warning (`ReplyQueueNotDeleted`, EventId 112) and leaves the queue behind, as a crash does (see [Request/response](#requestresponse)). Handing messages back is best effort too: what SQS does not take back at once is logged as a Warning with the count (`MessagesNotMadeVisible`, EventId 113) and reappears when its visibility timeout lapses.
 
 ## Auto-discovery
 
 The transport reads `ConduitTypeRegistry` — populated at compile time by the source generator — to learn which types this application handles:
 
-- `IEventListener<T>` — adds the event type to the per-app subscription's filter policy
-- `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — adds the type to the shared subscription's filter policy
+- `IEventListener<T>` — adds the event type to a filter policy
+- `ICommandHandler<T>`, `ICommandHandler<T,R>`, `IQueryHandler<T,R>` — adds the type to a filter policy
+
+The filter policy is that of the subscription of the queue that takes the type: the receiver pool's queue when a pool lists it, otherwise the application's queue. Each queue has one subscription (see [Topology](#topology)).
 
 A listener registered at runtime counts too: `AddJobs` (an event trigger's event), `AddAuditListener`
 (`AuditBatch`) and a `ConfigureConduitRegistrations` `HandleEvent` override activate their event in the

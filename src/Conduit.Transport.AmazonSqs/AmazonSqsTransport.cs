@@ -74,7 +74,12 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
     private static readonly Action<ILogger, string, Exception?> LogReplyQueueNotDeleted =
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(112, "ReplyQueueNotDeleted"),
-            "Could not delete reply queue '{QueueAddress}'; it stays behind, empty");
+            "Could not delete reply queue '{QueueAddress}'; it stays behind until deleted by hand");
+
+    private static readonly Action<ILogger, int, string, Exception?> LogMessagesNotMadeVisible =
+        LoggerMessage.Define<int, string>(LogLevel.Warning, new EventId(113, "MessagesNotMadeVisible"),
+            "Could not hand {Count} message(s) back to SQS queue '{QueueAddress}' at once; they reappear " +
+            "when their visibility timeout lapses");
 
     // How long disposal tries to delete a reply queue that stop did not
     private static readonly TimeSpan ReplyQueueDeleteTimeout = TimeSpan.FromSeconds(10);
@@ -568,7 +573,8 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
     /// <summary>
     /// Makes received messages visible again at once, for another instance to take. Best effort: one it
-    /// fails for reappears when its visibility timeout lapses.
+    /// fails for reappears when its visibility timeout lapses, and is logged as a Warning
+    /// (<c>MessagesNotMadeVisible</c>), whether the call failed or SQS refused some of its entries.
     /// </summary>
     private async Task MakeVisibleAsync(string queueAddress, IEnumerable<Message> messages)
     {
@@ -588,15 +594,20 @@ public sealed class AmazonSqsTransport : BrokerTransportBase<AmazonSqsInboundMes
 
         try
         {
-            await this.sqsClient.ChangeMessageVisibilityBatchAsync(
+            var response = await this.sqsClient.ChangeMessageVisibilityBatchAsync(
                 new ChangeMessageVisibilityBatchRequest { QueueUrl = queueAddress, Entries = entries },
                 CancellationToken.None);
+
+            if (response.Failed is { Count: > 0 } failed)
+            {
+                LogMessagesNotMadeVisible(this.Logger, failed.Count, queueAddress, null);
+            }
         }
 #pragma warning disable CA1031
-        catch (Exception)
+        catch (Exception exception)
 #pragma warning restore CA1031
         {
-            // Visible again when the visibility timeout lapses
+            LogMessagesNotMadeVisible(this.Logger, entries.Count, queueAddress, exception);
         }
     }
 

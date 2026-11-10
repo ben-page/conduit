@@ -1063,11 +1063,11 @@ All 4 broker transports (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ) shar
 - Reply via direct SQS send (bypasses SNS) to the requesting instance's own reply queue, `{system}-{app}-replies-{instanceId}`, deleted on stop
 - SQS queue name limit is 80 characters (app and pool queues 76, so `-dlq` fits) — `TopologyNaming` hash truncation activates frequently
 
-**Wire format:** SQS/SNS message attributes: `Type`, `MessageId`, `CausationId`, `ConversationId`, `ReplyQueueUrl`, `CorrelationId`.
+**Wire format:** SQS/SNS message attributes: `Type`, `MessageId`, `CausationId`, `ConversationId`, `ReplyQueueAddress`, `CorrelationId`.
 
 **Constraints:** Raw message delivery required on subscriptions (filter policies need it). Startup validates `RawMessageDelivery=true` and `VisibilityTimeoutSeconds >= ResponseTimeout`.
 
-**Topology modes:** Production = standard. Developer/Test = tagged resources with background cleanup.
+**Topology modes:** Production = unprefixed names. Developer/Test = names under the topology prefix. SNS and SQS have no auto-delete, so Developer/Test resources stay until reaped by prefix (`AmazonSqsTopologyReaper.ReapByPrefixAsync`, which the test projects run once per project).
 
 ## ActiveMQ Artemis Transport (`Conduit.Transport.ActiveMQ`)
 

@@ -139,8 +139,7 @@ internal sealed class AmazonSqsTopologyManager
     public async Task EnsureOutboundTopologyAsync(string replyQueueName, CancellationToken cancellationToken)
     {
         this.TopicArn = await this.CreateTopicAsync(cancellationToken);
-        this.ReplyQueueAddress = await this.CreateOrUpdateQueueAsync(
-            replyQueueName, this.ReplyQueueAttributes(), cancellationToken);
+        await this.CreateReplyQueueAsync(replyQueueName, cancellationToken);
     }
 
     /// <summary>
@@ -198,8 +197,7 @@ internal sealed class AmazonSqsTopologyManager
             queueAddresses[poolQueueName] = poolQueueAddress;
         }
 
-        this.ReplyQueueAddress = await this.CreateOrUpdateQueueAsync(
-            replyQueueName, this.ReplyQueueAttributes(), cancellationToken);
+        await this.CreateReplyQueueAsync(replyQueueName, cancellationToken);
 
         // 4. Let the topic send to each queue, then subscribe each queue that takes a type: one
         // subscription per queue, since SNS keys subscriptions by (topic, protocol, endpoint)
@@ -304,11 +302,22 @@ internal sealed class AmazonSqsTopologyManager
             cancellationToken);
     }
 
-    // The reply queue has no dead-letter queue: a reply is deleted on receipt, whether anything awaits it
-    private Dictionary<string, string> ReplyQueueAttributes() => new(StringComparer.Ordinal)
+    /// <summary>
+    /// Creates or updates the instance's reply queue, with no dead-letter queue (a reply is deleted on
+    /// receipt, whether anything awaits it). <see cref="ReplyQueueAddress"/> is set as soon as the queue
+    /// exists, before its attributes are: the transport deletes the queue by it on stop or disposal, also
+    /// after a start that failed at the next step.
+    /// </summary>
+    private async Task CreateReplyQueueAsync(string replyQueueName, CancellationToken cancellationToken)
     {
-        ["VisibilityTimeout"] = this.options.VisibilityTimeoutSeconds.ToString(CultureInfo.InvariantCulture),
-    };
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["VisibilityTimeout"] = this.options.VisibilityTimeoutSeconds.ToString(CultureInfo.InvariantCulture),
+        };
+
+        this.ReplyQueueAddress = await this.CreateOrFindQueueAsync(replyQueueName, attributes, cancellationToken);
+        await this.SetAttributesAsync(this.ReplyQueueAddress, attributes, cancellationToken);
+    }
 
     /// <summary>
     /// Creates the queue with <paramref name="attributes"/>, or finds it, then sets them. An existing queue
@@ -319,26 +328,36 @@ internal sealed class AmazonSqsTopologyManager
     private async Task<string> CreateOrUpdateQueueAsync(
         string queueName, Dictionary<string, string> attributes, CancellationToken cancellationToken)
     {
-        string queueAddress;
+        var queueAddress = await this.CreateOrFindQueueAsync(queueName, attributes, cancellationToken);
+        await this.SetAttributesAsync(queueAddress, attributes, cancellationToken);
+        return queueAddress;
+    }
+
+    // Creates the queue with these attributes, or, when it exists with other values, looks it up
+    private async Task<string> CreateOrFindQueueAsync(
+        string queueName, Dictionary<string, string> attributes, CancellationToken cancellationToken)
+    {
         try
         {
             var created = await this.sqsClient.CreateQueueAsync(
                 new CreateQueueRequest { QueueName = queueName, Attributes = attributes },
                 cancellationToken);
-            queueAddress = created.QueueUrl;
+            return created.QueueUrl;
         }
         catch (QueueNameExistsException)
         {
             var existing = await this.sqsClient.GetQueueUrlAsync(
                 new GetQueueUrlRequest { QueueName = queueName }, cancellationToken);
-            queueAddress = existing.QueueUrl;
+            return existing.QueueUrl;
         }
+    }
 
+    private async Task SetAttributesAsync(
+        string queueAddress, Dictionary<string, string> attributes, CancellationToken cancellationToken)
+    {
         await this.sqsClient.SetQueueAttributesAsync(
             new SetQueueAttributesRequest { QueueUrl = queueAddress, Attributes = attributes },
             cancellationToken);
-
-        return queueAddress;
     }
 
     private async Task<string> GetQueueArnAsync(

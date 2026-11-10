@@ -1,5 +1,10 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
+using Amazon.SQS.Model;
 using AwesomeAssertions;
+using Conduit.Configuration;
+using Conduit.Runtime;
 using Conduit.TestUtils;
 using Conduit.Transport.AmazonSqs.Tests.Support.Contracts;
 
@@ -89,6 +94,60 @@ public class SqsShutdownShould : SqsTestBase
 
         // The stopped instance never answered
         await reply.Awaiting(task => task).Should().ThrowExactlyAsync<TimeoutException>();
+    }
+
+    [TestMethod]
+    [Timeout(90_000)]
+    public async Task HandBackReceivedButUnstartedMessagesAtOnce()
+    {
+        // Arrange -- an instance that runs one handler at a time, under a visibility timeout far longer than
+        // the test, and five three-second commands sent straight to its queue: while the first runs, its
+        // poller holds the others it received, waiting for the slot
+        var handlerName = UniqueAppName("handler");
+        await using var firstHost = await CreateHostAsync(
+            handlerName,
+            configureOptions: options =>
+            {
+                options.DefaultConcurrency = 1;
+                options.VisibilityTimeoutSeconds = 60;
+            });
+        var prefix = firstHost.TopologyPrefix!;
+        var firstSpy = firstHost.GetRequiredService<SpyLog>();
+
+        using var sqsClient = CreateSqsClient();
+        var queueName = AmazonSqsTopologyManager.AppQueueName(firstHost.GetRequiredService<ConduitOptions>());
+        var queueUrl = (await sqsClient.GetQueueUrlAsync(queueName)).QueueUrl;
+        await sqsClient.SendMessageBatchAsync(new SendMessageBatchRequest
+        {
+            QueueUrl = queueUrl,
+            Entries = [.. Enumerable.Range(0, 5).Select(index => new SendMessageBatchRequestEntry
+            {
+                Id = index.ToString(CultureInfo.InvariantCulture),
+                MessageBody = JsonSerializer.Serialize(
+                    new ShutdownProbeCommand($"probe-{index}", DelayMs: 3000), ConduitRuntime.JsonOptions),
+                MessageAttributes = new Dictionary<string, MessageAttributeValue>
+                {
+                    ["Type"] = new() { DataType = "String", StringValue = typeof(ShutdownProbeCommand).FullName },
+                },
+            })],
+        });
+
+        await firstSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+        await Task.Delay(500);
+
+        // Act -- stop that instance mid-handler (the poller is waiting for the slot, not in a long poll),
+        // then start another instance of the application
+        await firstHost.DisposeAsync();
+        await using var secondHost = await CreateHostAsync(handlerName, prefix);
+
+        // Assert -- the other four reach the new instance within seconds, not when the 60-second visibility
+        // timeout lapses: the stopping instance made them visible again
+        var secondSpy = secondHost.GetRequiredService<SpyLog>();
+        await secondSpy.WaitForCountAsync(4, TimeSpan.FromSeconds(10));
+        firstSpy.Invocations.OfType<ShutdownProbeCommand>().Should().ContainSingle();
+        secondSpy.Invocations.OfType<ShutdownProbeCommand>().Select(command => command.Input).Should()
+            .OnlyHaveUniqueItems()
+            .And.NotContain(firstSpy.Invocations.OfType<ShutdownProbeCommand>().Single().Input);
     }
 
     private static void ShortVisibility(AmazonSqsOptions options)
