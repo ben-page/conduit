@@ -1,4 +1,4 @@
-﻿namespace Conduit.Durability.Outbox;
+namespace Conduit.Durability.Outbox;
 
 /// <summary>
 /// Status of an outbox entry.

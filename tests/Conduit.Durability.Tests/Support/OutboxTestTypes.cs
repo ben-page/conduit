@@ -1,4 +1,4 @@
-﻿using Conduit.Attributes;
+using Conduit.Attributes;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Handlers;
 using Conduit.Messages;

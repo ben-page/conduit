@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Tests.Support;

@@ -1,4 +1,4 @@
-﻿namespace Conduit.Durability.Outbox;
+namespace Conduit.Durability.Outbox;
 
 /// <summary>
 /// Represents a message stored in the outbox table for reliable delivery.

@@ -1,4 +1,4 @@
-﻿namespace Conduit.Messages;
+namespace Conduit.Messages;
 
 /// <summary>
 /// Marker interface for queries that return a <typeparamref name="TResult"/>.

@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Analysis;
 
 namespace Conduit.TypeGen.Tests.Unit;

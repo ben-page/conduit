@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Conduit.Middleware;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;

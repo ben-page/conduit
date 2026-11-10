@@ -1,4 +1,4 @@
-﻿using Conduit.Durability.Configuration;
+using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;

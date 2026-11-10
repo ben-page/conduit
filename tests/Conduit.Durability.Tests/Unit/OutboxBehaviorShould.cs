@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Configuration;
 using Conduit.Durability.Outbox;
 using Conduit.Persistence;

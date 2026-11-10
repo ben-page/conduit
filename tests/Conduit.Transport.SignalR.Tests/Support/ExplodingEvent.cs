@@ -1,4 +1,4 @@
-﻿using Conduit.Messages;
+using Conduit.Messages;
 
 namespace Conduit.Transport.SignalR.Tests.Support;
 

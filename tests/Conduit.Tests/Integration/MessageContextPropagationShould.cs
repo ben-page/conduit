@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Runtime;
 using Conduit.Generated;
 using Conduit.Tests.Support;

@@ -1,4 +1,4 @@
-﻿namespace Conduit.Durability.Persistence.Outbox;
+namespace Conduit.Durability.Persistence.Outbox;
 
 /// <summary>
 /// Lightweight result from claiming outbox entries by MessageId.

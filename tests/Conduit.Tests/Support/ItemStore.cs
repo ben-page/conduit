@@ -1,4 +1,4 @@
-﻿namespace Conduit.Tests.Support;
+namespace Conduit.Tests.Support;
 
 public class ItemStore
 {

@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using AwesomeAssertions;
 using Conduit.SourceGen.Tests.Support;
 using Microsoft.CodeAnalysis;

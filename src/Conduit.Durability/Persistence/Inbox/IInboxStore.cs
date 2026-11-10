@@ -1,4 +1,4 @@
-﻿namespace Conduit.Durability.Persistence.Inbox;
+namespace Conduit.Durability.Persistence.Inbox;
 
 /// <summary>
 /// Stores processed message IDs for deduplication.

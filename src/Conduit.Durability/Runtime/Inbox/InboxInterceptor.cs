@@ -1,4 +1,4 @@
-﻿using Conduit.Durability.Persistence.Inbox;
+using Conduit.Durability.Persistence.Inbox;
 using Conduit.Middleware;
 using Conduit.Runtime;
 

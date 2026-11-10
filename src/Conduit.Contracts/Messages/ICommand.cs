@@ -1,4 +1,4 @@
-﻿namespace Conduit.Messages;
+namespace Conduit.Messages;
 
 /// <summary>
 /// Marker interface for commands that produce no result.

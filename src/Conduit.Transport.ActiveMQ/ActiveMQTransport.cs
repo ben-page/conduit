@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using Amqp;
 using Amqp.Framing;
 using Conduit.Configuration;

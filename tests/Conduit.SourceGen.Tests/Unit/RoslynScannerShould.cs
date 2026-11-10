@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Analysis;
 using Conduit.Messages;
 using Microsoft.CodeAnalysis;

@@ -1,4 +1,4 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
 using Conduit.Durability.Runtime.Inbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
