@@ -264,9 +264,9 @@ from the call, naming the configuration key and the argument.
 | `UseAmazonSqs(Action<AmazonSqsOptions>? configure = null)` | `Conduit.NET.Transport.AmazonSqs` | `Region`, or `ServiceUri` for LocalStack; with neither, the AWS SDK's default region and credential chain |
 | `UseActiveMQ(string? connectionString = null, Action<ActiveMQOptions>? configure = null)` | `Conduit.NET.Transport.ActiveMQ` | `ConnectionString` |
 
-Each transport's options and their defaults are in its guide: [SignalR](transports/signalr.md),
-[HTTP](transports/http.md), [Azure Service Bus](transports/azure-service-bus.md), [RabbitMQ](transports/rabbitmq.md),
-[Amazon SQS](transports/amazon-sqs.md) and [ActiveMQ](transports/activemq.md).
+Each transport's options and their defaults are in its guide: [SignalR](transports/signalr.md#options-and-configuration-keys),
+[HTTP](transports/http.md#options-and-configuration-keys), [Azure Service Bus](transports/azure-service-bus.md#options-and-configuration-keys), [RabbitMQ](transports/rabbitmq.md#options-and-configuration-keys),
+[Amazon SQS](transports/amazon-sqs.md#options-and-configuration-keys) and [ActiveMQ](transports/activemq.md#options-and-configuration-keys).
 
 `UseTransport<TTransport>()`, `UseTransport<TTransport>(BrokerTransportOptions options)` and
 `UseTransport(IConduitTransport transport)` register a transport by hand, for a transport package's own `Use*` method
@@ -452,12 +452,12 @@ Each guide's *Options and configuration keys* section has the full table, with t
 
 | Transport | Keys under `Conduit:Endpoints:{name}` | Guide |
 |---|---|---|
-| RabbitMQ | `ConnectionString`, the shared keys | [RabbitMQ](transports/rabbitmq.md) |
-| ActiveMQ | `ConnectionString`, `Username`, `Password`, the shared keys | [ActiveMQ](transports/activemq.md) |
-| Azure Service Bus | `ConnectionString`, `AdminConnectionString`, the shared keys | [Azure Service Bus](transports/azure-service-bus.md) |
-| Amazon SQS | `Region`, `ServiceUri`, `Credentials:AccessKey`, `Credentials:SecretKey`, `Credentials:SessionToken`, `VisibilityTimeoutSeconds`, `MaxReceiveCount`, `RawMessageDelivery`, the shared keys | [Amazon SQS](transports/amazon-sqs.md) |
-| SignalR (client mode) | `HubUri` | [SignalR](transports/signalr.md) |
-| HTTP (client) | `BaseAddress`, `BasePath` | [HTTP](transports/http.md) |
+| RabbitMQ | `ConnectionString`, the shared keys | [RabbitMQ](transports/rabbitmq.md#options-and-configuration-keys) |
+| ActiveMQ | `ConnectionString`, `Username`, `Password`, the shared keys | [ActiveMQ](transports/activemq.md#options-and-configuration-keys) |
+| Azure Service Bus | `ConnectionString`, `AdminConnectionString`, the shared keys | [Azure Service Bus](transports/azure-service-bus.md#options-and-configuration-keys) |
+| Amazon SQS | `Region`, `ServiceUri`, `Credentials:AccessKey`, `Credentials:SecretKey`, `Credentials:SessionToken`, `VisibilityTimeoutSeconds`, `MaxReceiveCount`, `RawMessageDelivery`, the shared keys | [Amazon SQS](transports/amazon-sqs.md#options-and-configuration-keys) |
+| SignalR (client mode) | `HubUri` | [SignalR](transports/signalr.md#options-and-configuration-keys) |
+| HTTP (client) | `BaseAddress`, `BasePath` | [HTTP](transports/http.md#options-and-configuration-keys) |
 
 Amazon SQS maps two keys by hand, because the binder cannot build their types. `Region` is an AWS region's system name
 (`eu-west-1`), read with `RegionEndpoint.GetBySystemName`, which does not check it against a list: a misspelled region
