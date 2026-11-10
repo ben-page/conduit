@@ -28,7 +28,7 @@ public sealed class StoreConnectionDisposalShould
         await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);
         await store.MarkSentAsync(1, CancellationToken.None);
-        await store.IncrementRetryAsync(1, CancellationToken.None);
+        await store.IncrementRetryAsync(1, TimeSpan.Zero, CancellationToken.None);
         await store.MarkFailedAsync(1, CancellationToken.None);
         await store.DeleteCompletedAsync(TimeSpan.Zero, CancellationToken.None);
 

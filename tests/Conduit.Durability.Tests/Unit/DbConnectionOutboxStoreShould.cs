@@ -101,8 +101,8 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
     [TestMethod]
     public async Task SaveAndClaimWithoutThePropertiesColumnWhenNoneAreListed()
     {
-        // Arrange — a table created before the Properties column existed, and a host that lists no properties:
-        // the store must neither write nor read the column, so that host behaves exactly as before.
+        // Arrange — a table without the Properties column, and a host that lists no properties: the store must
+        // neither write nor read the column, so that host behaves exactly as before.
         await using var legacyFactory = new StubConnectionFactory();
         using (var create = legacyFactory.Connection.CreateCommand())
         {
@@ -118,6 +118,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
                     CreatedAt TEXT NOT NULL,
                     SentAt TEXT,
                     RetryCount INTEGER NOT NULL DEFAULT 0,
+                    NextAttemptAt TEXT NOT NULL,
                     ClaimedAt TEXT,
                     ClaimToken TEXT)
                 """;
@@ -270,8 +271,8 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         var entryId = claimed[0].Id;
 
-        // Act
-        await this.store.IncrementRetryAsync(entryId, CancellationToken.None);
+        // Act — no delay, so the entry is due again at once
+        await this.store.IncrementRetryAsync(entryId, TimeSpan.Zero, CancellationToken.None);
 
         // Assert — IncrementRetry releases the claim back to Pending, so the entry is claimable
         // again; re-claiming it transitions it to Claiming with the incremented retry count.
@@ -279,6 +280,46 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         claimedAgain.Should().HaveCount(1);
         claimedAgain[0].RetryCount.Should().Be(1);
         claimedAgain[0].Status.Should().Be(OutboxEntryStatus.Claiming);
+    }
+
+    [TestMethod]
+    public async Task NotClaimARowBeforeItsNextAttempt()
+    {
+        // Arrange — two entries whose sends failed: one is due again now, the other only in an hour
+        await this.connectionFactory.BeginTransactionAsync();
+        var transaction = this.connectionFactory.GetCurrentTransaction()!;
+        await this.store.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = "msg-due",
+                    ConversationId = "conv-1",
+                    Type = "Orders.Commands.CreateOrder",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+                new OutboxEntry
+                {
+                    MessageId = "msg-later",
+                    ConversationId = "conv-1",
+                    Type = "Orders.Commands.CreateOrder",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            transaction,
+            CancellationToken.None);
+        await this.connectionFactory.CommitAsync();
+
+        var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        await this.store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "msg-due").Id, TimeSpan.Zero, CancellationToken.None);
+        await this.store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "msg-later").Id, TimeSpan.FromHours(1), CancellationToken.None);
+
+        // Act
+        var reclaimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        reclaimed.Should().ContainSingle().Which.MessageId.Should().Be("msg-due");
     }
 
     [TestMethod]
@@ -391,7 +432,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         await factory.CommitAsync();
 
         var relayed = await store.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
-        await store.IncrementRetryAsync(relayed[0].Id, CancellationToken.None);
+        await store.IncrementRetryAsync(relayed[0].Id, TimeSpan.Zero, CancellationToken.None);
 
         // Act
         var claimed = await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);

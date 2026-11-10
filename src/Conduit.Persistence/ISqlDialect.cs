@@ -111,10 +111,11 @@ public interface ISqlDialect
     /// (<c>@PendingStatus</c>) — or stale claiming rows (<c>@ClaimingStatus</c>) whose claimed-at is
     /// at or before <c>@ClaimCutoff</c> — to the claiming status (<c>@ClaimingStatus</c>), stamping
     /// <c>@ClaimedAt</c> and a per-worker <c>@ClaimToken</c>. Only rows with created-at at or before
-    /// <c>@GraceCutoff</c> are eligible, limited to <c>@BatchSize</c>. The claimed rows are read back
+    /// <c>@GraceCutoff</c> and next-attempt-at (<see cref="IClaimableTableSchema.NextAttemptAtColumn"/>) at or
+    /// before <c>@Now</c> are eligible, limited to <c>@BatchSize</c>. The claimed rows are read back
     /// separately using the same <c>@ClaimToken</c>. The status values are bound parameters supplied
     /// by the caller, so the dialect carries no module-specific status knowledge.
-    /// Parameters: <c>@ClaimToken</c>, <c>@ClaimedAt</c>, <c>@GraceCutoff</c>, <c>@ClaimCutoff</c>,
+    /// Parameters: <c>@ClaimToken</c>, <c>@ClaimedAt</c>, <c>@GraceCutoff</c>, <c>@Now</c>, <c>@ClaimCutoff</c>,
     /// <c>@BatchSize</c>, <c>@PendingStatus</c>, <c>@ClaimingStatus</c>. Identifiers are substituted
     /// from <paramref name="schema"/>.
     /// </summary>

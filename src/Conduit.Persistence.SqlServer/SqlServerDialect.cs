@@ -120,6 +120,7 @@ public sealed class SqlServerDialect : ISqlDialect
                 SELECT TOP (@BatchSize) {1} FROM {0} WITH (ROWLOCK, UPDLOCK, READPAST)
                 WHERE ({2} = @PendingStatus OR ({2} = @ClaimingStatus AND {4} <= @ClaimCutoff))
                   AND {3} <= @GraceCutoff
+                  AND {6} <= @Now
                 ORDER BY {1}
             )
             """,
@@ -128,7 +129,8 @@ public sealed class SqlServerDialect : ISqlDialect
             schema.StatusColumn,
             schema.CreatedAtColumn,
             schema.ClaimedAtColumn,
-            schema.ClaimTokenColumn);
+            schema.ClaimTokenColumn,
+            schema.NextAttemptAtColumn);
     }
 
     /// <inheritdoc/>

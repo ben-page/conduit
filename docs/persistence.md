@@ -60,6 +60,23 @@ Each feature creates its tables on startup if they are absent:
 
 Three of the five can opt out if you manage schema through migrations — `AddOutbox(o => o.AutoCreateTable = false)`, `AddDeadLetterQueue(dlq => dlq.AutoCreateTable = false)`, and `AddJobs(jobs => jobs.AutoCreateTable = false)`. The inbox and the audit trail have no such flag and always create their table.
 
+### The outbox table
+
+A migration that creates `conduit_outbox` itself needs these columns (timestamps are ISO-8601 text, as everywhere):
+
+| Column | Holds |
+|---|---|
+| `Id` | Auto-increment primary key; the relay claims in its order |
+| `MessageId`, `ConversationId`, `CausationId` | The entry's message context (`CausationId` nullable) |
+| `Type`, `Payload` | The message's full type name and its JSON body |
+| `Status` | `0` Pending, `1` Sent, `2` Failed, `3` Claiming |
+| `CreatedAt` | When the entry was written; the grace period and the retention cleanup count from it |
+| `SentAt` | When it was sent (nullable) |
+| `RetryCount` | How many of its attempts failed and were retried |
+| `NextAttemptAt` | When it is next due: its `CreatedAt` when written, moved out by each failed send's [backoff](outbox.md#backoff), reset to now by a [retry](outbox.md#retrying-failed-entries) |
+| `ClaimedAt`, `ClaimToken` | The claim of the worker delivering it (nullable) |
+| `Properties` | The [dispatch properties](outbox.md#carrying-dispatch-properties) it carries (nullable; read and written only by a host that lists some) |
+
 ## The outbox needs a transaction-aware factory
 
 The connection factory supplied by an engine package is **non-transactional** — it opens fresh connections and cannot see your handler's ambient transaction. That is fine for the inbox, dead-letter queue, audit trail, and jobs, but the [transactional outbox](outbox.md) must write its entry in the *same* transaction as your business data. Enabling `AddOutbox()` against the built-in factory **fails fast at startup**; supply your own transaction-aware `IConduitConnectionFactory` as shown in the [outbox guide](outbox.md#providing-a-transaction).

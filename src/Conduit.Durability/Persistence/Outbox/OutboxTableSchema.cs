@@ -31,6 +31,9 @@ public sealed class OutboxTableSchema : IClaimableTableSchema
     public string CreatedAtColumn => "CreatedAt";
 
     /// <inheritdoc/>
+    public string NextAttemptAtColumn => "NextAttemptAt";
+
+    /// <inheritdoc/>
     public string ClaimedAtColumn => "ClaimedAt";
 
     /// <inheritdoc/>

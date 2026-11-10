@@ -11,6 +11,8 @@ namespace Conduit.Persistence;
 /// <see cref="CreatedAtColumn"/> is the claim's <b>eligibility</b> column, compared against
 /// <c>@GraceCutoff</c> — it is not required to mean "created at". The jobs ledger maps it to the
 /// run's due time, which is what turns "claim pending entries" into "claim jobs that are due".
+/// <see cref="NextAttemptAtColumn"/> is compared against <c>@Now</c> in the same claim, so a row whose
+/// last attempt failed waits out its backoff.
 /// </remarks>
 public interface IClaimableTableSchema
 {
@@ -31,6 +33,14 @@ public interface IClaimableTableSchema
     /// the entry's created-at; the jobs ledger maps it to the run's due time.
     /// </summary>
     public string CreatedAtColumn { get; }
+
+    /// <summary>
+    /// The column holding when the row is next due, compared against <c>@Now</c> by
+    /// <see cref="ISqlDialect.BuildClaimPendingSql"/>: a row is not claimed before it. The outbox maps it to the
+    /// entry's next attempt, which a failed send moves later; the jobs ledger maps it to the run's due time, as it
+    /// does <see cref="CreatedAtColumn"/>, since a job's retry moves that time instead.
+    /// </summary>
+    public string NextAttemptAtColumn { get; }
 
     /// <summary>The claimed-at timestamp column, which a stale claim is detected from.</summary>
     public string ClaimedAtColumn { get; }

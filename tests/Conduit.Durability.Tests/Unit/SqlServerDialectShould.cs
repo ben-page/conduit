@@ -90,6 +90,7 @@ public class SqlServerDialectShould
                 SELECT TOP (@BatchSize) Id FROM conduit_outbox WITH (ROWLOCK, UPDLOCK, READPAST)
                 WHERE (Status = @PendingStatus OR (Status = @ClaimingStatus AND ClaimedAt <= @ClaimCutoff))
                   AND CreatedAt <= @GraceCutoff
+                  AND NextAttemptAt <= @Now
                 ORDER BY Id
             )
             """);

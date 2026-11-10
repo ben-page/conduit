@@ -210,6 +210,7 @@ public sealed class DbJobStore : DbStoreBase, IJobStore
                 DbParameterHelper.Add(command, "@ClaimToken", claimToken);
                 DbParameterHelper.Add(command, "@ClaimedAt", FormatTimestamp(now));
                 DbParameterHelper.Add(command, "@GraceCutoff", FormatTimestamp(now));
+                DbParameterHelper.Add(command, "@Now", FormatTimestamp(now));
                 DbParameterHelper.Add(command, "@ClaimCutoff", FormatTimestamp(now - this.options.Value.ClaimTimeout));
                 DbParameterHelper.Add(command, "@BatchSize", batchSize);
                 DbParameterHelper.Add(command, "@PendingStatus", (int)JobRunStatus.Pending);

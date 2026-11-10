@@ -105,6 +105,7 @@ public sealed class PostgresDialect : ISqlDialect
                 SELECT {1} FROM {0}
                 WHERE ({2} = @PendingStatus OR ({2} = @ClaimingStatus AND {4} <= @ClaimCutoff))
                   AND {3} <= @GraceCutoff
+                  AND {6} <= @Now
                 ORDER BY {1}
                 LIMIT @BatchSize
                 FOR UPDATE SKIP LOCKED
@@ -115,7 +116,8 @@ public sealed class PostgresDialect : ISqlDialect
             schema.StatusColumn,
             schema.CreatedAtColumn,
             schema.ClaimedAtColumn,
-            schema.ClaimTokenColumn);
+            schema.ClaimTokenColumn,
+            schema.NextAttemptAtColumn);
     }
 
     /// <inheritdoc/>

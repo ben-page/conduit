@@ -7,6 +7,7 @@ using Conduit.Durability.DeadLetterQueue;
 using Conduit.Durability.Persistence.DeadLetterQueue;
 using Conduit.Durability.Persistence.Inbox;
 using Conduit.Durability.Persistence.Outbox;
+using Conduit.Durability.Runtime.Outbox;
 using Conduit.Jobs;
 using Conduit.Jobs.Configuration;
 using Conduit.Jobs.Persistence;
@@ -264,6 +265,76 @@ public abstract class PersistenceEngineTestBase
 
         // Assert
         recovered.Should().ContainSingle(e => e.MessageId == "stale");
+    }
+
+    [TestMethod]
+    public async Task NotClaimARowBeforeItsNextAttempt()
+    {
+        // Arrange — two entries whose sends failed: one is due again now, the other only in an hour
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbConnectionOutboxStore(factory, this.Dialect);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+
+        var createdAt = DateTime.UtcNow.AddMinutes(-1);
+        await SaveEntriesAsync(factory, this.Dialect, new[] { NewEntry("due", createdAt), NewEntry("later", createdAt) });
+        var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        await store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "due").Id, TimeSpan.Zero, CancellationToken.None);
+        await store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "later").Id, TimeSpan.FromHours(1), CancellationToken.None);
+
+        // Act
+        var reclaimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        reclaimed.Should().ContainSingle().Which.MessageId.Should().Be("due");
+    }
+
+    [TestMethod]
+    public async Task RetryAFailedEntry()
+    {
+        // Arrange — three entries whose retries ran out, each last pushed an hour out, beside one still pending
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbConnectionOutboxStore(factory, this.Dialect);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var outbox = new OutboxOperations(store);
+
+        var createdAt = DateTime.UtcNow.AddMinutes(-1);
+        await SaveEntriesAsync(factory, this.Dialect, new[]
+        {
+            NewEntry("placed-1", createdAt, "Test.Placed"),
+            NewEntry("shipped", createdAt, "Test.Shipped"),
+            NewEntry("placed-2", createdAt, "Test.Placed"),
+        });
+        var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        foreach (var entry in claimed)
+        {
+            await store.IncrementRetryAsync(entry.Id, TimeSpan.FromHours(1), CancellationToken.None);
+            await store.MarkFailedAsync(entry.Id, CancellationToken.None);
+        }
+
+        await SaveEntriesAsync(factory, this.Dialect, new[] { NewEntry("pending", createdAt) });
+        var shippedId = claimed.Single(e => e.MessageId == "shipped").Id;
+
+        // Act — find them (no type filter, paged), then retry one by id and the rest by type
+        var firstPage = await outbox.QueryFailedAsync(new FailedOutboxFilter { PageSize = 2 }, CancellationToken.None);
+        var secondPage = await outbox.QueryFailedAsync(
+            new FailedOutboxFilter { PageSize = 2, PageToken = firstPage.NextPageToken },
+            CancellationToken.None);
+        var retriedShipped = await outbox.RetryFailedAsync(shippedId, CancellationToken.None);
+        var retriedPlaced = await outbox.RetryFailedAsync("Test.Placed", CancellationToken.None);
+        var retriedAgain = await outbox.RetryFailedAsync(shippedId, CancellationToken.None);
+
+        // Assert
+        firstPage.TotalCount.Should().Be(3);
+        firstPage.Entries.Select(e => e.MessageId).Should().Equal("placed-1", "shipped");
+        secondPage.Entries.Select(e => e.MessageId).Should().Equal("placed-2");
+        secondPage.NextPageToken.Should().BeNull();
+        retriedShipped.Should().BeTrue();
+        retriedPlaced.Should().Be(2);
+        retriedAgain.Should().BeFalse("it is pending now, not failed");
+        var reclaimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        reclaimed.Select(e => e.MessageId).Should().BeEquivalentTo("placed-1", "shipped", "placed-2", "pending");
+        reclaimed.Should().AllSatisfy(e => e.RetryCount.Should().Be(0));
+        (await outbox.QueryFailedAsync(new FailedOutboxFilter(), CancellationToken.None)).Entries.Should().BeEmpty();
     }
 
     // 3) Inbox dedup ----------------------------------------------------------------------------
@@ -964,11 +1035,11 @@ public abstract class PersistenceEngineTestBase
 
     // Helpers -----------------------------------------------------------------------------------
 
-    private static OutboxEntry NewEntry(string messageId, DateTime createdAt) => new()
+    private static OutboxEntry NewEntry(string messageId, DateTime createdAt, string type = "Test.Event") => new()
     {
         MessageId = messageId,
         ConversationId = "conv-1",
-        Type = "Test.Event",
+        Type = type,
         Payload = "{}",
         CreatedAt = createdAt,
     };

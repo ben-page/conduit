@@ -3,6 +3,8 @@ using Conduit.Middleware;
 using Conduit.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Persistence;
 
@@ -200,6 +202,7 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 
         using var flushScope = scopeFactory.CreateScope();
         var store = flushScope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        var outboxOptions = flushScope.ServiceProvider.GetService<IOptions<OutboxOptions>>()?.Value ?? new OutboxOptions();
 
         var claimed = await store.ClaimByMessageIdsAsync(messageIds, cancellationToken);
         if (claimed.Count == 0)
@@ -266,7 +269,12 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
 #pragma warning restore CA1031
                 {
                     LogFlushSendFailed(logger, entry.Id, written.Envelope.Type, exception);
-                    await store.IncrementRetryAsync(entry.Id, cancellationToken);
+
+                    // A by-id claim takes only a never-attempted entry, so this failure is its first.
+                    await store.IncrementRetryAsync(
+                        entry.Id,
+                        OutboxBackoff.Delay(outboxOptions, failedAttempts: 1),
+                        cancellationToken);
                 }
             }
         }

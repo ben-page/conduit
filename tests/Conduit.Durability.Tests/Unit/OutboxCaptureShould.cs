@@ -1,5 +1,6 @@
 ﻿using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Durability.Configuration;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
@@ -8,6 +9,7 @@ using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using System.Data;
 using System.Data.Common;
 using System.Text.Json;
@@ -210,9 +212,37 @@ public class OutboxCaptureShould
         await OutboxCapture.ClaimAndDeliverAsync(
             CreateScopeFactory(store), CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
 
-        // Assert
+        // Assert -- with no options registered, the default first backoff step
         store.MarkedSent.Should().BeEmpty();
         store.RetriesIncremented.Should().BeEquivalentTo([10L]);
+        store.RetryDelays.Should().Equal(TimeSpan.FromSeconds(5));
+    }
+
+    [TestMethod]
+    public async Task ClaimAndDeliverAsyncBackOffAFailedEntryByTheInitialBackoff()
+    {
+        // Arrange -- a flush is an entry's first attempt, so its failure waits the first backoff step
+        var store = new StubOutboxStore();
+        var services = new ServiceCollection();
+        services.AddSingleton<IOutboxStore>(store);
+        services.AddSingleton(Options.Create(new OutboxOptions { InitialBackoff = TimeSpan.FromSeconds(7) }));
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var messages = new List<WrittenOutboxMessage>
+        {
+            new("msg-1", "conv-1", null, envelope),
+        };
+        store.ClaimedEntries =
+        [
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+        ];
+
+        // Act
+        await OutboxCapture.ClaimAndDeliverAsync(
+            scopeFactory, CreateDispatcher(new ThrowingTransport()), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
+
+        // Assert
+        store.RetryDelays.Should().Equal(TimeSpan.FromSeconds(7));
     }
 
     [TestMethod]

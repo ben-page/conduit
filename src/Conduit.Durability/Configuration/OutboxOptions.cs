@@ -16,6 +16,17 @@ public sealed class OutboxOptions
     public int BatchSize { get; set; } = 100;
     /// <summary>Maximum relay attempts before marking failed. Default: 10.</summary>
     public int MaxRetries { get; set; } = 10;
+
+    /// <summary>
+    /// How long an entry waits for its next attempt after its first failed send. Each failed attempt after it
+    /// doubles the wait, up to <see cref="MaxBackoff"/>, so a broker that is down for minutes does not use up
+    /// <see cref="MaxRetries"/> in seconds. Default: 5 seconds.
+    /// </summary>
+    public TimeSpan InitialBackoff { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The longest an entry waits between two attempts (see <see cref="InitialBackoff"/>). Default: 5 minutes.</summary>
+    public TimeSpan MaxBackoff { get; set; } = TimeSpan.FromMinutes(5);
+
     /// <summary>Whether to auto-create the outbox table on startup. Default: true.</summary>
     public bool AutoCreateTable { get; set; } = true;
 
@@ -57,11 +68,25 @@ public sealed class OutboxOptions
     public IDictionary<string, Type> PersistedProperties { get; } =
         new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type.</summary>
-    /// <exception cref="OptionsValidationException">An entry is invalid; each failure names its key.</exception>
+    /// <summary>
+    /// Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type, a negative
+    /// <see cref="InitialBackoff"/>, and a <see cref="MaxBackoff"/> below it.
+    /// </summary>
+    /// <exception cref="OptionsValidationException">An option is invalid; each failure names it.</exception>
     internal void Validate()
     {
         var failures = new List<string>();
+        if (this.InitialBackoff < TimeSpan.Zero)
+        {
+            failures.Add($"OutboxOptions.InitialBackoff is {this.InitialBackoff}; it cannot be negative.");
+        }
+
+        if (this.MaxBackoff < this.InitialBackoff)
+        {
+            failures.Add(
+                $"OutboxOptions.MaxBackoff is {this.MaxBackoff}, below OutboxOptions.InitialBackoff ({this.InitialBackoff}).");
+        }
+
         foreach (var (key, type) in this.PersistedProperties)
         {
             if (string.IsNullOrWhiteSpace(key))

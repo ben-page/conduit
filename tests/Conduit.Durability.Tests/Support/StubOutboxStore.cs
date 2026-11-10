@@ -8,6 +8,7 @@ public class StubOutboxStore : IOutboxStore
     public List<OutboxEntry> SavedEntries { get; } = [];
     public List<long> MarkedSent { get; } = [];
     public List<long> RetriesIncremented { get; } = [];
+    public List<TimeSpan> RetryDelays { get; } = [];
     public List<long> MarkedFailed { get; } = [];
     public List<TimeSpan> DeletedRetentions { get; } = [];
 
@@ -26,9 +27,10 @@ public class StubOutboxStore : IOutboxStore
         return Task.CompletedTask;
     }
 
-    public virtual Task IncrementRetryAsync(long entryId, CancellationToken cancellationToken)
+    public virtual Task IncrementRetryAsync(long entryId, TimeSpan retryDelay, CancellationToken cancellationToken)
     {
         this.RetriesIncremented.Add(entryId);
+        this.RetryDelays.Add(retryDelay);
         return Task.CompletedTask;
     }
 
@@ -37,6 +39,15 @@ public class StubOutboxStore : IOutboxStore
         this.MarkedFailed.Add(entryId);
         return Task.CompletedTask;
     }
+
+    public virtual Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)
+        => Task.FromResult(new FailedOutboxPage { Entries = [], NextPageToken = null, TotalCount = 0 });
+
+    public virtual Task<bool> RetryFailedAsync(long entryId, CancellationToken cancellationToken)
+        => Task.FromResult(false);
+
+    public virtual Task<int> RetryFailedAsync(string messageType, CancellationToken cancellationToken)
+        => Task.FromResult(0);
 
     public virtual Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
     {

@@ -97,6 +97,7 @@ public class SqliteDialectShould
                 SELECT Id FROM conduit_outbox
                 WHERE (Status = @PendingStatus OR (Status = @ClaimingStatus AND ClaimedAt <= @ClaimCutoff))
                   AND CreatedAt <= @GraceCutoff
+                  AND NextAttemptAt <= @Now
                 ORDER BY Id
                 LIMIT @BatchSize
             )

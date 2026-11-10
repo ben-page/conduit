@@ -218,6 +218,59 @@ public class OutboxRelayShould
     }
 
     [TestMethod]
+    public async Task BackOffExponentiallyAfterAFailedSend()
+    {
+        // Arrange -- one failing entry per number of earlier failed attempts, under the default backoff:
+        // 5 seconds after the first failure, doubling with each one after it, never more than 5 minutes
+        int[] earlierFailures = [0, 1, 2, 3, 6, 9];
+        var entries = earlierFailures
+            .Select((retryCount, index) => MakeEntry(id: index + 1, type: "Orders.Events.OrderCreated", retryCount: retryCount))
+            .ToList();
+        var store = new CapturingStubOutboxStore(entries);
+        var transport = new ThrowingTransport(new InvalidOperationException("broker down"));
+        var relay = BuildRelay(store, CreateDispatcher(transport), new OutboxOptions { MaxRetries = 20 });
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert
+        store.RetryDelays.Should().Equal(
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(20),
+            TimeSpan.FromSeconds(40),
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromMinutes(5));
+    }
+
+    [TestMethod]
+    public async Task BackOffWithinTheConfiguredBounds()
+    {
+        // Arrange
+        int[] earlierFailures = [0, 1, 2];
+        var entries = earlierFailures
+            .Select((retryCount, index) => MakeEntry(id: index + 1, type: "Orders.Events.OrderCreated", retryCount: retryCount))
+            .ToList();
+        var store = new CapturingStubOutboxStore(entries);
+        var transport = new ThrowingTransport(new InvalidOperationException("broker down"));
+        var relay = BuildRelay(
+            store,
+            CreateDispatcher(transport),
+            new OutboxOptions
+            {
+                MaxRetries = 20,
+                InitialBackoff = TimeSpan.FromSeconds(1),
+                MaxBackoff = TimeSpan.FromSeconds(3),
+            });
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert
+        store.RetryDelays.Should().Equal(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3));
+    }
+
+    [TestMethod]
     public async Task DoNothingWhenNoPendingEntries()
     {
         // Arrange

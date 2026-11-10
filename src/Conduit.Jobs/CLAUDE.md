@@ -89,7 +89,9 @@ reads as "this job is due", so `ISqlDialect.BuildClaimPendingSql` becomes the jo
 new per-engine SQL** — and the Postgres/MySQL `FOR UPDATE SKIP LOCKED` and SQL Server
 `ROWLOCK/UPDLOCK/READPAST` variants come along free — SQL Server's with its batch-level READ COMMITTED pin,
 so a jobs sweep on a pooled session left at Snapshot (SQL Server 2022, SqlClient 7.1.1) claims too. Do not add a literal `CreatedAt` column; the
-mapping is the whole trick.
+mapping is the whole trick. The claim's second cutoff, `NextAttemptAtColumn <= @Now` (the outbox's
+backoff), maps to **`RunAt`** too, and `ClaimDueAsync` binds `@Now` to the same instant as `@GraceCutoff`,
+so it agrees with the first: a job's retry already moves `RunAt` to its backoff time.
 
 `BuildInsertOrIgnoreSql`'s third argument is a **conflict target**, not necessarily the primary key.
 The runs table's PK is the auto-increment `Id` (claims order by it) while idempotent materialization

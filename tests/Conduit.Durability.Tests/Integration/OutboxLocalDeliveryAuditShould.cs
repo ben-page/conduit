@@ -164,7 +164,8 @@ public class OutboxLocalDeliveryAuditShould
         var store = new DbConnectionOutboxStore(connectionFactory, new SqliteDialect());
         await store.EnsureTableExistsAsync(CancellationToken.None);
 
-        // The relay's grace period is pushed out of reach so only the flush (and the hand-run relay) deliver.
+        // The relay's grace period is pushed out of reach so only the flush (and the hand-run relay) deliver, and a
+        // failed flush backs off for no time, so the hand-run relay finds its entry due.
         return TestWebHost.Start(builder =>
         {
             builder.Services.AddConduit(conduit =>
@@ -174,6 +175,7 @@ public class OutboxLocalDeliveryAuditShould
                 {
                     options.AutoCreateTable = false;
                     options.GracePeriod = TimeSpan.FromHours(1);
+                    options.InitialBackoff = TimeSpan.Zero;
                 }));
                 conduit.AddAudit(audit => audit.BatchSize = 1);
                 conduit.AddAuditListener(_ => { });

@@ -11,6 +11,7 @@
 - [Database dialects](#database-dialects)
 - [Custom stores](#custom-stores)
 - [Relay configuration](#relay-configuration)
+- [Retrying failed entries](#retrying-failed-entries)
 - [What gets captured](#what-gets-captured)
 - [The Immediate escape hatch](#the-immediate-escape-hatch)
 - [Publishing after the pipeline](#publishing-after-the-pipeline)
@@ -103,8 +104,9 @@ safety net) apply one per-entry delivery contract:
   ├── Local listeners first, from a fresh DI scope (redelivery-safe — see below)
   ├── Then the transport send
   ├── Marks the entry as sent on success
-  └── On failure: retry count increments and the claim releases for the next sweep
-      (the relay marks an entry Failed once MaxRetries is exhausted)
+  └── On failure: retry count increments and the claim releases, with the entry due again
+      only after a backoff that doubles with each failure (the relay marks an entry Failed
+      once MaxRetries is exhausted; IOutbox hands a Failed entry back)
 ```
 
 See [What gets captured](#what-gets-captured) for the full eligibility matrix and the
@@ -135,6 +137,7 @@ The `AddOutbox()` call registers:
 - `IOutboxPendingWriter` (scoped) — see [Publishing after the pipeline](#publishing-after-the-pipeline)
 - `OutboxBehavior<,>` as a pipeline behavior
 - `OutboxRelay` as a background service
+- `IOutbox` (scoped) — see [Retrying failed entries](#retrying-failed-entries)
 - `DbConnectionOutboxStore` with the chosen dialect
 
 ### Capture-only
@@ -181,7 +184,7 @@ Each `Use*` method registers the appropriate SQL dialect and connection factory.
 | `conduit.UsePostgres(connectionString)` | PostgreSQL | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 | `conduit.UseMySql(connectionString)` | MySQL 8.0+ | `FOR UPDATE SKIP LOCKED` in the claim subquery |
 
-The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`.
+The outbox table carries two columns supporting this: `ClaimedAt` and `ClaimToken`. A third, `NextAttemptAt`, holds when a row is next due: a new row's is its `CreatedAt`, and each failed send moves it out by the [backoff](#backoff). The relay's claim takes a row only once its `NextAttemptAt` has passed, as well as its `CreatedAt` being older than the grace period.
 
 These `Use*` methods are registered once on the `ConduitBuilder` (the engine is shared by the outbox, inbox, dead letter queue, audit trail, and jobs). Each engine ships in its own `Conduit.Persistence.*` package that carries the ADO.NET driver, so no generic connection-type parameter is needed:
 
@@ -208,7 +211,8 @@ For non-relational databases (Cosmos DB, MongoDB, DynamoDB), implement `IOutboxS
 public class CosmosOutboxStore : IOutboxStore
 {
     // Implement SaveAsync, ClaimPendingAsync, ClaimByMessageIdsAsync, MarkSentAsync,
-    // IncrementRetryAsync, MarkFailedAsync, DeleteCompletedAsync, DeleteFailedAsync, EnsureTableExistsAsync
+    // IncrementRetryAsync, MarkFailedAsync, QueryFailedAsync, RetryFailedAsync (by id and by type),
+    // DeleteCompletedAsync, DeleteFailedAsync, EnsureTableExistsAsync
 }
 ```
 
@@ -230,6 +234,8 @@ conduit.AddDurability(durability =>
         outbox.GracePeriod = TimeSpan.FromSeconds(10);         // ignore entries newer than this (default: 10s)
         outbox.BatchSize = 100;                                // entries per sweep (default: 100)
         outbox.MaxRetries = 10;                                // before marking failed (default: 10)
+        outbox.InitialBackoff = TimeSpan.FromSeconds(5);       // wait after a first failed send (default: 5s)
+        outbox.MaxBackoff = TimeSpan.FromMinutes(5);           // longest wait between attempts (default: 5m)
         outbox.AutoCreateTable = true;                         // create table on startup (default: true)
         outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries older than this (default: 7d); Zero disables
         outbox.FailedRetention = null;                          // delete Failed entries older than this (default: null = follow CompletedRetention); Zero keeps them forever
@@ -240,6 +246,23 @@ conduit.AddDurability(durability =>
 ```
 
 The grace period prevents the relay from racing with the handler. After the transaction commits, the entry is in the database — but the relay ignores entries newer than the grace period, giving the handler time to complete any post-commit work.
+
+These options are set in code. Durability reads nothing from `IConfiguration` (see [What configuration does not cover](configuration-reference.md#what-configuration-does-not-cover)).
+
+### Backoff
+
+A send that fails (the broker is down, a local listener throws) does not come back on the next sweep. The
+entry waits `InitialBackoff` after its first failed attempt, and each failure after that doubles the wait, up
+to `MaxBackoff`. With the defaults that is 5 s, 10 s, 20 s, 40 s, 80 s, 160 s, then 5 minutes for each
+attempt after, so the ten attempts `MaxRetries` allows span about twenty minutes: long enough to ride out a
+broker restart, where retrying every sweep would mark everything Failed within a minute. A failed
+[immediate send](#immediate-send) counts as the first failed attempt and waits `InitialBackoff` too.
+
+The wait is stored on the row (`NextAttemptAt`), so it holds across a relay restart and between relays on
+different hosts, whose clocks it assumes agree, as the grace period already does. The relay claims only on
+its sweeps, so an entry goes out on the first sweep after its wait ends. `InitialBackoff = TimeSpan.Zero`
+turns backoff off: a failed entry is due again on the next sweep. `AddOutbox` refuses a negative
+`InitialBackoff`, and a `MaxBackoff` below it, with an `OptionsValidationException`.
 
 ### Retention
 
@@ -261,6 +284,53 @@ and increments the `conduit.outbox.retries_exhausted` counter on the `Conduit` m
 `conduit.message.type`). Both are stable: alert on either. The relay records an untagged zero on the counter
 when it starts, so the series exists from its first export rather than from the first failure (an
 OpenTelemetry counter exports nothing until it is recorded); a real exhaustion is a separate, tagged series.
+Once the cause is fixed, [retry the entries](#retrying-failed-entries).
+
+## Retrying failed entries
+
+A Failed entry is the only copy of a message that never reached its listeners or broker, so it stays in the
+table (until `FailedRetention`) instead of being dropped. Inject `IOutbox` to find failed entries and hand them
+back to the relay:
+
+```csharp
+var outbox = serviceProvider.GetRequiredService<IOutbox>();
+
+// Find them: oldest first, optionally of one type, a page at a time
+var page = await outbox.QueryFailedAsync(new FailedOutboxFilter
+{
+    MessageType = "Orders.Events.OrderPlaced",   // null for every type
+    PageSize = 50,
+}, cancellationToken);
+
+foreach (var entry in page.Entries)
+{
+    // entry.Id, entry.Type, entry.MessageId, entry.Payload, entry.CreatedAt, entry.RetryCount
+}
+
+if (page.NextPageToken is not null)
+{
+    var nextPage = await outbox.QueryFailedAsync(new FailedOutboxFilter
+    {
+        MessageType = "Orders.Events.OrderPlaced",
+        PageSize = 50,
+        PageToken = page.NextPageToken,
+    }, cancellationToken);
+}
+
+// Retry one entry, or every failed entry of a type
+bool retried = await outbox.RetryFailedAsync(page.Entries[0].Id, cancellationToken);
+int retriedCount = await outbox.RetryFailedAsync("Orders.Events.OrderPlaced", cancellationToken);
+```
+
+Retrying makes the entry `Pending` again with its retry count reset to 0 and its `NextAttemptAt` set to now:
+the relay delivers it on its next sweep, local listeners first and then the transport, exactly like a new
+entry, with a fresh `MaxRetries` budget and backoff. It keeps its `MessageId`, so a downstream
+[inbox](inbox.md) that recorded an earlier attempt which did reach it discards the repeat. Only a
+Failed entry is retried: `RetryFailedAsync(id)` returns `false` for an id that is pending, sent or unknown,
+so it can never send a delivered message again, and the by-type overload returns how many it reset.
+
+`IOutbox` is registered in [capture-only](#capture-only) mode too: retrying is a row update, so a capture-only
+host can hand an entry back to the relay of the process that owns delivery.
 
 ## What gets captured
 
@@ -529,7 +599,7 @@ any listener or transport.
 
 ### Behavior
 
-`FlushAsync` schedules delivery of the outbox entries written during the current scope on `ConduitBackgroundDispatcher` and returns immediately — the caller never waits for delivery, only for its own commit. The scheduled work item runs under the dispatcher's own lifetime, not the caller's request: it claims the entries using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token), then sends each one via the appropriate transport using the in-memory envelope — no database read needed. Successfully delivered entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up on its next sweep.
+`FlushAsync` schedules delivery of the outbox entries written during the current scope on `ConduitBackgroundDispatcher` and returns immediately — the caller never waits for delivery, only for its own commit. The scheduled work item runs under the dispatcher's own lifetime, not the caller's request: it claims the entries using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token), then sends each one via the appropriate transport using the in-memory envelope — no database read needed. Successfully delivered entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up once the first [backoff](#backoff) step (`InitialBackoff`) has passed.
 
 Because delivery is scheduled rather than synchronous, `FlushAsync` returning is not evidence that listeners or transports have run — there is no read-your-writes guarantee. `FlushAsync` is a no-op (nothing is scheduled) when nothing was captured during the scope, and safe to call unconditionally. If the relay has already claimed an entry by the time the scheduled delivery runs, the claim returns nothing and it completes without sending duplicates.
 

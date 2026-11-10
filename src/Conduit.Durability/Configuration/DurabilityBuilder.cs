@@ -29,7 +29,8 @@ public sealed class DurabilityBuilder
 
     /// <summary>Adds the transactional outbox.</summary>
     /// <exception cref="OptionsValidationException">
-    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key.
+    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key, or
+    /// <see cref="OutboxOptions.InitialBackoff"/> is negative or above <see cref="OutboxOptions.MaxBackoff"/>.
     /// </exception>
     public DurabilityBuilder AddOutbox(Action<OutboxOptions>? configure = null)
     {
@@ -38,6 +39,9 @@ public sealed class DurabilityBuilder
         options.Validate();
 
         this.Services.TryAddScoped<IOutboxStore, DbConnectionOutboxStore>();
+
+        // Retrying a failed entry is a row update, so a capture-only host can hand one back to the relay that owns it.
+        this.Services.TryAddScoped<IOutbox, OutboxOperations>();
 
         this.Services.AddScoped<OutboxCapture>();
         this.Services.AddScoped<IOutboundInterceptor>(

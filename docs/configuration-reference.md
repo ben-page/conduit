@@ -33,7 +33,7 @@ builder.Services.AddConduit(conduit =>
 | `AddPipeline(type)` | Register an open-generic `IPipelineBehavior<,>` with two type parameters (request, result); a closed or other-arity type throws `ArgumentException` at registration. First registered = outermost. | `conduit.AddPipeline(typeof(LoggingBehavior<,>))` |
 | `AddTypeFilter(configure)` | Restrict which types external clients may dispatch | `conduit.AddTypeFilter(f => f.AllowType<CreateOrder>())` |
 | `AddDispatchRetry<TPolicy>(configure?)` | Retry a failed top-level command or query that `TPolicy` (a singleton `IDispatchRetryPolicy`) covers and gives a reason for, each attempt in a fresh DI scope. `DispatchRetryOptions`: `MaxAttempts` (default 3), `Delays` (jittered ranges, default 10-100 ms then 50-300 ms; the last repeats), `TimeProvider` (the retry clock, default `TimeProvider.System`). Once per host; options validated in the call. See [Dispatch Retry](dispatch-retry.md). | `conduit.AddDispatchRetry<MyRetryPolicy>(o => o.MaxAttempts = 4)` |
-| `AddDurability(configure)` | Configure durable messaging by nesting `AddOutbox()` / `AddInbox()` / `AddDeadLetterQueue()`. The persistence engine is set once on the `ConduitBuilder` (via `conduit.UseSqlite(...)` etc.) and shared with audit. See [Outbox](outbox.md), [Inbox](inbox.md), and [Dead Letter Queue](dead-letter-queue.md). | `conduit.UseSqlite("Data Source=app.db"); conduit.AddDurability(d => d.AddOutbox());` |
+| `AddDurability(configure)` | Configure durable messaging by nesting `AddOutbox()` / `AddInbox()` / `AddDeadLetterQueue()`. The persistence engine is set once on the `ConduitBuilder` (via `conduit.UseSqlite(...)` etc.) and shared with audit. `OutboxOptions`: the relay retries a failed send after `InitialBackoff` (default 5 s), doubling the wait with each failed attempt up to `MaxBackoff` (default 5 min), and marks the entry Failed after `MaxRetries` attempts (default 10); `AddOutbox` refuses a negative `InitialBackoff` or a `MaxBackoff` below it with `OptionsValidationException`. Set in code only (see [What configuration does not cover](#what-configuration-does-not-cover)). See [Outbox](outbox.md#backoff), [Inbox](inbox.md), and [Dead Letter Queue](dead-letter-queue.md). | `conduit.UseSqlite("Data Source=app.db"); conduit.AddDurability(d => d.AddOutbox());` |
 | `AddAudit(configure)` | Capture dispatch lifecycle observations and emit `AuditBatch` events. `MaxPayloadBytes` (default 64 KB, `0` = no cap, an enabled cap must be at least 1 KB) caps each record's request body in UTF-8 bytes when the record seals: a body over it is stored with its longest strings shortened and a `"$truncated": { "bytes", "cap" }` marker, or as the marker alone when that cannot fit. See [Audit Trail](audit.md#payload-size-cap). | `conduit.AddAudit(a => a.ServiceName = "orders")` |
 | `AddAuditListener(configure?)` | Consume `AuditBatch` events (local or over a transport) and persist them. Set the persistence engine separately via `conduit.UseSqlite(...)` (shared with durability). See [Audit Trail](audit.md). | `conduit.UseSqlite("Data Source=audit.db"); conduit.AddAuditListener();` |
 
@@ -335,8 +335,8 @@ reach the rest of the library:
   take `Type` values; a configuration binder cannot produce one.
 - **Durability, audit, resilience, and persistence are not configurable.** `AddDurability(...)`,
   `AddAudit(...)`, `AddResilience(...)`, and the engine calls (`UseSqlite(...)`, `UsePostgres(...)`,
-  …) read nothing from the `Conduit` section. Their connection strings come from wherever your code
-  reads them.
+  …) read nothing from the `Conduit` section, so the outbox's relay timing, retries and backoff are set
+  in `AddOutbox(o => ...)`. Their connection strings come from wherever your code reads them.
 - **No reload-on-change.** Options bind once during `AddConduit` and are registered as plain
   singletons, not `IOptionsMonitor<T>`. Editing `appsettings.json` on a running host changes
   nothing until it restarts.

@@ -148,7 +148,11 @@ public sealed partial class OutboxRelay(
                 }
                 else
                 {
-                    await store.IncrementRetryAsync(entry.Id, cancellationToken);
+                    // Backing off, not retrying on the next sweep, is what lets an entry outlast a broker restart.
+                    await store.IncrementRetryAsync(
+                        entry.Id,
+                        OutboxBackoff.Delay(options.Value, entry.RetryCount + 1),
+                        cancellationToken);
                 }
             }
         }

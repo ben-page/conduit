@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using Conduit.Durability.Configuration;
@@ -46,22 +47,45 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         ORDER BY Id
         """;
 
+    // A new entry is due at once: its NextAttemptAt is its CreatedAt, and the relay's grace period is applied to
+    // CreatedAt by the claim itself.
     private const string InsertEntrySql = """
-        INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount)
-        VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0)
+        INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount, NextAttemptAt)
+        VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0, @NextAttemptAt)
         """;
 
     private const string InsertEntryWithPropertiesSql = """
-        INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount, Properties)
-        VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0, @Properties)
+        INSERT INTO conduit_outbox (MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, RetryCount, NextAttemptAt, Properties)
+        VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0, @NextAttemptAt, @Properties)
         """;
 
     private const string MarkSentSql = "UPDATE conduit_outbox SET Status = 1, SentAt = @SentAt WHERE Id = @Id";
 
-    private const string IncrementRetrySql =
-        "UPDATE conduit_outbox SET RetryCount = RetryCount + 1, Status = 0, ClaimToken = NULL, ClaimedAt = NULL WHERE Id = @Id";
+    private const string IncrementRetrySql = """
+        UPDATE conduit_outbox
+        SET RetryCount = RetryCount + 1, Status = 0, ClaimToken = NULL, ClaimedAt = NULL, NextAttemptAt = @NextAttemptAt
+        WHERE Id = @Id
+        """;
 
     private const string MarkFailedSql = "UPDATE conduit_outbox SET Status = 2 WHERE Id = @Id";
+
+    private const string CountFailedSql = """
+        SELECT COUNT(*) FROM conduit_outbox
+        WHERE Status = 2 AND (@MessageType IS NULL OR Type = @MessageType)
+        """;
+
+    // A retried entry starts over: Pending, its whole retry budget back, due now.
+    private const string RetryFailedByIdSql = """
+        UPDATE conduit_outbox
+        SET Status = 0, RetryCount = 0, NextAttemptAt = @NextAttemptAt, ClaimToken = NULL, ClaimedAt = NULL
+        WHERE Id = @Id AND Status = 2
+        """;
+
+    private const string RetryFailedByTypeSql = """
+        UPDATE conduit_outbox
+        SET Status = 0, RetryCount = 0, NextAttemptAt = @NextAttemptAt, ClaimToken = NULL, ClaimedAt = NULL
+        WHERE Type = @MessageType AND Status = 2
+        """;
 
     private const string DeleteCompletedSql =
         "DELETE FROM conduit_outbox WHERE Status = 1 AND CreatedAt <= @RetentionCutoff";
@@ -72,6 +96,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     private readonly string createTableSql;
     private readonly string claimPendingSql;
     private readonly string claimByMessageIdsSql;
+    private readonly string queryFailedPageSql;
     private readonly bool persistsProperties;
 
     /// <summary>Initializes a new instance of <see cref="DbConnectionOutboxStore"/>.</summary>
@@ -94,6 +119,13 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         this.createTableSql = BuildCreateTableSql(dialect);
         this.claimPendingSql = dialect.BuildClaimPendingSql(Schema);
         this.claimByMessageIdsSql = dialect.BuildClaimByIdsSql(Schema);
+        this.queryFailedPageSql = $"""
+            SELECT Id, MessageId, ConversationId, CausationId, Type, Payload, Status, CreatedAt, SentAt, RetryCount{(this.persistsProperties ? ", Properties" : string.Empty)}
+            FROM conduit_outbox
+            WHERE Status = 2 AND (@MessageType IS NULL OR Type = @MessageType)
+            ORDER BY Id
+            {dialect.PaginationSuffix}
+            """;
     }
 
     /// <inheritdoc/>
@@ -121,7 +153,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                     DbParameterHelper.Add(command, "@CausationId", (object?)entry.CausationId ?? DBNull.Value);
                     DbParameterHelper.Add(command, "@Type", entry.Type);
                     DbParameterHelper.Add(command, "@Payload", entry.Payload);
-                    DbParameterHelper.Add(command, "@CreatedAt", entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
+                    var createdAt = entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture);
+                    DbParameterHelper.Add(command, "@CreatedAt", createdAt);
+                    DbParameterHelper.Add(command, "@NextAttemptAt", createdAt);
                     if (this.persistsProperties)
                     {
                         DbParameterHelper.Add(command, "@Properties", (object?)entry.Properties ?? DBNull.Value);
@@ -146,6 +180,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         // Atomically claim the rows for this worker (Pending or stale-Claiming → Claiming, tagged
         // with our unique token), then read back exactly the rows we claimed under that token.
         // The UPDATE is the exclusivity primitive — two concurrent claimers can never tag the same row.
+        // A row whose last send failed is not due before its NextAttemptAt (@Now).
         await this.ExecuteNonQueryAsync(
             this.claimPendingSql,
             command =>
@@ -153,6 +188,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                 DbParameterHelper.Add(command, "@ClaimToken", claimToken);
                 DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
                 DbParameterHelper.Add(command, "@GraceCutoff", graceCutoff);
+                DbParameterHelper.Add(command, "@Now", claimedAt);
                 DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
                 DbParameterHelper.Add(command, "@BatchSize", batchSize);
                 DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
@@ -180,10 +216,17 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             cancellationToken);
 
     /// <inheritdoc/>
-    public Task IncrementRetryAsync(long entryId, CancellationToken cancellationToken)
+    public Task IncrementRetryAsync(long entryId, TimeSpan retryDelay, CancellationToken cancellationToken)
         => this.ExecuteNonQueryAsync(
             IncrementRetrySql,
-            command => DbParameterHelper.Add(command, "@Id", entryId),
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", entryId);
+                DbParameterHelper.Add(
+                    command,
+                    "@NextAttemptAt",
+                    DateTime.UtcNow.Add(retryDelay).ToString("O", CultureInfo.InvariantCulture));
+            },
             cancellationToken);
 
     /// <inheritdoc/>
@@ -192,6 +235,68 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             MarkFailedSql,
             command => DbParameterHelper.Add(command, "@Id", entryId),
             cancellationToken);
+
+    /// <inheritdoc/>
+    public async Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var offset = 0;
+        if (filter.PageToken is not null && int.TryParse(filter.PageToken, CultureInfo.InvariantCulture, out var parsedOffset))
+        {
+            offset = parsedOffset;
+        }
+
+        var totalCount = Convert.ToInt32(
+            await this.ExecuteScalarAsync(CountFailedSql, command => AddMessageTypeFilter(command, filter.MessageType), cancellationToken),
+            CultureInfo.InvariantCulture);
+
+        var withProperties = this.persistsProperties;
+        var entries = await this.ExecuteReaderAsync(
+            this.queryFailedPageSql,
+            command =>
+            {
+                AddMessageTypeFilter(command, filter.MessageType);
+                DbParameterHelper.Add(command, "@PageSize", filter.PageSize);
+                DbParameterHelper.Add(command, "@Offset", offset);
+            },
+            reader => ReadEntry(reader, withProperties),
+            cancellationToken);
+
+        var nextOffset = offset + entries.Count;
+        return new FailedOutboxPage
+        {
+            Entries = entries,
+            NextPageToken = nextOffset < totalCount ? nextOffset.ToString(CultureInfo.InvariantCulture) : null,
+            TotalCount = totalCount,
+        };
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> RetryFailedAsync(long entryId, CancellationToken cancellationToken)
+        => await this.ExecuteNonQueryAsync(
+            RetryFailedByIdSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", entryId);
+                DbParameterHelper.Add(command, "@NextAttemptAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            },
+            cancellationToken) > 0;
+
+    /// <inheritdoc/>
+    public Task<int> RetryFailedAsync(string messageType, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageType);
+
+        return this.ExecuteNonQueryAsync(
+            RetryFailedByTypeSql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@MessageType", messageType);
+                DbParameterHelper.Add(command, "@NextAttemptAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            },
+            cancellationToken);
+    }
 
     /// <inheritdoc/>
     public Task DeleteCompletedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken)
@@ -288,6 +393,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                 CreatedAt {dialect.TimestampType} NOT NULL,
                 SentAt {dialect.NullableTimestampType},
                 RetryCount {dialect.IntegerType} NOT NULL DEFAULT 0,
+                NextAttemptAt {dialect.TimestampType} NOT NULL,
                 ClaimedAt {dialect.NullableTimestampType},
                 ClaimToken {dialect.NullableTextType},
                 Properties {dialect.NullableTextType}
@@ -295,6 +401,11 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 
         return dialect.BuildCreateTableIfNotExistsSql("conduit_outbox", columns);
     }
+
+    // Bound with an explicit string type: a null filter must still carry one, since Npgsql cannot infer the type of
+    // an untyped DBNull in an IS NULL predicate.
+    private static void AddMessageTypeFilter(DbCommand command, string? messageType)
+        => DbParameterHelper.Add(command, "@MessageType", (object?)messageType ?? DBNull.Value, DbType.String);
 
     private static OutboxEntry ReadEntry(DbDataReader reader, bool withProperties)
     {
