@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conduit.Exceptions;
 using Conduit.Messages;
 using Conduit.Runtime;
@@ -61,15 +62,17 @@ public static class ConduitRestHandlers
             async (HttpRequest request, IEnumerable<IDispatchContextEnricher> enrichers,
                 IMediator mediator, CancellationToken cancellationToken) =>
             {
+                var (command, refusal) = await ReadBodyAsync<TCommand>(request, cancellationToken);
+                if (command is null)
+                {
+                    return refusal;
+                }
+
                 try
                 {
-                    var command = IsMultipart(request)
-                        ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
-                        : (await request.ReadFromJsonAsync<TCommand>(ConduitRuntime.JsonOptions, cancellationToken))!;
-
                     HttpDispatchContext.Start(request.HttpContext, enrichers, trustCallerContext: false, readClientProperties: false);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
-                    return ToHttpResult(result);
+                    return ToCommandResult(result);
                 }
                 catch (ConduitException ex)
                 {
@@ -94,7 +97,7 @@ public static class ConduitRestHandlers
                 {
                     HttpDispatchContext.Start(httpContext, enrichers, trustCallerContext: false, readClientProperties: false);
                     var result = await mediator.ExecuteAsync(command, cancellationToken);
-                    return ToHttpResult(result);
+                    return ToCommandResult(result);
                 }
                 catch (ConduitException ex)
                 {
@@ -116,12 +119,14 @@ public static class ConduitRestHandlers
             async (HttpRequest request, IEnumerable<IDispatchContextEnricher> enrichers,
                 IMediator mediator, CancellationToken cancellationToken) =>
             {
+                var (command, refusal) = await ReadBodyAsync<TCommand>(request, cancellationToken);
+                if (command is null)
+                {
+                    return refusal;
+                }
+
                 try
                 {
-                    var command = IsMultipart(request)
-                        ? await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken)
-                        : (await request.ReadFromJsonAsync<TCommand>(ConduitRuntime.JsonOptions, cancellationToken))!;
-
                     HttpDispatchContext.Start(request.HttpContext, enrichers, trustCallerContext: false, readClientProperties: false);
                     await mediator.ExecuteAsync(command, cancellationToken);
                     return Results.NoContent();
@@ -162,6 +167,48 @@ public static class ConduitRestHandlers
         request.ContentType is not null
         && request.ContentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Reads a body-bound command, answering a body the caller got wrong as ASP.NET's own binding would: a content type
+    /// that is neither JSON nor multipart is 415; malformed JSON, a literal <c>null</c>, a form field that does not
+    /// convert, or a missing required file is a 400 Problem whose <c>detail</c> is the parser's message. Only the read
+    /// is guarded: a handler's own <see cref="FormatException"/> is still the server's failure.
+    /// </summary>
+    private static async Task<(TCommand? Command, IResult? Refusal)> ReadBodyAsync<TCommand>(
+        HttpRequest request,
+        CancellationToken cancellationToken)
+        where TCommand : class
+    {
+        try
+        {
+            if (IsMultipart(request))
+            {
+                return (await MultipartCommandBinder.BindAsync<TCommand>(request, cancellationToken), null);
+            }
+
+            if (!request.HasJsonContentType())
+            {
+                return (null, Results.Problem(
+                    detail: "The request body must be JSON (application/json) or multipart/form-data.",
+                    statusCode: StatusCodes.Status415UnsupportedMediaType,
+                    title: "UnsupportedMediaType"));
+            }
+
+            var command = await request.ReadFromJsonAsync<TCommand>(ConduitRuntime.JsonOptions, cancellationToken);
+            return command is null
+                ? (null, ToProblem(new BadRequestException("The request body is null."), request.HttpContext))
+                : (command, null);
+        }
+        catch (ConduitException ex)
+        {
+            return (null, ToProblem(ex, request.HttpContext));
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidCastException or OverflowException
+            or InvalidDataException)
+        {
+            return (null, ToProblem(new BadRequestException(ex.Message), request.HttpContext));
+        }
+    }
+
     private static IResult ToProblem(ConduitException ex, HttpContext httpContext)
     {
         // The edge where the answer leaves the server: the detail is written in the reader's language here.
@@ -172,8 +219,15 @@ public static class ConduitRestHandlers
     }
 
     /// <summary>
+    /// A command's result: <c>null</c> is 204 No Content (the command ran and has nothing to return), never the 404 a
+    /// query's null means; anything else as <see cref="ToHttpResult"/>.
+    /// </summary>
+    private static IResult ToCommandResult(object? result) =>
+        result is null ? Results.NoContent() : ToHttpResult(result);
+
+    /// <summary>
     /// Maps a handler result to an <see cref="IResult"/>. <see cref="BinaryData"/>
-    /// and <see cref="ConduitFile"/> produce file responses; <c>null</c> produces 404;
+    /// and <see cref="ConduitFile"/> produce file responses; <c>null</c> produces 404 (a query found nothing);
     /// anything else flows through <see cref="Results.Ok"/> as JSON.
     /// </summary>
     private static IResult ToHttpResult(object? result) => result switch

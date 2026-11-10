@@ -42,7 +42,7 @@ Inbound wire message arrives (transport provides MessageId)
 
 - **Dedup happens before the handler** — that's the whole point; it prevents duplicate side effects, not just duplicate results.
 - **All inbound wire messages are deduplicated** — commands, queries, and events alike.
-- **Duplicates are silently discarded.** There is no result caching — a duplicate is dropped, not answered with the original response. (This matches MassTransit and Wolverine.)
+- **Duplicates are silently discarded.** There is no result caching — a duplicate is dropped, not answered with the original response. (This matches MassTransit and Wolverine.) An edge that answers every request — HTTP `/dispatch`, the SignalR hub's `Dispatch` — answers a discarded one with an empty success (`DispatchResult.Ok(null)`).
 - **Local dispatch is unaffected** — the gate only runs on transport-inbound messages; in-process dispatch never hits it.
 
 A background `InboxCleanup` service periodically deletes records older than the retention window, so the table doesn't grow without bound.

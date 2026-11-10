@@ -99,7 +99,7 @@ always on; there is no opt-in flag.
   envelope endpoint, the SignalR hub, batch items, and broker-delivered commands, including a dead letter replayed
   from the DLQ. A command queued on a broker (or dead-lettered) before a deploy added a member is therefore refused
   after it, so **a broker-routed command's new member needs a C# default**. The RESTful endpoints
-  (`ConduitRestHandlers`' `ReadFromJsonAsync`) and the multipart binder read with ASP.NET's options and stay lenient:
+  (`ConduitRestHandlers`' `ReadFromJsonAsync`, with `ConduitRuntime.JsonOptions`) and the multipart binder stay lenient:
   a REST request missing a member still defaults it. The shared `ConduitRuntime.JsonOptions` stays lenient because it
   also reads stored `Conduit.Jobs` payloads, remote replies and events: a job stored before a member was added must
   keep running.

@@ -91,11 +91,15 @@ public record DeleteTodoCommand(Guid Id) : ICommand;
 
 ## Responses
 
-| Message type | Success response |
+| Request | Response |
 |---|---|
-| `IQuery<T>` | 200 OK with `T` as JSON |
-| `ICommand<T>` | 200 OK with `T` as JSON |
+| `IQuery<T>` | 200 OK with `T` as JSON; 404 Not Found when the handler returns `null` |
+| `ICommand<T>` | 200 OK with `T` as JSON; 204 No Content when the handler returns `null` (the command ran, it has nothing to return) |
 | `ICommand` (void) | 204 No Content |
+| A body that is neither JSON nor `multipart/form-data` (or has no content type) | 415 Unsupported Media Type |
+| A body that does not bind: malformed JSON, a literal `null`, a value of the wrong type, a form field that does not convert (a `Guid`, a number, a `bool`, an enum name), a missing required file | 400 Problem Details, `title` `BadRequest`, the parser's message as `detail` |
+
+A POST, PUT or PATCH command also accepts `multipart/form-data` when it declares one `BinaryData` or `ConduitFile` property: the file binds from the form's file part and every other property from the form field of the same name, in any letter case. Constructor parameters bind first (a positional record), then each settable property no parameter covered (a class with a parameterless constructor). An enum field is read by member name in any letter case, never by number, as on the JSON wire. A file property declared non-nullable (`ConduitFile`, not `ConduitFile?`) is required: a form without it is a 400, not a `null` for the handler.
 
 Both the envelope endpoint and the REST endpoints read and write JSON with Conduit's wire options (`ConduitRuntime.JsonOptions`), independent of the host's own `Microsoft.AspNetCore.Http.Json.JsonOptions`: an enum is its member name, a closed set its bare value, exactly as the generated TypeScript declares them. Conduit registers nothing into the host's options, so the host's other endpoints keep their own settings.
 
@@ -129,7 +133,7 @@ app.MapConduitEndpoint(); // defaults to /api/conduit
 
 This registers two POST endpoints:
 
-- **POST /api/conduit/dispatch** — commands and queries. Returns `DispatchResult` envelope.
+- **POST /api/conduit/dispatch** — commands and queries. Returns `DispatchResult` envelope. A request an inbound gate discards (the [inbox](../inbox.md)'s duplicate) is answered `200` with an empty success (`DispatchResult.Ok(null)`), as if it had run.
 - **POST /api/conduit/publish** — events. Returns 200 OK, or, for a refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type), the `DispatchResult` envelope status-coded as `/dispatch` answers a refusal.
 
 The message type is sent in the `X-Conduit-Type` request header. The request body contains the plain serialized message JSON — no envelope wrapper. This matches the wire format used by broker transports (type in transport-native properties, body is the raw message).
