@@ -13,8 +13,8 @@ Multi-host integration tests validating message routing correctness. Each test s
 ### Test Infrastructure
 
 Each transport test project contains:
-- `Support/Contracts/` — 19 contract types (commands, queries, events, results, F&F types, the shutdown probe) discovered by the source generator
-- `Support/Handlers/` — 17 handlers/listeners recording invocations via `SpyLog`
+- `Support/Contracts/` — 19 contract types (commands, queries, events, results, F&F types, the shutdown probe) discovered by the source generator (RabbitMQ: 20, with the `ConcurrencyProbeCommand` of its [transport-specific](#category-11-transport-specific-behavior) concurrency test)
+- `Support/Handlers/` — 17 handlers/listeners recording invocations via `SpyLog` (RabbitMQ: 18, plus the `ConcurrencyProbeMark` its probe handler records)
 - `Integration/{Transport}Fixture.cs` — extends `TransportTestFixture` from `Conduit.TestUtils`, manages broker container via Testcontainers
 
 Shared infrastructure in `Conduit.TestUtils`:
@@ -149,11 +149,23 @@ Universal. Both send `ShutdownProbeCommand(Input, DelayMs)`, whose handler recor
 
 Azure Service Bus's 10.1 is `[Ignore]`d for now: stopping its processor cancels the token the transport still settles and replies with, so the drained handler's reply and completion fail. It is enabled with the fix that settles with `CancellationToken.None`.
 
-### Totals (verified 2026-11-09)
+### Category 11: Transport-specific behavior
 
-Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**.
+Integration tests of one broker's own mechanics, beyond the shared matrix.
 
-Behavior-test methods across the four transports: 38 (RabbitMQ) + 38 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **153 `[TestMethod]` integration tests**.
+#### RabbitMQ
+
+| # | Test Method | Hosts | Assert |
+|---|---|---|---|
+| 11.1 | `RabbitMqCommandRoutingShould.KeepReplyingAfterConnectionRecovery` | A sends (15 s `ResponseTimeout`), B handles; one round trip, then the broker container is restarted (`RabbitMqTestBase.RestartBrokerAsync`: Testcontainers `StopAsync`/`StartAsync`; Inconclusive for a configured or reused broker, or a re-mapped port) | Once both connections raise `RecoverySucceededAsync` (no fixed sleep), a second request gets its reply: the client-named reply queue came back under the name its requests carry in `ReplyTo` |
+| 11.2 | `RabbitMqConcurrencyShould.RunHandlersInParallelUpToConcurrency` | B with `DefaultConcurrency = 4`; A sends 8 `ConcurrencyProbeCommand`s (1 s handler) at once | All 8 answered, and replaying the handler's `ConcurrencyProbeMark`s gives exactly 4 running at once: in parallel, never beyond the concurrency |
+| 11.3 | `RabbitMqDeadLetterShould.RouteAFailedEventToTheDeadLetterExchangeWithoutAConduitDlq` | A publishes `ThrowingTestEvent`, B listens with no dead-letter store | After 2 s the listener has run once (rejected, not requeued), and `{prefix}-conduit-dead-letter` holds the event once (`basic.get` twice: the event, then nothing), with `x-first-death-reason: rejected` and `x-first-death-queue` = B's app queue |
+
+### Totals (verified 2026-11-10)
+
+Each transport's `Integration/` directory contains a baseline of **38 `[TestMethod]` behavior tests** (the same shared matrix across all four broker transports: RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ). That is the 28 routing/context/pool/topology-mode methods above (categories 1–7, with topology-mode category 7.4 present only where applicable) plus the 6 dead-letter methods in category 8, the 2 self-published/wire-correlation methods in category 9 and the 2 shutdown methods in category 10. Category 4 (competing instances) further multiplies via `[DataRow(1)]`/`[DataRow(20)]`, so the executed case count is higher than the method count. SQS adds **1 reaper test** (`AmazonSqsTopologyReaperShould`) in a separate test class, bringing its total to **39**. RabbitMQ adds the **3 transport-specific tests** of category 11, bringing its total to **41**.
+
+Behavior-test methods across the four transports: 41 (RabbitMQ) + 38 (ASB) + 39 (SQS) + 38 (ActiveMQ) = **156 `[TestMethod]` integration tests**.
 
 ---
 
@@ -170,7 +182,7 @@ These tests verify naming logic and configuration without requiring a live broke
 | TM-1.1 | `UseCorrectMaxLengthForBroker` | Passes correct maxLength to `TopologyNaming` (RMQ=255, ASB=260/50, SQS=80/256, ActiveMQ=256) |
 | TM-1.2 | `UseSharedResourceNameForMainTopic` | Main topic/exchange/address uses `TopologyNaming.CreateSharedResourceName(options, maxLen)` |
 | TM-1.3 | `UseAppResourceNameForAppQueue` | Per-app queue uses `TopologyNaming.CreateAppResourceName(options, maxLen)` |
-| TM-1.4 | `UseAppResourceNameForReplyQueue` | Reply resource uses `TopologyNaming.CreateAppResourceName(options, "replies", maxLen)` |
+| TM-1.4 | `UseAppResourceNameForReplyQueue` | Reply resource uses `TopologyNaming.CreateAppResourceName(options, "replies", maxLen)` (RabbitMQ: one per transport instance, `"replies-{instanceId}"`, through `RabbitMQTopologyManager.ReplyQueueName`) |
 | TM-1.5 | `UseSharedResourceNameForCommandQueues` | Command/query queue names use `TopologyNaming.CreateSharedResourceName(options, type, maxLen)` — shared across apps (unicast) |
 | TM-1.6 | `UseAppResourceNameForEventQueues` | Event queue names use `TopologyNaming.CreateAppResourceName(options, type, maxLen)` — per-app (multicast) |
 | TM-1.7 | `TruncateLongNamesWithHash` | Names exceeding maxLength keep `maxLength - 9` characters, then `-` and 8 hex characters of an xxHash64 of the whole name (the exact format is pinned once, in `TopologyNamingShould.KeepLongSiblingNamesDistinct`) |
@@ -208,6 +220,7 @@ These tests validate broker-specific topology features that don't apply to all t
 | # | Test Method | Validates |
 |---|---|---|
 | TM-S.1 | `CreateTopicExchangeType` | Exchange type is `ExchangeType.Topic` |
+| TM-S.1b | `NameTheDeadLetterExchangeAndQueueAfterTheSystem` | `RabbitMQTopologyManager.DeadLetterName` is `{system}-dead-letter` under the topology prefix, with no application name |
 
 #### Azure Service Bus
 
@@ -232,13 +245,13 @@ These tests validate broker-specific topology features that don't apply to all t
 | TM-S.11 | `UseAmqpFilterOnQueues` | Queue filter expression: `AMQPSubject = '{FullTypeName}'` |
 | TM-S.12 | `SetAutoDeleteDelayForEphemeralQueues` | Native `auto-delete-delay` in milliseconds per topology mode |
 
-### Totals (verified 2026-06-09)
+### Totals (verified 2026-06-09; RabbitMQ 2026-11-10)
 
 The 16 universal topology-manager tests are TM-1 (8) + TM-2 (2) + TM-3 (3) + TM-4 (3). Each transport adds a varying number of transport-specific (TM-S) tests, so the actual `Unit/TopologyManagerShould.cs` `[TestMethod]` count differs per transport:
 
 | Transport | Unit topology `[TestMethod]` count |
 |---|---|
-| RabbitMQ | 23 |
+| RabbitMQ | 24 |
 | Azure Service Bus | 25 |
 | Amazon SQS | 17 |
 | ActiveMQ | 23 |
@@ -295,6 +308,15 @@ Only where a transport hand-maps something the binder cannot handle:
 | C-S.1 | `BindRegionCredentialsAndScalars` | Amazon SQS | `Region` → `RegionEndpoint`, `Credentials:AccessKey`/`SecretKey` → `BasicAWSCredentials` |
 | C-S.2 | `BuildSessionCredentialsWhenATokenIsSupplied` | Amazon SQS | A `SessionToken` selects `SessionAWSCredentials` |
 | C-S.3 | `LeaveCredentialsNullForTheDefaultAwsChain` | Amazon SQS | No key pair leaves `Credentials` null so the AWS default chain applies |
+
+### Category O-S: Transport-specific option validation (`Unit/{Name}OptionsShould.cs`)
+
+Where a transport refuses option values its broker cannot represent, at `Use{Name}(...)`:
+
+| # | Test Method | Transport | Validates |
+|---|---|---|---|
+| O-S.1 | `RejectConcurrencyOutsideUShort` | RabbitMQ | A `DefaultConcurrency` or pool `Concurrency` of 0, -1 or 65536 throws `ArgumentOutOfRangeException` naming the setting (and the pool), with the value as `ActualValue` |
+| O-S.2 | `AcceptConcurrencyAtTheUShortBounds` | RabbitMQ | 1 and 65535 are accepted, for both |
 
 Core-side coverage for the shared machinery lives in `tests/Conduit.Tests/Unit/`:
 `ConduitConfigurationShould` (core scalar binding, enum/`TimeSpan` parsing, absent keys, code wins,

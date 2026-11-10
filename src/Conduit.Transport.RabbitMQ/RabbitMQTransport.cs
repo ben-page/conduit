@@ -21,14 +21,31 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 {
     private readonly RabbitMQOptions options;
 
-    private IConnection? connection;
+    // Names this instance's reply queue, which no other instance shares
+    private readonly string instanceId = Guid.NewGuid().ToString("N");
+
+    // Outbound requests, events and redeliveries, and the topology declarations (publisher confirms on)
     private IChannel? publishChannel;
-    private IChannel? replyChannel;
+
+    // Replies to the requests this instance handles (publisher confirms on); none on a producer-only host
+    private IChannel? replyPublishChannel;
+
+    // Consumes this instance's reply queue
+    private IChannel? replyConsumerChannel;
     private string? replyQueueName;
     private TopologyResult? topologyResult;
 
+    // Set when stop begins: a message abandoned from then on is requeued, not dead-lettered
+    private volatile bool stopping;
+
     // One channel per inbound consumer; each delivery is acknowledged on the channel it arrived on
     private readonly List<(IChannel Channel, string ConsumerTag)> inboundConsumers = [];
+
+    // A channel that publishes with confirms: BasicPublishAsync returns only once the broker acknowledged
+    // the message and throws when it refuses it, so a message the broker never took is never reported sent.
+    // Immutable, with no confirm rate limiter, so both publishing channels share it.
+    private static readonly CreateChannelOptions ConfirmingChannel =
+        new(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true);
 
     // Transport-specific logging delegates
     private static readonly Action<ILogger, string, Exception?> LogPublishingEvent =
@@ -63,6 +80,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     /// <inheritdoc/>
     protected override string TransportName => "rabbitmq";
 
+    /// <summary>The broker connection once started (a test observes its automatic recovery).</summary>
+    internal IConnection? Connection { get; private set; }
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
@@ -75,9 +95,16 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             Uri = new Uri(this.options.ConnectionString),
         };
 
-        this.connection = await factory.CreateConnectionAsync(cancellationToken);
-        this.publishChannel = await this.connection.CreateChannelAsync(
-            cancellationToken: cancellationToken);
+        this.Connection = await factory.CreateConnectionAsync(cancellationToken);
+        this.publishChannel = await this.Connection.CreateChannelAsync(ConfirmingChannel, cancellationToken);
+
+        // Replies go out on a channel of their own: a channel error closes the channel it happens on (an
+        // outbound publish to an exchange that no longer exists, say), and it must not take the replies
+        // to the requests this instance is handling down with it.
+        if (!this.ConduitOptions.ProducerOnly)
+        {
+            this.replyPublishChannel = await this.Connection.CreateChannelAsync(ConfirmingChannel, cancellationToken);
+        }
     }
 
     /// <inheritdoc />
@@ -104,27 +131,33 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
     private async Task EnsureReplyQueueAsync(CancellationToken cancellationToken)
     {
-        // Set up reply queue (exclusive auto-delete)
-        this.replyChannel = await this.connection!.CreateChannelAsync(
+        // This instance's reply queue: exclusive to its connection and deleted with it, but named by the
+        // client. Automatic recovery re-declares the queue after a lost connection; a server-named one came
+        // back under a new name while every request still carried the old one in ReplyTo, so no reply
+        // reached this instance again. The client-named one comes back under the same name.
+        var queueName = RabbitMQTopologyManager.ReplyQueueName(this.ConduitOptions, this.instanceId);
+
+        this.replyConsumerChannel = await this.Connection!.CreateChannelAsync(
             cancellationToken: cancellationToken);
-        var replyDeclare = await this.replyChannel.QueueDeclareAsync(
-            queue: string.Empty,
+        await this.replyConsumerChannel.QueueDeclareAsync(
+            queue: queueName,
             durable: false,
             exclusive: true,
             autoDelete: true,
             arguments: null,
             noWait: false,
             cancellationToken: cancellationToken);
-        this.replyQueueName = replyDeclare.QueueName;
 
         // Consume replies
-        var replyConsumer = new AsyncEventingBasicConsumer(this.replyChannel);
+        var replyConsumer = new AsyncEventingBasicConsumer(this.replyConsumerChannel);
         replyConsumer.ReceivedAsync += this.OnReplyReceivedAsync;
-        await this.replyChannel.BasicConsumeAsync(
-            queue: this.replyQueueName,
+        await this.replyConsumerChannel.BasicConsumeAsync(
+            queue: queueName,
             autoAck: true,
             consumer: replyConsumer,
             cancellationToken: cancellationToken);
+
+        this.replyQueueName = queueName;
     }
 
     /// <inheritdoc />
@@ -133,26 +166,29 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         var registry = this.ServiceProvider.GetRequiredService<ConduitTypeRegistry>();
         LogStartingConsumers(this.Logger, registry.ActiveEventTypeNames.Count, null);
 
+        // UseRabbitMQ refused a concurrency outside 1..65535, so these casts never wrap
+        var defaultConcurrency = (ushort)this.options.DefaultConcurrency;
+
         // Start default app queue consumer (events — multicast)
         var appQueueName = TopologyNaming.CreateAppResourceName(this.ConduitOptions, 255);
-        await this.StartConsumerAsync(appQueueName, (ushort)this.options.DefaultConcurrency, cancellationToken);
+        await this.StartConsumerAsync(appQueueName, defaultConcurrency, cancellationToken);
 
-        // Start shared command/query queue consumers (unicast — competing consumers, default prefetch)
+        // Start shared command/query queue consumers (unicast — competing consumers, default concurrency)
         foreach (var sharedQueueName in this.topologyResult!.SharedCommandQueryQueues)
         {
-            await this.StartConsumerAsync(sharedQueueName, (ushort)this.options.DefaultConcurrency, cancellationToken);
+            await this.StartConsumerAsync(sharedQueueName, defaultConcurrency, cancellationToken);
         }
 
-        // Start pool event queue consumers (multicast, pool-specific prefetch)
-        foreach (var (queueName, prefetchCount) in this.topologyResult.PoolEventQueues)
+        // Start pool event queue consumers (multicast, pool-specific concurrency)
+        foreach (var (queueName, concurrency) in this.topologyResult.PoolEventQueues)
         {
-            await this.StartConsumerAsync(queueName, prefetchCount, cancellationToken);
+            await this.StartConsumerAsync(queueName, concurrency, cancellationToken);
         }
 
-        // Start pool command/query queue consumers (unicast — competing consumers, pool-specific prefetch)
-        foreach (var (queueName, prefetchCount) in this.topologyResult.PoolCommandQueryQueues)
+        // Start pool command/query queue consumers (unicast — competing consumers, pool-specific concurrency)
+        foreach (var (queueName, concurrency) in this.topologyResult.PoolCommandQueryQueues)
         {
-            await this.StartConsumerAsync(queueName, prefetchCount, cancellationToken);
+            await this.StartConsumerAsync(queueName, concurrency, cancellationToken);
         }
     }
 
@@ -160,6 +196,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     protected override async Task StopReceivingAsync(CancellationToken cancellationToken)
     {
         LogTransportStopping(this.Logger, null);
+
+        // From here on, an abandoned message is requeued rather than dead-lettered (AbandonAsync)
+        this.stopping = true;
 
         // Cancel the inbound consumers only. Their channels stay open, since a handler still running
         // acknowledges on its delivery's channel, and so does the reply consumer, since a handler may
@@ -186,9 +225,9 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
         // it (a handler the deadline cut short, a prefetched delivery never dispatched). The client's
         // close waits for a handler still running on the channel, so only the deadline bounds the wait.
         var closing = this.inboundConsumers.Select(consumer => CloseChannelAsync(consumer.Channel)).ToList();
-        if (this.replyChannel is not null)
+        if (this.replyConsumerChannel is not null)
         {
-            closing.Add(CloseChannelAsync(this.replyChannel));
+            closing.Add(CloseChannelAsync(this.replyConsumerChannel));
         }
 
         await WaitUntilDeadlineAsync(closing, cancellationToken);
@@ -202,9 +241,14 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             await CloseAndDisposeChannelAsync(channel);
         }
 
-        if (this.replyChannel is not null)
+        if (this.replyConsumerChannel is not null)
         {
-            await CloseAndDisposeChannelAsync(this.replyChannel);
+            await CloseAndDisposeChannelAsync(this.replyConsumerChannel);
+        }
+
+        if (this.replyPublishChannel is not null)
+        {
+            await CloseAndDisposeChannelAsync(this.replyPublishChannel);
         }
 
         if (this.publishChannel is not null)
@@ -212,16 +256,16 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             await CloseAndDisposeChannelAsync(this.publishChannel);
         }
 
-        if (this.connection is not null)
+        if (this.Connection is not null)
         {
             try
             {
-                if (this.connection.IsOpen)
+                if (this.Connection.IsOpen)
                 {
-                    await this.connection.CloseAsync();
+                    await this.Connection.CloseAsync();
                 }
 
-                this.connection.Dispose();
+                this.Connection.Dispose();
             }
 #pragma warning disable CA1031
             catch (Exception)
@@ -242,7 +286,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
     /// <inheritdoc />
     protected override BinaryData GetMessageBody(RabbitMQInboundMessage message) =>
-        new(message.Args.Body.ToArray());
+        new(message.Args.Body); // the transport's own copy (CopyDelivery), not the client's buffer
 
     /// <inheritdoc />
     protected override bool IsRequest(RabbitMQInboundMessage message) =>
@@ -262,7 +306,7 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     /// <inheritdoc />
     protected override async Task SendReplyAsync(RabbitMQInboundMessage message, BinaryData replyBody)
     {
-        if (this.publishChannel is null || string.IsNullOrEmpty(message.Args.BasicProperties.ReplyTo))
+        if (this.replyPublishChannel is null || string.IsNullOrEmpty(message.Args.BasicProperties.ReplyTo))
         {
             return;
         }
@@ -273,7 +317,8 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
             CorrelationId = message.Args.BasicProperties.CorrelationId,
         };
 
-        await this.publishChannel.BasicPublishAsync(
+        // Confirmed before the request is acknowledged: a reply the broker refused is logged by the base class
+        await this.replyPublishChannel.BasicPublishAsync(
             exchange: string.Empty,
             routingKey: message.Args.BasicProperties.ReplyTo,
             mandatory: false,
@@ -285,9 +330,17 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
     protected override Task AcknowledgeAsync(RabbitMQInboundMessage message) =>
         message.Channel.BasicAckAsync(message.Args.DeliveryTag, multiple: false).AsTask();
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Rejects the message without requeue, so its queue's dead-letter exchange routes it to the system's
+    /// dead-letter queue (<c>{system}-dead-letter</c>) once, rather than handing it straight back to a
+    /// consumer that fails it again, forever. Only what Conduit did not capture gets here: with a
+    /// dead-letter store registered, the base class captures and acknowledges a failed message.
+    /// Once the transport is stopping, the message is requeued: one the drain returns undispatched belongs
+    /// to another instance, not the dead-letter queue (and a handler failing during the drain is
+    /// redelivered, to be dead-lettered by the instance that fails it next).
+    /// </summary>
     protected override Task AbandonAsync(RabbitMQInboundMessage message) =>
-        message.Channel.BasicNackAsync(message.Args.DeliveryTag, multiple: false, requeue: true).AsTask();
+        message.Channel.BasicNackAsync(message.Args.DeliveryTag, multiple: false, requeue: this.stopping).AsTask();
 
     // -----------------------------------------------------------------------
     // Outbound primitives
@@ -416,21 +469,29 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
     private async Task StartConsumerAsync(
         string queueName,
-        ushort prefetchCount,
+        ushort concurrency,
         CancellationToken cancellationToken)
     {
-        var channel = await this.connection!.CreateChannelAsync(
-            cancellationToken: cancellationToken);
+        // Up to `concurrency` handlers run at once: the broker keeps at most that many deliveries
+        // unacknowledged on the channel (prefetch), and the client hands that many to the consumer at
+        // once (dispatch concurrency). The prefetch alone only buffers: the client's default dispatch
+        // concurrency of 1 ran the prefetched deliveries one after another.
+        var channel = await this.Connection!.CreateChannelAsync(
+            new CreateChannelOptions(
+                publisherConfirmationsEnabled: false,
+                publisherConfirmationTrackingEnabled: false,
+                consumerDispatchConcurrency: concurrency),
+            cancellationToken);
 
         await channel.BasicQosAsync(
             prefetchSize: 0,
-            prefetchCount: prefetchCount,
+            prefetchCount: concurrency,
             global: false,
             cancellationToken: cancellationToken);
 
         var consumer = new AsyncEventingBasicConsumer(channel);
         consumer.ReceivedAsync += (sender, args) =>
-            this.ProcessInboundMessageAsync(new RabbitMQInboundMessage(channel, args));
+            this.ProcessInboundMessageAsync(new RabbitMQInboundMessage(channel, CopyDelivery(args)));
 
         var tag = await channel.BasicConsumeAsync(
             queue: queueName,
@@ -440,6 +501,22 @@ public sealed class RabbitMQTransport : BrokerTransportBase<RabbitMQInboundMessa
 
         this.inboundConsumers.Add((channel, tag));
     }
+
+    /// <summary>
+    /// The delivery with its own copy of the body. The client reuses a delivery's body buffer, and the
+    /// message is read long after the first await (a dead-letter capture reads it once the handler has
+    /// failed), so it is copied before anything awaits.
+    /// </summary>
+    private static BasicDeliverEventArgs CopyDelivery(BasicDeliverEventArgs args) =>
+        new(
+            args.ConsumerTag,
+            args.DeliveryTag,
+            args.Redelivered,
+            args.Exchange,
+            args.RoutingKey,
+            args.BasicProperties,
+            args.Body.ToArray(),
+            args.CancellationToken);
 
     private static async Task CloseChannelAsync(IChannel channel)
     {

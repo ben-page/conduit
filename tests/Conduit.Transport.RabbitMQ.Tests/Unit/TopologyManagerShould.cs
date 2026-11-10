@@ -74,14 +74,15 @@ public class TopologyManagerShould
     [TestMethod]
     public void UseAppResourceNameForReplyQueue()
     {
-        // Arrange — the reply queue is per-app with a "replies" suffix
+        // Arrange — the reply queue is per transport instance: the app's "replies" suffix, then the
+        // instance's id, so the client names it and recovery re-declares it under the same name
         var conduitOptions = CreateConduitOptions(applicationName: "orders");
 
         // Act
-        var replyQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, "replies", 255);
+        var replyQueueName = RabbitMQTopologyManager.ReplyQueueName(conduitOptions, "0f1e2d3c");
 
-        // Assert — reply queue includes app name and "replies" suffix
-        replyQueueName.Should().Be("conduit-orders-replies");
+        // Assert — reply queue includes app name, "replies" suffix and instance id
+        replyQueueName.Should().Be("conduit-orders-replies-0f1e2d3c");
     }
 
     // --- TM-1.5: UseSharedResourceNameForCommandQueues ---
@@ -433,6 +434,22 @@ public class TopologyManagerShould
 
         // Assert — RabbitMQ topic exchange for routing key-based message routing
         exchangeType.Should().Be("topic");
+    }
+
+    [TestMethod]
+    public void NameTheDeadLetterExchangeAndQueueAfterTheSystem()
+    {
+        // Arrange — one dead-letter exchange and queue per system, shared by every application in it
+        var ordersOptions = CreateConduitOptions(applicationName: "orders");
+        var billingOptions = CreateConduitOptions(applicationName: "billing", topologyMode: TopologyMode.Developer, topologyPrefix: "jdoe");
+
+        // Act
+        var productionName = RabbitMQTopologyManager.DeadLetterName(ordersOptions);
+        var developerName = RabbitMQTopologyManager.DeadLetterName(billingOptions);
+
+        // Assert — {system}-dead-letter, under the topology prefix and without the application name
+        productionName.Should().Be("conduit-dead-letter");
+        developerName.Should().Be("jdoe-conduit-dead-letter");
     }
 
     [TestMethod]

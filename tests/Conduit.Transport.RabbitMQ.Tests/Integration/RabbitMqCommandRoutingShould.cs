@@ -196,4 +196,48 @@ public class RabbitMqCommandRoutingShould : RabbitMqTestBase
         handlerSpy.Invocations.OfType<FireAndForgetCommand>().Should().ContainSingle(
             c => c.Input == "fire-and-forget");
     }
+
+    [TestMethod]
+    [Timeout(180_000)]
+    public async Task KeepReplyingAfterConnectionRecovery()
+    {
+        // Arrange — a sender and a handler that have already exchanged one request and its reply
+        var handlerName = UniqueAppName("handler");
+        var senderName = UniqueAppName("sender");
+
+        await using var handlerHost = await CreateHostAsync(handlerName);
+        var prefix = handlerHost.TopologyPrefix!;
+        await using var senderHost = await CreateSenderHostAsync(
+            senderName, prefix, ContractsNamespace, "broker",
+            options => options.ResponseTimeout = TimeSpan.FromSeconds(15));
+
+        var mediator = senderHost.GetRequiredService<IMediator>();
+        (await mediator.ExecuteAsync(new TestCommand("before"))).Value.Should().Be("handled:before");
+
+        var handlerRecovered = WhenRecoveredAsync(handlerHost, "self");
+        var senderRecovered = WhenRecoveredAsync(senderHost, "broker");
+
+        // Act — restart the broker: both connections drop, and the sender's exclusive reply queue goes with
+        // its connection. Once both clients have recovered their topology, send again.
+        await RestartBrokerAsync();
+        await Task.WhenAll(handlerRecovered, senderRecovered).WaitAsync(TimeSpan.FromSeconds(120));
+        var result = await mediator.ExecuteAsync(new TestCommand("after"));
+
+        // Assert — the reply reached the request's waiter: it went to the reply queue the sender consumes
+        result.Value.Should().Be("handled:after");
+    }
+
+    /// <summary>Completes when the host's connection for <paramref name="endpointName"/> next finishes recovering.</summary>
+    private static Task WhenRecoveredAsync(TestHost host, string endpointName)
+    {
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = host.Services.GetRequiredKeyedService<RabbitMQTransport>(endpointName).Connection!;
+        connection.RecoverySucceededAsync += (sender, args) =>
+        {
+            recovered.TrySetResult();
+            return Task.CompletedTask;
+        };
+
+        return recovered.Task;
+    }
 }

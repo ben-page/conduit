@@ -328,6 +328,58 @@ public class RabbitMqDeadLetterShould : RabbitMqTestBase
         }
     }
 
+    [TestMethod]
+    [Timeout(60_000)]
+    public async Task RouteAFailedEventToTheDeadLetterExchangeWithoutAConduitDlq()
+    {
+        // Arrange — no dead-letter store, so a failed listener's event is left to the broker
+        var handlerName = UniqueAppName("dlx-h");
+        var publisherName = UniqueAppName("dlx-p");
+
+        await using var handler = await CreateHostAsync(handlerName, configureHandling: handling =>
+        {
+            handling.ClearCommandHandlers();
+            handling.ClearQueryHandlers();
+        });
+
+        await using var publisher = await CreateHostAsync(
+            publisherName,
+            handler.TopologyPrefix!,
+            handling => handling.ClearAllHandlers());
+
+        var conduitOptions = handler.GetRequiredService<ConduitOptions>();
+        var handlerSpy = handler.GetRequiredService<SpyLog>();
+        var mediator = publisher.GetRequiredService<IMediator>();
+        var deadLetterQueueName = $"{handler.TopologyPrefix}-conduit-dead-letter";
+
+        // Act — the listener throws; a requeued copy would come straight back, so give it time to
+        await mediator.PublishAsync(new ThrowingTestEvent("dead-letter-me"));
+        await handlerSpy.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
+        await Task.Delay(2000);
+
+        // Assert — the listener ran once: the event was rejected, not requeued
+        handlerSpy.Invocations.OfType<ThrowingTestEvent>().Should().ContainSingle();
+
+        // ...and the dead-letter exchange routed it to the system's dead-letter queue, once
+        var factory = new ConnectionFactory { Uri = new Uri(ConnectionString!) };
+        await using var connection = await factory.CreateConnectionAsync();
+        await using var channel = await connection.CreateChannelAsync();
+
+        var deadLettered = await channel.BasicGetAsync(deadLetterQueueName, autoAck: true);
+        deadLettered.Should().NotBeNull();
+        deadLettered!.BasicProperties.Type.Should().Be(typeof(ThrowingTestEvent).FullName);
+        Encoding.UTF8.GetString(deadLettered.Body.Span).Should().Contain("dead-letter-me");
+        GetHeaderString(deadLettered.BasicProperties.Headers, "x-first-death-reason").Should().Be("rejected");
+        GetHeaderString(deadLettered.BasicProperties.Headers, "x-first-death-queue")
+            .Should().Be(TopologyNaming.CreateAppResourceName(conduitOptions, 255));
+        (await channel.BasicGetAsync(deadLetterQueueName, autoAck: true)).Should().BeNull();
+    }
+
+    private static string? GetHeaderString(IDictionary<string, object?>? headers, string key) =>
+        headers is not null && headers.TryGetValue(key, out var value) && value is byte[] bytes
+            ? Encoding.UTF8.GetString(bytes)
+            : null;
+
     private static async Task PublishRawToAppQueueAsync(ConduitOptions options, string messageType, byte[] body)
     {
         var factory = new ConnectionFactory { Uri = new Uri(ConnectionString!) };

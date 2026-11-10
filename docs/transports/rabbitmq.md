@@ -8,13 +8,16 @@
   - [Unicast correctness](#unicast-correctness)
 - [Developer and test modes](#developer-and-test-modes)
 - [Request/response](#requestresponse)
+  - [Connection recovery](#connection-recovery)
+- [Publisher confirms](#publisher-confirms)
+- [Failed messages](#failed-messages)
 - [Auto-discovery](#auto-discovery)
 - [Wire format](#wire-format)
 - [Receiver pools](#receiver-pools)
 
 ## Overview
 
-The RabbitMQ transport provides durable, broker-based messaging over AMQP. All message types (commands, queries, events) flow through a single topic exchange with routing keys. Commands and queries use request/response with correlation IDs and a transient reply queue. The transport runs as an `IHostedService` that manages topology, consumers, and reply correlation.
+The RabbitMQ transport provides durable, broker-based messaging over AMQP. All message types (commands, queries, events) flow through a single topic exchange with routing keys. Commands and queries use request/response with correlation IDs and a transient reply queue per transport instance. Every publish waits for the broker's confirm, and a message whose listener fails is dead-lettered (by Conduit's dead-letter store when there is one, otherwise by the broker) rather than redelivered forever. The transport runs as an `IHostedService` that manages topology, consumers, and reply correlation.
 
 ## Setup
 
@@ -43,8 +46,10 @@ endpoint.UseRabbitMQ(connectionString, options =>
 | Property | Default | Description |
 |---|---|---|
 | `ConnectionString` | *(required)* | AMQP connection string, e.g. `"amqp://guest:guest@localhost:5672/"` |
-| `DefaultConcurrency` | `10` | Default consumer concurrency. For RabbitMQ this maps to the consumer channel prefetch count (`BasicQos`). |
+| `DefaultConcurrency` | `10` | How many handlers each default consumer runs at once: the consumer channel's prefetch count (`BasicQos`) and its consumer dispatch concurrency. Must be between 1 and 65535. |
 | `ResponseTimeout` | `60s` | Timeout for request/response operations |
+
+`UseRabbitMQ` throws `ArgumentOutOfRangeException` for a `DefaultConcurrency` or pool `Concurrency` outside 1..65535: both settings are AMQP shorts on the wire, and a value outside that range used to be cast silently (`0` meaning an unlimited prefetch, `65536` wrapping to `0`).
 
 Exchange and queue names are controlled by `SystemName` and `TopologyMode` on `ConduitOptions` (see [Developer and test modes](#developer-and-test-modes)).
 
@@ -78,16 +83,22 @@ The transport declares the following on startup (idempotent — safe to run on e
 
 ```
 Exchange: {systemName} (type: topic)
-Queue: {systemName}-{appName}
-├── Binding: routing key = {FullTypeName} (per handled type)
-Queue: {systemName}-{appName}-{poolName}
-├── Binding: routing key = {FullTypeName} (per pool type)
-Reply Queue: exclusive auto-delete (per connection)
+Exchange: {systemName}-dead-letter (type: fanout)
+└── Queue: {systemName}-dead-letter
+Queue: {systemName}-{appName}                     (events, one copy per application)
+├── Binding: routing key = {FullTypeName} (per subscribed event type)
+Queue: {systemName}-{TypeName-reversed}           (per handled command/query type, shared)
+├── Binding: routing key = {FullTypeName}
+Queue: {systemName}-{appName}-{poolName}          (a pool's events)
+Queue: {systemName}-{TypeName-reversed}-{poolName} (a pool's commands/queries)
+Reply queue: {systemName}-{appName}-replies-{instanceId} (exclusive, auto-delete, one per transport instance)
 ```
 
 All message types (commands, queries, events) flow through a single topic exchange. There is no direct exchange. Each handled type gets a queue binding with the full type name as the routing key — including event types this application publishes itself, so its own broadcasts route back to its own queue. See [Self-published events](index.md#self-published-events) for how the inbound side avoids running that application's own listeners twice. Reply messages bypass the exchange and go directly to the exclusive reply queue.
 
-All declarations are idempotent.
+Every queue a consumer reads (all of them but the reply queue and the dead-letter queue itself) is declared with `x-dead-letter-exchange: {systemName}-dead-letter`, so a message its consumer rejects goes to the system's dead-letter queue: see [Failed messages](#failed-messages). One dead-letter exchange and queue serve every application in the system.
+
+All declarations are idempotent. A queue that already exists with different arguments (for example one declared before the dead-letter exchange argument existed) makes RabbitMQ refuse the declaration, and the transport fails to start: delete the queue, or let it auto-delete in Developer and Test modes.
 
 Every resource name is sanitized to `[A-Za-z0-9_-]`, any other character becoming `-`. The default `ApplicationName` is the entry assembly's name, so an application named `Conduit.Sample.Orders` gets the queue `conduit-Conduit-Sample-Orders`, not `conduit-Conduit.Sample.Orders`.
 
@@ -130,6 +141,27 @@ When the generated mediator routes a command to a RabbitMQ endpoint:
 Replies time out after `ResponseTimeout` (default 60 seconds). Reply messages bypass the topic exchange.
 
 A request with no reply within `ResponseTimeout` fails with a `TimeoutException` (`No reply to '{type}' from endpoint '{endpoint}' within {timeout}.`), the same on every broker transport. It is never an `OperationCanceledException`, which only the caller's own cancellation token produces, so a `catch (OperationCanceledException)` around a dispatch cannot swallow a remote that did not answer. A request still waiting when the transport stops fails with an `InvalidOperationException`.
+
+Each transport instance has its own reply queue, `{systemName}-{appName}-replies-{instanceId}`: exclusive to the instance's connection and deleted with it. Replies are published on a channel of their own, apart from the outbound publishes, so a channel error on one cannot close the other.
+
+### Connection recovery
+
+The RabbitMQ client recovers a lost connection on its own (a broker restart, a network drop): it reconnects every few seconds, then re-declares the exchanges, queues and bindings the connection declared and restarts its consumers. The reply queue is named by the transport rather than by the broker precisely so that it comes back under the same name: a broker-named queue got a new name on recovery while every request still carried the old one in `ReplyTo`, so no reply reached the instance again until it restarted. A request whose reply was lost with the connection still fails at `ResponseTimeout`.
+
+## Publisher confirms
+
+Every publish waits for the broker's confirm: a request, an event, a dead-letter replay and a reply are reported sent only once RabbitMQ has acknowledged them, and a message the broker refuses throws (a `PublishException` from the client) instead of vanishing. An event published to the exchange with no queue bound to its type is still confirmed: RabbitMQ acknowledges a message it routed nowhere, and no subscriber is not an error. A reply is confirmed before its request is acknowledged.
+
+## Failed messages
+
+A failed message is never requeued in a loop. Where one that must be kept goes depends on whether the host registered Conduit's [dead-letter queue](../dead-letter-queue.md):
+
+- **With Conduit's dead-letter store** (`AddDurability(d => d.AddDeadLetterQueue())`), Conduit captures the failed message in its database, with the exception and the message context, and acknowledges it on the broker. Nothing reaches the broker's dead-letter queue, and the message is browsed and replayed through `IDeadLetters`.
+- **Without one**, the transport rejects the message (`BasicNack`, `requeue: false`), and its queue's dead-letter exchange routes it to `{systemName}-dead-letter` with its properties and headers intact, plus the broker's `x-death` and `x-first-death-*` headers (`x-first-death-reason: rejected`, `x-first-death-queue`: the queue it came from). It is the broker's to inspect, and to move back (with the management UI or a shovel) once the cause is fixed. Today this is a failed event listener (`EventListenerException`), and a routed `[FireAndForget]` command whose dispatch itself threw (its handler's own failure is logged and acknowledged): what Conduit's store would otherwise have captured. A message Conduit settles without a store (an undispatchable body, a refused event, a request whose failure was already answered to its caller) is acknowledged, as on every broker.
+
+A failure used to be requeued (`requeue: true`), so a listener that always failed received its event again at once, forever. A message the transport returns while it is stopping (one delivered after the [drain](index.md#stopping-a-host-with-work-in-flight) began, or a handler that fails during the drain) is still requeued, for another instance to take, not dead-lettered.
+
+The dead-letter queue is never auto-delete, so a consumer that attaches to it and detaches again does not take the dead letters with it. It is durable in Production. In Developer mode it is non-durable: one per developer prefix, kept until the broker restarts. In Test mode, where every run has its own prefix, it is non-durable and expires (`x-expires`) once unused for 5 minutes, and its exchange goes with it.
 
 ## Auto-discovery
 
@@ -179,9 +211,9 @@ endpoint.UseRabbitMQ(connectionString, options =>
 });
 ```
 
-This routes `BulkImportCommand` to a dedicated `{systemName}-{appName}-imports` queue with prefetch 2 (`pool.Concurrency` maps to the consumer prefetch count for RabbitMQ). Everything else uses the default queue at prefetch 20.
+This routes `BulkImportCommand` to a dedicated queue of the `imports` pool (`{systemName}-BulkImportCommand-Commands-Catalog-imports`; a pool's events share `{systemName}-{appName}-imports`) whose consumer runs at most 2 handlers at once. Everything else uses the default consumers, 20 handlers at once each.
 
-Prefetch count controls how many unacknowledged messages RabbitMQ delivers to a consumer at once. Lower values limit throughput but prevent a slow consumer from buffering too many messages.
+A consumer's concurrency is two settings on its channel: the prefetch count (`BasicQos`), how many unacknowledged messages RabbitMQ delivers to it at once, and the client's consumer dispatch concurrency, how many of those it hands to handlers at once. Both take the same value, so up to that many handlers really run in parallel. Lower values limit throughput but keep a slow consumer from buffering too many messages. Like `DefaultConcurrency`, `pool.Concurrency` must be between 1 and 65535.
 
 `AddPool` is get-or-create by name: a pool can be declared in configuration (`Pools` array under the
 endpoint's section) and configured again in code on the same name, and the two merge into one pool

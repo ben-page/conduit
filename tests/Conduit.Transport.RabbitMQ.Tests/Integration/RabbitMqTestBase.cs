@@ -87,6 +87,32 @@ public abstract class RabbitMqTestBase
     }
 
     /// <summary>
+    /// Restarts the broker container this test run started, at the same address: every client connection
+    /// drops and everything non-durable on the broker is lost, as when a broker restarts in production.
+    /// Inconclusive for a broker this run did not start (a configured one, or a reused container another
+    /// run may be using), and when the container runtime publishes the restarted broker on another port,
+    /// which no client could recover to.
+    /// </summary>
+    protected static async Task RestartBrokerAsync()
+    {
+        if (container is null)
+        {
+            Assert.Inconclusive("Restarting the broker needs the RabbitMQ container this test run started.");
+        }
+
+        var port = container.GetMappedPublicPort(RabbitMqBuilder.RabbitMqPort);
+        await container.StopAsync();
+        await container.StartAsync();
+
+        if (container.GetMappedPublicPort(RabbitMqBuilder.RabbitMqPort) != port)
+        {
+            // The tests after this one connect to the new address
+            ConnectionString = container.GetConnectionString();
+            Assert.Inconclusive("The container runtime published the restarted broker on another port.");
+        }
+    }
+
+    /// <summary>
     /// Creates a handler/listener host. When <paramref name="topologyPrefix"/> is null,
     /// a new unique prefix is auto-generated (use <see cref="TestHost.TopologyPrefix"/>
     /// to pass it to subsequent hosts in the same test).
@@ -94,7 +120,8 @@ public abstract class RabbitMqTestBase
     protected static async Task<TestHost> CreateHostAsync(
         string applicationName,
         string? topologyPrefix = null,
-        Action<ConduitRegistrationOverrides>? configureHandling = null)
+        Action<ConduitRegistrationOverrides>? configureHandling = null,
+        Action<RabbitMQOptions>? configureOptions = null)
     {
         return await TestHost.StartAsync(builder =>
         {
@@ -120,7 +147,7 @@ public abstract class RabbitMqTestBase
                 }
 
                 conduit.AddEndpoint("self", endpoint =>
-                    endpoint.UseRabbitMQ(ConnectionString));
+                    endpoint.UseRabbitMQ(ConnectionString, configureOptions));
             });
 
             if (configureHandling is not null)

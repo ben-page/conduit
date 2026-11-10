@@ -8,10 +8,15 @@ namespace Conduit.Transport.RabbitMQ;
 /// </summary>
 /// <remarks>
 /// <see cref="BrokerTransportOptions.DefaultConcurrency"/> and
-/// <see cref="ReceiverPoolOptions.Concurrency"/> map to the consumer <c>BasicQos</c> prefetch count.
+/// <see cref="ReceiverPoolOptions.Concurrency"/> are each a consumer's concurrency: its channel's
+/// <c>BasicQos</c> prefetch count and its consumer dispatch concurrency, so up to that many of its
+/// handlers run at once. Both are AMQP shorts: <c>UseRabbitMQ()</c> refuses a value outside 1..65535.
 /// </remarks>
 public sealed class RabbitMQOptions : BrokerTransportOptions
 {
+    /// <summary>The largest concurrency a consumer accepts: an AMQP short.</summary>
+    internal const int MaxConcurrency = ushort.MaxValue;
+
     /// <summary>Creates options with every setting at its default.</summary>
     public RabbitMQOptions()
     {
@@ -26,4 +31,32 @@ public sealed class RabbitMQOptions : BrokerTransportOptions
     /// validated after both are applied.
     /// </summary>
     public string ConnectionString { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Throws when <see cref="BrokerTransportOptions.DefaultConcurrency"/> or a pool's
+    /// <see cref="ReceiverPoolOptions.Concurrency"/> is outside 1..65535, which a consumer's prefetch
+    /// count and dispatch concurrency (both <see cref="ushort"/>) would otherwise silently wrap.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">A concurrency is outside 1..65535.</exception>
+    internal void ThrowIfConcurrencyOutOfRange()
+    {
+        if (this.DefaultConcurrency is < 1 or > MaxConcurrency)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(this.DefaultConcurrency),
+                this.DefaultConcurrency,
+                $"RabbitMQ endpoint '{this.EndpointName}': DefaultConcurrency must be between 1 and {MaxConcurrency}.");
+        }
+
+        foreach (var pool in this.Pools)
+        {
+            if (pool.Concurrency is < 1 or > MaxConcurrency)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(ReceiverPoolOptions.Concurrency),
+                    pool.Concurrency,
+                    $"RabbitMQ endpoint '{this.EndpointName}': the Concurrency of pool '{pool.Name}' must be between 1 and {MaxConcurrency}.");
+            }
+        }
+    }
 }

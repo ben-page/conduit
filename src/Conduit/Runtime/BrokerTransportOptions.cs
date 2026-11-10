@@ -73,8 +73,9 @@ public abstract class BrokerTransportOptions
 
     /// <summary>
     /// Whether <paramref name="name"/> would give a pool's queue the name of a transport's reply queue
-    /// (<c>replies</c>) or of the broker-side dead-letter queue a transport may create (<c>dead-letter</c>;
-    /// none creates one yet, the name is held for it), compared as resource names are built
+    /// (<c>replies</c>) or of a broker-side dead-letter queue a transport may name per application
+    /// (<c>dead-letter</c>, held for it: RabbitMQ's is one per system, <c>{system}-dead-letter</c>, which no
+    /// pool name produces), compared as resource names are built
     /// (sanitized, so <c>dead letter</c> is <c>dead-letter</c>) and ignoring case. <see cref="AddPool"/> and
     /// the configuration binder refuse such a name.
     /// </summary>

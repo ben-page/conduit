@@ -225,7 +225,8 @@ naming the offending configuration path.
 Two names are **reserved**: `replies` and `dead-letter`, in any case and however written before the
 name is sanitized for the broker (`dead letter` is `dead-letter`). A pool's queue is named after the
 pool: `replies` would give it the name of a transport's reply queue, and `dead-letter` is held for a
-broker-side dead-letter queue a transport may create (none does yet). `AddPool` throws
+broker-side dead-letter queue a transport may name per application (RabbitMQ's is one per system,
+`{system}-dead-letter`, which no pool name produces). `AddPool` throws
 `ArgumentException` for either, configuration `InvalidOperationException`.
 
 ### Unmatched endpoint sections

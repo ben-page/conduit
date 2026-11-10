@@ -23,6 +23,11 @@ public static class EndpointBuilderExtensions
     /// </param>
     /// <param name="configure">Optional callback to configure RabbitMQ-specific options.</param>
     /// <returns>The endpoint builder for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Neither configuration nor code supplied a connection string.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="BrokerTransportOptions.DefaultConcurrency"/> or a pool's <see cref="ReceiverPoolOptions.Concurrency"/>
+    /// is outside 1..65535.
+    /// </exception>
     public static ConduitEndpointBuilder UseRabbitMQ(
         this ConduitEndpointBuilder builder,
         string? connectionString = null,
@@ -49,6 +54,8 @@ public static class EndpointBuilderExtensions
                 $"Set 'Conduit:Endpoints:{builder.EndpointName}:ConnectionString' in configuration " +
                 $"or pass it to UseRabbitMQ().");
         }
+
+        options.ThrowIfConcurrencyOutOfRange();
 
         var endpointName = builder.EndpointName;
 
