@@ -2,7 +2,7 @@
 
 | Sample | Shows | URL |
 |---|---|---|
-| [`browser-client/Conduit.Sample.Notes`](browser-client/Conduit.Sample.Notes) | A browser app on the generated TypeScript `ConduitClient` over a SignalR hub: commands, queries and pushed events on one connection | https://localhost:5002 |
+| [`browser-client/Conduit.Sample.Notes`](browser-client/Conduit.Sample.Notes) | A browser app on the generated TypeScript `ConduitClient` over a SignalR hub: commands, queries and pushed events on one connection | https://localhost:5002 (same port as Orders; run one at a time) |
 | [`service-to-service/Conduit.Sample.Inventory`](service-to-service/Conduit.Sample.Inventory) | An internal service that handles inventory commands and queries on a SignalR hub | https://localhost:5101 |
 | [`service-to-service/Conduit.Sample.Orders`](service-to-service/Conduit.Sample.Orders) | A service that routes the inventory namespace to Inventory over SignalR and exposes the HTTP envelope endpoint | https://localhost:5002 |
 | [`rest-api/Conduit.Sample.Todos`](rest-api/Conduit.Sample.Todos) | Commands and queries mapped to REST routes with `MapConduitGet`/`Post`/`Put`/`Delete`, OpenAPI and Swagger UI | https://localhost:49877/swagger |
