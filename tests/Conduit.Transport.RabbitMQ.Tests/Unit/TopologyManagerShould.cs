@@ -142,15 +142,15 @@ public class TopologyManagerShould
         var conduitOptions = CreateConduitOptions(
             applicationName: "orders",
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
 
         // Act
         var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
         var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
 
         // Assert
-        exchangeName.Should().Be("bpage-conduit");
-        appQueueName.Should().Be("bpage-conduit-orders");
+        exchangeName.Should().Be("alice-conduit");
+        appQueueName.Should().Be("alice-conduit-orders");
     }
 
     [TestMethod]
@@ -373,7 +373,7 @@ public class TopologyManagerShould
         // Arrange
         var conduitOptions = CreateConduitOptions(
             topologyMode: TopologyMode.Developer,
-            topologyPrefix: "bpage");
+            topologyPrefix: "alice");
 
         // Act — developer mode: isEphemeral should be true
         var isEphemeral = conduitOptions.TopologyMode != TopologyMode.Production;
@@ -381,9 +381,9 @@ public class TopologyManagerShould
         // Assert — developer: durable=false, autoDelete=true, prefixed resources
         isEphemeral.Should().BeTrue();
         var exchangeName = TopologyNaming.CreateSharedResourceName(conduitOptions, 255);
-        exchangeName.Should().StartWith("bpage-");
+        exchangeName.Should().StartWith("alice-");
         var appQueueName = TopologyNaming.CreateAppResourceName(conduitOptions, 255);
-        appQueueName.Should().StartWith("bpage-");
+        appQueueName.Should().StartWith("alice-");
     }
 
     // --- TM-4.3: CreateEphemeralResourcesInTestMode ---
