@@ -2,18 +2,19 @@
 
 A source-generated mediator for .NET 10, with a typed TypeScript client and transports for HTTP, SignalR and four
 message brokers. Commands, queries and events are plain C# records; the mediator, its dispatch code and its DI
-registration are emitted at compile time, so dispatch needs no reflection and no assembly scanning.
+registration are emitted at compile time, so finding and calling a handler needs no reflection and no assembly
+scanning.
 
 ## Why Conduit
 
 Your front end and your back end are one application. The usual way to join them is an API designed for strangers: a
-REST surface whose resource model fits no screen, DTOs and the mapping between them, and business rules that drift
-into the browser because a REST update can only send a state diff. With CQRS, where every read model is bespoke, that
-boundary decouples nothing.
+REST surface whose resource model was shaped for no screen in particular, DTOs and the mapping between them, and
+business rules that drift into the browser because a resource update is naturally a state diff. With CQRS, where every
+read model is bespoke, that boundary decouples nothing.
 
 Conduit lets the front end call the application directly. A screen is a query with a read model of its own. A button
 is a command that names the user's intent, and the rules stay in its handler. The browser dispatches both through a
-generated, typed `ConduitClient` to the same `IQueryHandler` and `ICommandHandler` your C# code calls and, over
+generated, typed `ConduitClient` to the same `IQueryHandler` and `ICommandHandler` your C# code reaches and, over
 SignalR, receives events on the same connection. When a consumer really is a stranger, map the same handler to a REST
 route. When a handler moves to another service, route its messages there; the handler does not change.
 
@@ -42,11 +43,6 @@ The ids below use the default prefix, `Conduit`. The prefix may change before th
 | `Conduit.Persistence` | The storage abstraction that Durability, Audit and Jobs share |
 | `Conduit.Persistence.Sqlite`, `Conduit.Persistence.Postgres`, `Conduit.Persistence.SqlServer`, `Conduit.Persistence.MySql` | The database engines; reference one |
 
-A broker transport dispatches each message once and does not retry it. A failed request is answered to its caller. An
-event or fire-and-forget command whose handler fails goes to Conduit's [dead-letter queue](docs/dead-letter-queue.md)
-when that is enabled, and otherwise back to the broker, whose own redelivery and dead-letter settings apply. Retrying
-is something you opt into around the handler: [Dispatch Retry](docs/dispatch-retry.md) or `Conduit.Resilience`.
-
 ## Install
 
 ```shell
@@ -70,6 +66,12 @@ dotnet add package Conduit.TypeGen
 and writes `conduit.ts` and `conduit.generated.ts` (to `ClientApp/generated` by default). Their SignalR transport
 imports the `@microsoft/signalr` npm package. Build with the `dotnet` CLI: Visual Studio's own `msbuild.exe` cannot
 load the task. See [TypeScript Client](docs/transports/typescript-client.md).
+
+On a broker transport, Conduit dispatches each delivery once and never retries it itself. A failed request is answered
+to its caller, and an unexpected failure (not a refusal) is also captured to the
+[dead-letter queue](docs/dead-letter-queue.md) when one is configured. A failed event or fire-and-forget command is
+captured there too or, without one, handed back to the broker, whose own redelivery and dead-letter settings apply.
+Retrying is opt-in, around the handler: [Dispatch Retry](docs/dispatch-retry.md) or `Conduit.Resilience`.
 
 ## Run the samples
 

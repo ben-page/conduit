@@ -44,15 +44,15 @@ The front end's independence is a fiction, and keeping it up is paid for on ever
   has to decide what `GET /employees/{id}` returns for every consumer at once.
 - **Mapping.** Entity to DTO, DTO to resource, resource to view model. AutoMapper exists because this layer is tedious
   enough to automate, which says a good deal about whether it should exist at all.
-- **Logic in the wrong tier.** A REST update is a state diff. Deciding what the diff means, in what order to send
+- **Logic in the wrong tier.** A resource update is a state diff. Deciding what the diff means, in what order to send
   several of them and what to check first moves into the front end, where a scheduled job, another service or a test
   cannot reuse it.
 - **A controller per resource**, which exists to translate HTTP back into calls the application already has.
 
-With CQRS the fiction is not only expensive but contradictory. CQRS says every read is bespoke: a query serves one
-consumer, so its read model is shaped for that consumer and no other. Two screens never use the same model, so a step
-that decouples them from a shared one does no work. A general resource model makes the opposite claim, and in practice
-it wins: every screen over-fetches, or chains calls to assemble what one query would have returned.
+With CQRS and bespoke read models, the fiction is not only expensive but contradictory. Each read model is shaped for
+one consumer and no other, and two screens never use the same model, so there is no shared model for a mapping layer
+to protect them from. A general resource model makes the opposite claim, and in practice it wins: every screen
+over-fetches, or chains calls to assemble what one query would have returned.
 
 ## A screen is a query
 
@@ -102,14 +102,16 @@ const result = await client.fetch('Hr.Contracts.Employees.ListEmployeesQuery', {
 // result.data: EmployeeListItem[], or result.error: the server's refusal
 ```
 
-Rename a property in C# and the page stops compiling. That is the whole contract.
+Rename a property in C# and the page stops compiling. That is the whole contract. A tab loaded before a deploy is
+caught on the server: a request missing a member the new contract added without a default is refused as
+`ContractMismatch`, which tells the user the page is out of date, rather than run with that member silently defaulted.
 
 ## A button is a command
 
 A command names what the user is trying to do, and carries only what that intent needs. Compare two ways to
 deactivate an employee.
 
-Over REST, the page decides what deactivation means:
+With resource-style REST, the page decides what deactivation means:
 
 ```typescript
 // The page knows the rules, and nothing else can run them.
@@ -117,7 +119,11 @@ await http.patch(`/api/employees/${id}`, { status: 'Inactive', terminationDate: 
 await http.delete(`/api/employees/${id}/shifts`);
 ```
 
-With Conduit the intent is a type, and the rules live behind it:
+You can model the intent in REST instead, as an action resource: `POST /api/employees/{id}/deactivation` with the
+effective date and the reason. That is a remote procedure call with a route, a controller and a DTO in front of it: a
+command, plus the boilerplate.
+
+With Conduit the intent is a type, and the rules live behind it, with no controller or DTO in front:
 
 ```csharp
 // Hr.Contracts/Employees/DeactivateEmployeeCommand.cs
@@ -174,7 +180,7 @@ mediator runs it just before the handler; whatever either of them refuses comes 
 exception the page has to catch. What deactivation does to badges and shifts is the handler's business, and it is the
 same whether the command came from the browser, a nightly job or a test.
 
-What every write needs happens once, in the pipeline, instead of in every controller or every component:
+What every dispatch needs happens once, in the pipeline, instead of in every controller or every component:
 
 ```csharp
 builder.Services.AddConduit(conduit =>
@@ -191,8 +197,9 @@ apply the same way to the browser's dispatch as to an in-process one. See [Pipel
 
 ## The slice
 
-Because the browser calls the command directly, a feature has no horizontal layers to cut across. Everything one use
-case needs sits together, and the only part another module may touch is the contract:
+Because the browser calls the command directly, the layers that exist only to cross the boundary are gone: no
+controller, no DTO, no mapper, no hand-written API service. A feature is a contract, a handler and a page with the
+same name, and the only part another module may touch is the contract:
 
 ```text
 Hr/
@@ -213,9 +220,8 @@ ClientApp/src/app/hr/employees/
 └─ employee.page.ts         client.execute('Hr.Contracts.Employees.DeactivateEmployeeCommand', …)
 ```
 
-Reads and writes separate naturally. A query handler projects with `AsNoTracking` and never loads an aggregate. A
-command handler loads an aggregate through a repository and never returns a view. They share no model, so neither
-constrains the other.
+Reads and writes stay apart without effort: a query handler projects with `AsNoTracking` and never loads an aggregate,
+and a command handler loads one through a repository and never returns a view.
 
 Across modules the rule is the same as within one: any module may run another's queries, but only the owning module's
 commands change its data. The source generator in the host discovers the public handlers of every assembly the host
@@ -248,7 +254,7 @@ await transport.connect();
 
 The same connection carries events back. When a handler publishes a `[ClientVisible]` event, the hub pushes it to
 every connected client, and the page reacts. Register an `IEventRecipientResolver` to send events to some users or
-groups instead.
+groups instead, and mark an event `[LocalOnly]` to keep it inside the process.
 
 ```csharp
 // Hr.Contracts/Employees/EmployeeDeactivated.cs
@@ -263,9 +269,8 @@ client.on('Hr.Contracts.Employees.EmployeeDeactivated', deactivated => grid.remo
 ```
 
 A page that needs no push can use `HttpTransport` instead, against the endpoint the host maps with
-`app.MapConduitEndpoint()`. `[LocalOnly]` keeps an event inside the process, and ASP.NET Core's own authentication and
-authorization guard the hub and the endpoint. See [TypeScript Client](transports/typescript-client.md) and
-[Security](security.md).
+`app.MapConduitEndpoint()`. ASP.NET Core's own authentication and authorization guard the hub and the endpoint. See
+[TypeScript Client](transports/typescript-client.md) and [Security](security.md).
 
 ## REST when you want it
 
@@ -279,9 +284,20 @@ app.MapConduitGet<ListEmployeesQuery>("/api/employees")
     .WithTags("Employees");
 ```
 
-REST is a transport you add for the consumers who need it, not the shape the application is built around. The same
-holds for every transport: route a command to another service over SignalR, HTTP or a message broker (Azure Service
-Bus, RabbitMQ, Amazon SQS, ActiveMQ Artemis), and neither the handler nor the page changes. See
+REST is a transport you add for the consumers who need it, not the shape the application is built around.
+
+Moving a handler to another process is the same kind of change. When the HR module becomes a service of its own, its
+handlers move with it unchanged, the service maps `app.MapConduitEndpoint()`, and the host that serves the page routes
+`Hr.Contracts.Employees` there:
+
+```csharp
+builder.Services.AddConduit(conduit => conduit.AddEndpoint("hr", endpoint => endpoint
+    .UseHttp(new HttpClient { BaseAddress = new Uri("https://hr.internal") })
+    .RouteNamespace<DeactivateEmployeeCommand>()));
+```
+
+The page still sends `DeactivateEmployeeCommand` to its own host, which forwards it. SignalR and the four message
+brokers (Azure Service Bus, RabbitMQ, Amazon SQS, ActiveMQ Artemis) route the same way. See
 [HTTP](transports/http.md) and [Transports](transports/index.md).
 
 ## What it looks like at scale
