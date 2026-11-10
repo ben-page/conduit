@@ -128,6 +128,8 @@ The first public preview. The entries below are the changes since the earlier, u
   - A relayed routed `[FireAndForget]` command is sent without waiting for a reply.
   - Resolving an entry (sent, retry, failed) is guarded by the token of the claim that took it, so a worker whose
     claim went stale cannot release or overwrite a row another worker has since claimed and sent.
+  - A claim cancelled part-way (a relay stopping with the host, a flush whose caller gave up) hands back the entries
+    it had just claimed, rather than leaving them undelivered until `ClaimTimeout`.
   - The tables are created before the relay and the inbox cleanup make their first pass, the outbox's queries have
     indexes, and a second `AddOutbox` or `AddInbox` (another module's) registers nothing twice.
 - **Inbox**

@@ -62,6 +62,15 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         WHERE Id = @Id AND Status = 3 AND ClaimToken = @ClaimToken
         """;
 
+    // A claim cancelled part-way hands back whatever it tagged: back to Pending with the retry count and NextAttemptAt
+    // untouched (a cancelled claim is not a failed send), so the entry is due again at once rather than after the
+    // claim timeout. Guarded on Claiming and the claim's own token, so a row another worker has since taken is not
+    // released from under it.
+    private const string HandBackClaimSql = """
+        UPDATE conduit_outbox SET Status = 0, ClaimToken = NULL, ClaimedAt = NULL
+        WHERE Status = 3 AND ClaimToken = @ClaimToken
+        """;
+
     private const string IncrementRetrySql = """
         UPDATE conduit_outbox
         SET RetryCount = RetryCount + 1, Status = 0, ClaimToken = NULL, ClaimedAt = NULL, NextAttemptAt = @NextAttemptAt
@@ -221,27 +230,35 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         // with our unique token), then read back exactly the rows we claimed under that token.
         // The UPDATE is the exclusivity primitive — two concurrent claimers can never tag the same row.
         // A row whose last send failed is not due before its NextAttemptAt (@Now).
-        await this.ExecuteNonQueryAsync(
-            this.claimPendingSql,
-            command =>
-            {
-                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
-                DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
-                DbParameterHelper.Add(command, "@GraceCutoff", graceCutoff);
-                DbParameterHelper.Add(command, "@Now", claimedAt);
-                DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
-                DbParameterHelper.Add(command, "@BatchSize", batchSize);
-                DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
-                DbParameterHelper.Add(command, "@ClaimingStatus", (int)OutboxEntryStatus.Claiming);
-            },
-            cancellationToken);
+        try
+        {
+            await this.ExecuteNonQueryAsync(
+                this.claimPendingSql,
+                command =>
+                {
+                    DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                    DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
+                    DbParameterHelper.Add(command, "@GraceCutoff", graceCutoff);
+                    DbParameterHelper.Add(command, "@Now", claimedAt);
+                    DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
+                    DbParameterHelper.Add(command, "@BatchSize", batchSize);
+                    DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
+                    DbParameterHelper.Add(command, "@ClaimingStatus", (int)OutboxEntryStatus.Claiming);
+                },
+                cancellationToken);
 
-        var withProperties = this.persistsProperties;
-        return await this.ExecuteReaderAsync(
-            withProperties ? SelectClaimedEntriesWithPropertiesSql : SelectClaimedEntriesSql,
-            command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
-            reader => ReadEntry(reader, withProperties, claimToken),
-            cancellationToken);
+            var withProperties = this.persistsProperties;
+            return await this.ExecuteReaderAsync(
+                withProperties ? SelectClaimedEntriesWithPropertiesSql : SelectClaimedEntriesSql,
+                command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
+                reader => ReadEntry(reader, withProperties, claimToken),
+                cancellationToken);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            await this.HandBackClaimAsync(claimToken);
+            throw;
+        }
     }
 
     /// <inheritdoc/>
@@ -427,34 +444,55 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         // immediate-send flush can never both dispatch the same entry. Only a never-attempted row is
         // eligible: a flush that runs later than the grace period, after the relay has already tried and
         // released the row, leaves it to the relay, whose retries are the ones MaxRetries bounds.
-        await this.ExecuteNonQueryAsync(
-            claimSql,
-            command =>
-            {
-                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
-                DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
-                DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
-                DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
-                DbParameterHelper.Add(command, "@ClaimingStatus", (int)OutboxEntryStatus.Claiming);
-
-                for (var i = 0; i < messageIds.Count; i++)
+        try
+        {
+            await this.ExecuteNonQueryAsync(
+                claimSql,
+                command =>
                 {
-                    DbParameterHelper.Add(command, $"@p{i}", messageIds[i]);
-                }
-            },
-            cancellationToken);
+                    DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                    DbParameterHelper.Add(command, "@ClaimedAt", claimedAt);
+                    DbParameterHelper.Add(command, "@ClaimCutoff", claimCutoff);
+                    DbParameterHelper.Add(command, "@PendingStatus", (int)OutboxEntryStatus.Pending);
+                    DbParameterHelper.Add(command, "@ClaimingStatus", (int)OutboxEntryStatus.Claiming);
 
-        return await this.ExecuteReaderAsync(
-            SelectClaimedIdsSql,
-            command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
-            reader => new ClaimedOutboxEntry
-            {
-                Id = reader.GetInt64(reader.GetOrdinal("Id")),
-                MessageId = reader.GetString(reader.GetOrdinal("MessageId")),
-                ClaimToken = claimToken,
-            },
-            cancellationToken);
+                    for (var i = 0; i < messageIds.Count; i++)
+                    {
+                        DbParameterHelper.Add(command, $"@p{i}", messageIds[i]);
+                    }
+                },
+                cancellationToken);
+
+            return await this.ExecuteReaderAsync(
+                SelectClaimedIdsSql,
+                command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
+                reader => new ClaimedOutboxEntry
+                {
+                    Id = reader.GetInt64(reader.GetOrdinal("Id")),
+                    MessageId = reader.GetString(reader.GetOrdinal("MessageId")),
+                    ClaimToken = claimToken,
+                },
+                cancellationToken);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            await this.HandBackClaimAsync(claimToken);
+            throw;
+        }
     }
+
+    /// <summary>
+    /// Hands back whatever a cancelled claim tagged. The claim may have committed — a cancelled UPDATE can land on
+    /// the server, and the read-back is a later statement — yet the caller never learns which entries it holds, so
+    /// nothing would send or release them and they would wait out the claim timeout. Uncancellable, as a resolution
+    /// is; a claim is cancelled by a stopping relay or by a flush's caller giving up. The catch filters on the token
+    /// rather than the exception type because SqlClient reports a cancellation as a <c>SqlException</c>.
+    /// </summary>
+    private Task<int> HandBackClaimAsync(string claimToken)
+        => this.ExecuteNonQueryAsync(
+            HandBackClaimSql,
+            command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
+            CancellationToken.None);
 
     // An indexed column is KeyTextType: on SQL Server and MySQL the general text and timestamp types are unbounded
     // and cannot be index keys. That includes the two indexed timestamps, NextAttemptAt and SentAt, whose ISO 8601

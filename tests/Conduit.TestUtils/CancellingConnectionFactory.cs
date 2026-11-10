@@ -1,7 +1,7 @@
 using System.Data.Common;
 using Conduit.Persistence;
 
-namespace Conduit.Jobs.Tests.Support;
+namespace Conduit.TestUtils;
 
 /// <summary>
 /// Hands out connections from a real factory, and cancels a caller's token source as the store asks

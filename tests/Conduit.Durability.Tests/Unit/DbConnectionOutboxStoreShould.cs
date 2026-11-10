@@ -141,6 +141,46 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task HandBackARelayClaimThatIsCancelledBeforeItIsReadBack()
+    {
+        // Arrange — the relay's stop lands after the claim's UPDATE committed, before its read-back
+        await this.SavePendingEntryAsync("msg-1");
+        using var stopping = new CancellationTokenSource();
+        var stoppingStore = new DbConnectionOutboxStore(
+            new CancellingConnectionFactory(this.connectionFactory, stopping, allowedConnections: 1),
+            new SqliteDialect());
+
+        // Act
+        var claim = () => stoppingStore.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, stopping.Token);
+
+        // Assert — the caller never learns it holds the entry, so nothing would send or release it; left claimed
+        // it would wait out the claim timeout before any worker delivered it
+        await claim.Should().ThrowAsync<OperationCanceledException>();
+        var reclaimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        reclaimed.Should().ContainSingle("another worker takes the entry at once")
+            .Which.RetryCount.Should().Be(0, "a cancelled claim is not a failed send");
+    }
+
+    [TestMethod]
+    public async Task HandBackAFlushClaimThatIsCancelledBeforeItIsReadBack()
+    {
+        // Arrange — the flush's caller gives up (a request aborted) after the claim committed, before its read-back
+        await this.SavePendingEntryAsync("msg-1");
+        using var aborted = new CancellationTokenSource();
+        var abortingStore = new DbConnectionOutboxStore(
+            new CancellingConnectionFactory(this.connectionFactory, aborted, allowedConnections: 1),
+            new SqliteDialect());
+
+        // Act
+        var claim = () => abortingStore.ClaimByMessageIdsAsync(["msg-1"], aborted.Token);
+
+        // Assert — still a never-attempted Pending entry, so the next flush (or the relay) can take it
+        await claim.Should().ThrowAsync<OperationCanceledException>();
+        (await this.store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None))
+            .Should().ContainSingle("the entry was handed back, not left claimed by nobody");
+    }
+
+    [TestMethod]
     public async Task SaveAndClaimWithoutThePropertiesColumnWhenNoneAreListed()
     {
         // Arrange — a table without the Properties column, and a host that lists no properties: the store must
@@ -843,5 +883,24 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
             (OutboxEntryStatus)reader.GetInt32(0),
             reader.GetInt32(1),
             await reader.IsDBNullAsync(2) ? null : reader.GetString(2));
+    }
+
+    private async Task SavePendingEntryAsync(string messageId)
+    {
+        await this.connectionFactory.BeginTransactionAsync();
+        await this.store.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = messageId,
+                    ConversationId = "conv-1",
+                    Type = "Orders.Commands.CreateOrder",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            this.connectionFactory.GetCurrentTransaction()!,
+            CancellationToken.None);
+        await this.connectionFactory.CommitAsync();
     }
 }

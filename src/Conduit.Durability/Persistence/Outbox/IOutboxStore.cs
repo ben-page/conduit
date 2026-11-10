@@ -16,7 +16,8 @@ public interface IOutboxStore
     /// <summary>
     /// Claims pending entries for the relay using row-level locking, each returned with the claim's
     /// <see cref="OutboxEntry.ClaimToken"/>. A claim older than <see cref="Configuration.OutboxOptions.ClaimTimeout"/>
-    /// counts as abandoned, and its entry is claimable again.
+    /// counts as abandoned, and its entry is claimable again. Cancelled part-way, the call claims nothing: whatever
+    /// its claim tagged is handed back (Pending, unclaimed) before the cancellation propagates.
     /// </summary>
     public Task<IReadOnlyList<OutboxEntry>> ClaimPendingAsync(int batchSize, TimeSpan gracePeriod, CancellationToken cancellationToken);
     /// <summary>
@@ -61,7 +62,8 @@ public interface IOutboxStore
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken);
     /// <summary>
     /// Claims entries by MessageId using row-level locking. Returns only Id, MessageId and the claim's token for
-    /// entries that are still Pending.
+    /// entries that are still Pending. Cancelled part-way, the call claims nothing, as
+    /// <see cref="ClaimPendingAsync"/>.
     /// </summary>
     public Task<IReadOnlyList<ClaimedOutboxEntry>> ClaimByMessageIdsAsync(IReadOnlyList<string> messageIds, CancellationToken cancellationToken);
 }

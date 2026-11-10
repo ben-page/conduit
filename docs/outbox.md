@@ -230,7 +230,9 @@ A store owns the [claim guard](#claim-timeout): `ClaimPendingAsync` returns each
 (`OutboxEntry.ClaimToken`), as `ClaimByMessageIdsAsync` does (`ClaimedOutboxEntry.ClaimToken`), and
 `MarkSentAsync`, `IncrementRetryAsync` and `MarkFailedAsync` take that token back. Each changes the entry only while
 that claim still holds it, and returns whether it did: `false` is a lost claim, logged and left alone. The relay
-fails a sweep whose claimed entries come back without a token.
+fails a sweep whose claimed entries come back without a token. A claim cancelled part-way must claim nothing: hand
+back (to Pending, unclaimed) whatever its token tagged before the cancellation propagates, since the caller never
+learns which entries it holds.
 
 Register it as `IOutboxStore` after `AddConduit` so it overrides the built-in `DbConnectionOutboxStore`:
 
@@ -291,7 +293,9 @@ turns backoff off: a failed entry is due again on the next sweep. `AddOutbox` re
 
 A claim tags each row with the claiming worker's token. A worker that stops mid-delivery (a crash, a killed pod)
 would strand the rows it holds, so a claim older than `ClaimTimeout` (default 5 minutes) counts as abandoned: the
-next sweep of any relay claims the entry again and delivers it.
+next sweep of any relay claims the entry again and delivers it. A claim that is cancelled before it returns (a relay
+stopping with the host, or a flush whose caller gave up) does not wait for that: it hands back whatever it had tagged,
+due at once, with the retry count untouched.
 
 A worker that was only slow, still delivering when another relay took its entry over, must not then overwrite what
 the new claim does. So every outcome (sent, released for another attempt, or failed) is written only while the
