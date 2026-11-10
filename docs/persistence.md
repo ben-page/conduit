@@ -7,7 +7,7 @@ Conduit's durable features — the [outbox](outbox.md), [inbox](inbox.md), [dead
 Add the engine package for your database and call its `Use*` method inside `AddConduit`. The engine is registered on the `ConduitBuilder` and shared by all durable features — you do not configure a database per feature.
 
 ```xml
-<PackageReference Include="Conduit.NET.Persistence.Sqlite" />
+<PackageReference Include="Conduit.NET.Persistence.Sqlite" Version="1.0.0-preview.1" />
 ```
 
 ```csharp

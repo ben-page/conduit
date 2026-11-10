@@ -119,8 +119,8 @@ local-then-transport delivery contract in detail.
 Add the `Conduit.NET.Durability` package and configure inside `AddConduit`. The persistence engine is registered once on the `ConduitBuilder` (shared with the inbox, DLQ, audit trail, and jobs), then `AddOutbox()` enables the outbox on it:
 
 ```xml
-<PackageReference Include="Conduit.NET.Durability" />
-<PackageReference Include="Conduit.NET.Persistence.Sqlite" />
+<PackageReference Include="Conduit.NET.Durability" Version="1.0.0-preview.1" />
+<PackageReference Include="Conduit.NET.Persistence.Sqlite" Version="1.0.0-preview.1" />
 ```
 
 ```csharp

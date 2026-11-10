@@ -70,7 +70,9 @@ matched.`) and a wire request for it is refused as an unknown type, even when th
 registered in DI by hand. Do not suppress the warning to get past it; remove the attribute. The
 attribute is for an **event listener** that a feature registers itself, as `AddAuditListener` does
 the audit trail's: a listener is resolved from DI when its event is published, so one registered by
-hand runs.
+hand runs. Over a broker, though, a host subscribes only the events it listens for, and an event
+with no listener the generator can see is subscribed only when the feature calls
+`ConduitTypeRegistry.ActivateEvent` for it, as `AddAuditListener` does for `AuditBatch`.
 
 ## CONDUIT002 — Multiple handlers found
 

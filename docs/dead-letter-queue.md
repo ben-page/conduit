@@ -142,13 +142,13 @@ else
 
 ```csharp
 // Replay specific messages
-var results = await deadLetters.ReplayAsync(
+var replayed = await deadLetters.ReplayAsync(
     new[] { id1, id2, id3 },
     cancellationToken
 );
 
 // Replay all messages of a type
-var results = await deadLetters.ReplayByTypeAsync(
+var replayedByType = await deadLetters.ReplayByTypeAsync(
     "Orders.Commands.CreateOrder",
     cancellationToken
 );
@@ -236,7 +236,7 @@ Every dead-lettered message carries:
 
 Replay re-publishes through the source transport's `RedeliverAsync`, which targets the service's inbound queue directly so any available instance picks the message up.
 
-A broker replay carries the original correlation ids and nothing else in the broker's native properties, so it has no publishing-application stamp: the [self-published event filter](transports/index.md#self-published-events) never drops a replayed event, even when the host that replays it is the one that published it.
+A broker replay carries the original correlation ids and none of Conduit's other metadata in the broker's native properties (the message type travels too, as on any send), so it has no publishing-application stamp: the [self-published event filter](transports/index.md#self-published-events) never drops a replayed event, even when the host that replays it is the one that published it.
 
 | Transport | Redeliver mechanism |
 |---|---|

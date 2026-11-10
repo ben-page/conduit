@@ -118,7 +118,7 @@ Or replace `LocalAuditListener` with an `IEventListener<AuditBatch>` of your own
 Add the `Conduit.NET.Audit` package and configure inside `AddConduit`:
 
 ```xml
-<PackageReference Include="Conduit.NET.Audit" />
+<PackageReference Include="Conduit.NET.Audit" Version="1.0.0-preview.1" />
 ```
 
 ```csharp

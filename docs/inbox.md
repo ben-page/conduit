@@ -63,7 +63,7 @@ A background `InboxCleanup` service periodically deletes records older than the 
 
 The gate records a message's id before its handler runs, so the record has to come off again when the handler does not succeed. Otherwise one transient failure would lose the message: the broker transport abandons it, the broker redelivers it under the same `MessageId`, and the gate discards the redelivery as a duplicate, which the transport acknowledges, with no dead-letter entry.
 
-So on a broker transport (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ), a dispatch that fails **releases its inbox record**: a handler or listener that throws, a request or a `[FireAndForget]` command answered `InternalError`, and an event or a `[FireAndForget]` command this host cannot read (a body its type cannot read, or a type it does not know). `AddInbox()` registers an `IInboundErrorInterceptor`, `InboxErrorInterceptor`, which the transport calls on every such failure. The inbox does not need a [dead letter queue](dead-letter-queue.md): the release happens whether or not one is registered, and whether or not it captured the message. Then:
+So on a broker transport (RabbitMQ, Azure Service Bus, Amazon SQS, ActiveMQ), a dispatch that fails **releases its inbox record**: a handler or listener that throws, a request or a `[FireAndForget]` command answered `InternalError`, an event whose dispatch fails outside its listeners (a pipeline behavior that throws, a listener that cannot be resolved, or a gate registered after the inbox throwing something other than a refusal), and an event or a `[FireAndForget]` command this host cannot read (a body its type cannot read, or a type it does not know). `AddInbox()` registers an `IInboundErrorInterceptor`, `InboxErrorInterceptor`, which the transport calls on every such failure. The inbox does not need a [dead letter queue](dead-letter-queue.md): the release happens whether or not one is registered, and whether or not it captured the message. Then:
 
 - **A broker redelivery runs.** A failed listener is abandoned when nothing captures it, and its redelivery reaches the handler as a first attempt would.
 - **A dead-letter replay runs.** A replay carries the original `MessageId` (see [Interaction with inbox](dead-letter-queue.md#interaction-with-inbox)), and it is no longer discarded inside `RetentionPeriod`.
@@ -80,8 +80,8 @@ If the release itself fails (the database is unreachable), it is logged at Warni
 The inbox is part of `Conduit.Durability`. Register the persistence engine once on the `ConduitBuilder` (shared with the outbox, DLQ, audit trail, and jobs), then call `AddInbox()` (alongside `AddOutbox()` / `AddDeadLetterQueue()` if you use them):
 
 ```xml
-<PackageReference Include="Conduit.NET.Durability" />
-<PackageReference Include="Conduit.NET.Persistence.Sqlite" />
+<PackageReference Include="Conduit.NET.Durability" Version="1.0.0-preview.1" />
+<PackageReference Include="Conduit.NET.Persistence.Sqlite" Version="1.0.0-preview.1" />
 ```
 
 ```csharp
