@@ -405,6 +405,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             // still wakes the sleep that follows, and work written before is in what the pass reads.
             var woken = this.sweepSignal.Arm();
 
+            // Read before the pass looks at anything: work due by now that the pass leaves is blocked, work that comes
+            // due after it is not (ComputeSweepDelayAsync).
+            var passStartedAt = this.timeProvider.GetUtcNow();
+
             TimeSpan delay;
             try
             {
@@ -416,7 +420,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
                     continue;
                 }
 
-                delay = await this.ComputeSweepDelayAsync(stoppingToken);
+                delay = await this.ComputeSweepDelayAsync(passStartedAt, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -470,7 +474,7 @@ internal sealed partial class DurableJobScheduler : BackgroundService
     /// run's outcome is not recorded (its host died, or lost its claim) does the follow-on wait for a sweep
     /// pass, up to <c>ClaimTimeout</c>.
     /// </remarks>
-    private async Task<TimeSpan> ComputeSweepDelayAsync(CancellationToken stoppingToken)
+    private async Task<TimeSpan> ComputeSweepDelayAsync(DateTimeOffset passStartedAt, CancellationToken stoppingToken)
     {
         var ceiling = this.options.Value.ClaimTimeout;
 
@@ -492,8 +496,23 @@ internal sealed partial class DurableJobScheduler : BackgroundService
             return ceiling;
         }
 
+        if (due <= passStartedAt)
+        {
+            // Due when this pass began, and left by it: a scope blocked behind its key's in-flight run. Waking for a
+            // time already past would spin the sweep; the blocking run's end wakes it (JobSweepSignal) instead.
+            return ceiling;
+        }
+
+        // Came due during the pass, after its pickup or claim had looked: go round again now. Treated as blocked, it
+        // waited out the ceiling, ClaimTimeout late (DurableJobSchedulerShould.*ComesDueDuringASweepPass*). The next
+        // pass either takes it or began after it was due, so this cannot spin.
         var untilDue = due - this.timeProvider.GetUtcNow();
-        return untilDue > TimeSpan.Zero && untilDue < ceiling ? untilDue : ceiling;
+        if (untilDue <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        return untilDue < ceiling ? untilDue : ceiling;
     }
 
     /// <summary>

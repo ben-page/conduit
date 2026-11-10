@@ -487,6 +487,16 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   would spin the sweep on work it cannot take. What ends that wait is the blocking run's end, which
   wakes the sweep of the host that ran it (`JobSweepSignal`, below); only a run whose outcome is never
   recorded (its host died) leaves the follow-on to the ceiling.
+  **"Blocked" means due before the pass began.** `SweepAsync` reads `passStartedAt` before its pickup
+  and claim, and `ComputeSweepDelayAsync` treats a due time at or before it as blocked (ceiling) and one
+  after it, already past, as come due mid-pass (`TimeSpan.Zero`: go round again). Comparing with the
+  time of the sleep computation instead classed a scope or run that came due between the pass's look
+  and its sleep as blocked, so it waited out the ceiling — `ClaimTimeout` late for a delayed trigger, a
+  coalescing scope or a retry. It cannot spin: the next pass takes the work or began after it was due.
+  Pinned deterministically by `DurableJobSchedulerShould.PickUpAScopeThatComesDueDuringASweepPassWithoutWaitingOutTheCeiling`
+  / `.RunADelayedRunThatComesDueDuringASweepPassWithoutWaitingOutTheCeiling` (`HookedJobStore` steps
+  the clock as the sweep calls `GetNextPendingDueAsync`); their two neighbours, which used to step the
+  clock in 20 ms increments to dodge this race (and failed under heavy load), now jump to the due time.
 - **The sweep is woken by work this process writes (`JobSweepSignal`).** It sleeps on what was due when
   it last looked, so a run written meanwhile waited up to `ClaimTimeout`: "run now" was not now. A
   singleton, released (idempotently, `TrySetResult`) by `DurableJobs.TriggerNowAsync` after the write,

@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Conduit.Jobs.Configuration;
+using Conduit.Jobs.Persistence;
 using Conduit.Jobs.Runtime;
 using Conduit.Jobs.Tests.Support;
 using Conduit.TestUtils;
@@ -78,8 +79,9 @@ public class DurableJobSchedulerShould
         await host.GetRequiredService<IMediator>().PublishAsync(new CartAbandoned("cart-1"));
         await JobsDatabaseProbe.WaitForOnlyRunAsync(database);
 
-        // Act — the clock reaches the run's due time, and no further
-        await AdvanceInStepsAsync(timeProvider, TimeSpan.FromSeconds(30));
+        // Act — the clock reaches the run's due time in one jump, and no further. The publish's wake may still be
+        // running its sweep pass; wherever in it the jump lands, the run is taken (see the ComesDueDuringASweepPass tests)
+        timeProvider.Advance(TimeSpan.FromSeconds(30));
 
         // Assert
         await spy.WaitForCountAsync(1);
@@ -105,27 +107,66 @@ public class DurableJobSchedulerShould
         await host.GetRequiredService<IMediator>().PublishAsync(new BadgeScanned("loc-1", Start));
         await JobsDatabaseProbe.WaitForOnlyScopeAsync(database);
 
-        // Act — the clock reaches the scope's due time, and no further
-        await AdvanceInStepsAsync(timeProvider, TimeSpan.FromSeconds(30));
+        // Act — the clock reaches the scope's due time in one jump, and no further
+        timeProvider.Advance(TimeSpan.FromSeconds(30));
 
         // Assert
         await summaries.WaitForCountAsync(1);
     }
 
-    /// <summary>
-    /// Moves the clock to <paramref name="total"/> in five-second steps. The publish's wake may still be running
-    /// its sweep pass: one jump to the due time, landing between the pass's claim and its sleep computation,
-    /// would leave the run due but unclaimed and the sweep asleep for its two-minute ceiling on a frozen clock.
-    /// Stepping keeps the due time in the future until the sweep has armed its timer for it.
-    /// </summary>
-    private static async Task AdvanceInStepsAsync(FakeTimeProvider timeProvider, TimeSpan total)
+    [TestMethod]
+    [Timeout(30_000)]
+    public async Task PickUpAScopeThatComesDueDuringASweepPassWithoutWaitingOutTheCeiling()
     {
-        var step = TimeSpan.FromSeconds(5);
-        for (var advanced = TimeSpan.Zero; advanced < total; advanced += step)
-        {
-            timeProvider.Advance(step);
-            await Task.Delay(20);
-        }
+        // Arrange — the clock reaches the scope's due time at the worst moment: after the pass looked for due scopes
+        // and before it computed its sleep, which then saw a due time already past
+        var timeProvider = new FakeTimeProvider(Start);
+        using var summaries = new LocationSummarySpy();
+        var dueMidPass = new JobStoreHook(
+            nameof(IJobStore.GetNextPendingDueAsync), () => timeProvider.Advance(TimeSpan.FromSeconds(30)));
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.On<BadgeScanned>("rebuild")
+                .After(TimeSpan.FromSeconds(30))
+                .CoalesceBy(scan => scan.LocationId)
+                .Run(scan => new RebuildLocationSummary(scan.LocationId, scan.From))
+                .Merge((pending, incoming) => pending.From <= incoming.From ? pending : incoming),
+            timeProvider: timeProvider,
+            connectionString: database.ConnectionString,
+            locationSummarySpy: summaries,
+            configureServices: services => HookedJobStore.Install(services, dueMidPass));
+        dueMidPass.Arm();
+
+        // Act — the publish opens the scope and wakes the sweep, whose pass then meets the hook
+        await host.GetRequiredService<IMediator>().PublishAsync(new BadgeScanned("loc-1", Start));
+
+        // Assert — taken at once, on a clock that never moves again, not after the two-minute ceiling
+        await summaries.WaitForCountAsync(1);
+    }
+
+    [TestMethod]
+    [Timeout(30_000)]
+    public async Task RunADelayedRunThatComesDueDuringASweepPassWithoutWaitingOutTheCeiling()
+    {
+        // Arrange — as above, for a delayed trigger's run: it comes due after the pass's claim, before its sleep
+        var timeProvider = new FakeTimeProvider(Start);
+        var spy = new JobSpy();
+        var dueMidPass = new JobStoreHook(
+            nameof(IJobStore.GetNextPendingDueAsync), () => timeProvider.Advance(TimeSpan.FromSeconds(30)));
+        await using var database = SharedSqliteDatabase.Create();
+        await using var host = await JobsTestHost.StartAsync(
+            jobs => jobs.On<CartAbandoned>().After(TimeSpan.FromSeconds(30)).Run(cart => new RecordedJob(cart.CartId)),
+            spy,
+            timeProvider,
+            database.ConnectionString,
+            configureServices: services => HookedJobStore.Install(services, dueMidPass));
+        dueMidPass.Arm();
+
+        // Act
+        await host.GetRequiredService<IMediator>().PublishAsync(new CartAbandoned("cart-1"));
+
+        // Assert
+        await spy.WaitForCountAsync(1);
     }
 
     private static Task<TestHost> StartHostAsync(
