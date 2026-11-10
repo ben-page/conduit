@@ -45,7 +45,7 @@ public class ResilienceBehaviorShould
             new TimeoutException(),
             new TimeoutException());
 
-        var typeKey = typeof(TestCommand).FullName!;
+        var typeKey = ResilienceBehavior.TypePipelineKey(typeof(TestCommand));
         var behavior = BuildBehaviorWithTypedPipeline(typeKey, builder =>
             builder.AddRetry(new RetryStrategyOptions<string>
             {
@@ -71,7 +71,7 @@ public class ResilienceBehaviorShould
         // Arrange
         var handler = new FailingHandler(new NotFoundException("not found"));
 
-        var typeKey = typeof(TestCommand).FullName!;
+        var typeKey = ResilienceBehavior.TypePipelineKey(typeof(TestCommand));
         var behavior = BuildBehaviorWithTypedPipeline(typeKey, builder =>
             builder.AddRetry(new RetryStrategyOptions<string>
             {
@@ -97,7 +97,7 @@ public class ResilienceBehaviorShould
         // Arrange
         var handler = new FailingHandler(new UnauthorizedException("unauthorized"));
 
-        var typeKey = typeof(TestCommand).FullName!;
+        var typeKey = ResilienceBehavior.TypePipelineKey(typeof(TestCommand));
         var behavior = BuildBehaviorWithTypedPipeline(typeKey, builder =>
             builder.AddRetry(new RetryStrategyOptions<string>
             {
@@ -145,7 +145,7 @@ public class ResilienceBehaviorShould
 
         var handler = new FailingHandler(new TimeoutException());
 
-        var typeKey = typeof(TestCommand).FullName!;
+        var typeKey = ResilienceBehavior.TypePipelineKey(typeof(TestCommand));
         var behavior = BuildBehaviorWithTypedPipeline(typeKey, builder =>
             builder.AddRetry(new RetryStrategyOptions<string>
             {
@@ -279,11 +279,68 @@ public class ResilienceBehaviorShould
         }
     }
 
-    /// <summary>The behavior as a host resolves it after <c>AddResilience</c>.</summary>
-    private static ResilienceBehavior<TestCommand, string> BuildConduitBehavior(Action<ConduitResilienceBuilder> configure)
+    [TestMethod]
+    public async Task IgnoreAHostPipelineNamedLikeANamespace()
+    {
+        // Arrange -- the host registers pipelines for its own use, in the same registry, under names that equal
+        // TestCommand's namespace and one of its segments.
+        var resolved = new List<string>();
+        var behavior = BuildConduitBehavior(
+            resilience => resilience.AddDefaultPipeline(pipeline => RetryOnceRecording(pipeline, "default", resolved)),
+            services => services
+                .AddResiliencePipeline("Conduit.Resilience.Tests.Support",
+                    pipeline => RetryOnceRecording(pipeline, "host namespace", resolved))
+                .AddResiliencePipeline("Conduit", pipeline => RetryOnceRecording(pipeline, "host segment", resolved)));
+        var handler = new FailingHandler(new TimeoutException());
+
+        // Act
+        var result = await behavior.HandleAsync(new TestCommand("test"), handler.HandleAsync, CancellationToken.None);
+
+        // Assert -- Conduit resolves only keys it registered.
+        result.Should().Be("success");
+        resolved.Should().Equal("default");
+    }
+
+    [TestMethod]
+    public async Task ResolveTheMostSpecificKeyBeforeThePipelineKind()
+    {
+        // Arrange -- a typed default, a namespace pipeline and a non-generic pipeline for the type itself.
+        var resolved = new List<string>();
+        var behavior = BuildConduitBehavior(
+            resilience => resilience
+                .AddPipelineForNamespace("Conduit.Resilience.Tests.Support",
+                    pipeline => RetryOnceRecording(pipeline, "namespace", resolved))
+                .AddPipelineForType<TestCommand>(pipeline => RetryOnceRecording(pipeline, "type", resolved)),
+            services => services.AddResiliencePipeline<string, string>(ResilienceBehavior.DefaultPipelineKey,
+                pipeline => pipeline.AddRetry(new RetryStrategyOptions<string>
+                {
+                    MaxRetryAttempts = 1,
+                    Delay = TimeSpan.Zero,
+                    OnRetry = _ =>
+                    {
+                        resolved.Add("typed default");
+                        return ValueTask.CompletedTask;
+                    },
+                })));
+        var handler = new FailingHandler(new TimeoutException());
+
+        // Act
+        var result = await behavior.HandleAsync(new TestCommand("test"), handler.HandleAsync, CancellationToken.None);
+
+        // Assert -- the type's own pipeline beats the namespace's, and a non-generic pipeline under a more specific
+        // key beats a typed one under a less specific key.
+        result.Should().Be("success");
+        resolved.Should().Equal("type");
+    }
+
+    /// <summary>The behavior as a host resolves it after <c>AddResilience</c>, plus any pipelines the host registers
+    /// itself.</summary>
+    private static ResilienceBehavior<TestCommand, string> BuildConduitBehavior(
+        Action<ConduitResilienceBuilder> configure, Action<IServiceCollection>? hostServices = null)
     {
         var services = new ServiceCollection();
         new ConduitBuilder(services).AddResilience(configure);
+        hostServices?.Invoke(services);
         return services.BuildServiceProvider().GetRequiredService<ResilienceBehavior<TestCommand, string>>();
     }
 

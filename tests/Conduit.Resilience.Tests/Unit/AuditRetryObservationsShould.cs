@@ -1,5 +1,6 @@
 ﻿using AwesomeAssertions;
 using Conduit.Configuration;
+using Conduit.Resilience.Tests.Support;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
@@ -115,6 +116,36 @@ public sealed class AuditRetryObservationsShould
         // Assert -- Polly retried, but outside a Conduit dispatch's pipeline execution.
         callCount.Should().Be(2);
         this.collector.OfType<RetryAttempted>().Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task KeepARetriedResultsValuesOutOfTheObservation()
+    {
+        // Arrange -- a typed pipeline for TestCommand that retries a result, not an exception.
+        MessageContext.StartDispatch().AttachObserver(this.collector);
+        var services = new ServiceCollection();
+        new ConduitBuilder(services).AddResilience();
+        services.AddResiliencePipeline<string, SecretResult>(ResilienceBehavior.TypePipelineKey(typeof(TestCommand)),
+            pipeline => pipeline.AddRetry(new RetryStrategyOptions<SecretResult>
+            {
+                ShouldHandle = new PredicateBuilder<SecretResult>().HandleResult(result => result.Secret == "hunter2"),
+                MaxRetryAttempts = 1,
+                Delay = TimeSpan.Zero,
+            }));
+        var behavior = services.BuildServiceProvider()
+            .GetRequiredService<ResilienceBehavior<TestCommand, SecretResult>>();
+        var callCount = 0;
+
+        // Act
+        var result = await behavior.HandleAsync(new TestCommand("test"),
+            () => Task.FromResult(new SecretResult(++callCount == 1 ? "hunter2" : "fine")),
+            CancellationToken.None);
+
+        // Assert -- the retry is observed, but a result is not captured: only its type is named.
+        result.Secret.Should().Be("fine");
+        var retry = this.collector.OfType<RetryAttempted>().Should().ContainSingle().Subject;
+        retry.ErrorMessage.Should().NotContain("hunter2").And.Contain(typeof(SecretResult).FullName!);
+        retry.ExceptionType.Should().BeEmpty();
     }
 
     /// <summary>The behavior as a host resolves it after <c>AddResilience</c> with a default retry pipeline.</summary>

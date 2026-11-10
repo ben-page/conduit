@@ -20,7 +20,9 @@ public sealed class RemoteDispatchException : InvalidOperationException
     }
 
     /// <summary>The remote error's code (<see cref="DispatchError.Code"/>) with the HTTP status its server declared
-    /// (<see cref="DispatchError.Status"/>), or the built-in code's when the server predates it.</summary>
+    /// (<see cref="DispatchError.Status"/>). From a server that predates it, the status is
+    /// <see cref="ErrorCode.ToHttpStatusCode(string)"/>'s: the built-in code's, or 400 for a code that is not built
+    /// in.</summary>
     public ErrorCode Code { get; }
 
     /// <summary>The remote failure's support reference (<see cref="DispatchError.Reference"/>), or null when it sent none.</summary>

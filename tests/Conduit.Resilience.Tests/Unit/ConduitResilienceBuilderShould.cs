@@ -42,7 +42,7 @@ public class ConduitResilienceBuilderShould
         // Arrange
         var services = new ServiceCollection();
         var conduitBuilder = new ConduitBuilder(services);
-        var expectedKey = typeof(TestCommand).FullName!;
+        var expectedKey = ResilienceBehavior.TypePipelineKey(typeof(TestCommand));
 
         // Act
         conduitBuilder.AddResilience(resilience =>

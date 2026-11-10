@@ -620,8 +620,9 @@ public static partial class ConduitRuntime
     }
 
     /// <summary>
-    /// The <see cref="ErrorCode"/> a remote error names: its code with the status its server declared, or the built-in
-    /// code's status from a server predating <see cref="DispatchError.Status"/> (the HTTP endpoint's own rule). An error
+    /// The <see cref="ErrorCode"/> a remote error names: its code with the status its server declared, or, from a server
+    /// predating <see cref="DispatchError.Status"/>, <see cref="ErrorCode.ToHttpStatusCode(string)"/>'s (the built-in
+    /// code's, 400 for any other; the HTTP endpoint's own rule). An error
     /// that names no code is no refusal the server chose, so it reads as <see cref="ErrorCode.InternalError"/>.
     /// </summary>
     private static ErrorCode RemoteErrorCode(DispatchError error) =>

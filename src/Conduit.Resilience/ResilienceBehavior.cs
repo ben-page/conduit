@@ -38,16 +38,26 @@ public static class ResilienceBehavior
     internal static readonly ResiliencePropertyKey<bool> DispatchKey = new("Conduit.Dispatch");
 
     /// <summary>
-    /// The keys a pipeline for <paramref name="requestType"/> is looked up under, most specific first: its full name,
-    /// then each enclosing namespace on whole segments from the longest (<c>A.B.C</c>, <c>A.B</c>, <c>A</c>), then
-    /// <see cref="DefaultPipelineKey"/>.
+    /// The key of the pipeline registered for one message type: <c>"Conduit.Type:"</c> and its full name. Conduit's
+    /// keys share the host's <see cref="ResiliencePipelineRegistry{TKey}"/>, so each carries a prefix no pipeline the
+    /// host registers for its own use is named with by accident.
+    /// </summary>
+    internal static string TypePipelineKey(Type messageType) => "Conduit.Type:" + messageType.FullName;
+
+    /// <summary>The key of the pipeline registered for a namespace: <c>"Conduit.Namespace:"</c> and the namespace.</summary>
+    internal static string NamespacePipelineKey(string ns) => "Conduit.Namespace:" + ns;
+
+    /// <summary>
+    /// The keys a pipeline for <paramref name="requestType"/> is looked up under, most specific first: its type key,
+    /// then the namespace key of each enclosing namespace on whole segments from the longest (<c>A.B.C</c>, <c>A.B</c>,
+    /// <c>A</c>), then <see cref="DefaultPipelineKey"/>.
     /// </summary>
     internal static string[] PipelineKeys(Type requestType)
     {
-        var keys = new List<string> { requestType.FullName! };
+        var keys = new List<string> { TypePipelineKey(requestType) };
         for (var ns = requestType.Namespace; !string.IsNullOrEmpty(ns); ns = EnclosingNamespace(ns))
         {
-            keys.Add(ns);
+            keys.Add(NamespacePipelineKey(ns));
         }
 
         keys.Add(DefaultPipelineKey);
@@ -63,8 +73,9 @@ public static class ResilienceBehavior
 
 /// <summary>
 /// <see cref="IPipelineBehavior{TRequest,TResult}"/> that wraps dispatch in a Polly v8 resilience pipeline. The
-/// pipeline is the first one registered under, in order: the request type's full name, its namespace or the longest
-/// registered enclosing namespace, and the default key <c>"Conduit.Default"</c>. Under each key a typed
+/// pipeline is the first one registered under, in order: the request type's key (<c>"Conduit.Type:"</c> + its full
+/// name), the key of its namespace or of the longest registered enclosing namespace (<c>"Conduit.Namespace:"</c> + the
+/// namespace), and the default key <c>"Conduit.Default"</c>. It looks up no other key. Under each key a typed
 /// <see cref="ResiliencePipeline{T}"/> is preferred to a non-generic <see cref="ResiliencePipeline"/>. If none is
 /// registered, the next delegate is called directly.
 /// </summary>

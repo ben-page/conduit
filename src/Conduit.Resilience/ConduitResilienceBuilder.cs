@@ -28,7 +28,7 @@ public class ConduitResilienceBuilder
     /// <summary>
     /// Registers a catch-all resilience pipeline under the key
     /// <see cref="ResilienceBehavior.DefaultPipelineKey"/> (<c>"Conduit.Default"</c>).
-    /// Applied to any dispatch for which no type-specific pipeline is registered.
+    /// Applied to any dispatch for which no type-specific or namespace pipeline is registered.
     /// </summary>
     /// <param name="configure">Callback to build the resilience pipeline.</param>
     /// <returns>This builder for chaining.</returns>
@@ -42,7 +42,8 @@ public class ConduitResilienceBuilder
 
     /// <summary>
     /// Registers a resilience pipeline scoped to a specific request type <typeparamref name="T"/>.
-    /// The pipeline key is <c>typeof(T).FullName</c>. Takes precedence over the default pipeline.
+    /// The pipeline key is <c>"Conduit.Type:"</c> + <c>typeof(T).FullName</c>. Takes precedence over namespace
+    /// pipelines and the default pipeline.
     /// </summary>
     /// <typeparam name="T">The request type (command or query) to scope the pipeline to.</typeparam>
     /// <param name="configure">Callback to build the resilience pipeline.</param>
@@ -51,7 +52,7 @@ public class ConduitResilienceBuilder
         Action<ResiliencePipelineBuilder> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        this.Services.AddResiliencePipeline(typeof(T).FullName!, configure);
+        this.Services.AddResiliencePipeline(ResilienceBehavior.TypePipelineKey(typeof(T)), configure);
         return this;
     }
 
@@ -60,7 +61,8 @@ public class ConduitResilienceBuilder
     /// its sub-namespaces, matched on whole segments: <c>"MyApp.Orders"</c> covers <c>MyApp.Orders.CreateOrder</c> and
     /// <c>MyApp.Orders.Commands.CancelOrder</c>, never <c>MyApp.OrdersArchive.Purge</c>. When several registered
     /// namespaces enclose a type, the longest wins. A pipeline registered for the type itself takes precedence, and
-    /// any namespace pipeline takes precedence over the default. The pipeline key is the namespace itself.
+    /// any namespace pipeline takes precedence over the default. The pipeline key is <c>"Conduit.Namespace:"</c> + the
+    /// namespace, so a pipeline the host registers for its own use under a name equal to a namespace is never applied.
     /// </summary>
     /// <param name="namespacePrefix">
     /// The namespace to match (e.g. <c>"MyApp.Orders"</c>).
@@ -73,7 +75,7 @@ public class ConduitResilienceBuilder
     {
         ArgumentNullException.ThrowIfNull(namespacePrefix);
         ArgumentNullException.ThrowIfNull(configure);
-        this.Services.AddResiliencePipeline(namespacePrefix, configure);
+        this.Services.AddResiliencePipeline(ResilienceBehavior.NamespacePipelineKey(namespacePrefix), configure);
         return this;
     }
 }
