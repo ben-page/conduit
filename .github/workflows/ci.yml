@@ -14,9 +14,13 @@ name: CI
 # it runs as soon as `pack` is green. Publishing is irreversible: a NuGet package
 # version can never be overwritten.
 #
-# Secrets: `NUGET_API_KEY`, a nuget.org API key with push rights to the
-# Conduit.NET.* ids. Store it as a secret of the `release` environment, so only a
-# run a reviewer approved can read it. GitHub Packages uses GITHUB_TOKEN.
+# nuget.org uses Trusted Publishing: no stored API key. The job exchanges its
+# GitHub OIDC token (NuGet/login) for a one-hour key, which nuget.org grants
+# only to a run matching a policy on the nuget.org account (Trusted Publishing:
+# owner ben-page, repository conduit, workflow file ci.yml, environment
+# release). The one secret is `NUGET_USER`, the nuget.org profile name that owns
+# the policy (not an email), stored on the `release` environment. GitHub
+# Packages uses GITHUB_TOKEN.
 
 on:
   push:
@@ -194,6 +198,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Trusted Publishing: lets NuGet/login request this job's OIDC token.
+      id-token: write
     steps:
       - uses: actions/setup-dotnet@v6
         with:
@@ -215,14 +221,28 @@ jobs:
           --api-key "${{ secrets.GITHUB_TOKEN }}"
           --skip-duplicate
 
-      - name: Push to nuget.org
+      - name: Check NUGET_USER
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_USER: ${{ secrets.NUGET_USER }}
         run: |
-          if [[ -z "$NUGET_API_KEY" ]]; then
-            echo "::error::The NUGET_API_KEY secret is not set; nothing was pushed to nuget.org."
+          if [[ -z "$NUGET_USER" ]]; then
+            echo "::error::The NUGET_USER secret is not set; nothing was pushed to nuget.org."
             exit 1
           fi
+
+      # The key lives one hour, so it is minted right before the push it serves.
+      # Pinned to a commit, not the movable v1 tag: this step holds the power to
+      # publish under the Conduit.NET ids. Bump the SHA deliberately.
+      - name: Log in to nuget.org (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
           dotnet nuget push "artifacts/*.nupkg" \
             --source "https://api.nuget.org/v3/index.json" \
             --api-key "$NUGET_API_KEY" \
