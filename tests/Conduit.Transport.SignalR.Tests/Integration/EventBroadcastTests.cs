@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using Conduit.Runtime;
 using Conduit.TestUtils;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.SignalR.Tests.Integration;
 
@@ -138,6 +140,52 @@ public class EventBroadcastShould
         bobReceived.Types.Should().Equal(typeof(ItemSharedEvent).FullName, typeof(ItemArchivedEvent).FullName);
         resolver.Asked.Select(asked => asked.EventType).Should().Equal(itemEvents.Select(type => type.FullName));
         resolver.Asked.First().Event.Should().Be(assigned);
+    }
+
+    // Under the outbox an event reaches the transports through TransportDispatcher, which does not isolate one transport
+    // from the next: a resolver fault escaping the transport aborted the broadcast, failed the outbox entry and resent it
+    // to the transports that had already taken it. The transport logs the fault and pushes nothing for that event instead.
+    [TestMethod]
+    public async Task LogAndSkipTheEventWhenTheResolverThrows()
+    {
+        // Arrange
+        var log = new SpyLoggerProvider();
+        var laterTransport = new RecordingTransport();
+        await using var host = StartHubHost(services =>
+        {
+            services.AddSingleton<ILoggerProvider>(log);
+            services.AddSingleton<IEventRecipientResolver, FaultyRecipientResolver>();
+            services.AddSingleton<IConduitTransport>(laterTransport);
+        });
+        await using var connection = BuildConnection(host.Address, user: null);
+        var received = ReceivedEvents.Listen(connection, typeof(ItemAssignedEvent), typeof(ItemRenamedEvent));
+        await StartRegisteredAsync(connection);
+        var transportDispatcher = host.GetRequiredService<TransportDispatcher>();
+        var localDispatcher = host.GetRequiredService<ILocalEnvelopeDispatcher>();
+
+        // Act: delivered as the outbox delivers, the faulted event first
+        await transportDispatcher.SendAsync(
+            EnvelopeOf(new ItemAssignedEvent(Guid.NewGuid(), "alice")), localDispatcher, CancellationToken.None);
+        await transportDispatcher.SendAsync(
+            EnvelopeOf(new ItemRenamedEvent(Guid.NewGuid(), "Renamed")), localDispatcher, CancellationToken.None);
+        await received.WaitForAsync(typeof(ItemRenamedEvent));
+
+        // Assert
+        received.Types.Should().Equal(typeof(ItemRenamedEvent).FullName);
+        laterTransport.SentEvents.Select(envelope => envelope.Type).Should()
+            .Equal(typeof(ItemAssignedEvent).FullName, typeof(ItemRenamedEvent).FullName);
+        log.Entries.Should().ContainSingle(entry =>
+                entry.Category == typeof(SignalRTransport).FullName
+                && entry.Level == LogLevel.Warning
+                && entry.EventId.Id == 100)
+            .Which.Exception.Should().BeOfType<InvalidOperationException>();
+    }
+
+    private static DispatchEnvelope EnvelopeOf(object @event)
+    {
+        return new DispatchEnvelope(
+            @event.GetType().FullName!,
+            JsonSerializer.SerializeToElement(@event, @event.GetType(), ConduitRuntime.JsonOptions));
     }
 
     private static TestWebHost StartHubHost(Action<IServiceCollection>? configureServices = null)

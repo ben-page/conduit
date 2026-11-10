@@ -83,7 +83,7 @@ A single SignalR connection carries traffic in both directions.
 
 ```csharp
 [ClientVisible]
-public record OrderShippedEvent(Guid OrderId) : IEvent;
+public record OrderShippedEvent(Guid OrderId, string CustomerId) : IEvent;
 ```
 
 No subscription step is needed. Clients receive the events pushed to them by listening for the event's full type name:
@@ -141,7 +141,8 @@ The resolver's answer is the whole decision: a `[ClientVisible]` event it answer
 - **The event** arrives as its own type, deserialized from the payload the transport was handed with `ConduitRuntime.JsonOptions`; as the raw `JsonElement` when the host's registry does not list the type.
 - **Groups** are SignalR's: the host adds connections to them, for example from an `IHubFilter`'s `OnConnectedAsync` (`context.Hub.Groups.AddToGroupAsync(context.Context.ConnectionId, ...)`), which runs for `ConduitHub` too.
 - **Lifetime.** Register the resolver as a singleton: the server-mode transport is one and resolves it once. One that needs scoped services (a `DbContext` to look up a tenant's members) creates a scope from `IServiceScopeFactory` per call.
-- **Failure.** It runs inline in `PublishAsync`, once per event. An exception it throws stops only that event's push: the publish logs it as `TransportBroadcastFailed` (EventId 22) and carries on, as for any transport failure.
+- **When it runs.** Once per event: inline in `PublishAsync`, or, when the [outbox](../outbox.md) captured the event, later, on the outbox's delivery (its flush or its relay) after the publisher's request has ended. There it has no ambient request state: `MessageContext.Current`'s properties and an `IHttpContextAccessor` are not the publisher's. Decide from the event itself, so carry what the decision needs (a tenant id, a user id) on the event.
+- **Failure.** An exception the resolver throws, or a payload that does not read as the event's type, skips that event's push: the transport logs it as `RecipientResolutionFailed` (EventId 100, Warning, with the exception) and pushes the event to nobody. The transport does not throw for it, so the publish, the other transports and the outbox's delivery of the event carry on.
 
 ## Solicited events
 

@@ -1,6 +1,7 @@
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Transport.SignalR;
 
@@ -48,6 +49,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(serviceProvider => new SignalRTransport(
             serviceProvider.GetRequiredService<IHubContext<ConduitHub>>(),
             serviceProvider.GetRequiredService<ConduitTypeRegistry>(),
+            serviceProvider.GetRequiredService<ILogger<SignalRTransport>>(),
             serviceProvider.GetService<IEventRecipientResolver>()));
         services.AddSingleton<IConduitTransport>(serviceProvider => serviceProvider.GetRequiredService<SignalRTransport>());
         return services;

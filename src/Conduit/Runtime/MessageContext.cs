@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Text.Json;
 
 namespace Conduit.Runtime;
@@ -63,9 +62,8 @@ public sealed class MessageContext
 
     /// <summary>
     /// The raw JSON payload of the dispatched message. Set by the generated mediator
-    /// after serialization, consumed by the audit observer for storage. Public for Conduit.Audit, not for direct use.
+    /// after serialization, consumed by the audit observer for storage: the captured body, readable by an observer.
     /// </summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
     public JsonElement? Payload { get; private set; }
 
     /// <summary>

@@ -8,10 +8,10 @@ and `Microsoft.Extensions.Configuration.Binder`.
 **IntelliSense hygiene.** Public types that generated code and sibling packages call but a host never names carry
 `[EditorBrowsable(EditorBrowsableState.Never)]`: `ConduitRuntime`, `ConduitTelemetry`, `TransportDispatcher`,
 `DispatchContextEnrichment`, `ConduitConfigurationBinder`, `ILocalEnvelopeDispatcher`, `ConduitBackgroundDispatcher`,
-`WirePreflightResult` (and `ConduitRestHandlers` in Conduit.Transport.Http), plus the members
-`ConduitRuntime.SuppressAuditPayloadOf` and `MessageContext.Payload`, public only so Conduit.Audit reaches them without
-an `InternalsVisibleTo` (Conduit grants one only to its own test projects). Deliberately left visible because hosts name
-them: `ConduitTypeRegistry` (`GetRequiredService<ConduitTypeRegistry>().ExcludeEventTypes(...)`), `IWireMediator`
+`WirePreflightResult` (and `ConduitRestHandlers` in Conduit.Transport.Http), plus the member
+`ConduitRuntime.SuppressAuditPayloadOf`, public only so Conduit.Audit reaches it without an `InternalsVisibleTo`
+(Conduit grants one only to its own test projects). `MessageContext.Payload`, the other member Audit reads, is plainly
+public: the captured body, readable by any `IConduitObserver`. Deliberately left visible because hosts name them: `ConduitTypeRegistry` (`GetRequiredService<ConduitTypeRegistry>().ExcludeEventTypes(...)`), `IWireMediator`
 (a batch handler, a custom transport), `RefusalRendering` (a host's own edge calls `RenderResult`), `DispatchAttempt`
 (`Current`, read by behaviors), `ConduitHeaders` (wire contract). The attribute hides a type from completion only:
 naming it still compiles. `TypeFilterInterceptor` is internal (its test is in Conduit.Tests).

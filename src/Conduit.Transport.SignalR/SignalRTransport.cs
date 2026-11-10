@@ -3,6 +3,8 @@ using System.Text.Json;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Conduit.Transport.SignalR;
 
@@ -15,6 +17,12 @@ namespace Conduit.Transport.SignalR;
 /// </summary>
 public class SignalRTransport : IConduitTransport, IAsyncDisposable
 {
+    // The SignalR package's first EventId, in the 100s each transport package numbers its own from.
+    private static readonly Action<ILogger, string, Exception?> LogRecipientResolutionFailed =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(100, "RecipientResolutionFailed"),
+            "The event recipient resolver failed for '{EventType}'; the event is not pushed to any SignalR client");
+
+    private readonly ILogger logger = NullLogger.Instance;
     private readonly IHubContext<ConduitHub>? hubContext;
     private readonly IEventRecipientResolver? recipientResolver;
     private readonly FrozenDictionary<string, Type>? eventTypesByName;
@@ -33,6 +41,10 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     /// none; with one, the resolver is handed the event deserialized as the <see cref="ConduitTypeRegistry.EventTypes"/>
     /// entry of that name.
     /// </param>
+    /// <param name="logger">
+    /// Logs a resolver that throws (or a payload that does not read as its event type): that event is pushed to nobody,
+    /// and the send does not throw.
+    /// </param>
     /// <param name="recipientResolver">
     /// Decides who receives every event, in place of the <c>[ClientVisible]</c> default. <c>AddConduitSignalR</c> passes
     /// the one registered in DI, if any.
@@ -40,11 +52,14 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     public SignalRTransport(
         IHubContext<ConduitHub> hubContext,
         ConduitTypeRegistry typeRegistry,
+        ILogger<SignalRTransport> logger,
         IEventRecipientResolver? recipientResolver = null)
     {
         ArgumentNullException.ThrowIfNull(hubContext);
         ArgumentNullException.ThrowIfNull(typeRegistry);
+        ArgumentNullException.ThrowIfNull(logger);
 
+        this.logger = logger;
         this.hubContext = hubContext;
         this.typeRegistry = typeRegistry;
         this.recipientResolver = recipientResolver;
@@ -130,20 +145,36 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
         }
     }
 
-    private ValueTask<EventRecipients> ResolveRecipientsAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    private async ValueTask<EventRecipients> ResolveRecipientsAsync(
+        DispatchEnvelope envelope, CancellationToken cancellationToken)
     {
         if (this.recipientResolver is null)
         {
             var clientVisible = this.typeRegistry!.ClientVisibleEventTypeNames.Contains(envelope.Type);
-            return ValueTask.FromResult(clientVisible ? EventRecipients.All : EventRecipients.None);
+            return clientVisible ? EventRecipients.All : EventRecipients.None;
         }
 
-        // The resolver decides from the event itself, typed as it was published. A name the registry does not list (no
-        // generated publish sends one; a hand-built envelope can) leaves it the raw payload.
-        var @event = this.eventTypesByName!.TryGetValue(envelope.Type, out var eventType)
-            ? envelope.Payload.Deserialize(eventType, ConduitRuntime.JsonOptions)!
-            : envelope.Payload;
-        return this.recipientResolver.ResolveAsync(envelope.Type, @event, cancellationToken);
+        // A fault here skips this event's push and never throws: the outbox delivers through TransportDispatcher, which
+        // does not isolate one transport from the next, so a throw would stop the transports after this one, fail the
+        // outbox entry and resend it to those that already took it. A cancelled publish still propagates.
+#pragma warning disable CA1031 // A resolver's fault, or an unreadable payload, must not fail the broadcast.
+        try
+        {
+            // The resolver decides from the event itself, typed as it was published. A name the registry does not list
+            // (no generated publish sends one; a hand-built envelope can) leaves it the raw payload.
+            var @event = this.eventTypesByName!.TryGetValue(envelope.Type, out var eventType)
+                ? envelope.Payload.Deserialize(eventType, ConduitRuntime.JsonOptions)
+                    ?? throw new JsonException($"The payload of '{envelope.Type}' is null.")
+                : envelope.Payload;
+            return await this.recipientResolver.ResolveAsync(envelope.Type, @event, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException
+                                          || !cancellationToken.IsCancellationRequested)
+        {
+            LogRecipientResolutionFailed(this.logger, envelope.Type, exception);
+            return EventRecipients.None;
+        }
+#pragma warning restore CA1031
     }
 
     /// <summary>

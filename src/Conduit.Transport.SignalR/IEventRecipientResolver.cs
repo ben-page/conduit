@@ -9,8 +9,17 @@ namespace Conduit.Transport.SignalR;
 /// <remarks>
 /// The transport is a singleton and resolves the resolver once, from the root container, so register it as a singleton;
 /// one that needs scoped services (a database context, say) creates a scope from <c>IServiceScopeFactory</c> per call.
-/// It runs inline in the publisher's <c>PublishAsync</c>, once per event. An exception it throws stops that event's push
-/// only: the publish logs it as <c>TransportBroadcastFailed</c> and carries on.
+/// <para>
+/// It runs once per event: inline in the publisher's <c>PublishAsync</c>, or, for an event the outbox captured, later on
+/// the outbox's delivery (its flush or relay), after the publisher's request has ended. There it has no ambient request
+/// state: <c>MessageContext.Current</c>'s properties and an <c>IHttpContextAccessor</c> are not the publisher's, so decide
+/// from the event itself.
+/// </para>
+/// <para>
+/// An exception it throws, or a payload that does not read as the event's type, skips that event's push: the transport
+/// logs it (<c>RecipientResolutionFailed</c>, EventId 100, Warning) and pushes the event to nobody. The transport does not
+/// throw for it, so the publish, the other transports and the outbox's delivery carry on.
+/// </para>
 /// </remarks>
 public interface IEventRecipientResolver
 {
