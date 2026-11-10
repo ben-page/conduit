@@ -683,7 +683,7 @@ app.MapConduitGet<GetItemQuery>("/api/items/{id}")
 ### SignalR Transport
 
 Dual-mode transport implementing `IConduitTransport`:
-- **Server mode** (`IHubContext<ConduitHub>`) — pushes events to connected clients via hub broadcast. Registered in DI by `AddConduitSignalR()`.
+- **Server mode** (`IHubContext<ConduitHub>`) — pushes events to connected clients: a `[ClientVisible]` event to all of them and any other to none, unless an `IEventRecipientResolver` names the recipients (all, none, users or groups) for every event. Registered in DI by `AddConduitSignalR()`.
 - **Client mode** (`HubConnection`) — sends commands/queries (and routed `[FireAndForget]` commands, through the hub's `Dispatch`) to a remote hub. Send-only: it does not receive the hub's events (deferred). Uses lazy connect (`EnsureConnectedAsync`), starting the connection again once it is closed for good.
 
 ### HTTP Transport

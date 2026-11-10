@@ -1,4 +1,5 @@
 using Conduit.Runtime;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Conduit.Transport.SignalR;
@@ -13,6 +14,8 @@ public static class ServiceCollectionExtensions
     /// and client-to-server dispatch via the <see cref="ConduitHub"/>.
     /// Configures SignalR JSON serialization to match <see cref="ConduitRuntime.JsonOptions"/>
     /// (camelCase, string enums, case-insensitive).
+    /// A published event is pushed to every connection when it is <c>[ClientVisible]</c> and to none otherwise, unless
+    /// an <see cref="IEventRecipientResolver"/> is registered, which then decides for every event.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="configure">Configures how the hub treats its callers (<see cref="ConduitSignalROptions"/>); by
@@ -40,8 +43,13 @@ public static class ServiceCollectionExtensions
             services.Configure(configure);
         }
 
-        services.AddSingleton<SignalRTransport>();
-        services.AddSingleton<IConduitTransport>(sp => sp.GetRequiredService<SignalRTransport>());
+        // A factory, not the constructor DI would pick: the resolver is optional and resolved here, at the one place that
+        // builds the server-mode transport. The registry is AddConduit's.
+        services.AddSingleton(serviceProvider => new SignalRTransport(
+            serviceProvider.GetRequiredService<IHubContext<ConduitHub>>(),
+            serviceProvider.GetRequiredService<ConduitTypeRegistry>(),
+            serviceProvider.GetService<IEventRecipientResolver>()));
+        services.AddSingleton<IConduitTransport>(serviceProvider => serviceProvider.GetRequiredService<SignalRTransport>());
         return services;
     }
 

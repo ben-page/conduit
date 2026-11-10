@@ -5,6 +5,7 @@
 - [Correlation ids](#correlation-ids)
 - [Client properties](#client-properties)
 - [Bidirectional communication](#bidirectional-communication)
+- [Who receives an event](#who-receives-an-event)
 - [Solicited events](#solicited-events)
 - [Client mode (service-to-service)](#client-mode-service-to-service)
 - [Multi-pod deployment](#multi-pod-deployment)
@@ -26,7 +27,7 @@ app.MapHub<ConduitHub>("/conduit");
 app.Run();
 ```
 
-`AddConduitSignalR()` registers SignalR services, creates a `SignalRTransport` in server mode, and registers it as `IConduitTransport`. The transport holds an `IHubContext<ConduitHub>` and pushes events to connected clients.
+`AddConduitSignalR()` registers SignalR services, creates a `SignalRTransport` in server mode, and registers it as `IConduitTransport`. The transport holds an `IHubContext<ConduitHub>` and pushes events to connected clients: by default only the `[ClientVisible]` ones ([Who receives an event](#who-receives-an-event)).
 
 `MapHub<ConduitHub>` maps the inbound hub. It exposes two methods: `Dispatch` for commands/queries and `Publish` for events.
 
@@ -78,9 +79,14 @@ A single SignalR connection carries traffic in both directions.
 
 **Client to server.** Commands and queries go through the hub's `Dispatch` method. Events go through `Publish`. Both delegate to `IWireMediator`. A refused event (the [type filter](../security.md#typefilterinterceptor), an unknown type) fails the `Publish` invocation with a `HubException` carrying the refusal's message.
 
-**Server to client.** When a handler calls `mediator.PublishAsync(event)`, the server-mode `SignalRTransport` pushes the event to all connected clients via `Clients.All.SendAsync`.
+**Server to client.** When a handler calls `mediator.PublishAsync(event)`, the server-mode `SignalRTransport` pushes a `[ClientVisible]` event to all connected clients via `Clients.All.SendAsync`. An event without `[ClientVisible]` is not pushed to any client by default; register an [`IEventRecipientResolver`](#who-receives-an-event) to decide otherwise, or to send an event to some clients only.
 
-No subscription step is needed. Clients receive events by listening for the event's full type name:
+```csharp
+[ClientVisible]
+public record OrderShippedEvent(Guid OrderId) : IEvent;
+```
+
+No subscription step is needed. Clients receive the events pushed to them by listening for the event's full type name:
 
 ```typescript
 // TypeScript (browser)
@@ -96,6 +102,46 @@ hubConnection.On<JsonElement>("MyApp.Events.OrderShippedEvent", payload =>
     Console.WriteLine($"Shipped: {payload}");
 });
 ```
+
+## Who receives an event
+
+By default the hub pushes a `[ClientVisible]` event to every connection, signed in or not, and any other event to none. `[ClientVisible]` is also what gives an event a TypeScript type, so the events the [TypeScript client](typescript-client.md) knows about are the events it receives. [`[LocalOnly]`](../security.md#localonly) keeps an event in the process entirely: it reaches no transport, this one included.
+
+To scope events (to the users an event concerns, to a tenant's group) register an `IEventRecipientResolver`. Once one is registered it decides for **every** event the host publishes that is not `[LocalOnly]`, `[ClientVisible]` or not, in place of the default:
+
+```csharp
+public sealed class TenantRecipients : IEventRecipientResolver
+{
+    public ValueTask<EventRecipients> ResolveAsync(
+        string eventType, object @event, CancellationToken cancellationToken)
+    {
+        var recipients = @event switch
+        {
+            OrderShippedEvent shipped => EventRecipients.Users([shipped.CustomerId]),
+            InvoiceIssuedEvent issued => EventRecipients.Groups([$"tenant:{issued.TenantId}"]),
+            PriceListChangedEvent => EventRecipients.All,
+            _ => EventRecipients.None,
+        };
+        return ValueTask.FromResult(recipients);
+    }
+}
+
+builder.Services.AddSingleton<IEventRecipientResolver, TenantRecipients>();
+```
+
+| Answer | Sent with |
+|---|---|
+| `EventRecipients.All` | `Clients.All` |
+| `EventRecipients.None` (also `default`) | nothing |
+| `EventRecipients.Users(userIds)` | `Clients.Users(userIds)`: every connection of each user, as the host's `IUserIdProvider` names a connection's user (by default its `ClaimTypes.NameIdentifier` claim) |
+| `EventRecipients.Groups(groupNames)` | `Clients.Groups(groupNames)`: every connection in each group |
+
+The resolver's answer is the whole decision: a `[ClientVisible]` event it answers `None` for reaches nobody, and an event without the attribute it answers `All` for reaches everyone. End the switch with `None`, so an event added later is not pushed until you decide who sees it. An empty `Users` or `Groups` list pushes nothing.
+
+- **The event** arrives as its own type, deserialized from the payload the transport was handed with `ConduitRuntime.JsonOptions`; as the raw `JsonElement` when the host's registry does not list the type.
+- **Groups** are SignalR's: the host adds connections to them, for example from an `IHubFilter`'s `OnConnectedAsync` (`context.Hub.Groups.AddToGroupAsync(context.Context.ConnectionId, ...)`), which runs for `ConduitHub` too.
+- **Lifetime.** Register the resolver as a singleton: the server-mode transport is one and resolves it once. One that needs scoped services (a `DbContext` to look up a tenant's members) creates a scope from `IServiceScopeFactory` per call.
+- **Failure.** It runs inline in `PublishAsync`, once per event. An exception it throws stops only that event's push: the publish logs it as `TransportBroadcastFailed` (EventId 22) and carries on, as for any transport failure.
 
 ## Solicited events
 
@@ -133,7 +179,7 @@ The flow:
 
 1. Browser sends `PlaceOrderCommand` via the hub's `Dispatch` method.
 2. Server handles the command and calls `PublishAsync(new OrderPlacedEvent(...))`.
-3. The server-mode `SignalRTransport` broadcasts the event to all connected clients.
+3. The server-mode `SignalRTransport` pushes the event to all connected clients (`OrderPlacedEvent` is `[ClientVisible]`), or to those your [resolver](#who-receives-an-event) names.
 4. Browser receives `OrderPlacedEvent` on the same connection.
 5. The `Dispatch` call also returns the command result as a `DispatchResult`.
    A failed result's message and details are written in the reader's language on the way out when the host registers an `IDispatchCultureResolver` and an `IRefusalTextRenderer` ([A refusal in the reader's language](../error-handling.md#a-refusal-in-the-readers-language)).
@@ -212,7 +258,7 @@ app.Run();
 
 ## Multi-pod deployment
 
-On a single pod, server-mode `SignalRTransport` calls `Clients.All.SendAsync` and reaches all connections on that server.
+On a single pod, server-mode `SignalRTransport` calls `Clients.All.SendAsync` (or `Clients.Users`/`Clients.Groups`, for a [resolver's](#who-receives-an-event) answer) and reaches the matching connections on that server.
 
 For multiple pods, unsolicited events only reach clients on the pod that published the event. To broadcast across pods, add a SignalR backplane:
 
@@ -222,7 +268,7 @@ builder.Services.AddSignalR()
     .AddStackExchangeRedis("localhost:6379");
 ```
 
-This is standard ASP.NET Core configuration, not Conduit-specific. The backplane ensures `Clients.All.SendAsync` reaches every connected client regardless of pod. Conduit's transport works the same either way.
+This is standard ASP.NET Core configuration, not Conduit-specific. The backplane ensures `Clients.All.SendAsync` reaches every connected client regardless of pod, and a user's or group's connections likewise. Conduit's transport works the same either way.
 
 Solicited events (command triggers event on the same pod) work without a backplane because the client is always connected to the pod handling its request.
 

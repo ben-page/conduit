@@ -169,7 +169,7 @@ PublishAsync(event)
     |       UpdateAnalytics.HandleAsync()
     |
     +-- transport broadcast (out-of-process)
-            SignalRTransport.SendEventAsync()  --> connected clients
+            SignalRTransport.SendEventAsync()  --> connected clients ([ClientVisible] events, by default)
             ServiceBusTransport.SendEventAsync() --> topic subscribers
 ```
 

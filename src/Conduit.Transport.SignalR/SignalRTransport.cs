@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using Conduit.Runtime;
 using Microsoft.AspNetCore.SignalR;
@@ -8,12 +9,15 @@ namespace Conduit.Transport.SignalR;
 /// <summary>
 /// Dual-mode SignalR transport for Conduit messaging.
 /// In server mode (constructed with <see cref="IHubContext{ConduitHub}"/>), pushes events
-/// to connected clients. In client mode (constructed with <see cref="HubConnection"/>),
+/// to connected clients: a <c>[ClientVisible]</c> event to every connection and any other to none, unless an
+/// <see cref="IEventRecipientResolver"/> decides. In client mode (constructed with <see cref="HubConnection"/>),
 /// sends commands, queries and events to a remote hub; it does not receive the hub's events.
 /// </summary>
 public class SignalRTransport : IConduitTransport, IAsyncDisposable
 {
     private readonly IHubContext<ConduitHub>? hubContext;
+    private readonly IEventRecipientResolver? recipientResolver;
+    private readonly FrozenDictionary<string, Type>? eventTypesByName;
     private readonly HubConnection? hubConnection;
     private readonly ConduitTypeRegistry? typeRegistry;
     private readonly SemaphoreSlim connectLock = new(1, 1);
@@ -23,9 +27,35 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     /// Creates a server-mode transport that pushes events to connected SignalR clients.
     /// </summary>
     /// <param name="hubContext">The hub context for sending to clients.</param>
-    public SignalRTransport(IHubContext<ConduitHub> hubContext)
+    /// <param name="typeRegistry">
+    /// This host's message types. Without <paramref name="recipientResolver"/>, an event its
+    /// <see cref="ConduitTypeRegistry.ClientVisibleEventTypeNames"/> lists goes to every connection and any other to
+    /// none; with one, the resolver is handed the event deserialized as the <see cref="ConduitTypeRegistry.EventTypes"/>
+    /// entry of that name.
+    /// </param>
+    /// <param name="recipientResolver">
+    /// Decides who receives every event, in place of the <c>[ClientVisible]</c> default. <c>AddConduitSignalR</c> passes
+    /// the one registered in DI, if any.
+    /// </param>
+    public SignalRTransport(
+        IHubContext<ConduitHub> hubContext,
+        ConduitTypeRegistry typeRegistry,
+        IEventRecipientResolver? recipientResolver = null)
     {
+        ArgumentNullException.ThrowIfNull(hubContext);
+        ArgumentNullException.ThrowIfNull(typeRegistry);
+
         this.hubContext = hubContext;
+        this.typeRegistry = typeRegistry;
+        this.recipientResolver = recipientResolver;
+        if (recipientResolver is not null)
+        {
+            // The generator lists each name once (CONDUIT008 refuses a name two assemblies declare); a hand-built registry
+            // that repeats one keeps the first rather than failing to construct the transport.
+            this.eventTypesByName = typeRegistry.EventTypes
+                .DistinctBy(type => type.FullName, StringComparer.Ordinal)
+                .ToFrozenDictionary(type => type.FullName!, StringComparer.Ordinal);
+        }
     }
 
     /// <summary>
@@ -60,9 +90,11 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
     }
 
     /// <summary>
-    /// Server mode: pushes the event to every connected client. Client mode: sends a message that expects no reply to
-    /// the remote hub — an event to its <c>Publish</c>, anything else (a routed <c>[FireAndForget]</c> command, the only
-    /// one that reaches here) to its <c>Dispatch</c>, the result discarded but a refusal still thrown.
+    /// Server mode: pushes the event to the connections its recipients name — the registered
+    /// <see cref="IEventRecipientResolver"/>'s answer, or without one every connection for a <c>[ClientVisible]</c> event
+    /// and none for any other. Client mode: sends a message that expects no reply to the remote hub — an event to its
+    /// <c>Publish</c>, anything else (a routed <c>[FireAndForget]</c> command, the only one that reaches here) to its
+    /// <c>Dispatch</c>, the result discarded but a refusal still thrown.
     /// </summary>
     /// <inheritdoc />
     public async Task SendEventAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
@@ -71,11 +103,47 @@ public class SignalRTransport : IConduitTransport, IAsyncDisposable
 
         if (this.hubContext is not null)
         {
-            await this.hubContext.Clients.All.SendAsync(envelope.Type, envelope.Payload, cancellationToken);
+            await this.PushAsync(this.hubContext, envelope, cancellationToken);
             return;
         }
 
         await this.SendWithoutReplyAsync(this.hubConnection!, envelope, cancellationToken);
+    }
+
+    private async Task PushAsync(
+        IHubContext<ConduitHub> context, DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        var recipients = await this.ResolveRecipientsAsync(envelope, cancellationToken);
+        var names = recipients.Names;
+        var clients = recipients.Kind switch
+        {
+            EventRecipients.RecipientKind.All => context.Clients.All,
+            EventRecipients.RecipientKind.Users => names.Count > 0 ? context.Clients.Users(names) : null,
+            EventRecipients.RecipientKind.Groups => names.Count > 0 ? context.Clients.Groups(names) : null,
+            EventRecipients.RecipientKind.None => null,
+            _ => null,
+        };
+
+        if (clients is not null)
+        {
+            await clients.SendAsync(envelope.Type, envelope.Payload, cancellationToken);
+        }
+    }
+
+    private ValueTask<EventRecipients> ResolveRecipientsAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        if (this.recipientResolver is null)
+        {
+            var clientVisible = this.typeRegistry!.ClientVisibleEventTypeNames.Contains(envelope.Type);
+            return ValueTask.FromResult(clientVisible ? EventRecipients.All : EventRecipients.None);
+        }
+
+        // The resolver decides from the event itself, typed as it was published. A name the registry does not list (no
+        // generated publish sends one; a hand-built envelope can) leaves it the raw payload.
+        var @event = this.eventTypesByName!.TryGetValue(envelope.Type, out var eventType)
+            ? envelope.Payload.Deserialize(eventType, ConduitRuntime.JsonOptions)!
+            : envelope.Payload;
+        return this.recipientResolver.ResolveAsync(envelope.Type, @event, cancellationToken);
     }
 
     /// <summary>

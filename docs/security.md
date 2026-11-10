@@ -9,7 +9,7 @@
 
 ## Overview
 
-Conduit provides three layers of security alongside ASP.NET Core's authentication and authorization: type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent events from leaving the process, and `IInboundInterceptor` for custom wire-level middleware.
+Conduit provides three layers of security alongside ASP.NET Core's authentication and authorization: type filtering to control which messages external clients can dispatch, `[LocalOnly]` to prevent events from leaving the process (and `[ClientVisible]` with an `IEventRecipientResolver` to decide which browsers receive the rest), and `IInboundInterceptor` for custom wire-level middleware.
 
 ## TypeFilterInterceptor
 
@@ -48,6 +48,8 @@ public record UserPasswordChanged(Guid UserId) : IEvent;
 ```
 
 Events marked `[LocalOnly]` never leave the process, and neither does an event deriving from one: the attribute is inherited. The generated mediator broadcasts only the event types the source generator discovered and did not mark local-only, so the gate fails closed: an event type it never saw (a private or file-local type, say) stays in the process too. Use this for PII, security events, and internal coordination.
+
+`[LocalOnly]` keeps an event away from every transport, brokers included. Reaching browsers is a separate, narrower question, answered by `[ClientVisible]`: a SignalR hub pushes a `[ClientVisible]` event to every connection, signed in or not, and any other event to none. In a multi-tenant host a `[ClientVisible]` event therefore still reaches every tenant's browsers, so scope the events with an `IEventRecipientResolver`, which decides for every event who receives it (users, groups, everyone, nobody) in place of that default. See [SignalR → Who receives an event](transports/signalr.md#who-receives-an-event).
 
 See [Transports](transports/index.md) for the full broadcast model.
 
