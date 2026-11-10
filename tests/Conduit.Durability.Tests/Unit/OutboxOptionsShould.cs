@@ -41,4 +41,21 @@ public sealed class OutboxOptionsShould
         act.Should().Throw<OptionsValidationException>()
             .Which.Failures.Should().ContainSingle().Which.Should().Contain("MaxBackoff");
     }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    public void RefuseAClaimTimeoutThatIsNotPositive(int seconds)
+    {
+        // Arrange — a claim that is stale at once would let every relay take over every in-flight entry
+        var services = new ServiceCollection();
+
+        // Act
+        var act = () => services.AddConduit(conduit => conduit.AddDurability(durability =>
+            durability.AddOutbox(options => options.ClaimTimeout = TimeSpan.FromSeconds(seconds))));
+
+        // Assert
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Failures.Should().ContainSingle().Which.Should().Contain("ClaimTimeout");
+    }
 }

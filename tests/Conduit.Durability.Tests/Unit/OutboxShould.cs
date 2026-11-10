@@ -1,3 +1,4 @@
+using System.Globalization;
 using AwesomeAssertions;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Runtime.Outbox;
@@ -40,7 +41,7 @@ public sealed class OutboxShould : IAsyncDisposable
     [TestMethod]
     public async Task RetryAFailedEntry()
     {
-        // Arrange — an entry whose last failed attempt pushed its next attempt an hour out before its retries ran out
+        // Arrange — an entry whose retries ran out, its next attempt an hour out
         var failedId = await this.SaveFailedEntryAsync("msg-failed", OrderPlaced);
 
         // Act
@@ -84,7 +85,7 @@ public sealed class OutboxShould : IAsyncDisposable
         await this.SaveEntryAsync("msg-sent", OrderPlaced);
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         var sentId = claimed.Single().Id;
-        await this.store.MarkSentAsync(sentId, CancellationToken.None);
+        await this.store.MarkSentAsync(sentId, claimed.Single().ClaimToken!, CancellationToken.None);
 
         // Act
         var retriedSent = await this.outbox.RetryFailedAsync(sentId, CancellationToken.None);
@@ -172,16 +173,25 @@ public sealed class OutboxShould : IAsyncDisposable
     }
 
     /// <summary>
-    /// Saves an entry and fails it the way the relay does: one failed attempt that leaves it due only in an hour,
-    /// then the attempt that runs out of retries.
+    /// Saves an entry and fails it the way the relay does: one failed attempt released for another, then the attempt
+    /// that runs out of retries. Its next attempt is then pushed an hour out, so only a retry that resets it makes the
+    /// entry due.
     /// </summary>
     private async Task<long> SaveFailedEntryAsync(string messageId, string type)
     {
         await this.SaveEntryAsync(messageId, type);
-        var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
-        var id = claimed.Single(e => e.MessageId == messageId).Id;
-        await this.store.IncrementRetryAsync(id, TimeSpan.FromHours(1), CancellationToken.None);
-        await this.store.MarkFailedAsync(id, CancellationToken.None);
-        return id;
+        var first = (await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None))
+            .Single(e => e.MessageId == messageId);
+        await this.store.IncrementRetryAsync(first.Id, first.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        var second = (await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None))
+            .Single(e => e.MessageId == messageId);
+        await this.store.MarkFailedAsync(second.Id, second.ClaimToken!, CancellationToken.None);
+
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET NextAttemptAt = @NextAttemptAt WHERE Id = @Id";
+        command.Parameters.AddWithValue("@NextAttemptAt", DateTime.UtcNow.AddHours(1).ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("@Id", second.Id);
+        await command.ExecuteNonQueryAsync();
+        return second.Id;
     }
 }

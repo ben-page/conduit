@@ -25,14 +25,14 @@ internal sealed class GatedOutboxStore(IOutboxStore inner, SemaphoreSlim gate) :
     public Task<IReadOnlyList<OutboxEntry>> ClaimPendingAsync(int batchSize, TimeSpan gracePeriod, CancellationToken cancellationToken)
         => inner.ClaimPendingAsync(batchSize, gracePeriod, cancellationToken);
 
-    public Task MarkSentAsync(long entryId, CancellationToken cancellationToken)
-        => inner.MarkSentAsync(entryId, cancellationToken);
+    public Task<bool> MarkSentAsync(long entryId, string claimToken, CancellationToken cancellationToken)
+        => inner.MarkSentAsync(entryId, claimToken, cancellationToken);
 
-    public Task IncrementRetryAsync(long entryId, TimeSpan retryDelay, CancellationToken cancellationToken)
-        => inner.IncrementRetryAsync(entryId, retryDelay, cancellationToken);
+    public Task<bool> IncrementRetryAsync(long entryId, string claimToken, TimeSpan retryDelay, CancellationToken cancellationToken)
+        => inner.IncrementRetryAsync(entryId, claimToken, retryDelay, cancellationToken);
 
-    public Task MarkFailedAsync(long entryId, CancellationToken cancellationToken)
-        => inner.MarkFailedAsync(entryId, cancellationToken);
+    public Task<bool> MarkFailedAsync(long entryId, string claimToken, CancellationToken cancellationToken)
+        => inner.MarkFailedAsync(entryId, claimToken, cancellationToken);
 
     public Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)
         => inner.QueryFailedAsync(filter, cancellationToken);

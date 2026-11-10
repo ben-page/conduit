@@ -29,8 +29,9 @@ public sealed class DurabilityBuilder
 
     /// <summary>Adds the transactional outbox.</summary>
     /// <exception cref="OptionsValidationException">
-    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key, or
-    /// <see cref="OutboxOptions.InitialBackoff"/> is negative or above <see cref="OutboxOptions.MaxBackoff"/>.
+    /// <see cref="OutboxOptions.PersistedProperties"/> lists an unsupported type or an empty key,
+    /// <see cref="OutboxOptions.InitialBackoff"/> is negative or above <see cref="OutboxOptions.MaxBackoff"/>, or
+    /// <see cref="OutboxOptions.ClaimTimeout"/> is not positive.
     /// </exception>
     public DurabilityBuilder AddOutbox(Action<OutboxOptions>? configure = null)
     {

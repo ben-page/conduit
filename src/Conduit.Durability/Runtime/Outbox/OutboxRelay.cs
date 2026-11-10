@@ -80,12 +80,17 @@ public sealed partial class OutboxRelay(
     /// sweep-scoped provider, then for each claimed entry delivers local listeners (fresh scope
     /// per entry) before the transport send — mirroring <see cref="OutboxCapture.ClaimAndDeliverAsync"/>'s
     /// delivery contract (the routine <see cref="OutboxCapture.FlushAsync"/> schedules on the
-    /// background dispatcher), so redelivery re-runs local listeners identically. Exposed as
-    /// internal for testing.
+    /// background dispatcher), so redelivery re-runs local listeners identically. Each entry's
+    /// outcome is written under its claim's token: a claim another relay took over (it outlasted
+    /// <see cref="OutboxOptions.ClaimTimeout"/>) is logged as lost and nothing more is written for
+    /// that entry. Exposed as internal for testing.
     /// </summary>
+    /// <exception cref="InvalidOperationException">The store returned a claimed entry without its claim token.</exception>
     internal async Task ProcessPendingAsync(CancellationToken cancellationToken)
     {
-        using var sweepScope = scopeFactory.CreateScope();
+        // Disposed asynchronously, as every scope here is: Dispose() throws for a scoped service that implements only
+        // IAsyncDisposable.
+        await using var sweepScope = scopeFactory.CreateAsyncScope();
         var store = sweepScope.ServiceProvider.GetRequiredService<IOutboxStore>();
 
         var pending = await store.ClaimPendingAsync(
@@ -98,8 +103,13 @@ public sealed partial class OutboxRelay(
             return;
         }
 
+        var previousContext = MessageContext.Current;
         foreach (var entry in pending)
         {
+            // Every outcome below is written under the claim's token, so a claimed entry must carry it.
+            var claimToken = entry.ClaimToken ?? throw new InvalidOperationException(
+                $"{store.GetType().Name}.ClaimPendingAsync returned outbox entry {entry.Id} without its ClaimToken.");
+
             try
             {
                 var payload = JsonSerializer.Deserialize<JsonElement>(entry.Payload, ConduitRuntime.JsonOptions);
@@ -114,24 +124,16 @@ public sealed partial class OutboxRelay(
                     entry.ConversationId,
                     OutboxProperties.Read(entry.Properties, options.Value.PersistedProperties));
 
-                // Same delivery contract as the post-commit flush: local listeners first (fresh
-                // scope per entry), then transports, then mark sent. Redelivery re-runs local
-                // listeners — the idempotent-listener requirement is load-bearing.
-                using var entryScope = scopeFactory.CreateScope();
-                var localDispatcher = entryScope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
+                await this.DeliverAsync(envelope, cancellationToken);
 
-                if (localDispatcher is not null && localDispatcher.DeliversLocally(entry.Type))
+                if (await store.MarkSentAsync(entry.Id, claimToken, cancellationToken))
                 {
-                    await localDispatcher.PublishLocalEnvelopeAsync(envelope, entryScope.ServiceProvider, cancellationToken);
+                    MessageContext.Observe(new OutboxSent(entry.Id));
                 }
-
-                if (localDispatcher is null || !localDispatcher.IsLocalOnly(entry.Type))
+                else
                 {
-                    await transportDispatcher.SendAsync(envelope, localDispatcher, cancellationToken);
+                    LogClaimLost(logger, entry.Id, entry.Type);
                 }
-
-                await store.MarkSentAsync(entry.Id, cancellationToken);
-                MessageContext.Observe(new OutboxSent(entry.Id));
             }
 #pragma warning disable CA1031
             catch (Exception ex)
@@ -141,20 +143,56 @@ public sealed partial class OutboxRelay(
 
                 if (entry.RetryCount + 1 >= options.Value.MaxRetries)
                 {
-                    LogRetriesExhausted(logger, entry.Id, entry.Type, entry.MessageId, null);
-                    ConduitTelemetry.RecordOutboxRetriesExhausted(entry.Type);
-                    await store.MarkFailedAsync(entry.Id, cancellationToken);
-                    MessageContext.Observe(new OutboxRetryExhausted(entry.Id));
+                    // Reported as exhausted only once the row is Failed: a lost claim's entry belongs to the relay that
+                    // took it over, which may yet deliver it.
+                    if (await store.MarkFailedAsync(entry.Id, claimToken, cancellationToken))
+                    {
+                        LogRetriesExhausted(logger, entry.Id, entry.Type, entry.MessageId, null);
+                        ConduitTelemetry.RecordOutboxRetriesExhausted(entry.Type);
+                        MessageContext.Observe(new OutboxRetryExhausted(entry.Id));
+                    }
+                    else
+                    {
+                        LogClaimLost(logger, entry.Id, entry.Type);
+                    }
                 }
                 else
                 {
                     // Backing off, not retrying on the next sweep, is what lets an entry outlast a broker restart.
-                    await store.IncrementRetryAsync(
-                        entry.Id,
-                        OutboxBackoff.Delay(options.Value, entry.RetryCount + 1),
-                        cancellationToken);
+                    var retryDelay = OutboxBackoff.Delay(options.Value, entry.RetryCount + 1);
+                    if (!await store.IncrementRetryAsync(entry.Id, claimToken, retryDelay, cancellationToken))
+                    {
+                        LogClaimLost(logger, entry.Id, entry.Type);
+                    }
                 }
             }
+            finally
+            {
+                // The entry's context ends with the entry: the next one (which may fail to read before it restores its
+                // own) and the relay loop never run under it.
+                MessageContext.RestoreContext(previousContext);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Delivers one entry's envelope, as the post-commit flush does: local listeners first, from a fresh scope, then
+    /// transports. Redelivery re-runs local listeners — the idempotent-listener requirement is load-bearing. The scope
+    /// is disposed before the entry is marked sent, so its disposal is part of the delivery.
+    /// </summary>
+    private async Task DeliverAsync(DispatchEnvelope envelope, CancellationToken cancellationToken)
+    {
+        await using var entryScope = scopeFactory.CreateAsyncScope();
+        var localDispatcher = entryScope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
+
+        if (localDispatcher is not null && localDispatcher.DeliversLocally(envelope.Type))
+        {
+            await localDispatcher.PublishLocalEnvelopeAsync(envelope, entryScope.ServiceProvider, cancellationToken);
+        }
+
+        if (localDispatcher is null || !localDispatcher.IsLocalOnly(envelope.Type))
+        {
+            await transportDispatcher.SendAsync(envelope, localDispatcher, cancellationToken);
         }
     }
 
@@ -169,7 +207,7 @@ public sealed partial class OutboxRelay(
     /// </summary>
     internal async Task CleanupCompletedAsync(CancellationToken cancellationToken)
     {
-        using var scope = scopeFactory.CreateScope();
+        await using var scope = scopeFactory.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
         var o = options.Value;
 
@@ -195,4 +233,10 @@ public sealed partial class OutboxRelay(
     [LoggerMessage(EventId = 320, EventName = "OutboxRetriesExhausted", Level = LogLevel.Error,
         Message = "Outbox entry {EntryId} (type: {Type}, message: {MessageId}) exhausted retries, marking as failed")]
     private static partial void LogRetriesExhausted(ILogger logger, long entryId, string type, string messageId, Exception? exception);
+
+    // The flush logs the same event (OutboxCapture.LogClaimLost).
+    [LoggerMessage(EventId = 321, EventName = "ClaimLost", Level = LogLevel.Warning,
+        Message = "Lost the claim on outbox entry {EntryId} (type: {Type}): another worker took it over after the claim " +
+            "timeout, or it was already resolved, so this attempt's outcome was not recorded")]
+    private static partial void LogClaimLost(ILogger logger, long entryId, string type);
 }

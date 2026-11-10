@@ -186,7 +186,10 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
     /// <see cref="FlushAsync"/> schedules on the background dispatcher — it resolves
     /// <see cref="IOutboxStore"/> from its own fresh scope rather than a captured scoped instance,
     /// because the scope that produced <paramref name="messages"/> is gone by the time this runs
-    /// (mirrors <see cref="OutboxRelay.ProcessPendingAsync"/>'s scope-per-sweep pattern).
+    /// (mirrors <see cref="OutboxRelay.ProcessPendingAsync"/>'s scope-per-sweep pattern). Each
+    /// entry's outcome is written under its claim's token: a claim the relay took over (the
+    /// delivery outlasted <see cref="OutboxOptions.ClaimTimeout"/>) is logged as lost and nothing
+    /// more is written for that entry.
     /// </summary>
     internal static async Task ClaimAndDeliverAsync(
         IServiceScopeFactory scopeFactory,
@@ -200,7 +203,9 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
             .Distinct()
             .ToList();
 
-        using var flushScope = scopeFactory.CreateScope();
+        // Disposed asynchronously, as every scope here is: Dispose() throws for a scoped service that implements only
+        // IAsyncDisposable.
+        await using var flushScope = scopeFactory.CreateAsyncScope();
         var store = flushScope.ServiceProvider.GetRequiredService<IOutboxStore>();
         var outboxOptions = flushScope.ServiceProvider.GetService<IOptions<OutboxOptions>>()?.Value ?? new OutboxOptions();
 
@@ -245,24 +250,15 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                         written.ConversationId,
                         written.Properties);
 
-                    // Local listeners first, from a fresh scope (mirrors fire-and-forget's
-                    // fresh-scope semantics); then transports; then mark sent. Any failure leaves
-                    // the entry pending for the relay — redelivery re-runs local listeners, so
-                    // listeners must stay idempotent.
-                    using var scope = scopeFactory.CreateScope();
-                    var localDispatcher = scope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
+                    // Local listeners first, then transports, then mark sent. Any failure leaves the
+                    // entry pending for the relay — redelivery re-runs local listeners, so listeners
+                    // must stay idempotent.
+                    await DeliverAsync(scopeFactory, transportDispatcher, written.Envelope, cancellationToken);
 
-                    if (localDispatcher is not null && localDispatcher.DeliversLocally(written.Envelope.Type))
+                    if (!await store.MarkSentAsync(entry.Id, entry.ClaimToken, cancellationToken))
                     {
-                        await localDispatcher.PublishLocalEnvelopeAsync(written.Envelope, scope.ServiceProvider, cancellationToken);
+                        LogClaimLost(logger, entry.Id, written.Envelope.Type);
                     }
-
-                    if (localDispatcher is null || !localDispatcher.IsLocalOnly(written.Envelope.Type))
-                    {
-                        await transportDispatcher.SendAsync(written.Envelope, localDispatcher, cancellationToken);
-                    }
-
-                    await store.MarkSentAsync(entry.Id, cancellationToken);
                 }
 #pragma warning disable CA1031
                 catch (Exception exception)
@@ -271,10 +267,14 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
                     LogFlushSendFailed(logger, entry.Id, written.Envelope.Type, exception);
 
                     // A by-id claim takes only a never-attempted entry, so this failure is its first.
-                    await store.IncrementRetryAsync(
+                    if (!await store.IncrementRetryAsync(
                         entry.Id,
+                        entry.ClaimToken,
                         OutboxBackoff.Delay(outboxOptions, failedAttempts: 1),
-                        cancellationToken);
+                        cancellationToken))
+                    {
+                        LogClaimLost(logger, entry.Id, written.Envelope.Type);
+                    }
                 }
             }
         }
@@ -284,6 +284,37 @@ public sealed partial class OutboxCapture : IOutboundInterceptor, IOutboxFlusher
         }
     }
 
+    /// <summary>
+    /// Delivers one entry's envelope, as the relay does: local listeners first, from a fresh scope (mirrors
+    /// fire-and-forget's fresh-scope semantics), then transports. The scope is disposed before the entry is marked
+    /// sent, so its disposal is part of the delivery.
+    /// </summary>
+    private static async Task DeliverAsync(
+        IServiceScopeFactory scopeFactory,
+        TransportDispatcher transportDispatcher,
+        DispatchEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var localDispatcher = scope.ServiceProvider.GetService<ILocalEnvelopeDispatcher>();
+
+        if (localDispatcher is not null && localDispatcher.DeliversLocally(envelope.Type))
+        {
+            await localDispatcher.PublishLocalEnvelopeAsync(envelope, scope.ServiceProvider, cancellationToken);
+        }
+
+        if (localDispatcher is null || !localDispatcher.IsLocalOnly(envelope.Type))
+        {
+            await transportDispatcher.SendAsync(envelope, localDispatcher, cancellationToken);
+        }
+    }
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to flush outbox entry {EntryId} (type: {Type}), leaving for relay")]
     private static partial void LogFlushSendFailed(ILogger logger, long entryId, string type, Exception exception);
+
+    // The relay logs the same event (OutboxRelay.LogClaimLost).
+    [LoggerMessage(EventId = 321, EventName = "ClaimLost", Level = LogLevel.Warning,
+        Message = "Lost the claim on outbox entry {EntryId} (type: {Type}): another worker took it over after the claim " +
+            "timeout, or it was already resolved, so this attempt's outcome was not recorded")]
+    private static partial void LogClaimLost(ILogger logger, long entryId, string type);
 }

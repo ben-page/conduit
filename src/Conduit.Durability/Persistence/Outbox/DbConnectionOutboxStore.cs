@@ -14,14 +14,6 @@ namespace Conduit.Durability.Persistence.Outbox;
 /// </summary>
 public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
 {
-    /// <summary>
-    /// How long a claimed-but-unresolved entry stays exclusively claimed before it is treated as
-    /// abandoned (e.g. the claiming worker crashed) and becomes re-claimable. This bounds recovery
-    /// so a crash never strands a message, while being long enough that a healthy worker always
-    /// resolves (sends/retries/fails) its claim well within the window.
-    /// </summary>
-    private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
-
     private static readonly IClaimableTableSchema Schema = OutboxTableSchema.Default;
 
     // The Properties column is written and read only by a host that lists persisted properties
@@ -59,15 +51,26 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         VALUES (@MessageId, @ConversationId, @CausationId, @Type, @Payload, 0, @CreatedAt, 0, @NextAttemptAt, @Properties)
         """;
 
-    private const string MarkSentSql = "UPDATE conduit_outbox SET Status = 1, SentAt = @SentAt WHERE Id = @Id";
+    // A resolution applies only to a row the caller's claim still holds: Claiming (3), under its token. A claim older
+    // than the claim timeout can be taken over by another worker, which stamps its own token, so the first worker's
+    // late outcome matches no row: it can neither mark sent nor release back to Pending an entry the new claim is
+    // delivering (a release would deliver it a third time). Requiring Claiming also keeps a second resolution under
+    // one claim from undoing the first, e.g. a Sent row flipped back to Pending.
+    private const string MarkSentSql = """
+        UPDATE conduit_outbox SET Status = 1, SentAt = @SentAt
+        WHERE Id = @Id AND Status = 3 AND ClaimToken = @ClaimToken
+        """;
 
     private const string IncrementRetrySql = """
         UPDATE conduit_outbox
         SET RetryCount = RetryCount + 1, Status = 0, ClaimToken = NULL, ClaimedAt = NULL, NextAttemptAt = @NextAttemptAt
-        WHERE Id = @Id
+        WHERE Id = @Id AND Status = 3 AND ClaimToken = @ClaimToken
         """;
 
-    private const string MarkFailedSql = "UPDATE conduit_outbox SET Status = 2 WHERE Id = @Id";
+    private const string MarkFailedSql = """
+        UPDATE conduit_outbox SET Status = 2
+        WHERE Id = @Id AND Status = 3 AND ClaimToken = @ClaimToken
+        """;
 
     private const string CountFailedSql = """
         SELECT COUNT(*) FROM conduit_outbox
@@ -99,12 +102,17 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     private readonly string queryFailedPageSql;
     private readonly bool persistsProperties;
 
+    // A claim older than this counts as abandoned: the pending and the by-id claim both take its row over.
+    private readonly TimeSpan claimTimeout;
+
     /// <summary>Initializes a new instance of <see cref="DbConnectionOutboxStore"/>.</summary>
     /// <param name="connectionFactory">The engine's connection factory.</param>
     /// <param name="dialect">The engine's SQL dialect.</param>
     /// <param name="options">
     /// The outbox options: when <see cref="OutboxOptions.PersistedProperties"/> lists a key, the store writes and
-    /// reads the <c>Properties</c> column. Null, or none listed, leaves the column untouched.
+    /// reads the <c>Properties</c> column. Null, or none listed, leaves the column untouched. Its
+    /// <see cref="OutboxOptions.ClaimTimeout"/> is how old a claim must be for another worker to take its entry
+    /// over; null keeps the default.
     /// </param>
     public DbConnectionOutboxStore(
         IConduitConnectionFactory connectionFactory,
@@ -114,7 +122,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     {
         ArgumentNullException.ThrowIfNull(dialect);
 
-        this.persistsProperties = options?.Value.PersistedProperties.Count > 0;
+        var outboxOptions = options?.Value ?? new OutboxOptions();
+        this.persistsProperties = outboxOptions.PersistedProperties.Count > 0;
+        this.claimTimeout = outboxOptions.ClaimTimeout;
 
         this.createTableSql = BuildCreateTableSql(dialect);
         this.claimPendingSql = dialect.BuildClaimPendingSql(Schema);
@@ -173,7 +183,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     {
         var now = DateTime.UtcNow;
         var graceCutoff = now.Subtract(gracePeriod).ToString("O", CultureInfo.InvariantCulture);
-        var claimCutoff = now.Subtract(ClaimTimeout).ToString("O", CultureInfo.InvariantCulture);
+        var claimCutoff = now.Subtract(this.claimTimeout).ToString("O", CultureInfo.InvariantCulture);
         var claimedAt = now.ToString("O", CultureInfo.InvariantCulture);
         var claimToken = Guid.NewGuid().ToString("N");
 
@@ -200,41 +210,38 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         return await this.ExecuteReaderAsync(
             withProperties ? SelectClaimedEntriesWithPropertiesSql : SelectClaimedEntriesSql,
             command => DbParameterHelper.Add(command, "@ClaimToken", claimToken),
-            reader => ReadEntry(reader, withProperties),
+            reader => ReadEntry(reader, withProperties, claimToken),
             cancellationToken);
     }
 
     /// <inheritdoc/>
-    public Task MarkSentAsync(long entryId, CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(
+    public Task<bool> MarkSentAsync(long entryId, string claimToken, CancellationToken cancellationToken)
+        => this.ResolveAsync(
             MarkSentSql,
-            command =>
-            {
-                DbParameterHelper.Add(command, "@Id", entryId);
-                DbParameterHelper.Add(command, "@SentAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            },
+            entryId,
+            claimToken,
+            command => DbParameterHelper.Add(command, "@SentAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)),
             cancellationToken);
 
     /// <inheritdoc/>
-    public Task IncrementRetryAsync(long entryId, TimeSpan retryDelay, CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(
+    public Task<bool> IncrementRetryAsync(
+        long entryId,
+        string claimToken,
+        TimeSpan retryDelay,
+        CancellationToken cancellationToken)
+        => this.ResolveAsync(
             IncrementRetrySql,
-            command =>
-            {
-                DbParameterHelper.Add(command, "@Id", entryId);
-                DbParameterHelper.Add(
-                    command,
-                    "@NextAttemptAt",
-                    DateTime.UtcNow.Add(retryDelay).ToString("O", CultureInfo.InvariantCulture));
-            },
+            entryId,
+            claimToken,
+            command => DbParameterHelper.Add(
+                command,
+                "@NextAttemptAt",
+                DateTime.UtcNow.Add(retryDelay).ToString("O", CultureInfo.InvariantCulture)),
             cancellationToken);
 
     /// <inheritdoc/>
-    public Task MarkFailedAsync(long entryId, CancellationToken cancellationToken)
-        => this.ExecuteNonQueryAsync(
-            MarkFailedSql,
-            command => DbParameterHelper.Add(command, "@Id", entryId),
-            cancellationToken);
+    public Task<bool> MarkFailedAsync(long entryId, string claimToken, CancellationToken cancellationToken)
+        => this.ResolveAsync(MarkFailedSql, entryId, claimToken, bindValues: null, cancellationToken);
 
     /// <inheritdoc/>
     public async Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)
@@ -260,7 +267,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
                 DbParameterHelper.Add(command, "@PageSize", filter.PageSize);
                 DbParameterHelper.Add(command, "@Offset", offset);
             },
-            reader => ReadEntry(reader, withProperties),
+            reader => ReadEntry(reader, withProperties, claimToken: null),
             cancellationToken);
 
         var nextOffset = offset + entries.Count;
@@ -315,6 +322,30 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             cancellationToken);
     }
 
+    // Runs one of the claim-guarded resolutions (MarkSentSql, IncrementRetrySql, MarkFailedSql): true when it changed
+    // the row, false when the claim no longer holds it.
+    private async Task<bool> ResolveAsync(
+        string sql,
+        long entryId,
+        string claimToken,
+        Action<DbCommand>? bindValues,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+
+        var rowsAffected = await this.ExecuteNonQueryAsync(
+            sql,
+            command =>
+            {
+                DbParameterHelper.Add(command, "@Id", entryId);
+                DbParameterHelper.Add(command, "@ClaimToken", claimToken);
+                bindValues?.Invoke(command);
+            },
+            cancellationToken);
+
+        return rowsAffected == 1;
+    }
+
     /// <inheritdoc/>
     public Task EnsureTableExistsAsync(CancellationToken cancellationToken)
         => this.ExecuteNonQueryAsync(this.createTableSql, configureParameters: null, cancellationToken);
@@ -332,7 +363,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
         }
 
         var now = DateTime.UtcNow;
-        var claimCutoff = now.Subtract(ClaimTimeout).ToString("O", CultureInfo.InvariantCulture);
+        var claimCutoff = now.Subtract(this.claimTimeout).ToString("O", CultureInfo.InvariantCulture);
         var claimedAt = now.ToString("O", CultureInfo.InvariantCulture);
         var claimToken = Guid.NewGuid().ToString("N");
 
@@ -376,6 +407,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             {
                 Id = reader.GetInt64(reader.GetOrdinal("Id")),
                 MessageId = reader.GetString(reader.GetOrdinal("MessageId")),
+                ClaimToken = claimToken,
             },
             cancellationToken);
     }
@@ -407,7 +439,9 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
     private static void AddMessageTypeFilter(DbCommand command, string? messageType)
         => DbParameterHelper.Add(command, "@MessageType", (object?)messageType ?? DBNull.Value, DbType.String);
 
-    private static OutboxEntry ReadEntry(DbDataReader reader, bool withProperties)
+    // claimToken is the claim that read the row back (it equals the row's ClaimToken column), or null for a row no claim
+    // returned.
+    private static OutboxEntry ReadEntry(DbDataReader reader, bool withProperties, string? claimToken)
     {
         var sentAtOrdinal = reader.GetOrdinal("SentAt");
         var sentAtRaw = reader.IsDBNull(sentAtOrdinal) ? null : reader.GetString(sentAtOrdinal);
@@ -446,6 +480,7 @@ public sealed class DbConnectionOutboxStore : DbStoreBase, IOutboxStore
             SentAt = sentAt,
             RetryCount = reader.GetInt32(reader.GetOrdinal("RetryCount")),
             Properties = properties,
+            ClaimToken = claimToken,
         };
     }
 }

@@ -27,6 +27,15 @@ public sealed class OutboxOptions
     /// <summary>The longest an entry waits between two attempts (see <see cref="InitialBackoff"/>). Default: 5 minutes.</summary>
     public TimeSpan MaxBackoff { get; set; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// How long a claimed entry stays its worker's. A claim older than this counts as abandoned (its worker crashed or
+    /// was stopped mid-send) and another relay may claim the entry and deliver it again, so a crash never strands a
+    /// message. A worker still delivering past it has lost the claim: its outcome for the entry is refused (logged as
+    /// <c>ClaimLost</c>, EventId 321) and the row stays as the new claim leaves it. Keep it well above the longest
+    /// delivery, local listeners and transport send together. Default: 5 minutes.
+    /// </summary>
+    public TimeSpan ClaimTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
     /// <summary>Whether to auto-create the outbox table on startup. Default: true.</summary>
     public bool AutoCreateTable { get; set; } = true;
 
@@ -70,7 +79,8 @@ public sealed class OutboxOptions
 
     /// <summary>
     /// Refuses a <see cref="PersistedProperties"/> entry with an empty key or an unsupported type, a negative
-    /// <see cref="InitialBackoff"/>, and a <see cref="MaxBackoff"/> below it.
+    /// <see cref="InitialBackoff"/>, a <see cref="MaxBackoff"/> below it, and a <see cref="ClaimTimeout"/> that is not
+    /// positive.
     /// </summary>
     /// <exception cref="OptionsValidationException">An option is invalid; each failure names it.</exception>
     internal void Validate()
@@ -85,6 +95,12 @@ public sealed class OutboxOptions
         {
             failures.Add(
                 $"OutboxOptions.MaxBackoff is {this.MaxBackoff}, below OutboxOptions.InitialBackoff ({this.InitialBackoff}).");
+        }
+
+        // A claim that is stale at once would let any relay take over an entry another is still delivering.
+        if (this.ClaimTimeout <= TimeSpan.Zero)
+        {
+            failures.Add($"OutboxOptions.ClaimTimeout is {this.ClaimTimeout}; it must be positive.");
         }
 
         foreach (var (key, type) in this.PersistedProperties)

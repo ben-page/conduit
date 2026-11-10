@@ -12,6 +12,15 @@ public class StubOutboxStore : IOutboxStore
     public List<long> MarkedFailed { get; } = [];
     public List<TimeSpan> DeletedRetentions { get; } = [];
 
+    /// <summary>The claim token every MarkSent, IncrementRetry and MarkFailed call passed, in call order.</summary>
+    public List<string> ResolvedClaimTokens { get; } = [];
+
+    /// <summary>
+    /// When true, every MarkSent, IncrementRetry and MarkFailed call finds the claim gone and returns false, as the
+    /// store does once another worker has re-claimed the row.
+    /// </summary>
+    public bool ClaimLost { get; set; }
+
     public virtual Task SaveAsync(IReadOnlyList<OutboxEntry> entries, DbTransaction transaction, CancellationToken cancellationToken)
     {
         this.SavedEntries.AddRange(entries);
@@ -21,23 +30,26 @@ public class StubOutboxStore : IOutboxStore
     public virtual Task<IReadOnlyList<OutboxEntry>> ClaimPendingAsync(int batchSize, TimeSpan gracePeriod, CancellationToken cancellationToken)
         => Task.FromResult<IReadOnlyList<OutboxEntry>>([]);
 
-    public virtual Task MarkSentAsync(long entryId, CancellationToken cancellationToken)
+    public virtual Task<bool> MarkSentAsync(long entryId, string claimToken, CancellationToken cancellationToken)
     {
         this.MarkedSent.Add(entryId);
-        return Task.CompletedTask;
+        this.ResolvedClaimTokens.Add(claimToken);
+        return Task.FromResult(!this.ClaimLost);
     }
 
-    public virtual Task IncrementRetryAsync(long entryId, TimeSpan retryDelay, CancellationToken cancellationToken)
+    public virtual Task<bool> IncrementRetryAsync(long entryId, string claimToken, TimeSpan retryDelay, CancellationToken cancellationToken)
     {
         this.RetriesIncremented.Add(entryId);
         this.RetryDelays.Add(retryDelay);
-        return Task.CompletedTask;
+        this.ResolvedClaimTokens.Add(claimToken);
+        return Task.FromResult(!this.ClaimLost);
     }
 
-    public virtual Task MarkFailedAsync(long entryId, CancellationToken cancellationToken)
+    public virtual Task<bool> MarkFailedAsync(long entryId, string claimToken, CancellationToken cancellationToken)
     {
         this.MarkedFailed.Add(entryId);
-        return Task.CompletedTask;
+        this.ResolvedClaimTokens.Add(claimToken);
+        return Task.FromResult(!this.ClaimLost);
     }
 
     public virtual Task<FailedOutboxPage> QueryFailedAsync(FailedOutboxFilter filter, CancellationToken cancellationToken)

@@ -104,9 +104,11 @@ safety net) apply one per-entry delivery contract:
   ├── Local listeners first, from a fresh DI scope (redelivery-safe — see below)
   ├── Then the transport send
   ├── Marks the entry as sent on success
-  └── On failure: retry count increments and the claim releases, with the entry due again
-      only after a backoff that doubles with each failure (the relay marks an entry Failed
-      once MaxRetries is exhausted; IOutbox hands a Failed entry back)
+  ├── On failure: retry count increments and the claim releases, with the entry due again
+  │     only after a backoff that doubles with each failure (the relay marks an entry Failed
+  │     once MaxRetries is exhausted; IOutbox hands a Failed entry back)
+  └── Either outcome is written only while this worker's claim still holds the entry — see
+        "Claim timeout"
 ```
 
 See [What gets captured](#what-gets-captured) for the full eligibility matrix and the
@@ -175,7 +177,7 @@ builder.Services.AddScoped<IConduitConnectionFactory, AppDurabilityConnectionFac
 
 ## Database dialects
 
-Each `Use*` method registers the appropriate SQL dialect and connection factory. Claiming is **atomic**: a single `UPDATE` transitions pending rows to a `Claiming` status tagged with a per-worker token, so a row can be claimed (and dispatched) by exactly one worker — the relay and the immediate-send flush can never double-send. A claim that is not resolved within 5 minutes (e.g. a crashed worker) becomes re-claimable. The per-engine locking applied inside the claim:
+Each `Use*` method registers the appropriate SQL dialect and connection factory. Claiming is **atomic**: a single `UPDATE` transitions pending rows to a `Claiming` status tagged with a per-worker token, so a row can be claimed (and dispatched) by exactly one worker — the relay and the immediate-send flush can never double-send. A claim that is not resolved within `ClaimTimeout` (default 5 minutes; e.g. a crashed worker) becomes re-claimable, and a worker writes an entry's outcome only while its own claim still holds it (see [Claim timeout](#claim-timeout)). The per-engine locking applied inside the claim:
 
 | Method | Database | Claiming mechanism |
 |---|---|---|
@@ -216,6 +218,12 @@ public class CosmosOutboxStore : IOutboxStore
 }
 ```
 
+A store owns the [claim guard](#claim-timeout): `ClaimPendingAsync` returns each entry with its claim's token
+(`OutboxEntry.ClaimToken`), as `ClaimByMessageIdsAsync` does (`ClaimedOutboxEntry.ClaimToken`), and
+`MarkSentAsync`, `IncrementRetryAsync` and `MarkFailedAsync` take that token back. Each changes the entry only while
+that claim still holds it, and returns whether it did: `false` is a lost claim, logged and left alone. The relay
+fails a sweep whose claimed entries come back without a token.
+
 Register it as `IOutboxStore` after `AddConduit` so it overrides the built-in `DbConnectionOutboxStore`:
 
 ```csharp
@@ -236,6 +244,7 @@ conduit.AddDurability(durability =>
         outbox.MaxRetries = 10;                                // before marking failed (default: 10)
         outbox.InitialBackoff = TimeSpan.FromSeconds(5);       // wait after a first failed send (default: 5s)
         outbox.MaxBackoff = TimeSpan.FromMinutes(5);           // longest wait between attempts (default: 5m)
+        outbox.ClaimTimeout = TimeSpan.FromMinutes(5);         // a claim older than this may be taken over (default: 5m)
         outbox.AutoCreateTable = true;                         // create table on startup (default: true)
         outbox.CompletedRetention = TimeSpan.FromDays(7);       // delete Sent entries older than this (default: 7d); Zero disables
         outbox.FailedRetention = null;                          // delete Failed entries older than this (default: null = follow CompletedRetention); Zero keeps them forever
@@ -263,6 +272,24 @@ different hosts, whose clocks it assumes agree, as the grace period already does
 its sweeps, so an entry goes out on the first sweep after its wait ends. `InitialBackoff = TimeSpan.Zero`
 turns backoff off: a failed entry is due again on the next sweep. `AddOutbox` refuses a negative
 `InitialBackoff`, and a `MaxBackoff` below it, with an `OptionsValidationException`.
+
+### Claim timeout
+
+A claim tags each row with the claiming worker's token. A worker that stops mid-delivery (a crash, a killed pod)
+would strand the rows it holds, so a claim older than `ClaimTimeout` (default 5 minutes) counts as abandoned: the
+next sweep of any relay claims the entry again and delivers it.
+
+A worker that was only slow, still delivering when another relay took its entry over, must not then overwrite what
+the new claim does. So every outcome (sent, released for another attempt, or failed) is written only while the
+worker's own claim still holds the row (its token, status `Claiming`). A worker that finds its claim gone writes
+nothing more for that entry and logs a Warning with `EventId` **321** (`ClaimLost`; entry id and type are structured
+fields); the row stays as the new claim leaves it. Without the guard, the slow worker's failed send would release an
+entry the new claim had already marked Sent back to Pending, and the relay would deliver it a third time. The entry
+was still delivered by both workers: the outbox is [at-least-once](#limitations).
+
+Keep `ClaimTimeout` well above the longest delivery: an entry's local listeners and its transport send together.
+`ClaimLost` in the log means a delivery outlasted it; raise it, or find the slow listener. `AddOutbox` refuses a
+`ClaimTimeout` that is not positive with an `OptionsValidationException`.
 
 ### Retention
 
@@ -387,7 +414,9 @@ and `OutboxRelay` apply the identical per-entry delivery contract:
 
 1. Resolve `ILocalEnvelopeDispatcher` from a **fresh DI scope** — one scope per entry, mirroring
    fire-and-forget's own fresh-scope semantics (the scope that captured the envelope is long gone
-   by the time flush or the relay runs).
+   by the time flush or the relay runs). The scope ends with step 3, before step 4, and is disposed
+   asynchronously: a scoped service that implements only `IAsyncDisposable` (some database contexts
+   and pooled clients do) is disposed like any other, and a disposal that throws fails the delivery.
 2. If the entry's type is one whose local listeners the outbox owns (`DeliversLocally(type)` —
    `true` only for captured, non-Immediate `[FireAndForget]` events), run its local listener chain
    (with pipeline behaviors) against that fresh scope.
@@ -398,7 +427,7 @@ and `OutboxRelay` apply the identical per-entry delivery contract:
    goes to its endpoint with `SendEventAsync`, as the publish-time path sends it: no reply is
    awaited, so it neither holds the relay until the transport's response timeout nor counts a
    delivered message as failed.
-4. Mark the entry `Sent`.
+4. Mark the entry `Sent`, if this worker's claim still holds it (see [Claim timeout](#claim-timeout)).
 
 Plain events never reach step 2 for their *local* listeners — `DeliversLocally` is `false` for
 them, because they already ran inline, inside the handler's own transaction, at publish time.
@@ -599,7 +628,7 @@ any listener or transport.
 
 ### Behavior
 
-`FlushAsync` schedules delivery of the outbox entries written during the current scope on `ConduitBackgroundDispatcher` and returns immediately — the caller never waits for delivery, only for its own commit. The scheduled work item runs under the dispatcher's own lifetime, not the caller's request: it claims the entries using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token), then sends each one via the appropriate transport using the in-memory envelope — no database read needed. Successfully delivered entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up once the first [backoff](#backoff) step (`InitialBackoff`) has passed.
+`FlushAsync` schedules delivery of the outbox entries written during the current scope on `ConduitBackgroundDispatcher` and returns immediately — the caller never waits for delivery, only for its own commit. The scheduled work item runs under the dispatcher's own lifetime, not the caller's request: it claims the entries using the same atomic claim as the relay (`ClaimByMessageIds`, which transitions each row to `Claiming` under a per-worker token), then sends each one via the appropriate transport using the in-memory envelope — no database read needed. Successfully delivered entries are marked as `Sent`. If a transport fails, the entry's retry count is incremented and the claim is released so the relay picks it up once the first [backoff](#backoff) step (`InitialBackoff`) has passed. Either outcome is written only while the flush's claim still holds the entry, as the relay's are ([Claim timeout](#claim-timeout)).
 
 Because delivery is scheduled rather than synchronous, `FlushAsync` returning is not evidence that listeners or transports have run — there is no read-your-writes guarantee. `FlushAsync` is a no-op (nothing is scheduled) when nothing was captured during the scope, and safe to call unconditionally. If the relay has already claimed an entry by the time the scheduled delivery runs, the claim returns nothing and it completes without sending duplicates.
 
@@ -634,10 +663,10 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 ## Limitations
 
-**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), it will send again — and if the entry has captured local listeners, they run again too, since flush/relay redeliver local-then-transport as one unit (see [Flush and relay delivery](#flush-and-relay-delivery-local-then-transport)). Consumers and local listeners alike must handle duplicates. The [inbox](inbox.md) — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication for *wire-inbound* messages; there is no equivalent for local-listener redelivery, so those listeners must be naturally idempotent.
+**At-least-once, not exactly-once.** If the relay sends a message but fails to mark it as sent (e.g., database connection blip), or a delivery outlasts [`ClaimTimeout`](#claim-timeout) and another relay takes the entry over, it will send again — and if the entry has captured local listeners, they run again too, since flush/relay redeliver local-then-transport as one unit (see [Flush and relay delivery](#flush-and-relay-delivery-local-then-transport)). Consumers and local listeners alike must handle duplicates. The [inbox](inbox.md) — also part of `Conduit.Durability`, enabled via `durability.AddInbox()` — provides application-level deduplication for *wire-inbound* messages; there is no equivalent for local-listener redelivery, so those listeners must be naturally idempotent.
 
 **No ordering guarantees.** If message A fails and B succeeds, consumers see B first. For ordered delivery, use broker-native features (ASB sessions) or handle ordering at the consumer.
 
-**Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker, on every supported engine including SQLite. The relay and the immediate-send `FlushAsync` likewise never double-send the same entry.
+**Relay runs in-process.** The relay is a `BackgroundService` in the same process. If the process is down, pending entries wait until it restarts. Multiple instances of the same app each run a relay — atomic claiming (an `UPDATE` to a `Claiming` status tagged with a per-worker token) ensures each entry is claimed and sent by exactly one worker at a time, on every supported engine including SQLite. The relay and the immediate-send `FlushAsync` likewise never double-send the same entry, unless a delivery outlasts [`ClaimTimeout`](#claim-timeout).
 
 **Immediate send is best-effort, and asynchronous.** `FlushAsync` schedules delivery on the background dispatcher and returns immediately — it does not wait for delivery, so a caller cannot assume listeners or transports have run by the time `FlushAsync` returns. The relay is still the safety net: if the process crashes between commit and the scheduled delivery running, or delivery itself fails, the relay delivers the messages on its next sweep. This means messages may occasionally arrive with relay-scale latency even when immediate send is configured.

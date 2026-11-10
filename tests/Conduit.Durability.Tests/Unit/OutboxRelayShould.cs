@@ -6,6 +6,7 @@ using Conduit.Durability.Runtime.Outbox;
 using Conduit.Durability.Tests.Support;
 using Conduit.Runtime;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,7 +17,7 @@ namespace Conduit.Durability.Tests.Unit;
 [TestClass]
 public class OutboxRelayShould
 {
-    private static OutboxEntry MakeEntry(long id, string type, int retryCount = 0)
+    private static OutboxEntry MakeEntry(long id, string type, int retryCount = 0, string payload = "{}")
         => new()
         {
             Id = id,
@@ -24,8 +25,9 @@ public class OutboxRelayShould
             ConversationId = Guid.NewGuid().ToString(),
             CausationId = null,
             Type = type,
-            Payload = """{}""",
+            Payload = payload,
             RetryCount = retryCount,
+            ClaimToken = $"token-{id}",
         };
 
     private static TransportDispatcher CreateDispatcher(params IConduitTransport[] transports)
@@ -177,6 +179,7 @@ public class OutboxRelayShould
         transport.SentEventEnvelopes.Should().HaveCount(1);
         transport.SentEventEnvelopes[0].Type.Should().Be("Orders.Events.OrderCreated");
         store.MarkedSent.Should().ContainSingle().Which.Should().Be(1L);
+        store.ResolvedClaimTokens.Should().Equal("token-1");
         store.RetriesIncremented.Should().BeEmpty();
         store.MarkedFailed.Should().BeEmpty();
     }
@@ -195,6 +198,7 @@ public class OutboxRelayShould
 
         // Assert
         store.MarkedFailed.Should().ContainSingle().Which.Should().Be(2L);
+        store.ResolvedClaimTokens.Should().Equal("token-2");
         store.RetriesIncremented.Should().BeEmpty();
         store.MarkedSent.Should().BeEmpty();
     }
@@ -213,8 +217,185 @@ public class OutboxRelayShould
 
         // Assert
         store.RetriesIncremented.Should().ContainSingle().Which.Should().Be(3L);
+        store.ResolvedClaimTokens.Should().Equal("token-3");
         store.MarkedFailed.Should().BeEmpty();
         store.MarkedSent.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task LogALostClaim_WhenMarkingSent_AndRecordNothingElse()
+    {
+        // Arrange -- the send outlasted the claim timeout and another relay re-claimed the entry
+        var entry = MakeEntry(id: 11, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]) { ClaimLost = true };
+        var logger = new EventCapturingLogger();
+        var relay = BuildRelay(store, CreateDispatcher(new CapturingTransport()), logger: logger);
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- the entry belongs to the other claim now: no retry is recorded on top of it
+        AssertClaimLostLogged(logger.Entries, entry);
+        store.MarkedSent.Should().Equal(11L);
+        store.RetriesIncremented.Should().BeEmpty();
+        store.MarkedFailed.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task LogALostClaim_WhenReleasingAFailedSend()
+    {
+        // Arrange
+        var entry = MakeEntry(id: 12, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]) { ClaimLost = true };
+        var logger = new EventCapturingLogger();
+        var relay = BuildRelay(
+            store,
+            CreateDispatcher(new ThrowingTransport(new InvalidOperationException("broker down"))),
+            logger: logger);
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert
+        AssertClaimLostLogged(logger.Entries, entry);
+        store.RetriesIncremented.Should().Equal(12L);
+        store.MarkedFailed.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task LogALostClaimInsteadOfExhaustion_WhenMarkingFailed()
+    {
+        // Arrange -- the last attempt failed, but another relay holds the entry now and may yet deliver it.
+        // The Meter is process-global and tests run in parallel, so the counter is filtered to this test's own type.
+        const string type = "Orders.Events.OrderCreated.LostClaimCounter";
+        var entry = MakeEntry(id: 13, type: type, retryCount: 2);
+        var store = new CapturingStubOutboxStore([entry]) { ClaimLost = true };
+        var logger = new EventCapturingLogger();
+        var relay = BuildRelay(
+            store,
+            CreateDispatcher(new ThrowingTransport(new InvalidOperationException("broker down"))),
+            new OutboxOptions { MaxRetries = 3 },
+            logger);
+        long counted = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (i, l) =>
+        {
+            if (i.Meter.Name == "Conduit" && i.Name == "conduit.outbox.retries_exhausted")
+            {
+                l.EnableMeasurementEvents(i);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "conduit.message.type" && (string?)tag.Value == type)
+                {
+                    Interlocked.Add(ref counted, value);
+                }
+            }
+        });
+        listener.Start();
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- not reported as exhausted: the entry is not Failed
+        AssertClaimLostLogged(logger.Entries, entry);
+        store.MarkedFailed.Should().Equal(13L);
+        logger.Entries.Should().NotContain(e => e.Id.Id == 320);
+        Interlocked.Read(ref counted).Should().Be(0);
+    }
+
+    [TestMethod]
+    public async Task SurviveAnAsyncOnlyScopedService()
+    {
+        // Arrange -- the entry's listener, and the sweep's store, each resolve a scoped service that implements only
+        // IAsyncDisposable, which IServiceScope.Dispose() refuses with an exception
+        var entry = MakeEntry(id: 14, type: "Orders.Events.OrderCreated");
+        var store = new CapturingStubOutboxStore([entry]);
+        var created = new List<AsyncOnlyScopedService>();
+        var services = new ServiceCollection();
+        services.AddScoped(_ =>
+        {
+            var service = new AsyncOnlyScopedService();
+            created.Add(service);
+            return service;
+        });
+        services.AddScoped<IOutboxStore>(serviceProvider =>
+        {
+            serviceProvider.GetRequiredService<AsyncOnlyScopedService>();
+            return store;
+        });
+        services.AddSingleton<ILocalEnvelopeDispatcher, AsyncOnlyServiceListener>();
+        var provider = services.BuildServiceProvider();
+        var relay = new OutboxRelay(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            CreateDispatcher(),
+            Options.Create(new OutboxOptions { MaxRetries = 3 }),
+            NullLogger<OutboxRelay>.Instance);
+
+        // Act
+        var act = () => relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- marked sent and left sent, not flipped back to Pending by a disposal failure
+        await act.Should().NotThrowAsync();
+        store.MarkedSent.Should().Equal(14L);
+        store.RetriesIncremented.Should().BeEmpty();
+        created.Should().HaveCount(2).And.OnlyContain(service => service.Disposed);
+    }
+
+    [TestMethod]
+    public async Task NotCarryAnEntrysContextIntoTheNextEntry()
+    {
+        // Arrange -- the first entry is delivered under its restored context; the second fails to read before it
+        // restores its own, so it is released under whatever context the relay leaves current
+        var delivered = MakeEntry(id: 15, type: "Orders.Events.OrderCreated");
+        var unreadable = MakeEntry(id: 16, type: "Orders.Events.OrderCreated", payload: "not json");
+        var store = new ContextRecordingStubOutboxStore([delivered, unreadable]);
+        var relay = BuildRelay(store, CreateDispatcher(new CapturingTransport()));
+        var ambient = MessageContext.Current;
+
+        // Act
+        await relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert
+        store.RetriesIncremented.Should().Equal(16L);
+        store.ContextAtRetry.Should().BeSameAs(ambient, "the first entry's context ended with the first entry");
+    }
+
+    [TestMethod]
+    public async Task RefuseAClaimedEntryWithoutItsClaimToken()
+    {
+        // Arrange -- a custom store that drops the token would otherwise have every outcome refused, silently
+        var entry = new OutboxEntry
+        {
+            Id = 17,
+            MessageId = Guid.NewGuid().ToString(),
+            ConversationId = Guid.NewGuid().ToString(),
+            Type = "Orders.Events.OrderCreated",
+            Payload = "{}",
+        };
+        var store = new CapturingStubOutboxStore([entry]);
+        var transport = new CapturingTransport();
+        var relay = BuildRelay(store, CreateDispatcher(transport));
+
+        // Act
+        var act = () => relay.ProcessPendingAsync(CancellationToken.None);
+
+        // Assert -- the sweep fails loudly, before delivering anything
+        (await act.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("ClaimToken");
+        transport.SentEventEnvelopes.Should().BeEmpty();
+    }
+
+    private static void AssertClaimLostLogged(
+        IReadOnlyList<(LogLevel Level, EventId Id, string Message)> entries,
+        OutboxEntry entry)
+    {
+        var claimLost = entries.Should().ContainSingle(e => e.Id.Id == 321).Which;
+        claimLost.Id.Name.Should().Be("ClaimLost");
+        claimLost.Level.Should().Be(LogLevel.Warning);
+        claimLost.Message.Should().Contain(entry.Id.ToString(CultureInfo.InvariantCulture)).And.Contain(entry.Type);
     }
 
     [TestMethod]
@@ -372,6 +553,28 @@ file sealed class CapturingStubOutboxStore(IReadOnlyList<OutboxEntry> pending) :
         TimeSpan gracePeriod,
         CancellationToken cancellationToken)
         => Task.FromResult(pending);
+}
+
+/// <summary>Records the <see cref="MessageContext"/> current when the relay releases a failed entry.</summary>
+file sealed class ContextRecordingStubOutboxStore(IReadOnlyList<OutboxEntry> pending) : StubOutboxStore
+{
+    public MessageContext? ContextAtRetry { get; private set; }
+
+    public override Task<IReadOnlyList<OutboxEntry>> ClaimPendingAsync(
+        int batchSize,
+        TimeSpan gracePeriod,
+        CancellationToken cancellationToken)
+        => Task.FromResult(pending);
+
+    public override Task<bool> IncrementRetryAsync(
+        long entryId,
+        string claimToken,
+        TimeSpan retryDelay,
+        CancellationToken cancellationToken)
+    {
+        this.ContextAtRetry = MessageContext.Current;
+        return base.IncrementRetryAsync(entryId, claimToken, retryDelay, cancellationToken);
+    }
 }
 
 file sealed class CapturingTransport : IConduitTransport

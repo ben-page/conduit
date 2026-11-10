@@ -136,7 +136,7 @@ public abstract class PersistenceEngineTestBase
         });
 
         // Act — mark one sent, then re-claim: only the still-pending one comes back.
-        await store.MarkSentAsync(claimed[0].Id, CancellationToken.None);
+        await store.MarkSentAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
     }
 
     [TestMethod]
@@ -268,6 +268,32 @@ public abstract class PersistenceEngineTestBase
     }
 
     [TestMethod]
+    public async Task NotResolveARowWhoseClaimMovedOn()
+    {
+        // Arrange — worker A claims the entry and outlasts the claim timeout, so worker B re-claims it
+        var factory = await this.CreateIsolatedFactoryAsync();
+        var store = new DbConnectionOutboxStore(factory, this.Dialect);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        await SaveEntriesAsync(factory, this.Dialect, new[] { NewEntry("moved-on", DateTime.UtcNow.AddMinutes(-1)) });
+        var first = (await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None)).Single();
+        await SetClaimedAtAsync(factory, first.Id, DateTime.UtcNow.Subtract(ClaimTimeout).AddMinutes(-1));
+        var second = (await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None)).Single();
+
+        // Act — worker A resolves the entry with the token of the claim it lost, each of the three ways
+        var markedSent = await store.MarkSentAsync(first.Id, first.ClaimToken!, CancellationToken.None);
+        var retried = await store.IncrementRetryAsync(first.Id, first.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        var markedFailed = await store.MarkFailedAsync(first.Id, first.ClaimToken!, CancellationToken.None);
+
+        // Assert — none of them touched the row: it is still worker B's claim, at the retry count B claimed it with
+        markedSent.Should().BeFalse();
+        retried.Should().BeFalse();
+        markedFailed.Should().BeFalse();
+        second.ClaimToken.Should().NotBe(first.ClaimToken);
+        (await ReadOutboxRowAsync(factory, first.Id)).Should().Be((OutboxEntryStatus.Claiming, 0, second.ClaimToken));
+        (await store.MarkSentAsync(second.Id, second.ClaimToken!, CancellationToken.None)).Should().BeTrue();
+    }
+
+    [TestMethod]
     public async Task NotClaimARowBeforeItsNextAttempt()
     {
         // Arrange — two entries whose sends failed: one is due again now, the other only in an hour
@@ -278,8 +304,10 @@ public abstract class PersistenceEngineTestBase
         var createdAt = DateTime.UtcNow.AddMinutes(-1);
         await SaveEntriesAsync(factory, this.Dialect, new[] { NewEntry("due", createdAt), NewEntry("later", createdAt) });
         var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
-        await store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "due").Id, TimeSpan.Zero, CancellationToken.None);
-        await store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "later").Id, TimeSpan.FromHours(1), CancellationToken.None);
+        var due = claimed.Single(e => e.MessageId == "due");
+        var later = claimed.Single(e => e.MessageId == "later");
+        await store.IncrementRetryAsync(due.Id, due.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        await store.IncrementRetryAsync(later.Id, later.ClaimToken!, TimeSpan.FromHours(1), CancellationToken.None);
 
         // Act
         var reclaimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
@@ -304,11 +332,18 @@ public abstract class PersistenceEngineTestBase
             NewEntry("shipped", createdAt, "Test.Shipped"),
             NewEntry("placed-2", createdAt, "Test.Placed"),
         });
+        // Each fails twice, as the relay fails an entry: the first attempt released for another, the second out of
+        // retries. Its NextAttemptAt is then pushed an hour out, so only a retry that resets it makes the entry due.
         var claimed = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         foreach (var entry in claimed)
         {
-            await store.IncrementRetryAsync(entry.Id, TimeSpan.FromHours(1), CancellationToken.None);
-            await store.MarkFailedAsync(entry.Id, CancellationToken.None);
+            await store.IncrementRetryAsync(entry.Id, entry.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        }
+
+        foreach (var entry in await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None))
+        {
+            await store.MarkFailedAsync(entry.Id, entry.ClaimToken!, CancellationToken.None);
+            await SetNextAttemptAtAsync(factory, entry.Id, DateTime.UtcNow.AddHours(1));
         }
 
         await SaveEntriesAsync(factory, this.Dialect, new[] { NewEntry("pending", createdAt) });
@@ -1164,5 +1199,33 @@ public abstract class PersistenceEngineTestBase
         command.Parameters.Add(p2);
 
         await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static async Task SetNextAttemptAtAsync(IConduitConnectionFactory factory, long id, DateTime nextAttemptAt)
+    {
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET NextAttemptAt = @NextAttemptAt WHERE Id = @Id";
+        DbParameterHelper.Add(command, "@NextAttemptAt", nextAttemptAt.ToString("O", CultureInfo.InvariantCulture));
+        DbParameterHelper.Add(command, "@Id", id);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static async Task<(OutboxEntryStatus Status, int RetryCount, string? ClaimToken)> ReadOutboxRowAsync(
+        IConduitConnectionFactory factory,
+        long id)
+    {
+        await using var connection = await factory.CreateConnectionAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Status, RetryCount, ClaimToken FROM conduit_outbox WHERE Id = @Id";
+        DbParameterHelper.Add(command, "@Id", id);
+        await using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+        await reader.ReadAsync(CancellationToken.None);
+
+        // Status is the engine's small-int type, whose CLR width varies (TINYINT -> byte, SMALLINT -> short).
+        return (
+            (OutboxEntryStatus)Convert.ToInt32(reader.GetValue(0), CultureInfo.InvariantCulture),
+            reader.GetInt32(1),
+            await reader.IsDBNullAsync(2, CancellationToken.None) ? null : reader.GetString(2));
     }
 }

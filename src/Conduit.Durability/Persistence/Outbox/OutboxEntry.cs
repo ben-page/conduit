@@ -31,4 +31,11 @@ public sealed class OutboxEntry
     /// listener's context. Null when none of them was present, and on every entry of a host that lists none.
     /// </summary>
     public string? Properties { get; init; }
+    /// <summary>
+    /// The token of the claim that returned this entry from <see cref="IOutboxStore.ClaimPendingAsync"/>: the relay
+    /// hands it back to <see cref="IOutboxStore.MarkSentAsync"/>, <see cref="IOutboxStore.IncrementRetryAsync"/> or
+    /// <see cref="IOutboxStore.MarkFailedAsync"/>, which resolve the entry only while that claim still holds it. Null
+    /// on an entry no claim returned (a new entry, a <see cref="IOutboxStore.QueryFailedAsync"/> result).
+    /// </summary>
+    public string? ClaimToken { get; init; }
 }

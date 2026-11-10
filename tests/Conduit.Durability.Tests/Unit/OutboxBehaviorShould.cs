@@ -178,7 +178,7 @@ public class OutboxBehaviorShould
         // schedules it on the background dispatcher) against the exact messages OutboxBehavior
         // correlated via AddWrittenMessages, proving the MessageId round-trips correctly.
         var savedMessageId = store.SavedEntries[0].MessageId;
-        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 1, MessageId = savedMessageId }];
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 1, MessageId = savedMessageId, ClaimToken = "token-1" }];
 
         await OutboxCapture.ClaimAndDeliverAsync(
             CreateScopeFactory(store), CreateDispatcher(transport), NullLogger<OutboxCapture>.Instance, capture.WrittenMessages, CancellationToken.None);

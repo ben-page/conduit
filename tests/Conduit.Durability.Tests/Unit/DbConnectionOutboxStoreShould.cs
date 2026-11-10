@@ -1,4 +1,5 @@
-﻿using AwesomeAssertions;
+﻿using System.Globalization;
+using AwesomeAssertions;
 using Conduit.Persistence.Sqlite;
 using Conduit.Durability.Persistence.Outbox;
 using Conduit.Durability.Tests.Support;
@@ -206,7 +207,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         var entryId = claimed[0].Id;
 
         // Act
-        await this.store.MarkSentAsync(entryId, CancellationToken.None);
+        await this.store.MarkSentAsync(entryId, claimed[0].ClaimToken!, CancellationToken.None);
 
         // Assert — entry no longer claimable
         var claimedAgain = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
@@ -239,7 +240,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         var entryId = claimed[0].Id;
 
         // Act
-        await this.store.MarkFailedAsync(entryId, CancellationToken.None);
+        await this.store.MarkFailedAsync(entryId, claimed[0].ClaimToken!, CancellationToken.None);
 
         // Assert — entry no longer claimable
         var claimedAgain = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
@@ -272,7 +273,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         var entryId = claimed[0].Id;
 
         // Act — no delay, so the entry is due again at once
-        await this.store.IncrementRetryAsync(entryId, TimeSpan.Zero, CancellationToken.None);
+        await this.store.IncrementRetryAsync(entryId, claimed[0].ClaimToken!, TimeSpan.Zero, CancellationToken.None);
 
         // Assert — IncrementRetry releases the claim back to Pending, so the entry is claimable
         // again; re-claiming it transitions it to Claiming with the incremented retry count.
@@ -312,14 +313,61 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         await this.connectionFactory.CommitAsync();
 
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
-        await this.store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "msg-due").Id, TimeSpan.Zero, CancellationToken.None);
-        await this.store.IncrementRetryAsync(claimed.Single(e => e.MessageId == "msg-later").Id, TimeSpan.FromHours(1), CancellationToken.None);
+        var due = claimed.Single(e => e.MessageId == "msg-due");
+        var later = claimed.Single(e => e.MessageId == "msg-later");
+        await this.store.IncrementRetryAsync(due.Id, due.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        await this.store.IncrementRetryAsync(later.Id, later.ClaimToken!, TimeSpan.FromHours(1), CancellationToken.None);
 
         // Act
         var reclaimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
 
         // Assert
         reclaimed.Should().ContainSingle().Which.MessageId.Should().Be("msg-due");
+    }
+
+    [TestMethod]
+    public async Task NotResolveARowWhoseClaimMovedOn()
+    {
+        // Arrange — worker A claims the entry and outlasts the claim timeout, so worker B re-claims it
+        await this.SaveEntryAsync("msg-moved-on");
+        var first = (await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None)).Single();
+        await this.SetClaimedAtAsync(first.Id, DateTime.UtcNow.AddMinutes(-6));
+        var second = (await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None)).Single();
+
+        // Act — worker A resolves the entry with the token of the claim it lost, each of the three ways
+        var markedSent = await this.store.MarkSentAsync(first.Id, first.ClaimToken!, CancellationToken.None);
+        var retried = await this.store.IncrementRetryAsync(first.Id, first.ClaimToken!, TimeSpan.Zero, CancellationToken.None);
+        var markedFailed = await this.store.MarkFailedAsync(first.Id, first.ClaimToken!, CancellationToken.None);
+
+        // Assert — none of them touched the row: it is still worker B's claim, at the retry count B claimed it with
+        markedSent.Should().BeFalse();
+        retried.Should().BeFalse();
+        markedFailed.Should().BeFalse();
+        second.ClaimToken.Should().NotBe(first.ClaimToken);
+        (await this.ReadRowAsync(first.Id)).Should().Be((OutboxEntryStatus.Claiming, 0, second.ClaimToken));
+        (await this.store.MarkSentAsync(second.Id, second.ClaimToken!, CancellationToken.None)).Should().BeTrue();
+    }
+
+    [TestMethod]
+    public async Task TakeOverAClaimOnlyOnceItIsOlderThanTheConfiguredClaimTimeout()
+    {
+        // Arrange — a host whose deliveries can run long gives its claims an hour
+        var store = new DbConnectionOutboxStore(
+            this.connectionFactory,
+            new SqliteDialect(),
+            Options.Create(new OutboxOptions { ClaimTimeout = TimeSpan.FromHours(1) }));
+        await this.SaveEntryAsync("msg-slow");
+        var claimed = (await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None)).Single();
+
+        // Act — another worker claims while the claim is ten minutes old, then again once it is past the hour
+        await this.SetClaimedAtAsync(claimed.Id, DateTime.UtcNow.AddMinutes(-10));
+        var whileHeld = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+        await this.SetClaimedAtAsync(claimed.Id, DateTime.UtcNow.AddMinutes(-61));
+        var onceStale = await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        whileHeld.Should().BeEmpty();
+        onceStale.Should().ContainSingle().Which.Id.Should().Be(claimed.Id);
     }
 
     [TestMethod]
@@ -394,7 +442,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         await factory.CommitAsync();
 
         var pending = await store.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
-        await store.MarkSentAsync(pending[0].Id, CancellationToken.None);
+        await store.MarkSentAsync(pending[0].Id, pending[0].ClaimToken!, CancellationToken.None);
 
         // Act
         var claimed = await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);
@@ -432,7 +480,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         await factory.CommitAsync();
 
         var relayed = await store.ClaimPendingAsync(10, TimeSpan.Zero, CancellationToken.None);
-        await store.IncrementRetryAsync(relayed[0].Id, TimeSpan.Zero, CancellationToken.None);
+        await store.IncrementRetryAsync(relayed[0].Id, relayed[0].ClaimToken!, TimeSpan.Zero, CancellationToken.None);
 
         // Act
         var claimed = await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);
@@ -466,7 +514,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         await this.connectionFactory.CommitAsync();
 
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
-        await this.store.MarkSentAsync(claimed[0].Id, CancellationToken.None);
+        await this.store.MarkSentAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
 
         // Act — delete entries older than 7 days
         await this.store.DeleteCompletedAsync(TimeSpan.FromDays(7), CancellationToken.None);
@@ -502,7 +550,7 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         await this.connectionFactory.CommitAsync();
 
         var claimed = await this.store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
-        await this.store.MarkFailedAsync(claimed[0].Id, CancellationToken.None);
+        await this.store.MarkFailedAsync(claimed[0].Id, claimed[0].ClaimToken!, CancellationToken.None);
 
         var connection = this.connectionFactory.Connection;
 
@@ -521,5 +569,46 @@ public sealed class DbConnectionOutboxStoreShould : IAsyncDisposable
         // Assert — now it is gone
         var gone = await command.ExecuteScalarAsync();
         gone.Should().Be(0L);
+    }
+
+    private async Task SaveEntryAsync(string messageId)
+    {
+        await this.connectionFactory.BeginTransactionAsync();
+        await this.store.SaveAsync(
+            [
+                new OutboxEntry
+                {
+                    MessageId = messageId,
+                    ConversationId = "conv-1",
+                    Type = "Orders.Commands.CreateOrder",
+                    Payload = "{}",
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+            ],
+            this.connectionFactory.GetCurrentTransaction()!,
+            CancellationToken.None);
+        await this.connectionFactory.CommitAsync();
+    }
+
+    private async Task SetClaimedAtAsync(long id, DateTime claimedAt)
+    {
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "UPDATE conduit_outbox SET ClaimedAt = @ClaimedAt WHERE Id = @Id";
+        command.Parameters.AddWithValue("@ClaimedAt", claimedAt.ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("@Id", id);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<(OutboxEntryStatus Status, int RetryCount, string? ClaimToken)> ReadRowAsync(long id)
+    {
+        using var command = this.connectionFactory.Connection.CreateCommand();
+        command.CommandText = "SELECT Status, RetryCount, ClaimToken FROM conduit_outbox WHERE Id = @Id";
+        command.Parameters.AddWithValue("@Id", id);
+        using var reader = await command.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        return (
+            (OutboxEntryStatus)reader.GetInt32(0),
+            reader.GetInt32(1),
+            await reader.IsDBNullAsync(2) ? null : reader.GetString(2));
     }
 }

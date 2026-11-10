@@ -8,10 +8,12 @@ using Conduit.Persistence;
 using Conduit.Runtime;
 using Conduit.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.Data;
 using System.Data.Common;
+using System.Globalization;
 using System.Text.Json;
 
 namespace Conduit.Durability.Tests.Unit;
@@ -174,8 +176,8 @@ public class OutboxCaptureShould
 
         store.ClaimedEntries =
         [
-            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
-            new ClaimedOutboxEntry { Id = 11, MessageId = "msg-2" },
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" },
+            new ClaimedOutboxEntry { Id = 11, MessageId = "msg-2", ClaimToken = "token-11" },
         ];
 
         // Act
@@ -187,6 +189,7 @@ public class OutboxCaptureShould
         transport.SentEvents[0].Type.Should().Be("MyApp.Events.OrderPlaced");
         transport.SentEvents[1].Type.Should().Be("MyApp.Events.OrderShipped");
         store.MarkedSent.Should().BeEquivalentTo([10L, 11L]);
+        store.ResolvedClaimTokens.Should().Equal("token-10", "token-11");
     }
 
     [TestMethod]
@@ -205,7 +208,7 @@ public class OutboxCaptureShould
 
         store.ClaimedEntries =
         [
-            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" },
         ];
 
         // Act
@@ -216,6 +219,82 @@ public class OutboxCaptureShould
         store.MarkedSent.Should().BeEmpty();
         store.RetriesIncremented.Should().BeEquivalentTo([10L]);
         store.RetryDelays.Should().Equal(TimeSpan.FromSeconds(5));
+        store.ResolvedClaimTokens.Should().Equal("token-10");
+    }
+
+    [TestMethod]
+    public async Task ClaimAndDeliverAsyncLogALostClaimWhenMarkingSent()
+    {
+        // Arrange -- the delivery outlasted the claim timeout and the relay re-claimed the entry
+        var store = new StubOutboxStore { ClaimLost = true };
+        var spy = new SpyLoggerProvider();
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
+
+        // Act
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store), CreateDispatcher(new SpyTransport()), spy.CreateLogger("outbox"), messages, CancellationToken.None);
+
+        // Assert -- the entry belongs to the relay's claim now: no retry is recorded on top of it
+        AssertClaimLostLogged(spy, entryId: 10, type: "MyApp.Events.OrderPlaced");
+        store.MarkedSent.Should().Equal(10L);
+        store.RetriesIncremented.Should().BeEmpty();
+    }
+
+    [TestMethod]
+    public async Task ClaimAndDeliverAsyncLogALostClaimWhenReleasingAFailedSend()
+    {
+        // Arrange
+        var store = new StubOutboxStore { ClaimLost = true };
+        var spy = new SpyLoggerProvider();
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
+
+        // Act
+        await OutboxCapture.ClaimAndDeliverAsync(
+            CreateScopeFactory(store), CreateDispatcher(new ThrowingTransport()), spy.CreateLogger("outbox"), messages, CancellationToken.None);
+
+        // Assert
+        AssertClaimLostLogged(spy, entryId: 10, type: "MyApp.Events.OrderPlaced");
+        store.RetriesIncremented.Should().Equal(10L);
+    }
+
+    [TestMethod]
+    public async Task ClaimAndDeliverAsyncSurviveAnAsyncOnlyScopedService()
+    {
+        // Arrange -- the entry's listener, and the flush's store, each resolve a scoped service that implements only
+        // IAsyncDisposable, which IServiceScope.Dispose() refuses with an exception
+        var store = new StubOutboxStore();
+        var created = new List<AsyncOnlyScopedService>();
+        var services = new ServiceCollection();
+        services.AddScoped(_ =>
+        {
+            var service = new AsyncOnlyScopedService();
+            created.Add(service);
+            return service;
+        });
+        services.AddScoped<IOutboxStore>(serviceProvider =>
+        {
+            serviceProvider.GetRequiredService<AsyncOnlyScopedService>();
+            return store;
+        });
+        services.AddSingleton<ILocalEnvelopeDispatcher, AsyncOnlyServiceListener>();
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var envelope = new DispatchEnvelope("MyApp.Events.OrderPlaced", JsonSerializer.SerializeToElement(new { orderId = 1 }));
+        var messages = new List<WrittenOutboxMessage> { new("msg-1", "conv-1", null, envelope) };
+        store.ClaimedEntries = [new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" }];
+
+        // Act
+        var act = () => OutboxCapture.ClaimAndDeliverAsync(
+            scopeFactory, CreateDispatcher(), NullLogger<OutboxCapture>.Instance, messages, CancellationToken.None);
+
+        // Assert -- marked sent and left sent, not released for the relay to deliver again
+        await act.Should().NotThrowAsync();
+        store.MarkedSent.Should().Equal(10L);
+        store.RetriesIncremented.Should().BeEmpty();
+        created.Should().HaveCount(2).And.OnlyContain(service => service.Disposed);
     }
 
     [TestMethod]
@@ -234,7 +313,7 @@ public class OutboxCaptureShould
         };
         store.ClaimedEntries =
         [
-            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" },
         ];
 
         // Act
@@ -263,7 +342,7 @@ public class OutboxCaptureShould
 
         store.ClaimedEntries =
         [
-            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" },
         ];
 
         // Act
@@ -297,7 +376,7 @@ public class OutboxCaptureShould
         };
         store.ClaimedEntries =
         [
-            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1" },
+            new ClaimedOutboxEntry { Id = 10, MessageId = "msg-1", ClaimToken = "token-10" },
         ];
 
         // Act
@@ -333,6 +412,14 @@ public class OutboxCaptureShould
         // Assert
         transport.SentEvents.Should().BeEmpty();
         store.MarkedSent.Should().BeEmpty();
+    }
+
+    private static void AssertClaimLostLogged(SpyLoggerProvider spy, long entryId, string type)
+    {
+        var claimLost = spy.Entries.Should().ContainSingle(e => e.EventId.Id == 321).Which;
+        claimLost.EventId.Name.Should().Be("ClaimLost");
+        claimLost.Level.Should().Be(LogLevel.Warning);
+        claimLost.Message.Should().Contain(entryId.ToString(CultureInfo.InvariantCulture)).And.Contain(type);
     }
 }
 

@@ -27,9 +27,9 @@ public sealed class StoreConnectionDisposalShould
         await store.EnsureTableExistsAsync(CancellationToken.None);
         await store.ClaimPendingAsync(batchSize: 10, gracePeriod: TimeSpan.Zero, CancellationToken.None);
         await store.ClaimByMessageIdsAsync(["msg-1"], CancellationToken.None);
-        await store.MarkSentAsync(1, CancellationToken.None);
-        await store.IncrementRetryAsync(1, TimeSpan.Zero, CancellationToken.None);
-        await store.MarkFailedAsync(1, CancellationToken.None);
+        await store.MarkSentAsync(1, "claim-token", CancellationToken.None);
+        await store.IncrementRetryAsync(1, "claim-token", TimeSpan.Zero, CancellationToken.None);
+        await store.MarkFailedAsync(1, "claim-token", CancellationToken.None);
         await store.DeleteCompletedAsync(TimeSpan.Zero, CancellationToken.None);
 
         // Assert — every opened connection was disposed.
