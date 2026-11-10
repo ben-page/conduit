@@ -11,8 +11,9 @@ namespace Conduit.Jobs.Tests.Integration;
 [TestClass]
 public class ClaimRenewalShould
 {
-    private static readonly DateTimeOffset Start = new(2026, 8, 25, 1, 59, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset Occurrence = new(2026, 8, 25, 2, 4, 0, TimeSpan.Zero);
+    // One interval before an occurrence: interval occurrences align to the Unix epoch.
+    private static readonly DateTimeOffset Start = new(2026, 8, 25, 1, 55, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Occurrence = new(2026, 8, 25, 2, 0, 0, TimeSpan.Zero);
     private static readonly string JobKey = DurableJobScheduler.BuildJobKey("warm", Occurrence);
 
     [TestMethod]

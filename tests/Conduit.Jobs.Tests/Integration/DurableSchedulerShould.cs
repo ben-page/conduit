@@ -11,7 +11,8 @@ namespace Conduit.Jobs.Tests.Integration;
 public class DurableSchedulerShould
 {
     private static readonly DateTimeOffset Start = new(2026, 8, 25, 1, 59, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset Occurrence = new(2026, 8, 25, 2, 4, 0, TimeSpan.Zero);
+    // The first after Start: interval occurrences align to the Unix epoch, not to a host's start.
+    private static readonly DateTimeOffset Occurrence = new(2026, 8, 25, 2, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
     public async Task RunAnOccurrenceExactlyOnceAcrossThreeHosts()
@@ -113,10 +114,70 @@ public class DurableSchedulerShould
             DurableJobScheduler.BuildJobKey("warm", Occurrence), CancellationToken.None)).Should().BeNull();
     }
 
+    [TestMethod]
+    public async Task AgreeOnIntervalOccurrencesAcrossHostsWithDifferentStartTimes()
+    {
+        // Arrange — three replicas that came up ten seconds apart, each reading its own clock at start;
+        // anchored to its own start, each would run every interval at a time of its own
+        var clocks = new[]
+        {
+            new FakeTimeProvider(Start),
+            new FakeTimeProvider(Start.AddSeconds(10)),
+            new FakeTimeProvider(Start.AddSeconds(20)),
+        };
+        var spy = new JobSpy();
+        await using var database = SharedSqliteDatabase.Create();
+        await using var hostA = await StartHostAsync(database, clocks[0], spy);
+        await using var hostB = await StartHostAsync(database, clocks[1], spy);
+        await using var hostC = await StartHostAsync(database, clocks[2], spy);
+        DateTimeOffset[] occurrences =
+        [
+            new(2026, 8, 25, 2, 0, 0, TimeSpan.Zero),
+            new(2026, 8, 25, 2, 5, 0, TimeSpan.Zero),
+            new(2026, 8, 25, 2, 10, 0, TimeSpan.Zero),
+        ];
+
+        // Act — from here on the three read the same time, through three intervals
+        await AdvanceTogetherAsync(clocks, occurrences[^1].AddSeconds(30));
+        await spy.WaitForCountAsync(occurrences.Length);
+        foreach (var occurrence in occurrences)
+        {
+            await JobsDatabaseProbe.WaitForDeletionAsync(database, DurableJobScheduler.BuildJobKey("warm", occurrence));
+        }
+
+        await Task.Delay(200);
+
+        // Assert — one run per interval, each of the occurrence every replica computed
+        spy.Count.Should().Be(occurrences.Length, "replicas agree on an interval's occurrences without a cursor");
+        var history = await JobsDatabaseProbe.StoreFor(database).QueryHistoryAsync(
+            new JobHistoryFilter { ScheduleName = "warm" }, CancellationToken.None);
+        history.Entries.Select(entry => entry.JobKey).Order(StringComparer.Ordinal).Should().Equal(
+            occurrences.Select(occurrence => DurableJobScheduler.BuildJobKey("warm", occurrence)));
+    }
+
     private static Task<TestHost> StartHostAsync(
         SharedSqliteDatabase database, FakeTimeProvider timeProvider, JobSpy spy)
         => JobsTestHost.StartAsync(
             WarmEveryFiveMinutes, spy, timeProvider, database.ConnectionString);
+
+    /// <summary>
+    /// Sets every clock to the same instant, five seconds at a time, until <paramref name="until"/>. In
+    /// steps, because the loops re-arm their timers asynchronously after each firing.
+    /// </summary>
+    private static async Task AdvanceTogetherAsync(IReadOnlyList<FakeTimeProvider> clocks, DateTimeOffset until)
+    {
+        var now = clocks.Max(clock => clock.GetUtcNow());
+        while (now < until)
+        {
+            now += TimeSpan.FromSeconds(5);
+            foreach (var clock in clocks)
+            {
+                clock.SetUtcNow(now);
+            }
+
+            await Task.Delay(20);
+        }
+    }
 
     private static void WarmEveryFiveMinutes(JobsBuilder jobs)
         => jobs.Schedule("warm").Every(TimeSpan.FromMinutes(5)).Run(() => new RecordedJob("warm"));

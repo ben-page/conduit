@@ -43,8 +43,9 @@ internal sealed partial class InMemoryJobScheduler : BackgroundService
         this.logger = logger;
 
         // Read at construction rather than when the loop first runs: hosted services are constructed
-        // before any of them starts, so a schedule's first occurrence is anchored to when the host
-        // came up and does not drift with however long startup takes.
+        // before any of them starts, so a schedule's first occurrence is the first after the host came
+        // up, not after however long startup takes. Occurrences themselves are absolute (cron, or an
+        // interval aligned to the Unix epoch), so every host fires at the same instants.
         this.startedAt = timeProvider.GetUtcNow();
     }
 

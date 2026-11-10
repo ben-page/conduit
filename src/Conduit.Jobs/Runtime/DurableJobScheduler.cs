@@ -59,8 +59,10 @@ internal sealed partial class DurableJobScheduler : BackgroundService
         this.logger = logger;
 
         // Read at construction rather than when a loop first runs: hosted services are constructed
-        // before any of them starts, so a schedule with no cursor yet is anchored to when the host
-        // came up and does not drift with however long startup takes.
+        // before any of them starts, so a schedule with no cursor yet waits for its first occurrence
+        // after the host came up, not after however long startup takes. The instant picks which
+        // occurrence comes first, never when occurrences fall: cron is absolute and an interval aligns
+        // to the Unix epoch, so replicas started at different times agree.
         this.startedAt = timeProvider.GetUtcNow();
     }
 
@@ -96,6 +98,8 @@ internal sealed partial class DurableJobScheduler : BackgroundService
 
     private async Task RunScheduleAsync(JobSchedule schedule, CancellationToken stoppingToken)
     {
+        // With no cursor, the first occurrence after this host's start. Any instant gives the same
+        // timetable (JobSchedule.NextOccurrenceAfter), so no replica needs another's cursor to agree.
         var cursor = await this.ReadCursorAsync(schedule.Name, stoppingToken) ?? this.startedAt;
         cursor = await this.ApplyMisfireAsync(schedule, cursor, stoppingToken) ?? cursor;
 

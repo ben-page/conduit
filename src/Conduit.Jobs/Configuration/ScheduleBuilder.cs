@@ -35,7 +35,11 @@ public sealed class ScheduleBuilder
         return this;
     }
 
-    /// <summary>Declares a fixed interval. Interval schedules have no misfire policy.</summary>
+    /// <summary>
+    /// Declares a fixed interval. Occurrences fall on whole multiples of it since the Unix epoch, so
+    /// every replica computes the same ones whenever it started. Interval schedules have no misfire
+    /// policy.
+    /// </summary>
     /// <param name="value">The gap between occurrences.</param>
     /// <returns>This builder for chaining.</returns>
     public ScheduleBuilder Every(TimeSpan value)

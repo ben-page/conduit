@@ -24,18 +24,48 @@ public class JobScheduleShould
     }
 
     [TestMethod]
-    public void ComputeTheNextIntervalOccurrence()
+    public void AlignIntervalOccurrencesToTheEpoch()
     {
-        // Arrange
-        var schedule = JobSchedule.FromInterval("warm", TimeSpan.FromMinutes(5),
+        // Arrange — replicas that started at different moments of one five-minute period, and a
+        // seven-minute interval, which divides no hour or day
+        var fiveMinutes = JobSchedule.FromInterval("warm", TimeSpan.FromMinutes(5),
             allowsOverlap: false, maxRuntime: null, () => new NoopJob());
-        var after = new DateTimeOffset(2026, 3, 1, 3, 2, 0, TimeSpan.Zero);
+        var sevenMinutes = JobSchedule.FromInterval("odd", TimeSpan.FromMinutes(7),
+            allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+        var occurrence = new DateTimeOffset(2026, 3, 1, 3, 5, 0, TimeSpan.Zero);
 
         // Act
-        var next = schedule.NextOccurrenceAfter(after);
+        var fromEarlyStart = fiveMinutes.NextOccurrenceAfter(new DateTimeOffset(2026, 3, 1, 3, 0, 1, TimeSpan.Zero));
+        var fromLateStart = fiveMinutes.NextOccurrenceAfter(occurrence.AddTicks(-1));
+        var fromAnotherOffset = fiveMinutes.NextOccurrenceAfter(new DateTimeOffset(2026, 3, 1, 5, 2, 0, TimeSpan.FromHours(2)));
+        var fromTheOccurrence = fiveMinutes.NextOccurrenceAfter(occurrence);
+        var oddInterval = sevenMinutes.NextOccurrenceAfter(occurrence);
 
-        // Assert
-        next.Should().Be(new DateTimeOffset(2026, 3, 1, 3, 7, 0, TimeSpan.Zero));
+        // Assert — every replica reaches the same occurrence whenever it started, the next one is
+        // strictly after, as a cron schedule's is, and the phase is the Unix epoch's (03:08 is
+        // 4,219,844 seven-minute periods after it)
+        fromEarlyStart.Should().Be(occurrence);
+        fromLateStart.Should().Be(occurrence);
+        fromAnotherOffset.Should().Be(occurrence);
+        fromTheOccurrence.Should().Be(occurrence.AddMinutes(5));
+        oddInterval.Should().Be(new DateTimeOffset(2026, 3, 1, 3, 8, 0, TimeSpan.Zero));
+    }
+
+    [TestMethod]
+    public void AlignAnIntervalBeforeTheEpochAndYieldNoneBeyondTheLastInstant()
+    {
+        // Arrange
+        var fiveMinutes = JobSchedule.FromInterval("warm", TimeSpan.FromMinutes(5),
+            allowsOverlap: false, maxRuntime: null, () => new NoopJob());
+
+        // Act
+        var beforeTheEpoch = fiveMinutes.NextOccurrenceAfter(new DateTimeOffset(1969, 12, 31, 23, 57, 0, TimeSpan.Zero));
+        var lastPeriod = fiveMinutes.NextOccurrenceAfter(DateTimeOffset.MaxValue.AddMinutes(-1));
+
+        // Assert — the period is floored, not truncated toward the epoch, and an occurrence that cannot
+        // be represented is none, as a cron expression that yields none is
+        beforeTheEpoch.Should().Be(DateTimeOffset.UnixEpoch);
+        lastPeriod.Should().BeNull();
     }
 
     [TestMethod]

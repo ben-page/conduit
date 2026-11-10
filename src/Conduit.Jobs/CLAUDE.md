@@ -36,9 +36,23 @@ occurrence computation, misfire detection, backoff and `MaxRuntime` deterministi
 `FakeTimeProvider`. `grep -rn "DateTime.UtcNow\|DateTimeOffset.UtcNow" src/Conduit.Jobs/` must
 return nothing.
 
-Both schedulers read `TimeProvider.GetUtcNow()` in their **constructor** and anchor a schedule's
-first occurrence to that, not to whenever the loop's first database read returns. Hosted services
+Both schedulers read `TimeProvider.GetUtcNow()` in their **constructor** and wait for a schedule's
+first occurrence after that, not after whenever the loop's first database read returns. Hosted services
 are all constructed before any of them starts, so this is stable even when startup is slow.
+
+**That instant picks which occurrence is first, never when occurrences fall.** Cron is absolute, and
+an interval's occurrences are `UnixEpoch + k * Every` (`JobSchedule.NextIntervalOccurrenceAfter`):
+`after` exactly on an occurrence yields the next one, strictly after, as the cron path's
+`inclusive: false` does, because the cursor and every completed occurrence are such an `after`. It was
+`after + Every`, so with no cursor each replica's timetable was its own start plus multiples of the
+interval: replicas started seconds apart materialized different keys for one interval, and the cursor
+and the overlap lock, both keyed on the occurrence, let each run it
+(`DurableSchedulerShould.AgreeOnIntervalOccurrencesAcrossHostsWithDifferentStartTimes` saw six runs
+across three hosts where three were due). A cursor written by an earlier build off the epoch's phase is harmless: the next
+occurrence after it is aligned. Tests whose narrative needs the first occurrence one interval after
+the host's start set `Start` one interval before an aligned occurrence (1:55 for five minutes, 1:00
+for an hour). `JobScheduleShould.AlignIntervalOccurrencesToTheEpoch` pins the arithmetic, including a
+seven-minute interval and a non-UTC offset.
 
 ## Registered services
 
@@ -380,8 +394,8 @@ SNS/SQS ceiling of 10 message attributes — there is one attribute of headroom.
   discontinuous clock it means advancing past an occurrence nothing was waiting for.
 - **The misfire walk is capped** at 100,000 occurrences; beyond that the cursor moves to now with a
   warning rather than stalling startup.
-- **A cursor that cannot be read at start is read as no cursor** (logged): the timetable anchors to the
-  host's start and this start's misfire policy is skipped, rather than the loop ending. A completed
+- **A cursor that cannot be read at start is read as no cursor** (logged): the loop waits for the first
+  occurrence after the host's start and this start's misfire policy is skipped, rather than the loop ending. A completed
   occurrence still cannot re-run: every occurrence's write checks the real cursor (under the overlap
   lock, or from the schedule row for `AllowOverlap()`).
 - **Purge covers `Cancelled` as well as `Failed`.** Both are terminal history kept only for an

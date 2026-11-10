@@ -99,7 +99,10 @@ public sealed class JobSchedule
             timeZone, misfire, allowsOverlap, maxRuntime, createCommand, runsAtStart: false);
     }
 
-    /// <summary>Creates a fixed-interval schedule. Interval schedules have no misfire policy.</summary>
+    /// <summary>
+    /// Creates a fixed-interval schedule. Interval schedules have no misfire policy. Occurrences are the
+    /// whole multiples of <paramref name="interval"/> since the Unix epoch, whoever computes them.
+    /// </summary>
     /// <param name="name">The schedule's unique name.</param>
     /// <param name="interval">The gap between occurrences. Must be greater than zero.</param>
     /// <param name="allowsOverlap">Whether a new occurrence may start while a previous one is outstanding.</param>
@@ -158,21 +161,46 @@ public sealed class JobSchedule
     /// The first occurrence strictly after <paramref name="after"/>, or <see langword="null"/> if the
     /// expression yields none or the schedule is <see cref="IsOnDemand">on demand</see>. Cronos
     /// resolves DST transitions: an occurrence in a skipped local hour is not produced, and one in a
-    /// repeated local hour is produced once.
+    /// repeated local hour is produced once. An interval's occurrences are
+    /// <see cref="DateTimeOffset.UnixEpoch"/> plus whole multiples of the interval, so every host
+    /// computes the same ones whenever it started, with no cursor to read: anchored to each host's start
+    /// instead, replicas started seconds apart each ran every interval at a time of their own, and the
+    /// cursor and the overlap lock, keyed on the occurrence, let each of them run it.
     /// </summary>
     /// <param name="after">The instant to search forward from, exclusive.</param>
     /// <returns>
-    /// The next occurrence, or <see langword="null"/> when the expression yields none or the schedule
-    /// is on demand.
+    /// The next occurrence, or <see langword="null"/> when the expression yields none, an interval's
+    /// would fall past <see cref="DateTimeOffset.MaxValue"/>, or the schedule is on demand.
     /// </returns>
     public DateTimeOffset? NextOccurrenceAfter(DateTimeOffset after)
     {
         if (this.interval is { } every)
         {
-            return after + every;
+            return NextIntervalOccurrenceAfter(after, every);
         }
 
         // An on-demand schedule has no timetable, so it has no occurrence, ever.
         return this.cron?.GetNextOccurrence(after, this.TimeZone, inclusive: false);
+    }
+
+    // Strictly after, as the cron path is (inclusive: false): an `after` exactly on an occurrence, which
+    // the cursor and every completed occurrence are, yields the one an interval later, never itself.
+    private static DateTimeOffset? NextIntervalOccurrenceAfter(DateTimeOffset after, TimeSpan every)
+    {
+        // How far `after` is into its period, from 0 up to but not including the interval; the modulo of
+        // a negative tick count is negative, so an instant before the epoch is brought back into range.
+        var intoPeriod = (after.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks) % every.Ticks;
+        if (intoPeriod < 0)
+        {
+            intoPeriod += every.Ticks;
+        }
+
+        var periodStart = after.UtcTicks - intoPeriod;
+        if (DateTimeOffset.MaxValue.UtcTicks - periodStart < every.Ticks)
+        {
+            return null;
+        }
+
+        return new DateTimeOffset(periodStart + every.Ticks, TimeSpan.Zero);
     }
 }

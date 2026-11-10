@@ -19,7 +19,8 @@ public class OnDemandScheduleShould
     private const string OnDemand = "rederive";
     private const string Control = "warm";
 
-    private static readonly DateTimeOffset Start = new(2026, 11, 3, 1, 59, 0, TimeSpan.Zero);
+    // One interval before an occurrence: interval occurrences align to the Unix epoch.
+    private static readonly DateTimeOffset Start = new(2026, 11, 3, 1, 0, 0, TimeSpan.Zero);
     private static readonly TimeSpan SeveralDays = TimeSpan.FromDays(3);
 
     [TestMethod]

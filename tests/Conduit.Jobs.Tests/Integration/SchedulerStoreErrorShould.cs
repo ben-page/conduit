@@ -16,13 +16,14 @@ namespace Conduit.Jobs.Tests.Integration;
 [TestClass]
 public class SchedulerStoreErrorShould
 {
-    private static readonly DateTimeOffset Start = new(2026, 10, 12, 1, 59, 0, TimeSpan.Zero);
+    // One interval before an occurrence: interval occurrences align to the Unix epoch.
+    private static readonly DateTimeOffset Start = new(2026, 10, 12, 1, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
     public async Task KeepItsTimetable_AndLeaveTheRunToTheSweep_WhenAnOccurrencesClaimFails()
     {
         // Arrange — an hourly schedule whose sweep sleeps 90 minutes between passes, so the occurrence
-        // at 02:59 is claimed by the schedule's own loop alone, and the sweep's next pass is at 03:29
+        // at 02:00 is claimed by the schedule's own loop alone, and the sweep's next pass is at 02:30
         await using var database = SharedSqliteDatabase.Create();
         var timeProvider = new FakeTimeProvider(Start);
         var spy = new JobSpy();
@@ -51,7 +52,7 @@ public class SchedulerStoreErrorShould
         await spy.WaitForCountAsync(1);
         await JobsDatabaseProbe.WaitForDeletionAsync(database, DurableJobScheduler.BuildJobKey("warm", Start.AddHours(1)));
 
-        // Assert — and the schedule's loop is still alive for the next occurrence, at 03:59
+        // Assert — and the schedule's loop is still alive for the next occurrence, at 03:00
         timeProvider.Advance(TimeSpan.FromMinutes(30));
         await spy.WaitForCountAsync(2);
         host.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested

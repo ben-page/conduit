@@ -93,7 +93,7 @@ builder.Services.AddConduit(conduit =>
 | Method | Meaning |
 |---|---|
 | `Cron(expression)` | Five cron fields, or six to include seconds. UTC unless `InTimeZone` says otherwise. |
-| `Every(TimeSpan)` | A fixed interval. Interval schedules have no misfire policy. |
+| `Every(TimeSpan)` | A fixed interval, aligned to the Unix epoch (see below). Interval schedules have no misfire policy. |
 | `OnDemand()` | No timetable: runs only when `IJobs.TriggerNowAsync` starts it. See [On-demand schedules](#on-demand-schedules). |
 | `InTimeZone(id)` | Evaluate the cron expression in this timezone. |
 | `OnMisfire(policy)` | What to do about occurrences missed while the application was down. |
@@ -106,6 +106,15 @@ A schedule declares exactly one of `Cron(...)`, `Every(...)` and `OnDemand()`; n
 fails at startup naming the schedule. A schedule's name is its database key, so names must be
 unique — `AddJobs` rejects duplicates at startup, and rejects a trigger whose name collides with a
 schedule's.
+
+An interval's occurrences are the whole multiples of the interval since the Unix epoch
+(1970-01-01T00:00Z), whichever host computes them and whenever it started:
+`Every(TimeSpan.FromMinutes(5))` runs at :00, :05, :10 and so on past every hour, and
+`Every(TimeSpan.FromHours(1))` on the hour. An interval that divides no day, such as seven minutes,
+still has the one timetable every replica shares; it just does not line up with the clock face. A
+host's first occurrence is therefore the next one after it starts, up to one interval away, not one
+interval after its start: anchored to each host's start instead, replicas that came up seconds apart
+would each run every interval at a time of their own.
 
 Cron is parsed by [Cronos](https://github.com/HangfireIO/Cronos), chosen for DST correctness. On a
 spring-forward, a daily job whose local time does not exist that day runs once at the instant the
@@ -300,8 +309,8 @@ nothing), one delete and one cursor update. For a daily job, single-digit statem
 
 ### Why occurrences are computed in memory
 
-Schedules are code-declared, so every host has the same cron expression and reaches the same answer
-without asking anyone. The database is therefore never consulted about **when** a job is due — only
+Schedules are code-declared, so every host has the same cron expression, or the same interval
+aligned to the same epoch, and reaches the same answer without asking anyone. The database is therefore never consulted about **when** a job is due — only
 about **who runs this one**. There is no poll loop looking for work that has come due, and
 steady-state traffic is proportional to occurrences rather than to the passage of time.
 
@@ -509,14 +518,15 @@ jobs.Schedule("sweep").Every(TimeSpan.FromMinutes(5)).RunAtStart().Run(() => new
   claiming it: the run stays queued, and the sweep claims it within `ClaimTimeout` (default 2 minutes;
   up to twice that in the rare case the claim was recorded and only reading it back failed).
 - **The timetable is untouched.** After the start-up run the loop waits for the next occurrence after
-  the cursor, exactly as without `RunAtStart()`. The phase stays the cursor's, shared by every replica,
-  so the next occurrence may follow the start-up run by less than an interval — and is skipped by the
+  the cursor, exactly as without `RunAtStart()`. The phase stays the interval's own, aligned to the
+  Unix epoch and shared by every replica, so the next occurrence may follow the start-up run by less
+  than an interval — and is skipped by the
   overlap lock if the start-up run is still outstanding.
 - **It is not an occurrence.** `IJobs` lists a start-up run under its schedule as it lists a manual
   run, and one whose attempts are exhausted shows in `GetFailedAsync`; `LastCompletedOccurrence`
   never reflects it.
 - **Without a database** the loop dispatches the start-up run once at start, through the same per-host
-  overlap tracking as its occurrences, then follows its timetable from the start instant as before.
+  overlap tracking as its occurrences, then follows the same epoch-aligned timetable as before.
   The host reports ready without waiting for that run: the first occurrence's timer is armed first.
   The loop never overlaps itself, so a start-up run longer than the interval delays the first
   occurrence, as a long occurrence delays the next.

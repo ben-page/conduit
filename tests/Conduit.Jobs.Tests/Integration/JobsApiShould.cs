@@ -313,10 +313,11 @@ public class JobsApiShould
         // Act
         var schedules = await host.GetRequiredService<IJobs>().GetSchedulesAsync(CancellationToken.None);
 
-        // Assert — computed from the declaration, the same answer every host reaches
+        // Assert — computed from the declaration, the same answer every host reaches: the first
+        // occurrence aligned to the Unix epoch, not five minutes after this host started
         schedules.Should().ContainSingle();
         schedules[0].Name.Should().Be("warm");
-        schedules[0].NextOccurrence.Should().Be(Start.AddMinutes(5));
+        schedules[0].NextOccurrence.Should().Be(new DateTimeOffset(2026, 8, 25, 2, 0, 0, TimeSpan.Zero));
         schedules[0].IsPaused.Should().BeFalse();
     }
 
