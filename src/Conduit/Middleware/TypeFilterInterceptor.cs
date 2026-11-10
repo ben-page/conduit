@@ -14,8 +14,9 @@ namespace Conduit.Middleware;
 /// that maps 401 to a forced re-login must not be bounced to /login by a type-filter block
 /// (e.g. a version-skewed bundle dispatching a since-removed type) — 403 lets it surface a
 /// graceful error and keep the session.
+/// Internal: a host registers and configures it with <see cref="ConduitBuilder.AddTypeFilter"/> and never names it.
 /// </summary>
-public class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IInboundInterceptor
+internal sealed class TypeFilterInterceptor(IOptions<TypeFilterOptions> options) : IInboundInterceptor
 {
     /// <inheritdoc />
     public Task<bool> ShouldProcessAsync(string messageType, CancellationToken cancellationToken)

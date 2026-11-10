@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Conduit.Configuration;
 
 namespace Conduit.Runtime;
@@ -5,8 +6,10 @@ namespace Conduit.Runtime;
 /// <summary>
 /// Sends dispatch envelopes to transports via route resolution. Routed types
 /// go to the endpoint's keyed transport; unrouted types broadcast to all
-/// registered transports. Registered as a singleton in DI by <c>AddConduitCore</c>.
+/// registered transports. Registered as a singleton in DI by <c>AddConduitCore</c>. Infrastructure for Conduit's own
+/// packages (the outbox's relay and flush); not intended for direct use.
 /// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class TransportDispatcher
 {
     private readonly ConduitOptions options;

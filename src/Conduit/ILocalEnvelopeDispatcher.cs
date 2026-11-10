@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Conduit.Runtime;
 
 namespace Conduit;
@@ -7,8 +8,9 @@ namespace Conduit;
 /// classifies message types for the outbox's flush/relay delivery decisions. Implemented by the
 /// generated mediator (compile-time type knowledge — no runtime reflection); resolved by
 /// Conduit.Durability via <c>GetService</c> so hosts without the source generator degrade to
-/// transport-only outbox delivery.
+/// transport-only outbox delivery. Not intended for direct use.
 /// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public interface ILocalEnvelopeDispatcher
 {
     /// <summary>

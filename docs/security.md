@@ -27,7 +27,7 @@ builder.Services.AddConduit(conduit =>
 
 Any inbound wire dispatch for a type not in the allowed set is rejected with `ForbiddenException` (403) before the message reaches a handler — the caller is authenticated, the type is simply not client-dispatchable, so this is a permission error, not an authentication failure (a client mapping 401 to a forced re-login must not be bounced by a type-filter block). The type name matched is the full type name from `DispatchEnvelope.Type`.
 
-`TypeFilterInterceptor` implements `IInboundInterceptor`, so it checks every inbound message: commands, queries, and events alike. An event a client may publish must be listed too.
+`TypeFilterInterceptor` (internal: `AddTypeFilter` registers it, and you never name it) implements `IInboundInterceptor`, so it checks every inbound message: commands, queries, and events alike. An event a client may publish must be listed too.
 
 A refused event is answered to the publisher, as a refused request is:
 

@@ -23,7 +23,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Conduit.Audit" />
     <InternalsVisibleTo Include="Conduit.Tests" />
     <InternalsVisibleTo Include="Conduit.Resilience.Tests" />
   </ItemGroup>

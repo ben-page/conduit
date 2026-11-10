@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -10,7 +11,9 @@ namespace Conduit.Runtime;
 /// sequentially. On shutdown every item already queued runs, with a live token, until the host's
 /// shutdown deadline. At the deadline the running item's token is cancelled, <see cref="StopAsync"/> returns
 /// even if that item ignores it, and the items still queued are logged (<c>ShutdownAbandoned</c>), not run.
+/// Infrastructure for the generated mediator and Conduit's own packages; not intended for direct use.
 /// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class ConduitBackgroundDispatcher : BackgroundService
 {
     private readonly Channel<Func<CancellationToken, Task>> workChannel =

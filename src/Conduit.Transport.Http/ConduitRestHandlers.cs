@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json;
 using Conduit.Exceptions;
 using Conduit.Messages;
@@ -21,6 +22,7 @@ namespace Conduit.Transport.Http;
 /// </list>
 /// Queries always use route binding. Commands have both variants.
 /// </remarks>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public static class ConduitRestHandlers
 {
     /// <summary>Maps a query type to a RESTful endpoint using route/query parameter binding.</summary>
@@ -228,7 +230,8 @@ public static class ConduitRestHandlers
     /// <summary>
     /// Maps a handler result to an <see cref="IResult"/>. <see cref="BinaryData"/>
     /// and <see cref="ConduitFile"/> produce file responses; <c>null</c> produces 404 (a query found nothing);
-    /// anything else flows through <see cref="Results.Ok"/> as JSON.
+    /// anything else is written as JSON by <c>Results.Json</c> with <see cref="ConduitRuntime.JsonOptions"/>, never the
+    /// host's ASP.NET JSON options.
     /// </summary>
     private static IResult ToHttpResult(object? result) => result switch
     {

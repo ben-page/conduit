@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Conduit.Runtime;
 using Microsoft.Extensions.Configuration;
 
@@ -6,8 +7,9 @@ namespace Conduit.Configuration;
 /// <summary>
 /// Binds a transport's options from its endpoint configuration section.
 /// Called by each transport package's <c>Use*</c> extension before the code callback runs,
-/// so values set in code override configured ones.
+/// so values set in code override configured ones. Infrastructure for transport packages; not intended for direct use.
 /// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public static class ConduitConfigurationBinder
 {
     /// <summary>

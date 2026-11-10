@@ -63,9 +63,15 @@ public static partial class ConduitRuntime
     /// Records that the host's audit registration keeps <paramref name="type"/>'s body out of the trail
     /// (<c>Suppress&lt;T&gt;()</c> or <c>SuppressPayload&lt;T&gt;()</c>), so an <see cref="AuditAsAttribute"/> member holding
     /// one is left out of <see cref="AuditJsonOptions"/>' output, as it is for a type-level <see cref="DoNotAuditAttribute"/>.
-    /// Called by Conduit.Audit's <c>AddAudit</c>. Process-wide and add-only.
+    /// Called by Conduit.Audit's <c>AddAudit</c>. Process-wide and add-only. Public for that package, not for direct use.
     /// </summary>
-    internal static void SuppressAuditPayloadOf(Type type) => AuditSuppressedPayloadTypes.TryAdd(type, 0);
+    /// <param name="type">The message type whose body the audit trail keeps out.</param>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static void SuppressAuditPayloadOf(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        AuditSuppressedPayloadTypes.TryAdd(type, 0);
+    }
 
     /// <summary>
     /// Whether a dispatch of <paramref name="type"/> captures an audit body: false for a type marked

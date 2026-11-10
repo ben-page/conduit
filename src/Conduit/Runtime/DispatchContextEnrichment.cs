@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Claims;
 
 namespace Conduit.Runtime;
@@ -13,7 +14,9 @@ namespace Conduit.Runtime;
 /// client-supplied entry of the same key. Property names are case-insensitive
 /// (<see cref="StringComparer.OrdinalIgnoreCase"/>): the bag an enricher receives matches <c>"userid"</c> to a
 /// client's <c>"UserId"</c>, so removing or overwriting a key reaches every spelling of it.
+/// Infrastructure for transport packages: a host implements <see cref="IDispatchContextEnricher"/> instead.
 /// </remarks>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public static class DispatchContextEnrichment
 {
     /// <summary>

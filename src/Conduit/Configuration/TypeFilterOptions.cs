@@ -8,7 +8,7 @@ public sealed class TypeFilterOptions
 {
     /// <summary>
     /// The set of message type names that external clients are permitted to dispatch.
-    /// Types not in this set are rejected by the <see cref="Middleware.TypeFilterInterceptor"/>.
+    /// Types not in this set are rejected by the type filter <see cref="ConduitBuilder.AddTypeFilter"/> registers.
     /// </summary>
     public HashSet<string> AllowedTypes { get; } = [];
 }
