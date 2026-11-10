@@ -123,7 +123,10 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
     /// <remarks>
     /// Several records can share a message ID: a dispatch silent past the stale timeout has a provisional record and
     /// then its real one, and a central store keeps each service's record of one logical message. The one returned is
-    /// the most recently stored (highest <c>Id</c>), so a dispatch's real record wins over its provisional one.
+    /// the most recently stored (highest <c>Id</c>) that is not provisional (its last observation is not the
+    /// <c>Conduit.Audit.StaleGroupEviction</c> marker), so a dispatch's real record wins over its provisional one even
+    /// when a collector persisting batches concurrently stored the provisional one later; a provisional record is
+    /// returned only when there is nothing else.
     /// </remarks>
     public async Task<DispatchAuditRecord?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken)
     {
@@ -135,7 +138,7 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
             ReadRecord,
             cancellationToken);
 
-        return records.Count > 0 ? records[0] : null;
+        return records.Find(record => !IsProvisional(record)) ?? (records.Count > 0 ? records[0] : null);
     }
 
     /// <inheritdoc/>
@@ -161,6 +164,10 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
 
         return utc.ToString("O", CultureInfo.InvariantCulture);
     }
+
+    private static bool IsProvisional(DispatchAuditRecord record)
+        => record.Observations.Count > 0
+            && record.Observations[^1] is CustomObservation { Name: DispatchGroup.EvictionMarkerName };
 
     private static DispatchAuditRecord ReadRecord(DbDataReader reader)
     {

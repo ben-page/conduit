@@ -383,7 +383,7 @@ upgrade the packages:
   provisional one ending in a `Conduit.Audit.StaleGroupEviction` marker, with no outcome, and then its
   real one. It used to store one, recorded as failed (`Conduit.Audit.StaleGroupEviction` as a
   `DispatchFailed`), and drop its real outcome. `IAuditStore.GetByMessageIdAsync` returns the most
-  recently stored record of a `MessageId`. See [audit](audit.md#stale-dispatch-groups).
+  recently stored record of a `MessageId` that is not provisional. See [audit](audit.md#stale-dispatch-groups).
 - **A missing required value now throws `InvalidOperationException`.**
   Where `UseRabbitMQ(null)` or `UseSignalR(null)` used to fail immediately in a guard clause with
   an `ArgumentNullException`/`ArgumentException`, the

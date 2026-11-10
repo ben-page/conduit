@@ -109,10 +109,13 @@ public sealed class AuditObserver : IConduitObserver
 
         // Only DispatchInvoked (always the first observation) opens a group. A later observation finds its group among
         // the active ones, or among those the sweep evicted (written provisionally, still open); with neither, its
-        // DispatchInvoked was skipped above, and it is dropped.
+        // DispatchInvoked was skipped above, and it is dropped. An active group under this message ID is this dispatch's
+        // only if it was opened from this context: once the sweep has moved a dispatch's group out, the same message
+        // delivered again (no inbox) opens a group of its own under the ID, and the first dispatch's later observations
+        // belong in its evicted group, not in that one.
         DispatchGroup? group = null;
         if (observation is not DispatchInvoked
-            && !this.activeGroups.TryGetValue(context.MessageId, out group)
+            && !(this.activeGroups.TryGetValue(context.MessageId, out group) && ReferenceEquals(group.Context, context))
             && !this.evictedGroups.TryGetValue(context, out group))
         {
             return;
@@ -137,9 +140,16 @@ public sealed class AuditObserver : IConduitObserver
             return;
         }
 
-        // Wherever the group is, it is finished. Seal now, while the payload is readable; only the write waits.
+        // Wherever the group is, it is finished. Seal now, while the payload is readable; only the write waits. The weak
+        // table (one internal lock) is touched only for a group the sweep moved there: a snapshot either happened before
+        // this terminal observation was added, and IsEvicted shows it, or cannot happen after it, the group having just
+        // observed.
         this.activeGroups.TryRemove(new KeyValuePair<string, DispatchGroup>(context.MessageId, group));
-        this.evictedGroups.Remove(context);
+        if (group.IsEvicted)
+        {
+            this.evictedGroups.Remove(context);
+        }
+
         this.Write(group.Seal(), context);
     }
 

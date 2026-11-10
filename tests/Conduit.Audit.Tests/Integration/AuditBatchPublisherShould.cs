@@ -147,6 +147,43 @@ public sealed class AuditBatchPublisherShould
 
     [TestMethod]
     [Timeout(30_000)]
+    public async Task LogAnAbandonedBatchOnceWhenTheHostDisposesAfterTheStop()
+    {
+        // Arrange — a listener that never returns within the grace holds one batch in flight
+        var spy = new SpyLoggerProvider();
+        await using var host = await TestHost.StartAsync(builder =>
+        {
+            builder.Logging.AddProvider(spy);
+            builder.Services.AddSingleton<MessageIdCapture>();
+            builder.Services.AddSingleton<AuditBatchGate>();
+            builder.Services.AddConduit(conduit => conduit.AddAudit(audit =>
+            {
+                audit.BatchSize = 1;
+                audit.ShutdownGrace = TimeSpan.FromMilliseconds(100);
+            }));
+        });
+        var gate = host.GetRequiredService<AuditBatchGate>();
+        await host.GetRequiredService<IMediator>().ExecuteAsync(new AuditTestCommand("held"));
+        await gate.WaitUntilHeldAsync();
+
+        // Act — the stop's grace abandons the held batch, and the host disposes while that publish still runs
+        try
+        {
+            await host.StopAsync(CancellationToken.None);
+            await host.DisposeAsync();
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        // Assert — the batch abandoned once is logged once
+        spy.Entries.Where(entry => entry.EventId.Id == 520).Should().ContainSingle()
+            .Which.Message.Should().Contain("1 audit record(s)");
+    }
+
+    [TestMethod]
+    [Timeout(30_000)]
     public async Task PublishAProvisionalThenTheFinalRecordOfACommandSilentPastTheTimeout()
     {
         // Arrange — a command handler held past a short stale timeout, observing nothing meanwhile, as a job body does

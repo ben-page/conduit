@@ -93,7 +93,7 @@ public sealed partial class AuditBatchPublisher(
     public override void Dispose()
     {
         // Disposed without a stop: end the drain loop rather than leave it waiting on a channel nobody writes to. After a
-        // stop, nothing is left to count.
+        // stop, Abandon has counted everything already (a batch the stop abandoned may still be publishing) and returns 0.
         writer.TryComplete();
         var abandonedCount = this.Abandon();
         if (abandonedCount > 0)
@@ -202,10 +202,17 @@ public sealed partial class AuditBatchPublisher(
 
     // Stops the drain loop taking batches and counts what it leaves unpublished: the batch in flight, if any, and the
     // records still queued (read off and dropped, so the loop, the writer being complete, finds the channel finished).
+    // Counts once: by a later call the queue is empty and the writer complete, and the batch in flight, whose publish
+    // runs on under CancellationToken.None, has been counted already.
     private int Abandon()
     {
         lock (this.drainGate)
         {
+            if (this.abandoned)
+            {
+                return 0;
+            }
+
             this.abandoned = true;
             var count = this.inFlightCount;
             while (channel.TryRead(out _))

@@ -116,6 +116,46 @@ public sealed class AuditObserverShould
     }
 
     [TestMethod]
+    public void KeepAnEvictedDispatchApartFromARedeliveryOfItsMessage()
+    {
+        // Arrange — a dispatch silent past the timeout, then the same message delivered again (no inbox) as a second dispatch
+        var start = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(start);
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(
+            channel.Writer,
+            "TestService",
+            new HashSet<string>(),
+            new HashSet<string>(),
+            Configuration.AuditOptions.DefaultMaxPayloadBytes,
+            clock);
+        var original = MessageContext.StartDispatchFromTransport("redelivered-1", causationId: null, "conversation-1");
+        observer.OnObservation(new DispatchInvoked("Test.Jobs.Reindex", "Request"), original);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        observer.EvictStaleGroups(clock.GetUtcNow().UtcDateTime, TimeSpan.FromMinutes(5));
+        var redelivery = MessageContext.StartDispatchFromTransport("redelivered-1", causationId: null, "conversation-1");
+        observer.OnObservation(new DispatchInvoked("Test.Jobs.Reindex", "Request"), redelivery);
+
+        // Act — each dispatch ends
+        observer.OnObservation(new DispatchCompleted(360_000), original);
+        observer.OnObservation(new DispatchFailed(5, "boom", "System.InvalidOperationException"), redelivery);
+
+        // Assert — the original's provisional and real records, then the redelivery's own
+        var records = new List<DispatchAuditRecord>();
+        while (channel.Reader.TryRead(out var record))
+        {
+            records.Add(record);
+        }
+
+        records.Should().HaveCount(3);
+        records[0].Observations[^1].Should().BeOfType<CustomObservation>();
+        records[1].Observations[^1].Should().BeOfType<DispatchCompleted>();
+        records[1].Observations.Should().ContainSingle(observation => observation is CustomObservation);
+        records[2].Observations.Should().HaveCount(2);
+        records[2].Observations[^1].Should().BeOfType<DispatchFailed>();
+    }
+
+    [TestMethod]
     public void SealGroupOnDispatchCompleted()
     {
         // Arrange

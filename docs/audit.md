@@ -176,7 +176,7 @@ conduit.AddAudit(audit =>
     audit.BatchSize = 100;                               // records per batch (default: 100)
     audit.ChannelCapacity = 10_000;                      // buffered records before backpressure (default: 10,000)
     audit.BackpressureMode = BoundedChannelFullMode.DropOldest; // when buffer is full (default: DropOldest)
-    audit.StaleGroupTimeout = TimeSpan.FromMinutes(5);   // evict a dispatch that observes nothing this long (default: 5m)
+    audit.StaleGroupTimeout = TimeSpan.FromMinutes(5);   // provisional record for a dispatch silent this long (default: 5m)
     audit.ShutdownGrace = TimeSpan.FromSeconds(5);       // longest drain when the host stops (default: 5s)
     audit.MaxPayloadBytes = 64 * 1024;                   // largest stored request body, UTF-8 bytes (default: 64 KB; 0 = no cap)
 });
@@ -205,7 +205,7 @@ The stored body is always valid JSON and never longer than the cap. A message wh
 The observer holds a dispatch's observations until its terminal one (`DispatchCompleted` or `DispatchFailed`). A command or query observes nothing while its handler runs (`DispatchInvoked`, then its outcome), so a long one, such as a background job's body, holds them for as long as it runs, and one that never ends (a handler that hangs, a flow abandoned between two observations) would hold them forever with nothing reaching the store. So the batch publisher sweeps once per `StaleGroupTimeout`, or once a minute when the timeout is longer, and writes a **provisional record** of each dispatch that has made no observation for `StaleGroupTimeout` (default 5 minutes):
 
 - The provisional record holds the observations so far and the payload, and ends in a marker, a `CustomObservation` named `Conduit.Audit.StaleGroupEviction`. It records **no outcome**: neither `DispatchCompleted` nor `DispatchFailed`.
-- The dispatch stays open. When it ends, its **real record** is written as usual, with the same `MessageId`, its outcome, and every observation, the marker included where the provisional record was cut. **The later record is the authoritative one**: `IAuditStore.GetByMessageIdAsync` returns the most recently stored record of a `MessageId`, so it returns the real record once there is one.
+- The dispatch stays open. When it ends, its **real record** is written as usual, with the same `MessageId`, its outcome, and every observation, the marker included where the provisional record was cut. **The real record is the authoritative one**: `IAuditStore.GetByMessageIdAsync` returns the most recently stored record of a `MessageId` that is not provisional, so it returns the real record once there is one, even when a collector persisting batches concurrently stored the provisional one after it; it returns a provisional record only when there is nothing else.
 - A dispatch that never ends leaves only its provisional record. The observer holds it no longer than the dispatch's own `MessageContext` lives.
 - A dispatch gets one provisional record at most, however long it then runs.
 
@@ -344,7 +344,7 @@ A record is sealed (its payload read and capped) at the moment the nested dispat
 
 When a service calls `AddAudit()` and has a transport registered, the `AuditBatch` events it publishes are broadcast to that transport like any other event (`AuditBatch` is a normal `IEvent`). A dedicated collector service that calls `AddAuditListener()` subscribes to `AuditBatch` on its broker transports and persists everything it receives — from every service on the broker. Any service that calls `AddAuditListener()` on that broker does the same, a role 2 service included; see [Deployment roles](#deployment-roles) for keeping one to its own batches.
 
-Because each service stamps its own records with the shared `MessageId`, the central store can reconstruct a cross-service timeline for a single logical message — e.g. the sender's transport-send and the receiver's handler-start appear as separate records sharing one `MessageId`. `IAuditStore.GetByMessageIdAsync` returns one record of a `MessageId`, the most recently stored; to see every service's record of a message, query the `conduit_audit` table by `MessageId` directly.
+Because each service stamps its own records with the shared `MessageId`, the central store can reconstruct a cross-service timeline for a single logical message — e.g. the sender's transport-send and the receiver's handler-start appear as separate records sharing one `MessageId`. `IAuditStore.GetByMessageIdAsync` returns one record of a `MessageId`, the most recently stored that is not provisional; to see every service's record of a message, query the `conduit_audit` table by `MessageId` directly.
 
 ## Limitations
 

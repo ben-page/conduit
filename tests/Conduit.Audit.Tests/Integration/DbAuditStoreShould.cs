@@ -59,6 +59,27 @@ public sealed class DbAuditStoreShould
         read!.Observations[^1].Should().BeOfType<DispatchCompleted>();
     }
 
+    [TestMethod]
+    public async Task ReturnTheRealRecordEvenWhenItsProvisionalOneWasStoredLater()
+    {
+        // Arrange — a collector persisting batches concurrently stored the real record first
+        await using var factory = new CountingConnectionFactory();
+        var store = new DbAuditStore(factory, new SqliteDialect());
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var marker = new CustomObservation("Conduit.Audit.StaleGroupEviction", null);
+        var invoked = new DispatchInvoked("Test.Jobs.Reindex", "Command");
+        await store.SaveBatchAsync(
+            [NewRecord("silent-2", "Test.Jobs.Reindex", [invoked, marker, new DispatchCompleted(360_000)])],
+            CancellationToken.None);
+        await store.SaveBatchAsync([NewRecord("silent-2", "Test.Jobs.Reindex", [invoked, marker])], CancellationToken.None);
+
+        // Act
+        var read = await store.GetByMessageIdAsync("silent-2", CancellationToken.None);
+
+        // Assert — the real record, though the provisional one has the higher Id
+        read!.Observations[^1].Should().BeOfType<DispatchCompleted>();
+    }
+
     private static DispatchAuditRecord NewRecord(string messageId, string messageType)
         => NewRecord(messageId, messageType, [new DispatchInvoked(messageType, "Command"), new DispatchCompleted(1.0)]);
 
