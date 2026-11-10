@@ -101,7 +101,7 @@ Routes only apply to commands and queries. Events broadcast rather than route (s
 
 When two services communicate, both need the message type definitions. The simplest approach is to copy the record declarations into the calling service. They just need to match by full type name and shape.
 
-For larger systems, put the shared types in a standalone class library that both services reference. `Conduit.Contracts` holds the message interfaces and attributes with no package dependencies of its own:
+For larger systems, put the shared types in a standalone class library that both services reference. The `Conduit.NET.Contracts` package holds the message interfaces and attributes with no package dependencies of its own:
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
@@ -109,7 +109,7 @@ For larger systems, put the shared types in a standalone class library that both
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Conduit.Contracts" />
+    <PackageReference Include="Conduit.NET.Contracts" />
   </ItemGroup>
 </Project>
 ```
@@ -120,7 +120,7 @@ namespace Inventory.Commands;
 public record ReserveInventoryCommand(string ProductId, int Quantity) : ICommand<bool>;
 ```
 
-Both services reference the contracts library. The handling service implements handlers. The calling service configures routes. A contract that carries a file (`ConduitFile`) needs the `Conduit` package instead, which holds that type.
+Both services reference the contracts library. The handling service implements handlers. The calling service configures routes. A contract that carries a file (`ConduitFile`) needs the `Conduit.NET` package instead, which holds that type.
 
 The namespace matters. A namespace route matches on whole namespace segments: `RouteNamespace<Inventory.Commands.ReserveStock>()` covers `Inventory.Commands` and `Inventory.Commands.Bulk`, but not `Inventory.CommandsArchive`. Keep contract types in a predictable hierarchy.
 

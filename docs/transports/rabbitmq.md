@@ -104,7 +104,7 @@ Queue: {systemName}-{ReversedTypeName}-{poolName}       one per pooled command o
 Queue: {systemName}-{appName}-replies-{instanceId}      exclusive, auto-delete: one per transport instance
 ```
 
-`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes. `{ReversedTypeName}` is the full type name with its segments reversed and joined by `-`: `Orders.Commands.CreateOrder` gets the queue `conduit-CreateOrder-Commands-Orders`.
+`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes, or whenever `TopologyPrefix` is set explicitly. `{ReversedTypeName}` is the full type name with its segments reversed and joined by `-`: `Orders.Commands.CreateOrder` gets the queue `conduit-CreateOrder-Commands-Orders`.
 
 All message types (commands, queries, events) flow through a single topic exchange. There is no direct exchange. Each queue is bound with the full type names it takes as routing keys, including event types this application publishes itself, so its own broadcasts route back to its own queue when it also listens for them. See [Self-published events](index.md#self-published-events) for how the inbound side avoids running that application's own listeners twice. Reply messages bypass the exchange and go directly to the sender's reply queue.
 
@@ -144,7 +144,7 @@ No manual binding configuration is needed. When a message is published, the tran
 
 | Mode | Prefix | Durable | Cleanup |
 |---|---|---|---|
-| `Production` | None | Yes: exchanges and queues (but see [Limitations](#limitations) on messages) | None |
+| `Production` | None, unless `TopologyPrefix` is set | Yes: exchanges and queues (but see [Limitations](#limitations) on messages) | None |
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | No: a broker restart deletes them | Auto-delete: a queue goes when its last consumer leaves, an exchange when its last binding goes |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | No | As Developer, and the dead-letter queue expires once unused for 5 minutes |
 

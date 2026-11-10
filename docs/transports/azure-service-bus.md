@@ -100,7 +100,7 @@ Queue: {systemName}-{appName}-{poolName}    a pool's types
 Queue: {systemName}-{appName}-replies       session-enabled; replies expire after 2 × ResponseTimeout (at least 1 s)
 ```
 
-`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes. `{ReversedTypeName}` is the full type name with its segments reversed and joined by `-`: `Orders.Commands.CreateOrder` becomes `CreateOrder-Commands-Orders`. Subscription names are cut to Service Bus's 50 characters, and topic and queue names to 260, with a hash of the whole name standing in for what was cut.
+`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes, or whenever `TopologyPrefix` is set explicitly. `{ReversedTypeName}` is the full type name with its segments reversed and joined by `-`: `Orders.Commands.CreateOrder` becomes `CreateOrder-Commands-Orders`. Subscription names are cut to Service Bus's 50 characters, and topic and queue names to 260, with a hash of the whole name standing in for what was cut.
 
 All messages (commands, queries, events) publish to the shared topic, with the full type name as the message's `Subject`. Each subscription has one SQL rule, `sys.Label = '{FullTypeName}'` (`sys.Label` is the SQL filter's name for `Subject`), and forwards what it matches to its queue. Replies are the only exception: they go point-to-point to the session-enabled reply queue.
 
@@ -145,7 +145,7 @@ No manual subscription configuration is needed.
 
 | Mode | Prefix | Durable | Cleanup |
 |---|---|---|---|
-| `Production` | None | Yes | None |
+| `Production` | None, unless `TopologyPrefix` is set | Yes | None |
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | Yes: Service Bus keeps every entity's messages | Each topic, queue and subscription is deleted after 4 hours idle (`AutoDeleteOnIdle`) |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | Yes | Each is deleted after 5 minutes idle |
 

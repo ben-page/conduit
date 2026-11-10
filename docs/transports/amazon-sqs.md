@@ -156,7 +156,7 @@ SQS queue: {systemName}-{appName}-{poolName}-dlq          dead-letter queue
 SQS queue: {systemName}-{appName}-replies-{instanceId}    one per transport instance, deleted on stop
 ```
 
-`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes.
+`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes, or whenever `TopologyPrefix` is set explicitly.
 
 Every message (command, query or event) is published to the single SNS topic. Each queue has one subscription, whose filter policy lists the types the queue takes: the commands and queries the application handles and the events it listens for, minus those a [receiver pool](#receiver-pools) takes. SNS hands a message to every subscription whose filter policy matches, so every application that listens for an event gets its own copy, and the instances of one application compete for it on their shared queue.
 
@@ -242,7 +242,7 @@ A [long name](#name-length) is cut and hashed after its first 67 characters (71 
 
 | Mode | Prefix | Durable | Cleanup |
 |---|---|---|---|
-| `Production` | None | Yes | None |
+| `Production` | None, unless `TopologyPrefix` is set | Yes | None |
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | Yes | None: SNS and SQS have no auto-delete (see below) |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | Yes | None (see below) |
 

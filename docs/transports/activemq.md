@@ -104,7 +104,7 @@ Address: {systemName}-events                       (MULTICAST)
 Reply queue: per connection, temporary (deleted with the connection)
 ```
 
-`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes. `{type}` is the full type name with its segments reversed and joined by `-`: `Orders.Commands.CreateOrder` gets the queue `conduit-CreateOrder-Commands-Orders`. The application's event queue is created only when the application listens for an event no pool takes, and a pool's event queue only when the pool takes an event the application listens for.
+`{systemName}` is `ConduitOptions.SystemName` (`conduit` by default), prefixed with `{TopologyPrefix}-` in Developer and Test modes, or whenever `TopologyPrefix` is set explicitly. `{type}` is the full type name with its segments reversed and joined by `-`: `Orders.Commands.CreateOrder` gets the queue `conduit-CreateOrder-Commands-Orders`. The application's event queue is created only when the application listens for an event no pool takes, and a pool's event queue only when the pool takes an event the application listens for.
 
 A `ProducerOnly` host creates only the two addresses: no queue and no consumer, only its temporary reply queue.
 
@@ -141,7 +141,7 @@ No manual binding configuration is needed.
 
 | Mode | Prefix | Durable | Cleanup |
 |---|---|---|---|
-| `Production` | None | Yes: queues (but see [Limitations](#limitations) on messages) | None |
+| `Production` | None, unless `TopologyPrefix` is set | Yes: queues (but see [Limitations](#limitations) on messages) | None |
 | `Developer` | `TopologyPrefix`, by default `Environment.UserName` | No: a broker restart deletes the queues | A queue is deleted 4 hours after its last consumer left; the two addresses stay |
 | `Test` | `TopologyPrefix`, by default `test-` and 8 random hex characters | No | A queue is deleted 5 minutes after its last consumer left; the two addresses stay |
 
