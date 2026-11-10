@@ -5,6 +5,7 @@ using Conduit.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Conduit.Audit;
 
@@ -21,6 +22,8 @@ public static class ConduitBuilderExtensions
     /// <param name="builder">The Conduit builder to configure.</param>
     /// <param name="configure">Optional callback to configure audit options and per-type suppression.</param>
     /// <returns>The original <paramref name="builder"/> for chaining.</returns>
+    /// <exception cref="Microsoft.Extensions.Options.OptionsValidationException">An option the callback set is invalid
+    /// (<see cref="AuditOptions.Validate"/>); each failure names it.</exception>
     public static ConduitBuilder AddAudit(
         this ConduitBuilder builder,
         Action<AuditBuilder>? configure = null)
@@ -29,7 +32,7 @@ public static class ConduitBuilderExtensions
 
         var auditBuilder = new AuditBuilder(builder.Services);
         configure?.Invoke(auditBuilder);
-        AuditPayloadCap.ThrowIfInvalid(auditBuilder.Options.MaxPayloadBytes, nameof(AuditBuilder.MaxPayloadBytes));
+        auditBuilder.Options.Validate();
 
         // Configure options via IOptions<AuditOptions>
         builder.Services.Configure<AuditOptions>(options =>
@@ -37,6 +40,7 @@ public static class ConduitBuilderExtensions
             options.BatchSize = auditBuilder.Options.BatchSize;
             options.ServiceName = auditBuilder.Options.ServiceName;
             options.StaleGroupTimeout = auditBuilder.Options.StaleGroupTimeout;
+            options.ShutdownGrace = auditBuilder.Options.ShutdownGrace;
             options.ChannelCapacity = auditBuilder.Options.ChannelCapacity;
             options.BackpressureMode = auditBuilder.Options.BackpressureMode;
             options.MaxPayloadBytes = auditBuilder.Options.MaxPayloadBytes;
@@ -89,12 +93,15 @@ public static class ConduitBuilderExtensions
                 suppressedTypes,
                 suppressedPayloadTypes,
                 auditBuilder.Options.MaxPayloadBytes,
-                serviceProvider.GetRequiredService<TimeProvider>());
+                serviceProvider.GetRequiredService<TimeProvider>(),
+                serviceProvider.GetService<ILogger<AuditObserver>>());
         });
         builder.Services.AddSingleton<Conduit.Runtime.IConduitObserver>(
             serviceProvider => serviceProvider.GetRequiredService<AuditObserver>());
 
-        // Background publisher (drains channel, publishes AuditBatch events)
+        // Background publisher (drains channel, publishes AuditBatch events). AddAudit runs inside AddConduit's callback,
+        // which registers ConduitBackgroundDispatcher after it: the host stops hosted services in reverse order, so the
+        // dispatcher's queued fire-and-forget work has run, and sealed its records, before this drains on stop.
         builder.Services.AddHostedService<AuditBatchPublisher>();
 
         return builder;
@@ -111,6 +118,8 @@ public static class ConduitBuilderExtensions
     /// <param name="configure">Optional callback to tune the listener's retention. The persistence
     /// engine is configured separately on the builder (e.g. <c>conduit.UseSqlite(...)</c>).</param>
     /// <returns>The original <paramref name="builder"/> for chaining.</returns>
+    /// <exception cref="Microsoft.Extensions.Options.OptionsValidationException">A retention option the callback set is
+    /// invalid (<see cref="AuditOptions.Validate"/>); each failure names it.</exception>
     public static ConduitBuilder AddAuditListener(
         this ConduitBuilder builder,
         Action<AuditListenerBuilder>? configure = null)
@@ -119,6 +128,7 @@ public static class ConduitBuilderExtensions
 
         var listenerBuilder = new AuditListenerBuilder(builder.Services);
         configure?.Invoke(listenerBuilder);
+        listenerBuilder.Options.Validate();
 
         // Retention/purge are owned by the listener (it registers the purge service).
         builder.Services.Configure<AuditOptions>(options =>

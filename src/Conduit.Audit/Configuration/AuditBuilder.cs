@@ -27,14 +27,14 @@ public sealed class AuditBuilder
         set => this.Options.ServiceName = value;
     }
 
-    /// <summary>Maximum number of records per batch before publishing. Default 100.</summary>
+    /// <summary>Maximum number of records per batch before publishing. Positive. Default 100.</summary>
     public int BatchSize
     {
         get => this.Options.BatchSize;
         set => this.Options.BatchSize = value;
     }
 
-    /// <summary>Maximum number of records buffered before backpressure applies. Default 10,000.</summary>
+    /// <summary>Maximum number of records buffered before backpressure applies. Positive. Default 10,000.</summary>
     public int ChannelCapacity
     {
         get => this.Options.ChannelCapacity;
@@ -48,11 +48,25 @@ public sealed class AuditBuilder
         set => this.Options.BackpressureMode = value;
     }
 
-    /// <summary>Time after which an incomplete dispatch group is evicted as stale. Default 5 minutes.</summary>
+    /// <summary>
+    /// How long a dispatch may go without an observation before its group is evicted as stale (sealed as failed).
+    /// Positive, and at most one day. Default 5 minutes.
+    /// </summary>
     public TimeSpan StaleGroupTimeout
     {
         get => this.Options.StaleGroupTimeout;
         set => this.Options.StaleGroupTimeout = value;
+    }
+
+    /// <summary>
+    /// How long the batch publisher keeps draining queued records when the host stops, at most (the host's shutdown
+    /// deadline ends it sooner); what is left then is counted in one Warning. Not negative, and at most one day. Default
+    /// 5 seconds.
+    /// </summary>
+    public TimeSpan ShutdownGrace
+    {
+        get => this.Options.ShutdownGrace;
+        set => this.Options.ShutdownGrace = value;
     }
 
     /// <summary>

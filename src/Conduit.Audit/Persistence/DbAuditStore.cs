@@ -9,7 +9,7 @@ namespace Conduit.Audit.Persistence;
 
 /// <summary>
 /// ADO.NET audit store. Extends <see cref="DbStoreBase"/> for the disposal-correct
-/// connection-per-method pattern, resolving the engine from DI via
+/// connection-per-method pattern (a batch is one connection and one transaction), resolving the engine from DI via
 /// <see cref="IConduitConnectionFactory"/> + <see cref="ISqlDialect"/>. SQL identifiers are
 /// module-owned (see <see cref="AuditTableSchema"/>); engine-specific idioms (DDL type names) come
 /// from the dialect. Timestamps are written as round-trippable ISO 8601 text and parsed back on read,
@@ -72,6 +72,11 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
     internal string CreateTableSql { get; }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// The batch is written on one connection, in one transaction, committed after its last record: a record that fails
+    /// rolls back those written before it (the uncommitted transaction rolls back as it is disposed) and the failure is
+    /// thrown, so a batch the publisher logs as dropped has left nothing behind.
+    /// </remarks>
     public async Task SaveBatchAsync(IReadOnlyList<DispatchAuditRecord> records, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(records);
@@ -81,9 +86,13 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
             return;
         }
 
+        await using var connection = await this.ConnectionFactory.CreateConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         foreach (var record in records)
         {
-            await this.ExecuteNonQueryAsync(
+            await ExecuteOnConnectionAsync(
+                connection,
+                transaction,
                 this.insertSql,
                 command =>
                 {
@@ -105,6 +114,8 @@ public sealed class DbAuditStore : DbStoreBase, IAuditStore
                 },
                 cancellationToken);
         }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     /// <inheritdoc/>

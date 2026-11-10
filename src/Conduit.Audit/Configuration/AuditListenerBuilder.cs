@@ -41,14 +41,14 @@ public sealed class AuditListenerBuilder
         this.Services.AddHostedService<AuditPurgeService>();
     }
 
-    /// <summary>How long stored audit records are retained before the purge removes them. Default 90 days.</summary>
+    /// <summary>How long stored audit records are retained before the purge removes them. Positive, and at most 3650 days. Default 90 days.</summary>
     public TimeSpan RetentionPeriod
     {
         get => this.Options.RetentionPeriod;
         set => this.Options.RetentionPeriod = value;
     }
 
-    /// <summary>How often the purge runs to remove expired records. Default 24 hours.</summary>
+    /// <summary>How often the purge runs to remove expired records. Positive, and at most one day. Default 24 hours.</summary>
     public TimeSpan PurgeInterval
     {
         get => this.Options.PurgeInterval;

@@ -3,6 +3,8 @@ using System.Threading.Channels;
 using AwesomeAssertions;
 using Conduit.Audit.Runtime;
 using Conduit.Runtime;
+using Conduit.TestUtils;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Conduit.Audit.Tests.Unit;
@@ -48,6 +50,71 @@ public sealed class AuditObserverShould
         record!.Timestamp.Should().Be(now.UtcDateTime);
         evictedEarly.Should().BeFalse();
         evictedAtTheTimeout.Should().BeTrue();
+    }
+
+    [TestMethod]
+    public void KeepALongRunningDispatchAlive()
+    {
+        // Arrange — a dispatch that runs past the stale timeout but keeps observing
+        var start = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(start);
+        var staleTimeout = TimeSpan.FromMinutes(5);
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(
+            channel.Writer,
+            "TestService",
+            new HashSet<string>(),
+            new HashSet<string>(),
+            Configuration.AuditOptions.DefaultMaxPayloadBytes,
+            clock);
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Jobs.Reindex", "Command"), context);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        observer.OnObservation(new HandlerStarted("ReindexHandler"), context);
+
+        // Act — swept six minutes after it began, two after it last observed; then it completes
+        clock.Advance(TimeSpan.FromMinutes(2));
+        observer.EvictStaleGroups(clock.GetUtcNow().UtcDateTime, staleTimeout);
+        observer.OnObservation(new DispatchCompleted(360_000), context);
+
+        // Assert — one record, carrying the real completion
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        channel.Reader.TryRead(out _).Should().BeFalse("the dispatch has one record");
+        record!.Observations.Should().NotContain(observation => observation is DispatchFailed);
+        record.Observations[^1].Should().BeOfType<DispatchCompleted>();
+    }
+
+    [TestMethod]
+    public void DropButLogACompletionThatArrivesAfterEviction()
+    {
+        // Arrange — a dispatch silent for longer than the stale timeout is evicted
+        var start = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(start);
+        var spy = new SpyLoggerProvider();
+        using var loggerFactory = LoggerFactory.Create(logging => logging.AddProvider(spy).SetMinimumLevel(LogLevel.Debug));
+        var channel = Channel.CreateUnbounded<DispatchAuditRecord>();
+        var observer = new AuditObserver(
+            channel.Writer,
+            "TestService",
+            new HashSet<string>(),
+            new HashSet<string>(),
+            Configuration.AuditOptions.DefaultMaxPayloadBytes,
+            clock,
+            loggerFactory.CreateLogger<AuditObserver>());
+        var context = MessageContext.StartDispatch();
+        observer.OnObservation(new DispatchInvoked("Test.Jobs.Silent", "Command"), context);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        observer.EvictStaleGroups(clock.GetUtcNow().UtcDateTime, TimeSpan.FromMinutes(5));
+
+        // Act
+        observer.OnObservation(new DispatchCompleted(360_000), context);
+
+        // Assert — the evicted record stands, and the late completion is only logged
+        channel.Reader.TryRead(out var record).Should().BeTrue();
+        record!.Observations[^1].Should().BeOfType<DispatchFailed>();
+        channel.Reader.TryRead(out _).Should().BeFalse("a late completion writes no second record");
+        spy.Entries.Should().ContainSingle(entry => entry.EventId.Id == 522)
+            .Which.Should().Match<SpyLogEntry>(entry => entry.Level == LogLevel.Debug && entry.Message.Contains(context.MessageId));
     }
 
     [TestMethod]

@@ -114,7 +114,7 @@ Every timestamp the stores write is the UTC instant as ISO-8601 text in one fixe
 
 ## The clock
 
-Every "now" the durable features read comes from the host's `TimeProvider`: the outbox's claims, backoff, outcome stamps, retention cutoffs and new entries' creation time, the inbox's record time and retention, the dead-letter queue's capture time and replay claims, the audit trail's record, batch and purge times, and every scheduling decision of [background jobs](jobs.md). `AddDurability`, `AddAudit`, `AddAuditListener` and `AddJobs` register `TimeProvider.System` when the host registers none; a host that registers its own, before or after `AddConduit`, keeps it.
+Every "now" the durable features read comes from the host's `TimeProvider`: the outbox's claims, backoff, outcome stamps, retention cutoffs and new entries' creation time, the inbox's record time and retention, the dead-letter queue's capture time and replay claims, the audit trail's record, batch and purge times and the inactivity that evicts a stale dispatch, and every scheduling decision of [background jobs](jobs.md). `AddDurability`, `AddAudit`, `AddAuditListener` and `AddJobs` register `TimeProvider.System` when the host registers none; a host that registers its own, before or after `AddConduit`, keeps it.
 
 The waits between passes (the outbox's `RelayInterval`, the cleanup and purge intervals) are real time. A test that registers a `FakeTimeProvider` therefore moves every cutoff by advancing the clock, and a clock that never moves holds them still: an entry written at the fake instant waits out the outbox's `GracePeriod` (10 s by default) only once the clock has advanced past it, so the relay does not claim it before then. The post-commit flush does not wait for the grace period.
 

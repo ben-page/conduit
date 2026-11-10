@@ -6,9 +6,13 @@
 - [Two entry points: capture and persistence](#two-entry-points-capture-and-persistence)
 - [Deployment roles](#deployment-roles)
 - [Setup](#setup)
-- [Database dialects](#database-dialects)
+- [Database engines](#database-engines)
 - [Capture tuning](#capture-tuning)
+  - [Payload size cap](#payload-size-cap)
+  - [Stale dispatch groups](#stale-dispatch-groups)
+  - [Shutdown](#shutdown)
 - [Retention](#retention)
+- [Validated options](#validated-options)
 - [Suppressing sensitive data](#suppressing-sensitive-data)
 - [What gets captured](#what-gets-captured)
 - [Records and retried attempts](#records-and-retried-attempts)
@@ -42,16 +46,18 @@ Dispatch runs
 AuditObserver  (set by AddAudit)
   ├── groups observations by MessageId into a DispatchGroup
   ├── seals the group on DispatchCompleted / DispatchFailed
+  │     (or evicts it, sealed as failed, once it has observed nothing for StaleGroupTimeout)
   └── writes the sealed DispatchAuditRecord to a bounded channel
 
 AuditBatchPublisher  (background service, set by AddAudit)
   ├── drains the channel
-  └── publishes batches as AuditBatch events via IMediator.PublishAsync
-      (a listener failure is logged and that batch dropped; the next batch is published as usual)
+  ├── publishes batches as AuditBatch events via IMediator.PublishAsync
+  │     (a listener failure is logged and that batch dropped; the next batch is published as usual)
+  └── on stop, drains what is queued, for ShutdownGrace at most
 
 LocalAuditListener : IEventListener<AuditBatch>  (set by AddAuditListener)
-  └── persists each batch to IAuditStore  (whether the event was published
-      in-process or arrived over a transport)
+  └── persists each batch to IAuditStore in one transaction  (whether the event
+      was published in-process or arrived over a transport)
 
 AuditPurgeService  (background service, set by AddAuditListener)
   └── periodically deletes records older than the retention window
@@ -132,12 +138,12 @@ builder.Services.AddConduit(conduit =>
 
 Audit shares the persistence engine with the durability subsystem — there is one engine registration on the `ConduitBuilder`, not on the audit listener. Register the engine with the matching `Conduit.Persistence.*` package's `UseXxx` extension; audit and durability both resolve it from DI:
 
-| Engine package | Method | Timestamp column |
-|---|---|---|
-| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` | ISO-8601 text |
-| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` | `DATETIME2` |
-| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` | `TIMESTAMPTZ` |
-| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` | `DATETIME(6)` |
+| Engine package | Method |
+|---|---|
+| `Conduit.Persistence.Sqlite` | `conduit.UseSqlite(connectionString)` |
+| `Conduit.Persistence.SqlServer` | `conduit.UseSqlServer(connectionString)` |
+| `Conduit.Persistence.Postgres` | `conduit.UsePostgres(connectionString)` |
+| `Conduit.Persistence.MySql` | `conduit.UseMySql(connectionString)` |
 
 ```csharp
 // SQL Server (Conduit.Persistence.SqlServer package)
@@ -154,7 +160,9 @@ If `AddAuditListener` is called but no engine is registered, the host fails fast
 
 The audit table (`conduit_audit`) is created automatically on startup.
 
-**Timestamps are stored and read as UTC** on every engine: the store writes round-trippable ISO 8601 UTC text and parses it back stamped `Kind=Utc`, matching the durability stores — no per-engine datetime binding required.
+**Timestamps are stored as ISO-8601 UTC text on every engine.** No engine uses a native date-time column: the `Timestamp` column has the engine's text type (`TEXT` on SQLite and PostgreSQL, `NVARCHAR(MAX)` on SQL Server, `LONGTEXT` on MySQL), and the store writes round-trippable UTC text into it and parses it back stamped `Kind=Utc`, as the durability stores do (see [Timestamps](persistence.md#timestamps)).
+
+**Each batch is written atomically.** The store inserts a batch's records on one connection, in one transaction, and commits after the last one. A record that fails rolls the whole batch back, so a batch the publisher logs as dropped (see [Limitations](#limitations)) has left none of its records behind.
 
 ## Capture tuning
 
@@ -167,7 +175,8 @@ conduit.AddAudit(audit =>
     audit.BatchSize = 100;                               // records per batch (default: 100)
     audit.ChannelCapacity = 10_000;                      // buffered records before backpressure (default: 10,000)
     audit.BackpressureMode = BoundedChannelFullMode.DropOldest; // when buffer is full (default: DropOldest)
-    audit.StaleGroupTimeout = TimeSpan.FromMinutes(5);   // evict incomplete dispatch groups (default: 5m)
+    audit.StaleGroupTimeout = TimeSpan.FromMinutes(5);   // evict a dispatch that observes nothing this long (default: 5m)
+    audit.ShutdownGrace = TimeSpan.FromSeconds(5);       // longest drain when the host stops (default: 5s)
     audit.MaxPayloadBytes = 64 * 1024;                   // largest stored request body, UTF-8 bytes (default: 64 KB; 0 = no cap)
 });
 ```
@@ -190,6 +199,24 @@ By default the buffer drops the oldest record under sustained overload, trading 
 
 The stored body is always valid JSON and never longer than the cap. A message whose root has its own `$truncated` member collides with the marker: under the cap it is stored as is and reads like a marker, and over the cap it is replaced by the marker (its value is not kept). The shortening runs when the record seals, inside the observer's terminal-observation callback, on the dispatching thread — about 15 ms per MB of body over the cap; a body at or under the cap costs only a length check. A shortened body is re-written by the serializer, so its escaping can differ from the original's (it is not a byte prefix of it). `0` or less turns the cap off; an enabled cap below 1 KB (`AuditOptions.MinimumMaxPayloadBytes`) is refused when `AddAudit` runs, so the marker always fits. Bodies that should never be kept at all still belong to `SuppressPayload<T>()`, `Suppress<T>()` and `[DoNotAudit]` — the cap only bounds what remains.
 
+### Stale dispatch groups
+
+The observer holds a dispatch's observations until its terminal one (`DispatchCompleted` or `DispatchFailed`). A dispatch that never sends one (a handler that hangs, a flow abandoned between two observations) would hold them forever, so the batch publisher sweeps once per `StaleGroupTimeout`, or once a minute when the timeout is longer, and evicts each dispatch that has made **no observation** for `StaleGroupTimeout`. An evicted dispatch is not dropped: its record is written with the observations so far and its payload, ending in a `DispatchFailed` whose `ExceptionType` is `Conduit.Audit.StaleGroupEviction` (`"Dispatch evicted as stale: no observation for 00:05:00."`).
+
+The timeout counts from the dispatch's **last** observation, not its first, so a dispatch that runs longer than `StaleGroupTimeout` but keeps observing stays open and is recorded with its real outcome. Only the dispatch's own observations count: a nested dispatch (a command its handler sends) has a record of its own and does not keep its parent open. A handler that runs silent for longer than the timeout, such as one long job step, is still evicted. Raise `StaleGroupTimeout` above the longest such silence (at most one day), or have the handler report progress on its own dispatch, which also lands in its record:
+
+```csharp
+MessageContext.Observe(new CustomObservation("reindex.progress", processed));
+```
+
+When an evicted dispatch does end, its terminal observation is dropped: the record already written stands, saying it was evicted, and the observer logs the late arrival at Debug (EventId 522, `TerminalObservationAfterEviction`). Each observation is timed by the host's `TimeProvider`, and the sweep's "now" reads it too, so a test ages a group by advancing a `FakeTimeProvider`; the sweep's cadence is real time. A sweep that throws is logged at Error (EventId 521, `StaleGroupSweepFailed`), and the next one runs as usual.
+
+### Shutdown
+
+When the host stops, the batch publisher stops taking records (a record sealed from then on is not recorded) and drains what is already queued, publishing it in batches as usual. The drain runs until the queue is empty, until `ShutdownGrace` (default 5 seconds) has passed, or until the host's own shutdown deadline (`HostOptions.ShutdownTimeout`) arrives, whichever is first. The stop never cancels a batch's write part-way. If the grace or the deadline ends the drain first, the records still unpublished (those queued, and a batch whose write has not finished) are counted in one Warning, EventId 520 (`AuditRecordsAbandoned`), and the stop returns. `ShutdownGrace = TimeSpan.Zero` abandons the queue at once, counting it. The grace is real time.
+
+A host stops its hosted services in the reverse of the order they were registered. `AddAudit` runs inside `AddConduit`, which registers the background dispatcher for `[FireAndForget]` work after it, so the dispatcher's queued work has run, and its records are sealed, before the publisher drains. A hosted service registered **before** `AddAudit` stops after the publisher, so a dispatch it makes while stopping is not recorded: one your host adds before calling `AddConduit`, or a transport whose `Use…` call precedes `AddAudit` in the callback. To have their last dispatches recorded, call `AddAudit` before the transports and add your own dispatching hosted services after `AddConduit`. A host that sets `HostOptions.ServicesStopConcurrently` stops them all at once, in no order.
+
 ## Retention
 
 Retention is owned by the listener, since it registers the purge service:
@@ -202,6 +229,22 @@ conduit.AddAuditListener(listener =>
     listener.PurgeInterval = TimeSpan.FromHours(24);     // how often the purge runs (default: 24h)
 });
 ```
+
+## Validated options
+
+`AddAudit` and `AddAuditListener` check the options once their callback has run, and refuse a value the runtime cannot work with by throwing an `OptionsValidationException` that names each offending option, so the mistake stops the host at startup:
+
+| Option | Set on | Default | Allowed |
+|---|---|---|---|
+| `BatchSize` | `AddAudit` | 100 | positive |
+| `ChannelCapacity` | `AddAudit` | 10,000 | positive |
+| `StaleGroupTimeout` | `AddAudit` | 5 minutes | positive, at most 1 day |
+| `ShutdownGrace` | `AddAudit` | 5 seconds | not negative, at most 1 day |
+| `MaxPayloadBytes` | `AddAudit` | 64 KB | 0 or less (no cap), or at least 1 KB |
+| `RetentionPeriod` | `AddAuditListener` | 90 days | positive, at most 3650 days |
+| `PurgeInterval` | `AddAuditListener` | 24 hours | positive, at most 1 day |
+
+Each refused value would otherwise fail after the host had started: a batch size of zero leaves the publisher spinning on the first record, a stale timeout of zero throws inside the publisher and stops the host, a purge interval of zero purges in a loop, and a timer or a retention cutoff cannot hold a duration near `TimeSpan.MaxValue`.
 
 ## Suppressing sensitive data
 
@@ -257,7 +300,7 @@ The audit payload then carries the inner message read into its type (with `JsonO
 
 A misapplied `[AuditAs]` — the member is not a `JsonElement`, or the name is not a `string` property — is a build error (CONDUIT006) on a message and on every type a message carries, in the compilation or in a referenced assembly that references `Conduit.Contracts` (see [Diagnostics](diagnostics.md#conduit006--misapplied-auditas) for the walk and its bounds). On a type the generator does not check — one reached only through an interface or `object` member — the serializer writes such a member as the placeholder rather than failing the dispatch. The sibling is the most-derived declaration of that name, so a `new`-hidden property resolves to the derived one. `[DoNotAudit]` or `[AuditRedacted]` on the same member takes precedence over `[AuditAs]`. The marks act only on a type serialized as a JSON object contract: a type with its own `[JsonConverter]` is written by that converter, and none of its members' marks, `[AuditAs]` included, apply — keep such a type out of the payload. `AddAudit` hands its suppressed types to the serializer through a lookup that is process-wide, as `AuditJsonOptions` is: a type any host in the process suppresses is left out of every host's `[AuditAs]` capture (it can only redact more). The same lookup keeps capture from serializing a suppressed type at all (`ConduitRuntime.CapturesAuditPayload`), in process and over the wire, so a suppressed type cannot fail its dispatch through capture.
 
-Member-level capture serializes with `ConduitRuntime.AuditJsonOptions`: `JsonOptions` plus a modifier that drops `[DoNotAudit]` properties (and the properties bound to marked constructor parameters), writes `[AuditRedacted]` ones as their placeholder, and types `[AuditAs]` ones as above. Names match case-insensitively, and base types are walked: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. Wire serialization keeps `JsonOptions`, so the member still travels on the wire. The modifier acts on members it can see as CLR properties: a raw-JSON member — `JsonElement`, `JsonElement?`, `JsonNode`, `JsonDocument` or `object` (the serializer reads `object` as a `JsonElement`), or a `[JsonExtensionData]` bag — is captured **verbatim**, with any `[DoNotAudit]`/`[AuditRedacted]` value inside it in clear, **unless** it is marked `[AuditAs]` (typed at capture), `[DoNotAudit]` (left out) or `[AuditRedacted]` (the placeholder). A message carrying an unmarked raw-JSON member that may hold a secret must be kept out of the payload (`SuppressPayload<T>()`, `Suppress<T>()` or a type-level `[DoNotAudit]`).
+The marks shape the captured body only: wire serialization is unchanged, so a marked member still travels on the wire. They are inherited: a base record's marked parameter counts, and so does a mark on a base virtual property its override does not repeat. A raw-JSON member — `JsonElement`, `JsonElement?`, `JsonNode`, `JsonDocument` or `object`, or a `[JsonExtensionData]` bag — is captured **verbatim**, with any `[DoNotAudit]`/`[AuditRedacted]` value inside it in clear, **unless** it is marked `[AuditAs]` (typed at capture), `[DoNotAudit]` (left out) or `[AuditRedacted]` (the placeholder). A message carrying an unmarked raw-JSON member that may hold a secret must be kept out of the payload (`SuppressPayload<T>()`, `Suppress<T>()` or a type-level `[DoNotAudit]`).
 
 **Wire-inbound dispatch captures the same body.** A request or event that arrives over a transport (the generated `HandleWireRequestAsync`/`HandleWireEventAsync`) is read into its typed message, and that object is serialized with `AuditJsonOptions` (`ConduitRuntime.CaptureAuditPayload`) — never the raw inbound JSON, which would keep `[DoNotAudit]` members and any property the sender invented. A raw-JSON member follows the rule above: verbatim unless it is `[AuditAs]`, `[DoNotAudit]` or `[AuditRedacted]`. A type-level `[DoNotAudit]` type captures nothing. A request this host **forwards** to another endpoint by route is never deserialized here, so its record carries no body. The receiving host records its own. A request whose JSON cannot be read still leaves a failed record, without a body.
 
@@ -297,7 +340,7 @@ Because each service stamps its own records with the shared `MessageId`, the cen
 
 ## Limitations
 
-**Audit is best-effort, by design.** The capture channel is bounded and defaults to `DropOldest` — under sustained overload, the oldest unpersisted records are dropped rather than blocking or failing the dispatch. Audit must never take down the work it observes. A listener that fails (an audit store that cannot be written) loses its batch: `AuditBatch` is a plain event, so the failure throws out of the publish, and `AuditBatchPublisher` logs it at Error and drains the next batch rather than ending the service and the host with it. If you need guaranteed capture, raise `ChannelCapacity` and choose a blocking `BackpressureMode`, accepting the dispatch-path cost.
+**Audit is best-effort, by design.** The capture channel is bounded and defaults to `DropOldest` — under sustained overload, the oldest unpersisted records are dropped rather than blocking or failing the dispatch. Audit must never take down the work it observes. A listener that fails (an audit store that cannot be written) loses its batch: `AuditBatch` is a plain event, so the failure throws out of the publish, and `AuditBatchPublisher` logs it at Error and drains the next batch rather than ending the service and the host with it. The built-in store writes a batch in one transaction, so a lost batch has none of its records stored. When the host stops, the records already queued are drained for `ShutdownGrace` at most and the rest counted in a Warning; a record sealed after the stop began is not recorded (see [Shutdown](#shutdown)). If you need guaranteed capture, raise `ChannelCapacity` and choose a blocking `BackpressureMode`, accepting the dispatch-path cost.
 
 **Persistence requires a listener.** `AddAudit()` alone emits `AuditBatch` events but stores nothing. Without either a local `AddAuditListener()` or a central collector, the events have no consumer and the records are discarded.
 

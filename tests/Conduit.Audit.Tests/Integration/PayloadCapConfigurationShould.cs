@@ -99,6 +99,7 @@ public sealed class PayloadCapConfigurationShould
         var act = () => builder.AddAudit(audit => audit.MaxPayloadBytes = 100);
 
         // Assert
-        act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*MaxPayloadBytes*");
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Failures.Should().ContainSingle().Which.Should().Contain("AuditOptions.MaxPayloadBytes");
     }
 }
