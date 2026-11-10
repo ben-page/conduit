@@ -64,10 +64,14 @@ public sealed class SqlServerDialect : ISqlDialect
     // waiting for the schema-modification lock. It runs at READ COMMITTED, as the claims do: a pooled session can carry
     // Snapshot from a host's own transaction, and DDL at Snapshot that meets another session's DDL on the same table
     // fails with 3961 (metadata is not versioned). A create racing a process that takes no such lock still fails with
-    // 2714 or 1913, which IsAlreadyExists recognizes.
+    // 2714 or 1913, which IsAlreadyExists recognizes. XACT_ABORT rolls the transaction back when the client times out
+    // or cancels, rather than leaving it open on a pooled connection, and a lock not granted (a negative return) ends
+    // the batch with an error instead of creating without it.
     private const string OneCreateAtATime =
-        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\n" +
-        "EXEC sp_getapplock @Resource = N'conduit_create_if_absent', @LockMode = N'Exclusive', @LockOwner = N'Transaction';\n";
+        "SET XACT_ABORT ON;\nSET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\n" +
+        "DECLARE @lock int;\n" +
+        "EXEC @lock = sp_getapplock @Resource = N'conduit_create_if_absent', @LockMode = N'Exclusive', @LockOwner = N'Transaction';\n" +
+        "IF @lock < 0 THROW 51000, N'Conduit could not take its create lock.', 1;\n";
 
     private const string Commit = ";\nCOMMIT TRANSACTION;";
 

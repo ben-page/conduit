@@ -37,10 +37,13 @@ public class SqlServerDialectShould
     // Create-table-if-not-exists — SQL Server has no inline clause, so it guards with OBJECT_ID. Each create holds an
     // exclusive application lock for its transaction, so replicas starting together create one at a time (two
     // concurrent CREATE INDEX on one table deadlock, 1205), at READ COMMITTED (a pooled session carrying Snapshot fails
-    // a DDL statement that meets another replica's DDL, 3961).
+    // a DDL statement that meets another replica's DDL, 3961). XACT_ABORT rolls back a batch the client abandons, and a
+    // lock not granted ends the batch with an error.
     private const string OneCreateAtATime =
-        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\n" +
-        "EXEC sp_getapplock @Resource = N'conduit_create_if_absent', @LockMode = N'Exclusive', @LockOwner = N'Transaction';\n";
+        "SET XACT_ABORT ON;\nSET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\n" +
+        "DECLARE @lock int;\n" +
+        "EXEC @lock = sp_getapplock @Resource = N'conduit_create_if_absent', @LockMode = N'Exclusive', @LockOwner = N'Transaction';\n" +
+        "IF @lock < 0 THROW 51000, N'Conduit could not take its create lock.', 1;\n";
 
     private const string Commit = ";\nCOMMIT TRANSACTION;";
 

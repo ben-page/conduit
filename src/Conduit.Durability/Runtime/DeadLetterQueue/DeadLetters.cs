@@ -113,7 +113,7 @@ public sealed class DeadLetters : IDeadLetters
 #pragma warning restore CA1031
         {
             LogReplayFailed(this.logger, entry.MessageType, ex);
-            await this.ReleaseClaimAsync(entry, claimToken);
+            await this.ReleaseClaimAsync(id, entry.MessageType, claimToken);
             return Failed(id, ex.Message);
         }
 
@@ -206,17 +206,17 @@ public sealed class DeadLetters : IDeadLetters
 
     // Frees the entry for the next replay after a failed redelivery, even if the caller has cancelled. A release that
     // fails is logged: the claim then times out instead.
-    private async Task ReleaseClaimAsync(DeadLetterEntry entry, string claimToken)
+    private async Task ReleaseClaimAsync(Guid id, string messageType, string claimToken)
     {
         try
         {
-            await this.store.ReleaseReplayClaimAsync(entry.Id, claimToken, CancellationToken.None);
+            await this.store.ReleaseReplayClaimAsync(id, claimToken, CancellationToken.None);
         }
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            LogReplayClaimNotReleased(this.logger, entry.MessageType, entry.Id, ex);
+            LogReplayClaimNotReleased(this.logger, messageType, id, ex);
         }
     }
 }
